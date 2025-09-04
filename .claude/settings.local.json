@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(npm run build:main:*)",
+      "WebSearch",
+      "WebFetch(domain:www.electronjs.org)",
+      "WebFetch(domain:dev.to)",
+      "WebFetch(domain:stackoverflow.com)",
+      "Bash(npm install:*)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\main/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\main\\services/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\motionProcessing/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\renderer/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\renderer/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\renderer\\components/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\renderer\\components/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\renderer/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\preload/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\main\\services/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\renderer/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\dist\\main\\electron\\main/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\dist\\main\\electron\\preload/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\main/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)",
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)"
+    ],
+    "deny": [],
+    "ask": [],
+    "additionalDirectories": [
+      "E:\\mnt\\e\\MyWebApps\\Tropx",
+      "E:\\e\\MyWebApps\\Tropx"
+    ]
+  }
+}
