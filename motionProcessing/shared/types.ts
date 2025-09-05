@@ -1,13 +1,13 @@
 // Import types from SDK
 import {
     IMUData,
-    Vector3D,
     Quaternion,
-    ConnectionState as SDKConnectionState
-} from '../../sdk/core/MuseData';
+    Vector3D
+} from '../../muse_sdk/core/MuseData';
+import { SDKConnectionState } from '../../muse_sdk/types/types';
 
 // Re-export SDK types for convenience
-export type { IMUData, Vector3D, Quaternion };
+export type { IMUData, Vector3D, Quaternion, SDKConnectionState };
 
 /**
  * Device sample with timestamped measurement data.

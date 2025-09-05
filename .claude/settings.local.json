@@ -33,7 +33,10 @@
       "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\dist\\main\\electron\\preload/**)",
       "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\electron\\main/**)",
       "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)",
-      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)"
+      "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)",
+      "Bash(git checkout:*)",
+      "WebFetch(domain:webbluetoothcg.github.io)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": [],
     "ask": [],

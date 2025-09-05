@@ -1,4 +1,4 @@
-import { IMUData } from '../../sdk/core/MuseData';
+import { IMUData } from '../../muse_sdk/core/MuseData';
 import { SYNC } from '../shared/constants';
 
 interface SyncResult {

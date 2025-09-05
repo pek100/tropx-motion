@@ -1,4 +1,4 @@
-import { Quaternion } from '../../sdk/core/MuseData';
+import { Quaternion } from '../../muse_sdk/core/MuseData';
 import {ANGLE} from '../shared/constants';
 
 /**

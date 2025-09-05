@@ -1,4 +1,4 @@
-import { IMUData, Quaternion } from '../../sdk/core/MuseData';
+import { IMUData, Quaternion } from '../../muse_sdk/core/MuseData';
 import { DeviceData } from '../shared/types';
 import {INTERPOLATION} from '../shared/constants';
 import {lerp, QuaternionService} from "../shared/QuaternionService";

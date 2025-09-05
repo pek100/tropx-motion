@@ -1,4 +1,4 @@
-import { IMUData } from '../../sdk/core/MuseData';
+import { IMUData } from '../../muse_sdk/core/MuseData';
 import { DeviceData, MotionConfig } from '../shared/types';
 import { InterpolationService } from './InterpolationService';
 import { DataSyncService } from './DataSyncService';

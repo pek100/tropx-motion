@@ -2,19 +2,26 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import * as path from 'path';
 import { ElectronMotionService } from './services/ElectronMotionService';
 import { isDev } from './utils/environment';
+import { WSMessageType } from './types/websocket';
 
 class ElectronApp {
     private mainWindow: BrowserWindow | null = null;
     private motionService: ElectronMotionService;
 
     constructor() {
-        // Enable Web Bluetooth API and related features
+        // Enable Web Bluetooth API and related features (Enhanced for 2025)
+        console.log('🔧 Enabling Web Bluetooth flags for optimal device discovery...');
         app.commandLine.appendSwitch('enable-experimental-web-platform-features');
         app.commandLine.appendSwitch('enable-web-bluetooth');
         app.commandLine.appendSwitch('enable-bluetooth-web-api');
-        app.commandLine.appendSwitch('enable-features', 'WebBluetooth');
-        app.commandLine.appendSwitch('enable-blink-features', 'WebBluetooth');
+        app.commandLine.appendSwitch('enable-features', 'WebBluetooth,WebBluetoothScanning');
+        app.commandLine.appendSwitch('enable-blink-features', 'WebBluetooth,WebBluetoothScanning');
         app.commandLine.appendSwitch('disable-features', 'OutOfBlinkCors');
+        
+        // Additional flags for better Bluetooth device discovery
+        app.commandLine.appendSwitch('enable-bluetooth-advertising');
+        app.commandLine.appendSwitch('enable-bluetooth-device-discovery');
+        console.log('✅ Web Bluetooth flags enabled');
         
         this.motionService = new ElectronMotionService();
         this.setupAppEvents();
@@ -63,7 +70,9 @@ class ElectronApp {
                 preload: path.join(__dirname, '../preload/preload.js'),
                 webSecurity: !isDev,
                 experimentalFeatures: true,
-                enableBlinkFeatures: 'WebBluetooth'
+                enableBlinkFeatures: 'WebBluetooth,WebBluetoothScanning',
+                // Enhanced permissions for Bluetooth device access
+                allowRunningInsecureContent: isDev
             },
             show: false
         });
@@ -86,6 +95,10 @@ class ElectronApp {
         // Setup Bluetooth handlers after webContents is ready
         this.mainWindow.webContents.once('did-finish-load', () => {
             console.log('🌐 WebContents finished loading, setting up Bluetooth handlers...');
+            
+            // Add Bluetooth diagnostics
+            this.runBluetoothDiagnostics();
+            
             this.setupBluetoothHandlers();
         });
 
@@ -100,117 +113,220 @@ class ElectronApp {
             return;
         }
 
-        console.log('🔧 Setting up Bluetooth handlers...');
+        console.log('🔧 Setting up simplified Bluetooth handlers using grosdode pattern...');
 
-        let bluetoothCallback: ((deviceId: string) => void) | null = null;
-        let foundDevices: any[] = [];
-        let scanTimeout: NodeJS.Timeout | null = null;
-        let lastDeviceFoundTime: number = 0;
-        const SCAN_DURATION_MS = 10000; // 10 seconds total scan time
-        const DEVICE_DISCOVERY_GRACE_PERIOD = 3000; // 3 seconds after last device found
-
+        // Optimized grosdode pattern (data-driven refinement)
+        let lastDeviceDiscovery = 0;
         this.mainWindow.webContents.on('select-bluetooth-device', (event, deviceList, callback) => {
-            console.log('🔵 select-bluetooth-device event fired at:', new Date().toISOString());
-            console.log('🔵 Device count in this event:', deviceList.length);
-            console.log('🔵 Total devices found so far:', foundDevices.length);
-
-            event.preventDefault(); // CRITICAL: Prevent default Electron device picker
+            const timestamp = Date.now();
             
-            // Store the callback for later use
-            if (!bluetoothCallback) {
-                bluetoothCallback = callback;
-                console.log('🔵 Starting extended Bluetooth device discovery...');
-                console.log(`🔵 Will scan for ${SCAN_DURATION_MS}ms with ${DEVICE_DISCOVERY_GRACE_PERIOD}ms grace period`);
+            // Reduce log spam - only log significant discoveries
+            const shouldLogDetailed = deviceList.length > 0 || (timestamp - lastDeviceDiscovery) > 5000;
+            
+            if (shouldLogDetailed) {
+                console.log('\n🔵 ===== DEVICE DISCOVERY (GROSDODE PATTERN) =====');
+                console.log('🔵 Found devices:', deviceList.length);
+                console.log('🔵 Status: ' + (deviceList.length > 0 ? '✅ SUCCESS' : '❌ EMPTY'));
+                if (deviceList.length > 0) {
+                    console.log('🔵 Devices:', deviceList.map(d => `${d.deviceName} (${d.deviceId})`).join(', '));
+                }
+                lastDeviceDiscovery = timestamp;
+            }
+            
+
+            event.preventDefault(); // Required: Prevent default Electron device picker
+
+            // Enhanced filtering for SDK devices with more permissive matching
+            const validDevices = deviceList.filter(device => {
+                const name = (device.deviceName || (device as any).name || '').toLowerCase();
+                const isValidDevice = name.includes('tropx') || 
+                                    name.includes('muse') || 
+                                    name.includes('arduino') || // Sometimes devices show generic names
+                                    name.includes('ble') ||
+                                    device.deviceId?.toLowerCase().includes('tropx') ||
+                                    device.deviceId?.toLowerCase().includes('muse');
+                
+                    return isValidDevice;
+            });
+
+            if (shouldLogDetailed && deviceList.length > 0) {
+                console.log(`🔵 Valid SDK devices: ${validDevices.length}/${deviceList.length}`);
             }
 
-            // Process new devices from this scan event
-            if (deviceList.length > 0) {
-                console.log('🔵 ✅ NEW DEVICES FOUND IN THIS SCAN EVENT!');
-                lastDeviceFoundTime = Date.now();
-
-                // Add new devices to our accumulated list (avoid duplicates)
-                deviceList.forEach((device, index) => {
-                    console.log(`🔵 Processing device ${index}:`, {
-                        name: device.deviceName,
-                        id: device.deviceId,
-                    });
-
-                    // Check if we already have this device
-                    const existingDevice = foundDevices.find(d => d.deviceId === device.deviceId);
-                    if (!existingDevice) {
-                        foundDevices.push(device);
-                        console.log(`🔵 ✅ Added new device: "${device.deviceName}" (${device.deviceId})`);
-                    } else {
-                        console.log(`🔵 ⚠️ Device already found: "${device.deviceName}" (${device.deviceId})`);
-                    }
+            // Windows Bluetooth Fix: Even if no devices found, allow manual connection
+            if (validDevices.length === 0) {
+                if (shouldLogDetailed) {
+                    console.log('🔵 No valid devices found - manual entry available');
+                    console.log('🔵 =============================================\n');
+                }
+                
+                // Send empty list but keep callback for manual device entry
+                this.bluetoothDeviceCallback = callback;
+                
+                this.motionService.broadcastMessage({
+                    type: WSMessageType.DEVICE_SCAN_RESULT,
+                    data: {
+                        devices: [],
+                        success: false,
+                        message: 'No devices found - try manual connection or ensure devices are in pairing mode',
+                        scanComplete: true,
+                        showManualEntry: true // Flag to show manual device entry option
+                    },
+                    timestamp: Date.now()
                 });
                 
-                console.log(`🔵 📊 Discovery progress: ${foundDevices.length} unique devices found`);
-                foundDevices.forEach((device, idx) => {
-                    console.log(`🔵   ${idx + 1}. "${device.deviceName}" (${device.deviceId})`);
-                });
+                // Don't return callback yet - let user try manual entry
+                return;
+            }
 
-                // Reset the completion timer since we found new devices
-                if (scanTimeout) {
-                    clearTimeout(scanTimeout);
-                }
+            // Store callback for user selection
+            this.bluetoothDeviceCallback = callback;
 
-                // Set completion timer for grace period after last device found
-                scanTimeout = setTimeout(() => {
-                    completeBluetoothDeviceDiscovery();
-                }, DEVICE_DISCOVERY_GRACE_PERIOD);
+            // Send valid devices to renderer for selection
+            this.motionService.broadcastMessage({
+                type: WSMessageType.DEVICE_SCAN_RESULT,
+                data: {
+                    devices: validDevices.map(device => ({
+                        id: device.deviceId,
+                        name: device.deviceName || (device as any).name || 'Unknown Device',
+                        connected: false,
+                        batteryLevel: null
+                    })),
+                    success: true,
+                    message: `Found ${validDevices.length} SDK device(s)`,
+                    scanComplete: true
+                },
+                timestamp: Date.now()
+            });
 
-            } else {
-                console.log('🔵 Empty scan event - no new devices in this cycle');
-
-                // If this is the first empty event and we haven't started a timer yet
-                if (foundDevices.length === 0 && !scanTimeout) {
-                    console.log('🔵 Starting initial scan timeout...');
-                    scanTimeout = setTimeout(() => {
-                        completeBluetoothDeviceDiscovery();
-                    }, SCAN_DURATION_MS);
-                }
+            if (shouldLogDetailed) {
+                console.log('🔵 Device selection UI triggered');
+                console.log('🔵 =============================================\n');
             }
         });
 
-        // Helper function to complete the device discovery process
-        const completeBluetoothDeviceDiscovery = () => {
-            console.log('🔵 🏁 Completing Bluetooth device discovery...');
-            console.log(`🔵 📊 Final results: Found ${foundDevices.length} total devices`);
+        // Setup Bluetooth pairing handler for Windows/Linux
+        this.mainWindow.webContents.session.setBluetoothPairingHandler((details, callback) => {
+            console.log('🔵 Bluetooth pairing requested:', details);
 
-            if (foundDevices.length > 0) {
-                foundDevices.forEach((device, idx) => {
-                    console.log(`🔵 Final device ${idx + 1}: "${device.deviceName}" (${device.deviceId})`);
-                });
+            // Store pairing callback
+            this.bluetoothPairingCallback = callback;
 
-                // UPDATED: Store devices and callback, then send to renderer
-                this.motionService.setDiscoveredDevices(foundDevices, bluetoothCallback!);
-                this.motionService.sendDiscoveredDevicesToRenderer(foundDevices);
-            } else {
-                console.log('🔵 No devices found during extended scan period');
-                // Send empty list to renderer
-                this.motionService.sendDiscoveredDevicesToRenderer([]);
+            // Send pairing request to renderer
+            this.motionService.broadcastMessage({
+                type: WSMessageType.BLUETOOTH_PAIRING_REQUEST,
+                data: {
+                    deviceId: details.deviceId, // Fix: use deviceId instead of device
+                    pairingKind: details.pairingKind,
+                    pin: details.pin
+                },
+                timestamp: Date.now()
+            });
+        });
+
+        // Setup permission handlers - note: Electron doesn't support 'bluetooth' permission type
+        this.mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+            console.log('🔵 Permission check:', permission, 'from', requestingOrigin);
+
+            // Allow all permissions for our app since Bluetooth isn't in the standard permission types
+            return true;
+        });
+
+        // Setup device permission handler - note: Electron doesn't support 'bluetooth' device type
+        this.mainWindow.webContents.session.setDevicePermissionHandler((details) => {
+            console.log('🔵 Device permission request:', details);
+
+            // Allow all device types since we're using Web Bluetooth API
+            return true;
+        });
+
+        console.log('✅ Bluetooth handlers setup complete');
+    }
+
+    private bluetoothDeviceCallback: ((deviceId: string) => void) | null = null;
+    private bluetoothPairingCallback: ((response: any) => void) | null = null;
+
+    private async runBluetoothDiagnostics() {
+        console.log('🔧 ===== BLUETOOTH DIAGNOSTICS =====');
+        console.log('🔧 Platform:', process.platform);
+        console.log('🔧 Electron version:', process.versions.electron);
+        console.log('🔧 Chrome version:', process.versions.chrome);
+        
+        // Check if we can access Bluetooth at the system level
+        try {
+            if (this.mainWindow) {
+                // Test basic Web Bluetooth availability in renderer
+                const result = await this.mainWindow.webContents.executeJavaScript(`
+                    (async () => {
+                        return {
+                            bluetoothAvailable: !!navigator.bluetooth,
+                            secureContext: window.isSecureContext,
+                            userAgent: navigator.userAgent,
+                            permissions: await (async () => {
+                                try {
+                                    const result = await navigator.permissions.query({ name: 'bluetooth' });
+                                    return result.state;
+                                } catch (e) {
+                                    return 'not-supported';
+                                }
+                            })()
+                        };
+                    })()
+                `);
                 
-                // Complete callback with no selection
-                if (bluetoothCallback) {
-                    bluetoothCallback(''); // Empty selection
+                console.log('🔧 Renderer Bluetooth status:', result);
+                
+                if (!result.bluetoothAvailable) {
+                    console.error('❌ Web Bluetooth API not available in renderer!');
+                    console.log('💡 This may be due to missing feature flags or platform limitations');
+                }
+                
+                if (!result.secureContext) {
+                    console.warn('⚠️ Not in secure context - may affect Bluetooth functionality');
+                }
+                
+                if (result.permissions === 'denied') {
+                    console.error('❌ Bluetooth permissions denied');
+                } else if (result.permissions === 'not-supported') {
+                    console.warn('⚠️ Bluetooth permissions API not supported');
+                } else {
+                    console.log('✅ Bluetooth permissions:', result.permissions);
+                }
+
+                // Additional Windows-specific checks
+                if (process.platform === 'win32') {
+                    console.log('🔧 Running Windows-specific Bluetooth checks...');
+                    
+                    // Check if Windows Bluetooth is actually enabled
+                    const winBtCheck = await this.mainWindow.webContents.executeJavaScript(`
+                        (async () => {
+                            try {
+                                // Try to get Bluetooth availability at system level
+                                const adapter = await navigator.bluetooth.getAvailability();
+                                return { adapter };
+                            } catch (e) {
+                                return { error: e.message };
+                            }
+                        })()
+                    `);
+                    
+                    console.log('🔧 Windows Bluetooth availability check:', winBtCheck);
+                    
+                    if (winBtCheck.error) {
+                        console.warn('⚠️ Windows Bluetooth system issue detected');
+                        console.log('💡 Recommendations:');
+                        console.log('💡 1. Check Windows Bluetooth is turned on in Settings');
+                        console.log('💡 2. Update Bluetooth drivers via Device Manager');
+                        console.log('💡 3. Run Windows Bluetooth troubleshooter');
+                        console.log('💡 4. Restart Bluetooth service: services.msc → Bluetooth Support Service');
+                    }
                 }
             }
-
-            // Clean up scan state but keep devices and callback for connection requests
-            if (scanTimeout) {
-                clearTimeout(scanTimeout);
-                scanTimeout = null;
-            }
-            
-            // Clear scan-specific state but keep devices for connection
-            bluetoothCallback = null; // This will be managed by motionService now
-            foundDevices = [];
-            lastDeviceFoundTime = 0;
-        };
-
-        // Store the helper function so it can be called from the timeout
-        (this as any).completeBluetoothDeviceDiscovery = completeBluetoothDeviceDiscovery;
+        } catch (error) {
+            console.error('❌ Bluetooth diagnostics failed:', error);
+        }
+        
+        console.log('🔧 ===== DIAGNOSTICS COMPLETE =====');
     }
 
     private setupIpcHandlers() {
@@ -268,6 +384,84 @@ class ElectronApp {
                 nodeVersion: process.versions.node,
                 appCommandLine: process.argv
             };
+        });
+
+        // Enhanced device selection handler with manual entry support
+        ipcMain.handle('bluetooth:selectDevice', (_, deviceId: string) => {
+            console.log('🔵 User selected device via grosdode pattern:', deviceId);
+            if (this.bluetoothDeviceCallback) {
+                this.bluetoothDeviceCallback(deviceId);
+                this.bluetoothDeviceCallback = null;
+                return { success: true, message: 'Device selected successfully' };
+            } else {
+                console.error('❌ No pending device selection callback');
+                return { success: false, message: 'No pending device selection' };
+            }
+        });
+
+        // Add manual device connection handler for Windows Bluetooth issues
+        ipcMain.handle('bluetooth:connectManual', (_, deviceName: string) => {
+            console.log('🔵 Manual device connection requested:', deviceName);
+            
+            // Create a mock device selection to trigger SDK connection
+            if (this.bluetoothDeviceCallback) {
+                // Use device name as ID for manual connections
+                this.bluetoothDeviceCallback(deviceName);
+                this.bluetoothDeviceCallback = null;
+                return { success: true, message: `Manual connection initiated for ${deviceName}` };
+            }
+            
+            return { success: false, message: 'No pending device selection for manual connection' };
+        });
+
+        // Enhanced scan with multiple attempts for Windows
+        ipcMain.handle('bluetooth:scanEnhanced', async () => {
+            console.log('🔵 Enhanced scan requested for Windows Bluetooth');
+            
+            try {
+                // Multiple scan attempts to work around Windows Bluetooth limitations
+                const scanAttempts = 3;
+                let allDevices = [];
+                
+                for (let attempt = 1; attempt <= scanAttempts; attempt++) {
+                    console.log(`🔵 Scan attempt ${attempt}/${scanAttempts}`);
+                    
+                    // Trigger a scan by having renderer call Web Bluetooth
+                    this.mainWindow?.webContents.send('bluetooth-trigger-scan', { attempt });
+                    
+                    // Wait between attempts
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
+                
+                return { success: true, message: 'Enhanced scan completed' };
+            } catch (error) {
+                console.error('❌ Enhanced scan failed:', error);
+                return { success: false, message: `Enhanced scan failed: ${error instanceof Error ? error.message : String(error)}` };
+            }
+        });
+
+        // Add Bluetooth pairing response handler
+        ipcMain.handle('bluetooth:pairingResponse', (_, response: any) => {
+            console.log('🔵 User pairing response:', response);
+            if (this.bluetoothPairingCallback) {
+                this.bluetoothPairingCallback(response);
+                this.bluetoothPairingCallback = null;
+                return { success: true, message: 'Pairing response sent' };
+            } else {
+                console.error('❌ No pending pairing callback');
+                return { success: false, message: 'No pending pairing request' };
+            }
+        });
+
+        // Add handler to cancel Bluetooth selection
+        ipcMain.handle('bluetooth:cancelSelection', () => {
+            console.log('🔵 User cancelled device selection');
+            if (this.bluetoothDeviceCallback) {
+                this.bluetoothDeviceCallback(''); // Empty string cancels selection
+                this.bluetoothDeviceCallback = null;
+                return { success: true, message: 'Selection cancelled' };
+            }
+            return { success: false, message: 'No pending selection to cancel' };
         });
     }
 

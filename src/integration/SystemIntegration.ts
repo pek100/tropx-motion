@@ -15,7 +15,7 @@ import {
 import { deviceStateMachine } from '../core/DeviceStateMachine';
 import { streamDataManager } from '../core/StreamDataManager';
 import { webRTCManager } from '../core/WebRTCManager';
-import { museManager } from '../../sdk/core/MuseManager';
+import { museManager } from '../../muse_sdk/core/MuseManager';
 import { motionProcessingCoordinator } from '../../motionProcessing/MotionProcessingCoordinator';
 import { PERFORMANCE_CONSTANTS } from '../core/constants';
 

@@ -1,8 +1,8 @@
 // electron/main/services/ElectronMotionService.ts
 import { WebSocket, WebSocketServer } from 'ws';
 import { motionProcessingCoordinator } from '../../../services/motionProcessing/MotionProcessingCoordinator';
-import { museManager } from '../../../sdk/core/MuseManager';
-import { IMUData } from '../../../sdk/core/MuseData';
+import { museManager } from '../../../muse_sdk/core/MuseManager';
+import { IMUData } from '../../../muse_sdk/core/MuseData';
 import { WSMessage, WSMessageType, DeviceInfo, MotionDataUpdate, RecordingSession } from '../types/websocket';
 import { DataBatcher } from '../utils/DataBatcher';
 

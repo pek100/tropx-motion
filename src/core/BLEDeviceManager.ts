@@ -15,7 +15,7 @@ import {
   IMUData 
 } from './types';
 import { deviceStateMachine } from './DeviceStateMachine';
-import { museManager } from '../../sdk/core/MuseManager';
+import { museManager } from '../../muse_sdk/core/MuseManager';
 import { streamDataManager } from './StreamDataManager';
 import { ERROR_CODES, PERFORMANCE_CONSTANTS } from './constants';
 
@@ -1117,4 +1117,3 @@ export const bleDeviceManager = BLEDeviceManager.getInstance({
   batteryUpdateIntervalMs: 30000,
   connectionTimeoutMs: 15000 // Longer timeout for Electron's Bluetooth coordination
 });
-

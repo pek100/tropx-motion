@@ -17,6 +17,15 @@ export interface ElectronAPI {
         getWebSocketPort: () => Promise<number>;
     };
 
+    bluetooth: {
+        selectDevice: (deviceId: string) => Promise<{ success: boolean; message: string }>;
+        connectManual: (deviceName: string) => Promise<{ success: boolean; message: string }>;
+        scanEnhanced: () => Promise<{ success: boolean; message: string }>;
+        cancelSelection: () => Promise<{ success: boolean; message: string }>;
+        pairingResponse: (response: any) => Promise<{ success: boolean; message: string }>;
+        getSystemInfo: () => Promise<any>;
+    };
+
     system: {
         platform: string;
         arch: string;
@@ -39,6 +48,15 @@ const electronAPI: ElectronAPI = {
         startRecording: (sessionData) => ipcRenderer.invoke('motion:startRecording', sessionData),
         stopRecording: () => ipcRenderer.invoke('motion:stopRecording'),
         getWebSocketPort: () => ipcRenderer.invoke('motion:getWebSocketPort'),
+    },
+
+    bluetooth: {
+        selectDevice: (deviceId: string) => ipcRenderer.invoke('bluetooth:selectDevice', deviceId),
+        connectManual: (deviceName: string) => ipcRenderer.invoke('bluetooth:connectManual', deviceName),
+        scanEnhanced: () => ipcRenderer.invoke('bluetooth:scanEnhanced'),
+        cancelSelection: () => ipcRenderer.invoke('bluetooth:cancelSelection'),
+        pairingResponse: (response: any) => ipcRenderer.invoke('bluetooth:pairingResponse', response),
+        getSystemInfo: () => ipcRenderer.invoke('bluetooth:getSystemInfo'),
     },
 
     system: {

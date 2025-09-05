@@ -1,21 +1,19 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { motionProcessingCoordinator } from '../../../motionProcessing/MotionProcessingCoordinator';
-import { IMUData } from '../../../sdk/core/MuseData';
+import { IMUData } from '../../../muse_sdk/core/MuseData';
 import { WSMessage, WSMessageType, DeviceInfo, MotionDataUpdate, RecordingSession } from '../types/websocket';
 import { DataBatcher } from '../utils/DataBatcher';
+import { museManager } from '../../../muse_sdk/core/MuseManager';
 
 export class ElectronMotionService {
     private wsServer: WebSocketServer | null = null;
     private clients = new Set<WebSocket>();
     private dataBatcher: DataBatcher;
     private currentSessionId: string | null = null;
-    private deviceSelectionCallback: ((deviceId: string) => void) | null = null;
     private isInitialized = false;
     private heartbeatInterval: NodeJS.Timeout | null = null;
-    private deviceSelectionInProgress = false;
 
-    private connectedDevices = new Map<string, DeviceInfo>();
-    private batteryLevels = new Map<string, number>();
+    // Simplified state management using SDK
     private isRecording = false;
     private recordingStartTime: Date | null = null;
 
@@ -213,7 +211,7 @@ export class ElectronMotionService {
                 return { success: false, message: 'Recording already in progress' };
             }
 
-            console.log('🎬 Starting recording session...', sessionData);
+            console.log('🎬 SDK: Starting recording session with SDK commands...', sessionData);
 
             const motionSuccess = motionProcessingCoordinator.startRecording(
                 sessionData.sessionId,
@@ -225,8 +223,15 @@ export class ElectronMotionService {
                 return { success: false, message: 'Failed to start motion processing' };
             }
 
-            // Device streaming will be handled by the renderer process
-            // The renderer will send motion data via WebSocket messages
+            // Send recording commands to all connected devices via SDK
+            console.log('🎬 SDK: Sending start recording commands to all devices...');
+            const recordingStarted = await museManager.startRecordingOnDevices();
+            
+            if (!recordingStarted) {
+                // Clean up motion processing if device recording failed
+                await motionProcessingCoordinator.stopRecording();
+                return { success: false, message: 'Failed to start recording on devices via SDK' };
+            }
 
             this.isRecording = true;
             this.recordingStartTime = new Date();
@@ -234,7 +239,8 @@ export class ElectronMotionService {
 
             this.broadcastRecordingState();
 
-            return { success: true, message: 'Recording started successfully' };
+            console.log('🎬 SDK: Recording started on devices and motion processing');
+            return { success: true, message: 'Recording started successfully via SDK' };
 
         } catch (error) {
             console.error('❌ Recording start error:', error);
@@ -248,9 +254,13 @@ export class ElectronMotionService {
                 return { success: false, message: 'No recording in progress' };
             }
 
-            console.log('🛑 Stopping recording session...');
+            console.log('🛑 SDK: Stopping recording session with SDK commands...');
 
-            // Device streaming stop will be handled by the renderer process
+            // Send stop recording commands to all devices via SDK first
+            console.log('🛑 SDK: Sending stop recording commands to all devices...');
+            const recordingStopped = await museManager.stopRecordingOnDevices();
+
+            // Stop motion processing
             const success = await motionProcessingCoordinator.stopRecording();
 
             this.isRecording = false;
@@ -260,10 +270,16 @@ export class ElectronMotionService {
 
             this.broadcastRecordingState();
 
+            const statusMessage = recordingStopped ? 
+                'Recording stopped successfully via SDK' : 
+                'Recording stopped (some devices may not have received stop command)';
+
+            console.log('🛑 SDK: Recording stopped on devices and motion processing');
+
             if (success) {
                 return { 
                     success: true, 
-                    message: 'Recording stopped successfully',
+                    message: statusMessage,
                     recordingId: sessionId || undefined
                 };
             } else {
@@ -277,11 +293,20 @@ export class ElectronMotionService {
     }
 
     getStatus() {
+        // Get device info from SDK
+        const sdkDevices = museManager.getAllDevices();
+        const batteryLevels = Object.fromEntries(museManager.getAllBatteryLevels());
+
         return {
             isInitialized: this.isInitialized,
             isRecording: this.isRecording,
-            connectedDevices: Array.from(this.connectedDevices.values()),
-            batteryLevels: Object.fromEntries(this.batteryLevels),
+            connectedDevices: sdkDevices.map(d => ({
+                id: d.id,
+                name: d.name,
+                connected: d.connected,
+                batteryLevel: d.batteryLevel
+            })),
+            batteryLevels,
             recordingStartTime: this.recordingStartTime?.toISOString(),
             wsPort: this.WS_PORT,
             clientCount: this.clients.size
@@ -294,315 +319,129 @@ export class ElectronMotionService {
 
     async connectDevices(): Promise<{ success: boolean; message: string; devices?: DeviceInfo[] }> {
         try {
-            console.log('🔍 Starting device connection process...');
-            console.log('🔍 Note: Device connection must be initiated from renderer process');
+            console.log('🔍 grosdode pattern: Simple device connection trigger');
             
-            // Send message to renderer to trigger device connection
+            // Send simple message to trigger Web Bluetooth scan
             this.broadcast({
                 type: WSMessageType.SCAN_REQUEST,
                 data: { 
-                    action: 'connect_devices',
-                    message: 'Connecting to Bluetooth devices from renderer process'
+                    action: 'trigger_bluetooth_scan',
+                    message: 'Triggering Web Bluetooth scan for device selection'
                 },
                 timestamp: Date.now()
             });
 
             return { 
                 success: true, 
-                message: 'Device connection initiated in renderer process'
+                message: 'Web Bluetooth scan triggered'
             };
         } catch (error) {
             console.error('❌ Device connection trigger failed:', error);
             return { 
                 success: false, 
-                message: `Device connection trigger failed: ${error instanceof Error ? error.message : String(error)}` 
+                message: `Connection trigger failed: ${error instanceof Error ? error.message : String(error)}` 
             };
         }
     }
 
-    private discoveredDevices: any[] = [];
-    private bluetoothCallback: ((deviceId: string) => void) | null = null;
-    private pendingConnections: Map<string, boolean> = new Map(); // Track pending connections
+    // Simplified state - let SDK handle device management
+    private isScanning = false;
 
     async scanForDevices(): Promise<{ success: boolean; message: string }> {
         try {
-            console.log('📡 Starting device scan from main process...');
-            console.log('📡 This will trigger select-bluetooth-device event handler');
+            console.log('📡 grosdode pattern: Simple scan trigger');
             
-            // Clear previous devices
-            this.discoveredDevices = [];
-            this.bluetoothCallback = null;
+            if (this.isScanning) {
+                return { success: false, message: 'Scan already in progress' };
+            }
+
+            this.isScanning = true;
             
-            // UPDATED: Trigger a Web Bluetooth scan that will activate the select-bluetooth-device handler
-            // We do this by sending a message to the renderer to make a Web Bluetooth request
-            // which will then trigger our main process handler
-            
+            // Simple trigger - let grosdode pattern handle the rest
             this.broadcast({
                 type: WSMessageType.SCAN_REQUEST,
                 data: { 
-                    action: 'trigger_main_process_scan',
-                    message: 'Starting main process Bluetooth device discovery'
+                    action: 'trigger_bluetooth_scan',
+                    message: 'Trigger Web Bluetooth scan for grosdode device selection'
                 },
                 timestamp: Date.now()
             });
 
+            // Reset scanning after reasonable timeout
+            setTimeout(() => {
+                this.isScanning = false;
+            }, 10000);
+
             return { 
                 success: true, 
-                message: 'Main process Bluetooth scan initiated - devices will appear in UI when found' 
+                message: 'Web Bluetooth scan triggered'
             };
         } catch (error) {
-            console.error('❌ Device scan trigger failed:', error);
+            console.error('❌ Scan trigger failed:', error);
+            this.isScanning = false;
             return { success: false, message: `Scan trigger failed: ${error instanceof Error ? error.message : String(error)}` };
         }
     }
 
     /**
-     * Store discovered devices and callback for later connection requests
+     * Cancel scan - simplified
      */
-    setDiscoveredDevices(devices: any[], callback: (deviceId: string) => void) {
-        console.log('📋 Storing discovered devices for connection requests');
-        this.discoveredDevices = devices;
-        this.bluetoothCallback = callback;
+    public cancelScan(): { success: boolean; message: string } {
+        if (!this.isScanning) {
+            return { success: false, message: 'No scan in progress' };
+        }
+
+        console.log('🚫 Scan canceled');
+        this.isScanning = false;
+        return { success: true, message: 'Scan canceled' };
     }
 
     /**
-     * Send discovered devices to renderer for display
+     * Store devices found via grosdode pattern in SDK
      */
-    sendDiscoveredDevicesToRenderer(devices: any[]) {
-        console.log('📡 Sending discovered devices to renderer:', devices.length);
+    storeScannedDevices(devices: any[]) {
+        console.log('📋 grosdode pattern: Storing devices in SDK');
         
-        // Filter devices according to SDK specifications
-        const filteredDevices = devices.filter(device => {
-            const deviceName = device.deviceName?.toLowerCase() || '';
-            
-            // Use SDK-based filtering: must contain "tropx" and have proper naming pattern
-            const isValidTropxDevice = deviceName.includes('tropx') &&
-                                     (deviceName.includes('_ln_') || deviceName.includes('_rn_') ||
-                                      deviceName.includes('ln_') || deviceName.includes('rn_'));
-                                      
-            if (isValidTropxDevice) {
-                console.log(`✅ Valid SDK device: ${device.deviceName}`);
-                return true;
-            } else {
-                console.log(`🚫 Filtered out non-SDK device: ${device.deviceName}`);
-                return false;
-            }
-        });
+        // Add devices to SDK registry
+        const sdkDevices = devices.map(device => ({
+            deviceId: device.deviceId,
+            deviceName: device.deviceName
+        }));
         
-        console.log(`📡 Filtered ${filteredDevices.length}/${devices.length} devices based on SDK criteria`);
-        
-        this.broadcast({
-            type: WSMessageType.DEVICE_SCAN_RESULT,
-            data: { 
-                devices: filteredDevices.map(device => ({
-                    id: device.deviceId,
-                    name: device.deviceName,
-                    connected: false,
-                    batteryLevel: null
-                }))
-            },
-            timestamp: Date.now()
-        });
+        museManager.addScannedDevices(sdkDevices);
+        console.log(`📋 Added ${devices.length} devices to SDK registry`);
     }
 
+    // Removed - grosdode pattern handles device filtering automatically
+
     /**
-     * Connect to a specific device using the stored Electron callback
-     * This bridges Electron's device discovery with SDK connection
+     * grosdode pattern: Simple device connection using SDK
      */
     async connectToSpecificDevice(deviceName: string): Promise<{ success: boolean; message: string }> {
         try {
-            console.log(`🔗 Connecting to specific device: ${deviceName}`);
-            
-            // Check if connection is already in progress for this device
-            if (this.pendingConnections.get(deviceName)) {
-                console.log(`⚠️ Connection already in progress for ${deviceName}`);
-                return { success: false, message: `Connection already in progress for ${deviceName}` };
-            }
-            
-            if (!this.bluetoothCallback) {
-                return { success: false, message: 'No Bluetooth callback available - please scan for devices first' };
-            }
+            console.log(`🔗 grosdode pattern: Connecting to device via SDK: ${deviceName}`);
 
-            // Find the device in our discovered list
-            const targetDevice = this.discoveredDevices.find(device => device.deviceName === deviceName);
-            if (!targetDevice) {
-                return { success: false, message: `Device ${deviceName} not found in discovered devices` };
-            }
+            // Use SDK to connect - it will handle the Web Bluetooth connection
+            const success = await museManager.connectToScannedDevice('', deviceName);
 
-            // Mark this device as having a pending connection
-            this.pendingConnections.set(deviceName, true);
-
-            console.log(`📱 Selecting device via Electron callback: ${targetDevice.deviceName} (${targetDevice.deviceId})`);
-            
-            try {
-                // Step 1: Use Electron's callback to make device available to Web Bluetooth
-                this.bluetoothCallback(targetDevice.deviceId);
-                
-                // Step 2: Clear the callback to prevent reuse issues
-                // Note: We keep the callback for now but track usage per device
-                
-                // Step 3: Give the system a moment to process the selection
-                await new Promise(resolve => setTimeout(resolve, 500));
-                
-                // Step 4: The device should now be available to Web Bluetooth in the renderer
-                // Send connection success message back to renderer so it can use the SDK
-                this.broadcast({
-                    type: WSMessageType.DEVICE_CONNECTED,
-                    data: {
-                        deviceId: targetDevice.deviceId,
-                        deviceName: targetDevice.deviceName,
-                        message: 'Device made available via Electron - ready for SDK connection'
-                    },
-                    timestamp: Date.now()
-                });
-                
-                console.log(`✅ Device ${deviceName} made available via main process for SDK connection`);
-                
-                // Clear the pending connection status
-                this.pendingConnections.delete(deviceName);
-                
-                return { success: true, message: `Device ${deviceName} made available for SDK connection` };
-                
-            } catch (callbackError) {
-                // Clear pending status on callback error
-                this.pendingConnections.delete(deviceName);
-                throw callbackError;
-            }
-            
-        } catch (error) {
-            console.error(`❌ Failed to connect to device ${deviceName}:`, error);
-            // Ensure pending status is cleared on any error
-            this.pendingConnections.delete(deviceName);
-            return { success: false, message: `Connection failed: ${error instanceof Error ? error.message : String(error)}` };
-        }
-    }
-
-
-    handleBluetoothDeviceSelection(deviceList: any[], callback: (deviceId: string) => void): void {
-        console.log('🔵 Electron select-bluetooth-device event triggered');
-        console.log('🔵 Found', deviceList.length, 'Bluetooth devices');
-        console.log('🔵 Raw device list from Electron:', deviceList);
-        
-        if (deviceList.length === 0) {
-            console.log('🔵 No Bluetooth devices found - this could mean:');
-            console.log('🔵 1. No BLE devices are advertising nearby');
-            console.log('🔵 2. Device is not in discoverable/pairable mode');
-            console.log('🔵 3. Bluetooth is disabled on system');
-            console.log('🔵 4. Electron filtering is excluding devices');
-
-            // Broadcast empty result to UI
-            this.broadcast({
-                type: WSMessageType.DEVICE_SCAN_RESULT,
-                data: {
-                    devices: [],
-                    success: true,
-                    message: 'No Bluetooth devices found',
-                    selectedDevice: null
-                },
-                timestamp: Date.now()
-            });
-
-            callback(''); // Call callback with empty string for no device
-            return;
-        }
-        
-        // Log device details
-        deviceList.forEach((device, index) => {
-            console.log(`🔵 Device ${index + 1}:`, {
-                name: device.deviceName,
-                id: device.deviceId,
-                paired: device.paired
-            });
-        });
-        
-        // CRITICAL: Filter devices to only show supported Tropx/Muse devices
-        console.log('📋 Filtering devices for supported Tropx/Muse devices only...');
-
-        // Filter for supported devices based on name patterns
-        const supportedDevices = deviceList.filter(device => {
-            const deviceName = device.deviceName || '';
-            const isValidTropxDevice = deviceName.toLowerCase().includes('tropx') &&
-                                     (deviceName.includes('_ln_') || deviceName.includes('_rn_') ||
-                                      deviceName.includes('ln_') || deviceName.includes('rn_'));
-            const isValidMuseDevice = deviceName.toLowerCase().includes('muse');
-
-            const isSupported = isValidTropxDevice || isValidMuseDevice;
-
-            if (!isSupported) {
-                console.log(`❌ Filtering out unsupported device: "${deviceName}" (${device.deviceId})`);
+            if (success) {
+                // Notify UI of successful connection
+                this.broadcastDeviceStatus();
+                console.log(`✅ SDK connection successful for ${deviceName}`);
+                return { success: true, message: `Connected to ${deviceName} via SDK` };
             } else {
-                console.log(`✅ Including supported device: "${deviceName}" (${device.deviceId})`);
+                console.error(`❌ SDK connection failed for ${deviceName}`);
+                return { success: false, message: `Failed to connect to ${deviceName}` };
             }
 
-            return isSupported;
-        });
-
-        if (supportedDevices.length === 0) {
-            console.log('❌ No supported Tropx/Muse devices found');
-            // Broadcast empty result to UI
-            this.broadcast({
-                type: WSMessageType.DEVICE_SCAN_RESULT,
-                data: {
-                    devices: [],
-                    success: true,
-                    message: 'No supported Tropx/Muse devices found',
-                    selectedDevice: null
-                },
-                timestamp: Date.now()
-            });
-
-            callback(''); // Call callback with empty string for no device
-            return;
+        } catch (error) {
+            console.error(`❌ SDK connection error for ${deviceName}:`, error);
+            return { success: false, message: `Connection error: ${error instanceof Error ? error.message : String(error)}` };
         }
-
-        // Log supported device details
-        supportedDevices.forEach((device, index) => {
-            console.log(`🔵 Supported Device ${index + 1}:`, {
-                name: device.deviceName,
-                id: device.deviceId,
-                paired: device.paired
-            });
-        });
-
-        // CRITICAL: Register supported devices only
-        // Note: Import MuseManager class, not instance, since main process doesn't have one
-        console.log('📋 Registering discovered supported devices...');
-        // We'll let the renderer handle the MuseManager registration since that's where the instance lives
-
-        // Send ONLY SUPPORTED devices to renderer for UI display
-        console.log('🔵 Broadcasting supported devices to UI for selection');
-
-        const supportedDeviceList = supportedDevices.map(device => {
-            const deviceName = device.deviceName || 'Unknown Device';
-
-            console.log(`🔍 Adding supported device: "${deviceName}" (${device.deviceId})`);
-
-            return {
-                id: device.deviceId,
-                name: deviceName,
-                connected: false,
-                batteryLevel: null,
-                paired: device.paired || false
-            };
-        });
-
-        this.broadcast({
-            type: WSMessageType.DEVICE_SCAN_RESULT,
-            data: {
-                devices: supportedDeviceList,
-                success: true,
-                message: `Found ${supportedDevices.length} supported Tropx/Muse device(s)`,
-                selectedDevice: null // No auto-selection, let user choose
-            },
-            timestamp: Date.now()
-        });
-
-        // Don't auto-select any device - let the user choose from the UI
-        // Cancel the Web Bluetooth dialog since we're handling device selection in our UI
-        console.log('🔵 Canceling Web Bluetooth dialog - devices will be shown in custom UI');
-        callback(''); // Cancel the Web Bluetooth selection dialog
-        console.log('✅ Device list broadcast completed, user can now select from UI');
     }
+
+
+    // Removed - grosdode pattern handles device selection automatically in main.ts
 
     /**
      * Processes motion data received from the renderer process
@@ -701,17 +540,7 @@ export class ElectronMotionService {
         }
     }
 
-    private updateConnectedDevices(deviceMap: Map<string, any>): void {
-        this.connectedDevices.clear();
-        deviceMap.forEach((device, deviceId) => {
-            this.connectedDevices.set(deviceId, {
-                id: deviceId,
-                name: device.device?.name || deviceId,
-                connected: true,
-                batteryLevel: this.batteryLevels.get(deviceId) || null
-            });
-        });
-    }
+    // Removed - using SDK for device management
 
     private handleClientMessage(ws: WebSocket, message: string, clientId: string): void {
         try {
@@ -727,15 +556,8 @@ export class ElectronMotionService {
                     });
                     break;
 
-                case 'select_bluetooth_device':
-                    console.log('🔵 Received device selection from renderer:', parsed.data?.deviceId);
-                    if (this.deviceSelectionCallback && parsed.data?.deviceId) {
-                        console.log('🔵 Calling device selection callback with selected device');
-                        this.deviceSelectionInProgress = false;
-                        this.deviceSelectionCallback(parsed.data.deviceId);
-                        this.deviceSelectionCallback = null;
-                    }
-                    break;
+                // Removed - grosdode pattern handles device selection in main.ts
+                // case 'select_bluetooth_device': - no longer needed
 
                 case 'motion_data':
                     // Process incoming motion data from renderer
@@ -769,6 +591,12 @@ export class ElectronMotionService {
         }
     }
 
+    // Public method for broadcasting messages (used by main process)
+    public broadcastMessage(message: WSMessage): void {
+        this.broadcast(message);
+    }
+
+    // Private broadcast method for internal use
     private broadcast(message: WSMessage): void {
         const data = JSON.stringify(message);
         this.clients.forEach(client => {
@@ -787,11 +615,20 @@ export class ElectronMotionService {
     }
 
     private broadcastDeviceStatus(): void {
+        // Get device info from SDK
+        const sdkDevices = museManager.getAllDevices();
+        const batteryLevels = Object.fromEntries(museManager.getAllBatteryLevels());
+
         this.broadcast({
             type: WSMessageType.DEVICE_STATUS,
             data: {
-                connectedDevices: Array.from(this.connectedDevices.values()),
-                batteryLevels: Object.fromEntries(this.batteryLevels)
+                connectedDevices: sdkDevices.filter(d => d.connected).map(d => ({
+                    id: d.id,
+                    name: d.name,
+                    connected: d.connected,
+                    batteryLevel: d.batteryLevel
+                })),
+                batteryLevels
             },
             timestamp: Date.now()
         });

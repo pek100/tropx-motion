@@ -14,7 +14,7 @@ import {
   IMUData 
 } from './types';
 import { deviceStateMachine } from './DeviceStateMachine';
-import { museManager } from '../../sdk/core/MuseManager';
+import { museManager } from '../../muse_sdk/core/MuseManager';
 import { streamDataManager } from './StreamDataManager';
 import { ERROR_CODES } from './constants';
 
@@ -441,7 +441,7 @@ export class SimpleBLEDeviceManager {
     try {
       console.log(`🔗 Connecting to device: ${deviceInfo.name}`);
 
-      // Update state
+      // Update state to connecting
       deviceInfo.state = DeviceState.CONNECTING;
       deviceInfo.lastUpdate = Date.now();
       this.notifyStateChange(deviceInfo.id, DeviceState.CONNECTING);
@@ -454,15 +454,35 @@ export class SimpleBLEDeviceManager {
         }));
       }
 
+      // 🔧 FIX: Properly verify SDK connection before updating UI state
+      console.log(`🎯 Attempting actual SDK connection for ${deviceInfo.name}...`);
+
+      // First, ensure the device is registered in MuseManager
+      museManager.addScannedDevices([{
+        deviceId: deviceInfo.id,
+        deviceName: deviceInfo.name
+      }]);
+
       // Use MuseManager for actual connection
       const success = await museManager.connectToScannedDevice(deviceInfo.id, deviceInfo.name);
       
       if (success) {
-        deviceInfo.state = DeviceState.CONNECTED_IDLE;
-        deviceInfo.lastUpdate = Date.now();
-        this.notifyStateChange(deviceInfo.id, DeviceState.CONNECTED_IDLE);
-        console.log(`✅ Connected to ${deviceInfo.name}`);
-        return true;
+        // 🔧 FIX: Verify the device is actually connected in MuseManager
+        const connectedDevices = museManager.getConnectedDevices();
+        const isActuallyConnected = connectedDevices.has(deviceInfo.name);
+
+        if (isActuallyConnected) {
+          deviceInfo.state = DeviceState.CONNECTED_IDLE;
+          deviceInfo.lastUpdate = Date.now();
+          this.notifyStateChange(deviceInfo.id, DeviceState.CONNECTED_IDLE);
+          console.log(`✅ Device ${deviceInfo.name} is ACTUALLY connected via SDK`);
+
+          // Battery level will be updated automatically by SimpleBLEDeviceManager
+          return true;
+        } else {
+          console.error(`❌ SDK reports success but device ${deviceInfo.name} is not in connected devices map`);
+          throw new Error('SDK connection verification failed');
+        }
       } else {
         throw new Error('MuseManager connection failed');
       }

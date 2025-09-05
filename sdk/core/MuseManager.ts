@@ -2,6 +2,7 @@
 import { IMUData } from './MuseData';
 import { MuseDataParser } from './MuseDataParser';
 import { MuseHardware } from './MuseHardware';
+import { MuseCommands } from './Commands';
 
 // Bluetooth Web API types
 interface BluetoothDevice {
@@ -190,9 +191,9 @@ export class MuseManager {
 
     try {
       console.log(`🔋 Requesting battery level for ${deviceName}...`);
-      const batteryCommand = new Uint8Array([0x87, 0x00]);
-      await device.characteristics.command.writeValue(batteryCommand.buffer);
-      
+      const batteryCommand = MuseCommands.Cmd_GetBatteryCharge();
+      await device.characteristics.command.writeValue(batteryCommand.buffer as ArrayBuffer);
+
       await new Promise(resolve => setTimeout(resolve, 200));
       
       const response = await device.characteristics.command.readValue();
@@ -597,5 +598,99 @@ export class MuseManager {
     }
 
     console.log('✅ Disconnected from all devices');
+  }
+
+  /**
+   * Send start recording command to all connected devices
+   */
+  async startRecordingOnDevices(): Promise<boolean> {
+    try {
+      console.log('🎬 Sending start recording command to all connected devices...');
+
+      if (this.connectedDevices.size === 0) {
+        console.warn('⚠️ No connected devices to start recording on');
+        return false;
+      }
+
+      const recordingPromises: Promise<boolean>[] = [];
+
+      for (const [deviceName, device] of this.connectedDevices.entries()) {
+        if (!device.characteristics?.command) {
+          console.warn(`⚠️ Device ${deviceName} missing command characteristic`);
+          continue;
+        }
+
+        const recordingPromise = (async () => {
+          try {
+            const startRecordCommand = MuseCommands.Cmd_StartRecording();
+            await device.characteristics!.command.writeValue(startRecordCommand.buffer as ArrayBuffer);
+            console.log(`✅ Start recording command sent to ${deviceName}`);
+            return true;
+          } catch (error) {
+            console.error(`❌ Failed to send start recording command to ${deviceName}:`, error);
+            return false;
+          }
+        })();
+
+        recordingPromises.push(recordingPromise);
+      }
+
+      const results = await Promise.all(recordingPromises);
+      const successCount = results.filter(r => r).length;
+
+      console.log(`📋 Recording commands sent: ${successCount}/${this.connectedDevices.size} devices`);
+      return successCount > 0;
+
+    } catch (error) {
+      console.error('❌ Error sending start recording commands:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Send stop recording command to all connected devices
+   */
+  async stopRecordingOnDevices(): Promise<boolean> {
+    try {
+      console.log('🛑 Sending stop recording command to all connected devices...');
+
+      if (this.connectedDevices.size === 0) {
+        console.warn('⚠️ No connected devices to stop recording on');
+        return false;
+      }
+
+      const recordingPromises: Promise<boolean>[] = [];
+
+      for (const [deviceName, device] of this.connectedDevices.entries()) {
+        if (!device.characteristics?.command) {
+          console.warn(`⚠️ Device ${deviceName} missing command characteristic`);
+          continue;
+        }
+
+        const recordingPromise = (async () => {
+          try {
+            const stopRecordCommand = MuseCommands.Cmd_StopRecording();
+            await device.characteristics!.command.writeValue(stopRecordCommand.buffer as ArrayBuffer);
+            console.log(`✅ Stop recording command sent to ${deviceName}`);
+            return true;
+          } catch (error) {
+            console.error(`❌ Failed to send stop recording command to ${deviceName}:`, error);
+            return false;
+          }
+        })();
+
+        recordingPromises.push(recordingPromise);
+      }
+
+      const results = await Promise.all(recordingPromises);
+      const successCount = results.filter(r => r).length;
+
+      console.log(`📋 Stop recording commands sent: ${successCount}/${this.connectedDevices.size} devices`);
+      return successCount > 0;
+
+    } catch (error) {
+      console.error('❌ Error sending stop recording commands:', error);
+      return false;
+    }
   }
 }

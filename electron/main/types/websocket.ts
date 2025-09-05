@@ -8,6 +8,8 @@ export enum WSMessageType {
     DEVICE_CONNECTED = 'device_connected',
     SCAN_REQUEST = 'scan_request',
     BLUETOOTH_DEVICES = 'bluetooth_devices',
+    BLUETOOTH_DEVICES_FOUND = 'bluetooth_devices_found',
+    BLUETOOTH_PAIRING_REQUEST = 'bluetooth_pairing_request',
     BATTERY_UPDATE = 'battery_update',
     
     RECORDING_STATE = 'recording_state',
