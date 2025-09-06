@@ -36,7 +36,8 @@
       "Read(/E:\\MyWebApps\\Tropx\\TropxMotion\\sdk\\core/**)",
       "Bash(git checkout:*)",
       "WebFetch(domain:webbluetoothcg.github.io)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(npm run build:renderer:*)"
     ],
     "deny": [],
     "ask": [],

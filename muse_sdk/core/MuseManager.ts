@@ -4,6 +4,34 @@ import { MuseDataParser } from './MuseDataParser';
 import { MuseHardware } from './MuseHardware';
 import { MuseCommands } from './Commands';
 
+// Extended Bluetooth Web API types to include newer methods
+interface RequestDeviceOptions {
+  filters?: BluetoothLEScanFilter[];
+  optionalServices?: BluetoothServiceUUID[];
+  acceptAllDevices?: boolean;
+}
+
+interface BluetoothLEScanFilter {
+  name?: string;
+  namePrefix?: string;
+  services?: BluetoothServiceUUID[];
+}
+
+type BluetoothServiceUUID = string | number;
+
+interface Bluetooth {
+  requestDevice(options?: RequestDeviceOptions): Promise<BluetoothDevice>;
+  getAvailability(): Promise<boolean>;
+  getDevices?(): Promise<BluetoothDevice[]>; // Optional newer method
+}
+
+// Extend Navigator interface to include the updated Bluetooth type
+declare global {
+  interface Navigator {
+    bluetooth?: Bluetooth;
+  }
+}
+
 // Bluetooth Web API types
 interface BluetoothDevice {
   id: string;
@@ -47,6 +75,13 @@ export class MuseManager {
   private batteryLevels: Map<string, number>;
   private dataCallback: ((deviceName: string, data: IMUData) => void) | null;
   private batteryUpdateCallbacks: Set<(levels: Map<string, number>) => void>;
+  
+  // GATT operation queuing (Web Bluetooth best practice)
+  private gattOperationQueue = new Map<string, Promise<any>>();
+  
+  // Connection timeouts (1.2s recommended by Web Bluetooth spec)
+  private readonly CONNECTION_TIMEOUT_MS = 10000; // 10s for initial connection
+  private readonly GATT_OPERATION_TIMEOUT_MS = 1200; // 1.2s for GATT ops
 
   constructor() {
     this.connectedDevices = new Map();
@@ -68,26 +103,92 @@ export class MuseManager {
     );
   }
 
+  /** Get names of devices that are currently streaming data */
+  getStreamingDeviceNames(): string[] {
+    if (!this.isStreaming) {
+      return [];
+    }
+    
+    // Return all connected device names when streaming is active
+    return Array.from(this.connectedDevices.keys());
+  }
+
+  /** Check if a specific device is streaming */
+  isDeviceStreaming(deviceName: string): boolean {
+    return this.isStreaming && this.connectedDevices.has(deviceName);
+  }
+
+  /**
+   * Fast reconnection using getDevices() - Web Bluetooth 2025 best practice
+   */
+  async reconnectToPreviousDevices(): Promise<BluetoothDevice[]> {
+    console.log('\n🔍 ===== FAST RECONNECTION ATTEMPT =====');
+    console.log(`🔍 Timestamp: ${new Date().toISOString()}`);
+    console.log(`🔍 Web Bluetooth getDevices support: ${!!navigator.bluetooth?.getDevices}`);
+    
+    if (!navigator.bluetooth?.getDevices) {
+      console.log('❌ getDevices() not supported, falling back to discovery');
+      return [];
+    }
+
+    try {
+      console.log('🔍 Checking for previously paired devices...');
+      const devices = await navigator.bluetooth.getDevices();
+      console.log(`🔍 getDevices() returned ${devices.length} total devices`);
+      
+      devices.forEach((device, index) => {
+        console.log(`🔍   Device ${index + 1}: ${device.name} (${device.id}) - GATT connected: ${device.gatt?.connected || false}`);
+      });
+      
+      const tropxDevices = devices.filter(device => 
+        device.name && (
+          device.name.toLowerCase().includes('tropx') || 
+          device.name.toLowerCase().includes('muse')
+        )
+      );
+
+      console.log(`✅ Found ${tropxDevices.length} previously paired Tropx devices`);
+      tropxDevices.forEach((device, index) => {
+        console.log(`✅   Tropx Device ${index + 1}: ${device.name} - GATT: ${device.gatt?.connected ? 'CONNECTED' : 'DISCONNECTED'}`);
+      });
+      
+      console.log('🔍 ========================================\n');
+      return tropxDevices;
+      
+    } catch (error) {
+      console.error('❌ Error getting previous devices:', error);
+      console.log('🔍 ========================================\n');
+      return [];
+    }
+  }
+
   // Device discovery and connection
   async discoverAndConnect(): Promise<boolean> {
     try {
-      console.log('Starting Bluetooth device discovery...');
+      // First, try to reconnect to previously paired devices (much faster)
+      const previousDevices = await this.reconnectToPreviousDevices();
       
-      const device = await navigator.bluetooth!.requestDevice({
-        optionalServices: [MuseHardware.BLEConfig.SERVICE_UUID],
-        filters: [
-          { namePrefix: "tropx" },
-          { namePrefix: "muse" }
-        ]
-      });
-
-      if (!device) {
-        console.log('No device selected');
-        return false;
+      if (previousDevices.length > 0) {
+        console.log('🚀 Fast reconnection to previous devices...');
+        
+        for (const device of previousDevices) {
+          try {
+            const connected = await this.connectToDeviceWithTimeout(device, 5000);
+            if (connected) {
+              console.log(`✅ Fast reconnection successful: ${device.name}`);
+              return true;
+            }
+          } catch (error) {
+            console.warn(`⚠️ Fast reconnection failed for ${device.name}:`, error);
+          }
+        }
       }
-
-      console.log('Device selected:', device.name);
-      return this.connectToDevice(device);
+      
+      // No native chooser fallback - system works only with paired devices
+      console.log('❌ No previously paired devices found or reconnection failed');
+      console.log('❌ Please pair devices through system Bluetooth settings first, then scan using the app');
+      console.log('💡 Use the "Scan" button to discover devices, then connect to paired devices');
+      return false;
 
     } catch (error) {
       console.error('Discovery error:', error);
@@ -251,18 +352,24 @@ export class MuseManager {
     
     try {
 
+      // Enhanced connection state validation
       if (this.connectedDevices.has(deviceName)) {
-        console.log(`✅ SDK: Device ${deviceName} is already connected`);
-        
-        // Verify the connection is still active
         const device = this.connectedDevices.get(deviceName);
+        
         if (device?.server?.connected) {
-          console.log(`✅ SDK: Verified ${deviceName} connection is still active`);
+          console.log(`✅ SDK: Device ${deviceName} is already connected and active`);
           return true;
         } else {
-          console.log(`⚠️ SDK: ${deviceName} was connected but connection is stale, cleaning up...`);
+          console.log(`🧹 SDK: Cleaning up stale connection for ${deviceName}`);
           this.connectedDevices.delete(deviceName);
-          // Continue with fresh connection attempt
+          this.batteryLevels.delete(deviceName);
+          
+          // Also clean up from scanned devices if GATT is stale
+          const scannedDevice = this.scannedDevices.get(deviceName);
+          if (scannedDevice && scannedDevice.gatt && !scannedDevice.gatt.connected) {
+            console.log(`🧹 SDK: Refreshing stale device entry for ${deviceName}`);
+            scannedDevice.gatt = undefined; // Force re-acquisition of GATT
+          }
         }
       }
 
@@ -292,52 +399,65 @@ export class MuseManager {
         }
       }
 
-      // 🔧 CRITICAL FIX: Use SDK-based connection instead of Web Bluetooth API
-      console.log(`🎯 SDK: Using SDK commands to establish connection to ${deviceName}...`);
+      // 🔧 OPTIMIZED: Use already-discovered device from scan (no redundant requestDevice)
+      console.log(`🎯 SDK: Connecting to already-discovered device: ${deviceName}...`);
 
       try {
-        // Step 1: Establish Web Bluetooth connection using SDK configuration
-        if (!navigator.bluetooth) {
-          throw new Error('Web Bluetooth API not available');
+        let deviceToConnect = bluetoothDevice;
+
+        // If GATT is not available, try to find it in previously paired devices
+        if (!bluetoothDevice.gatt) {
+          console.log(`🔧 SDK: Device ${deviceName} has no GATT interface, looking for paired device...`);
+          
+          try {
+            // Check if Web Bluetooth is available
+            if (!navigator.bluetooth) {
+              throw new Error('Web Bluetooth API not available');
+            }
+
+            // First try to find the device in already paired devices (no chooser!)
+            let foundDevice = null;
+            let pairedDevices: BluetoothDevice[] = [];
+            
+            if (navigator.bluetooth.getDevices) {
+              pairedDevices = await navigator.bluetooth.getDevices();
+              console.log(`🔍 SDK: Searching for ${deviceName} among ${pairedDevices.length} paired devices`);
+              console.log(`🔍 SDK: Paired device names: ${pairedDevices.map(d => d.name).join(', ')}`);
+              
+              foundDevice = pairedDevices.find(d => d.name === deviceName || d.id === bluetoothDevice.id);
+              
+              if (foundDevice) {
+                console.log(`✅ SDK: Found ${deviceName} in previously paired devices`);
+                deviceToConnect = foundDevice as any;
+                
+                // Update the registry with the GATT-enabled device
+                this.scannedDevices.set(deviceName, foundDevice as any);
+                console.log(`🔄 SDK: Updated registry with paired device GATT interface for ${deviceName}`);
+              }
+            } else {
+              console.error(`❌ SDK: getDevices() API not available in this browser`);
+            }
+            
+            // If not found in paired devices, the device needs to be paired first
+            if (!foundDevice) {
+              console.error(`❌ SDK: ${deviceName} not found in previously paired devices`);
+              console.error(`❌ SDK: Device needs to be paired through the system Bluetooth settings first`);
+              console.error(`❌ SDK: Available paired devices: ${pairedDevices.map(d => d.name || 'unnamed').join(', ')}`);
+              throw new Error(`Device ${deviceName} not found in paired devices. Please pair it through system Bluetooth settings first, then scan again.`);
+            }
+            
+          } catch (gattError) {
+            const errorMessage = gattError instanceof Error ? gattError.message : String(gattError);
+            console.error(`❌ SDK: Failed to acquire GATT interface for ${deviceName}:`, gattError);
+            throw new Error(`Failed to acquire GATT interface for device ${deviceName}: ${errorMessage}`);
+          }
         }
 
-        console.log(`🔍 SDK: Using SDK BLE configuration for connection to ${deviceName}...`);
-
-        // Use SDK's BLE configuration for connection
-        console.log(`🔍 SDK: Requesting device via Web Bluetooth API for ${deviceName}...`);
+        console.log(`✅ SDK: Using device with GATT interface for ${deviceName}`);
+        console.log(`🔗 SDK: Connecting using optimized SDK method...`);
         
-        const realWebBluetoothDevice = await navigator.bluetooth!.requestDevice({
-          filters: [
-            { name: deviceName },
-            { namePrefix: deviceName.split('_')[0] }
-          ],
-          optionalServices: [MuseHardware.BLEConfig.SERVICE_UUID]
-        });
-
-        if (!realWebBluetoothDevice) {
-          throw new Error(`No device returned from Web Bluetooth API`);
-        }
-        
-        if (realWebBluetoothDevice.name !== deviceName) {
-          console.warn(`⚠️ SDK: Device name mismatch: expected ${deviceName}, got ${realWebBluetoothDevice?.name}`);
-          console.warn(`⚠️ SDK: Continuing with connection anyway...`);
-        }
-
-        console.log(`✅ SDK: Got Web Bluetooth device for ${deviceName}, establishing SDK connection...`);
-
-        // Step 2: Use SDK's connectToDevice method with proper configuration
-        const realBluetoothDevice: BluetoothDevice = {
-          id: realWebBluetoothDevice.id,
-          name: realWebBluetoothDevice.name,
-          gatt: realWebBluetoothDevice.gatt
-        };
-
-        // Update our device registry with the real device
-        this.scannedDevices.set(deviceName, realBluetoothDevice);
-
-        // Step 3: Use SDK's connection method which will use proper SDK commands
-        console.log(`🔗 SDK: Connecting using SDK connectToDevice method for ${deviceName}...`);
-        const connectionSuccess = await this.connectToDevice(realBluetoothDevice);
+        // Use device with GATT interface
+        const connectionSuccess = await this.connectToDeviceWithTimeout(deviceToConnect as any, this.CONNECTION_TIMEOUT_MS);
 
         if (connectionSuccess) {
           const connectionDuration = Date.now() - connectionStartTime;
@@ -385,20 +505,37 @@ export class MuseManager {
       } catch (error) {
         console.error(`❌ SDK: Failed to establish SDK connection for ${deviceName}:`, error);
         
-        // Clean up any partial connection state
-        if (this.connectedDevices.has(deviceName)) {
-          console.log(`🧹 SDK: Cleaning up partial connection for ${deviceName}`);
-          this.connectedDevices.delete(deviceName);
+        // Enhanced cleanup for connection failures
+        this.connectedDevices.delete(deviceName);
+        this.batteryLevels.delete(deviceName);
+        
+        // Reset device GATT interface for next attempt
+        const scannedDevice = this.scannedDevices.get(deviceName);
+        if (scannedDevice) {
+          console.log(`🔄 SDK: Resetting GATT interface for ${deviceName} to enable retry`);
+          scannedDevice.gatt = undefined;
         }
         
-        // Provide more specific error information
+        // Enhanced error analysis
         if (error instanceof Error) {
-          if (error.name === 'NotFoundError') {
-            console.error(`❌ SDK: Device ${deviceName} not found - ensure it's powered on and in range`);
-          } else if (error.name === 'NetworkError') {
-            console.error(`❌ SDK: Network error connecting to ${deviceName} - check Bluetooth connection`);
-          } else if (error.name === 'AbortError') {
-            console.error(`❌ SDK: Connection aborted for ${deviceName} - device may have been disconnected`);
+          switch (error.name) {
+            case 'NotFoundError':
+              console.error(`❌ Device not found: ${deviceName} may be out of range or turned off`);
+              break;
+            case 'NetworkError':
+              console.error(`❌ Network error: Bluetooth connection issue with ${deviceName}`);
+              break;
+            case 'AbortError':
+              console.error(`❌ Connection aborted: Timeout or user cancellation for ${deviceName}`);
+              break;
+            case 'SecurityError':
+              console.error(`❌ Security error: Web Bluetooth access denied for ${deviceName}`);
+              break;
+            case 'InvalidStateError':
+              console.error(`❌ Invalid state: ${deviceName} is in an unexpected state`);
+              break;
+            default:
+              console.error(`❌ Unexpected error (${error.name}): ${error.message}`);
           }
         }
         
@@ -525,9 +662,125 @@ export class MuseManager {
     }
   }
 
+  /**
+   * Connection with timeout and retry logic (Web Bluetooth 2025 best practice)
+   */
+  private async connectToDeviceWithTimeout(device: BluetoothDevice, timeoutMs: number = this.CONNECTION_TIMEOUT_MS): Promise<boolean> {
+    console.log(`\n⏱️ ===== CONNECTION WITH TIMEOUT =====`);
+    console.log(`⏱️ Device: ${device.name || 'Unknown'} (${device.id})`);
+    console.log(`⏱️ Timeout: ${timeoutMs}ms`);
+    console.log(`⏱️ Device GATT connected: ${device.gatt?.connected || false}`);
+    console.log(`⏱️ Max retries: 3`);
+    
+    try {
+      const result = await this.retryWithExponentialBackoff(
+        () => {
+          console.log(`⏱️ Starting connection race (timeout vs connectToDevice)`);
+          return Promise.race([
+            this.connectToDevice(device),
+            new Promise<boolean>((_, reject) => {
+              setTimeout(() => {
+                console.log(`⏱️ ❌ TIMEOUT TRIGGERED after ${timeoutMs}ms`);
+                reject(new Error(`Connection timeout after ${timeoutMs}ms`));
+              }, timeoutMs);
+            })
+          ]);
+        },
+        3, // maxRetries
+        device.name || 'Unknown Device'
+      );
+      
+      console.log(`⏱️ ✅ Connection successful: ${result}`);
+      console.log(`⏱️ ===================================\n`);
+      return result;
+      
+    } catch (error) {
+      console.log(`⏱️ ❌ Connection failed: ${error instanceof Error ? error.message : error}`);
+      console.log(`⏱️ ===================================\n`);
+      throw error;
+    }
+  }
+
+  /**
+   * Exponential backoff retry pattern for connection stability
+   */
+  private async retryWithExponentialBackoff<T>(
+    operation: () => Promise<T>,
+    maxRetries: number = 3,
+    deviceName: string = 'Device'
+  ): Promise<T> {
+    let lastError: Error;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        console.log(`🔄 Connection attempt ${attempt + 1}/${maxRetries} for ${deviceName}`);
+        const result = await operation();
+        
+        if (attempt > 0) {
+          console.log(`✅ Connection succeeded on retry ${attempt + 1} for ${deviceName}`);
+        }
+        
+        return result;
+        
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        
+        if (attempt === maxRetries - 1) {
+          console.error(`❌ Final connection attempt failed for ${deviceName}:`, lastError.message);
+          break;
+        }
+        
+        // Exponential backoff: 1s, 2s, 4s
+        const delayMs = Math.pow(2, attempt) * 1000;
+        console.warn(`⚠️ Connection attempt ${attempt + 1} failed for ${deviceName}, retrying in ${delayMs}ms:`, lastError.message);
+        
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+    
+    throw lastError!;
+  }
+
+  /**
+   * GATT operation with timeout and queuing (prevents "GATT operation in progress" errors)
+   */
+  private async executeGattOperationWithTimeout<T>(
+    deviceName: string, 
+    operation: () => Promise<T>, 
+    timeoutMs: number = this.GATT_OPERATION_TIMEOUT_MS
+  ): Promise<T> {
+    // Queue GATT operations per device to prevent conflicts
+    const existingOperation = this.gattOperationQueue.get(deviceName);
+    
+    const queuedOperation = (existingOperation || Promise.resolve()).then(async () => {
+      return Promise.race([
+        operation(),
+        new Promise<T>((_, reject) => 
+          setTimeout(() => reject(new Error(`GATT operation timeout after ${timeoutMs}ms`)), timeoutMs)
+        )
+      ]);
+    }).catch(error => {
+      // Clean up queue on error
+      this.gattOperationQueue.delete(deviceName);
+      throw error;
+    });
+    
+    this.gattOperationQueue.set(deviceName, queuedOperation);
+    return queuedOperation;
+  }
+
   // Utility methods
   getBatteryLevel(deviceName: string): number | null {
     return this.batteryLevels.get(deviceName) ?? null;
+  }
+
+  /**
+   * Register an already-connected device to prevent double connection
+   */
+  registerConnectedDevice(deviceName: string, webMuseDevice: WebMuseDevice): void {
+    console.log(`📝 Registering already-connected device: ${deviceName}`);
+    this.connectedDevices.set(deviceName, webMuseDevice);
+    console.log(`✅ Device ${deviceName} registered in connected devices map`);
   }
 
   getConnectedDevices(): Map<string, WebMuseDevice> {
@@ -642,20 +895,28 @@ export class MuseManager {
 
     try {
       console.log(`🔋 Requesting battery level for ${deviceName}...`);
-      const batteryCommand = MuseCommands.Cmd_GetBatteryCharge();
-      await device.characteristics.command.writeValue(batteryCommand.buffer as ArrayBuffer);
-
-      await new Promise(resolve => setTimeout(resolve, 200));
-
-      const response = await device.characteristics.command.readValue();
-      console.log(`🔋 Battery response for ${deviceName}:`, new Uint8Array(response.buffer));
-
-      const batteryLevel = response.getUint8(4);
-
-      this.batteryLevels.set(deviceName, batteryLevel);
-      this.notifyBatteryUpdateListeners();
-
-      console.log(`🔋 Battery level for ${deviceName}: ${batteryLevel}%`);
+      
+      // Use queued GATT operations to prevent conflicts
+      await this.executeGattOperationWithTimeout(deviceName, async () => {
+        const batteryCommand = MuseCommands.Cmd_GetBatteryCharge();
+        await device.characteristics!.command.writeValue(batteryCommand.buffer as ArrayBuffer);
+        
+        // Wait for response
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        const response = await device.characteristics!.command.readValue();
+        console.log(`🔋 Battery response for ${deviceName}:`, new Uint8Array(response.buffer));
+        
+        const batteryLevel = response.getUint8(4);
+        
+        this.batteryLevels.set(deviceName, batteryLevel);
+        this.notifyBatteryUpdateListeners();
+        
+        console.log(`🔋 Battery level for ${deviceName}: ${batteryLevel}%`);
+        
+        return batteryLevel;
+      });
+      
     } catch (error) {
       console.error(`🔋 Battery level read error for ${deviceName}:`, error);
     }
@@ -756,10 +1017,122 @@ export class MuseManager {
     }
   }
 
+  // Check if streaming is active
+  getIsStreaming(): boolean {
+    return this.isStreaming;
+  }
+
+  // One-time device pairing method (shows chooser intentionally)
+  async pairNewDevice(): Promise<{ success: boolean; deviceName: string | null; message: string }> {
+    console.log('🔗 SDK: Starting one-time device pairing process...');
+    
+    try {
+      if (!navigator.bluetooth) {
+        throw new Error('Web Bluetooth API not available');
+      }
+
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [
+          { namePrefix: 'tropx_' }
+        ],
+        optionalServices: [MuseHardware.BLEConfig.SERVICE_UUID]
+      });
+      
+      if (device && device.name) {
+        console.log(`✅ SDK: Device ${device.name} paired successfully`);
+        
+        // Add to scanned devices registry
+        this.scannedDevices.set(device.name, device as any);
+        
+        return {
+          success: true,
+          deviceName: device.name,
+          message: `Device ${device.name} paired successfully. It will now be available for connection.`
+        };
+      } else {
+        throw new Error('No device selected or device has no name');
+      }
+      
+    } catch (error) {
+      console.error('❌ SDK: Device pairing failed:', error);
+      return {
+        success: false,
+        deviceName: null,
+        message: `Pairing failed: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+
   // Check if device is actually connected
   isDeviceConnected(deviceName: string): boolean {
     const device = this.connectedDevices.get(deviceName);
-    return device ? (device.server?.connected || false) : false;
+    
+    // Enhanced connection validation
+    if (!device || !device.server) {
+      return false;
+    }
+    
+    // Check GATT server connection status
+    if (!device.server.connected) {
+      console.log(`⚠️ Device ${deviceName} in registry but GATT disconnected, cleaning up...`);
+      this.connectedDevices.delete(deviceName);
+      this.batteryLevels.delete(deviceName);
+      return false;
+    }
+    
+    return true;
+  }
+
+  /**
+   * Reset a specific device's state completely (useful after connection failures)
+   */
+  resetDeviceState(deviceName: string): void {
+    console.log(`\n🔄 ===== RESETTING DEVICE STATE =====`);
+    console.log(`🔄 Device: ${deviceName}`);
+    
+    // Remove from all registries
+    console.log(`🔄 Removing from connected devices...`);
+    this.connectedDevices.delete(deviceName);
+    
+    console.log(`🔄 Removing from battery levels...`);
+    this.batteryLevels.delete(deviceName);
+    
+    // Reset scanned device GATT interface
+    const scannedDevice = this.scannedDevices.get(deviceName);
+    if (scannedDevice) {
+      console.log(`🔄 Resetting GATT interface (was connected: ${scannedDevice.gatt?.connected || false})`);
+      scannedDevice.gatt = undefined;
+    } else {
+      console.log(`🔄 Device not found in scanned devices registry`);
+    }
+    
+    console.log(`✅ Device state reset completed for ${deviceName}`);
+    console.log(`🔄 ===================================\n`);
+  }
+  
+  /**
+   * Force clear Web Bluetooth cache and all device state (nuclear option)
+   */
+  async forceResetAllDeviceState(): Promise<void> {
+    console.log(`\n💥 ===== FORCE RESET ALL DEVICE STATE =====`);
+    
+    // Stop any active streaming
+    if (this.isStreaming) {
+      console.log(`💥 Stopping active streaming...`);
+      await this.stopStreaming();
+    }
+    
+    // Clear all registries
+    console.log(`💥 Clearing all device registries...`);
+    this.connectedDevices.clear();
+    this.batteryLevels.clear();
+    this.scannedDevices.clear();
+    
+    // Clear any callbacks
+    this.dataCallback = null;
+    
+    console.log(`✅ Force reset completed - all device state cleared`);
+    console.log(`💥 =======================================\n`);
   }
 
   // Reset SDK state (useful for troubleshooting)

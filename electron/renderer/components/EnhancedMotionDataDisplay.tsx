@@ -25,16 +25,17 @@ interface EnhancedMotionDataDisplayProps {
 
 /** Enhanced data parser that converts various motion data formats to standardized knee data */
 const parseMotionData = (rawData: any): MotionData | null => {
-  console.log('🔍 parseMotionData called with:', rawData);
+  // Removed console.log for performance - only log errors in development
+  if (process.env.NODE_ENV === 'development' && Math.random() < 0.01) {
+    console.log('🔍 parseMotionData sample:', typeof rawData, Object.keys(rawData || {}).slice(0, 3));
+  }
   
   if (!rawData || typeof rawData !== 'object') {
-    console.log('❌ parseMotionData: Invalid raw data');
     return null;
   }
 
   // Check if it's already in the expected format (from motion processing pipeline)
   if (rawData.left && rawData.right && typeof rawData.left.current === 'number' && typeof rawData.right.current === 'number') {
-    console.log('✅ parseMotionData: Found motion processing pipeline format');
     return {
       left: {
         current: rawData.left.current,
@@ -60,7 +61,6 @@ const parseMotionData = (rawData: any): MotionData | null => {
 
   // For testing: Create fake data if we have any data at all
   if (rawData && Object.keys(rawData).length > 0) {
-    console.log('⚠️ parseMotionData: Creating test data for visualization');
     
     // Extract timestamp from any source
     const timestamp = rawData.timestamp || Date.now();
@@ -93,7 +93,7 @@ const parseMotionData = (rawData: any): MotionData | null => {
     };
   }
 
-  console.log('❌ parseMotionData: No valid data found');
+  // No valid data format found
   return null;
 };
 

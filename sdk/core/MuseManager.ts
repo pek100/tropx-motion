@@ -43,12 +43,8 @@ interface BluetoothRemoteGATTCharacteristic {
 
 interface Bluetooth {
   requestDevice(options?: BluetoothRequestDeviceOptions): Promise<BluetoothDevice>;
-}
-
-declare global {
-  interface Navigator {
-    bluetooth?: Bluetooth;
-  }
+  getAvailability(): Promise<boolean>;
+  getDevices?(): Promise<BluetoothDevice[]>; // Optional newer method
 }
 
 interface WebMuseDevice {
@@ -330,6 +326,13 @@ export class MuseManager {
     return this.connectedDevices.size;
   }
 
+  /**
+   * Check if a specific device is connected
+   */
+  isDeviceConnected(deviceName: string): boolean {
+    return this.connectedDevices.has(deviceName);
+  }
+
   getAllBatteryLevels(): Map<string, number> {
     return new Map(this.batteryLevels);
   }
@@ -518,6 +521,91 @@ export class MuseManager {
    * REMOVED: attemptDirectConnection method to prevent Web Bluetooth conflicts
    * All connections now go through proper Electron device discovery flow
    */
+
+  /**
+   * Fast reconnection using getDevices() - Web Bluetooth 2025 best practice
+   */
+  async reconnectToPreviousDevices(): Promise<BluetoothDevice[]> {
+    if (!navigator.bluetooth?.getDevices) {
+      console.log('getDevices() not supported, falling back to discovery');
+      return [];
+    }
+
+    try {
+      console.log('🔍 Checking for previously paired devices...');
+      const devices = await navigator.bluetooth.getDevices();
+      
+      const tropxDevices = devices.filter(device => 
+        device.name && (
+          device.name.toLowerCase().includes('tropx') || 
+          device.name.toLowerCase().includes('muse')
+        )
+      );
+
+      console.log(`✅ Found ${tropxDevices.length} previously paired Tropx devices`);
+      return tropxDevices;
+      
+    } catch (error) {
+      console.error('Error getting previous devices:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Connection with timeout and retry logic (Web Bluetooth 2025 best practice)
+   */
+  async connectToDeviceWithTimeout(device: BluetoothDevice, timeoutMs: number = 10000): Promise<boolean> {
+    return this.retryWithExponentialBackoff(
+      () => Promise.race([
+        this.connectToDevice(device),
+        new Promise<boolean>((_, reject) => 
+          setTimeout(() => reject(new Error(`Connection timeout after ${timeoutMs}ms`)), timeoutMs)
+        )
+      ]),
+      3, // maxRetries
+      device.name || 'Unknown Device'
+    );
+  }
+
+  /**
+   * Exponential backoff retry pattern for connection stability
+   */
+  private async retryWithExponentialBackoff<T>(
+    operation: () => Promise<T>,
+    maxRetries: number = 3,
+    deviceName: string = 'Device'
+  ): Promise<T> {
+    let lastError: Error;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        console.log(`🔄 Connection attempt ${attempt + 1}/${maxRetries} for ${deviceName}`);
+        const result = await operation();
+        
+        if (attempt > 0) {
+          console.log(`✅ Connection succeeded on retry ${attempt + 1} for ${deviceName}`);
+        }
+        
+        return result;
+        
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        
+        if (attempt === maxRetries - 1) {
+          console.error(`❌ Final connection attempt failed for ${deviceName}:`, lastError.message);
+          break;
+        }
+        
+        // Exponential backoff: 1s, 2s, 4s
+        const delayMs = Math.pow(2, attempt) * 1000;
+        console.warn(`⚠️ Connection attempt ${attempt + 1} failed for ${deviceName}, retrying in ${delayMs}ms:`, lastError.message);
+        
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+    
+    throw lastError!;
+  }
 
   /**
    * Store devices from Electron's device discovery process

@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { flushSync } from 'react-dom';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ComposedChart,
   Area,
@@ -189,8 +188,12 @@ const KneeAreaChart = ({
   /** Constrains values within physiological angle limits */
   const clampValue = (value) => Math.max(ANGLE_CONSTRAINTS.MIN, Math.min(ANGLE_CONSTRAINTS.MAX, value));
 
-  /** Updates real-time data stream with 1 decimal precision */
-  useEffect(() => {
+  // Use requestAnimationFrame for smooth updates and throttling
+  const animationFrameRef = useRef();
+  
+  const updateData = useCallback(() => {
+    if (!leftKnee && !rightKnee) return;
+    
     const timestamp = getTimestamp(leftKnee, rightKnee);
     updateCounterRef.current++;
 
@@ -202,22 +205,37 @@ const KneeAreaChart = ({
       _updateId: updateCounterRef.current // Force uniqueness
     };
 
-    // Use flushSync to force immediate React update
-    flushSync(() => {
-      setData(currentData => {
-        return [...currentData, newDataPoint].filter(
-            point => timestamp - point[DataKeys.TIME] < TIME_CONSTRAINTS.WINDOW_MS
-        );
-      });
+    setData(currentData => {
+      return [...currentData, newDataPoint].filter(
+        point => timestamp - point[DataKeys.TIME] < TIME_CONSTRAINTS.WINDOW_MS
+      );
     });
+  }, [leftKnee, rightKnee]);
 
+  /** Updates real-time data stream with throttled updates */
+  useEffect(() => {
+    if (!leftKnee && !rightKnee) return;
+    
+    // Cancel any pending animation frame
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    
+    // Schedule update on next animation frame (60fps max)
+    animationFrameRef.current = requestAnimationFrame(updateData);
+    
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
   }, [
     leftKnee?.current,
     rightKnee?.current,
     leftKnee?.sensorTimestamp,
     rightKnee?.sensorTimestamp,
-    leftKnee?.lastUpdate,
-    rightKnee?.lastUpdate
+    updateData
+    // Removed lastUpdate dependencies to prevent excessive re-renders
   ]);
 
   /** Formats Y-axis labels with degree symbol */
