@@ -491,6 +491,13 @@ export class ElectronMotionService {
                     });
                     break;
 
+                // 🔵 Handle device discovery trigger from renderer after successful connection
+                case 'trigger_device_discovery':
+                    console.log('🔵 [ElectronMotionService] Received device discovery trigger request');
+                    console.log('🔵 Device info:', parsed.data);
+                    this.triggerDeviceDiscoveryPattern(parsed.data);
+                    break;
+
                 // Removed - grosdode pattern handles device selection in main.ts
                 // case 'select_bluetooth_device': - no longer needed
 
@@ -597,6 +604,33 @@ export class ElectronMotionService {
             data,
             timestamp: Date.now()
         });
+    }
+
+    /**
+     * 🔵 Trigger device discovery pattern after successful connection
+     */
+    private triggerDeviceDiscoveryPattern(deviceData: any): void {
+        try {
+            console.log('🔵 [ElectronMotionService] Triggering device discovery pattern...');
+            console.log('🔵 Connected device:', deviceData.deviceName, deviceData.deviceId);
+
+            // Send the same scan request that the scan button triggers
+            this.broadcast({
+                type: WSMessageType.SCAN_REQUEST,
+                data: {
+                    action: 'trigger_bluetooth_scan',
+                    message: `Device discovery after connection: ${deviceData.deviceName}`,
+                    triggeredBy: 'post_connection',
+                    connectedDevice: deviceData.deviceName
+                },
+                timestamp: Date.now()
+            });
+
+            console.log('🔵 Device discovery pattern broadcast sent to all clients');
+
+        } catch (error) {
+            console.error('❌ Failed to trigger device discovery pattern:', error);
+        }
     }
 
     cleanup(): void {

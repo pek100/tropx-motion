@@ -121,12 +121,36 @@ export const useBLEDevices = (): UseBLEDevicesReturn => {
   const connectDevice = useCallback(async (deviceId: string) => {
     try {
       setError(null);
-      console.log(`🔗 Connecting to device: ${deviceId}`);
-      
+      console.log(`🔗 [useBLEDevices] Connecting to device: ${deviceId}`);
+
       await simpleBLEDeviceManager.connectDevice(deviceId);
       
-      console.log(`✅ Device ${deviceId} connected successfully`);
-      
+      console.log(`✅ [useBLEDevices] Device ${deviceId} connected successfully`);
+
+      // 🔵 Trigger device discovery pattern after successful connection
+      console.log('🔵 [useBLEDevices] Triggering device discovery pattern after connection...');
+      try {
+        // Try to trigger via WebSocket
+        const ws = new WebSocket('ws://localhost:8080');
+        ws.onopen = () => {
+          ws.send(JSON.stringify({
+            type: 'scan_request',
+            data: {
+              action: 'trigger_bluetooth_scan',
+              message: 'Post-connection device discovery from useBLEDevices'
+            },
+            timestamp: Date.now()
+          }));
+          console.log('🔵 [useBLEDevices] Device discovery pattern message sent');
+          ws.close();
+        };
+        ws.onerror = (error) => {
+          console.warn('⚠️ [useBLEDevices] WebSocket failed for device discovery:', error);
+        };
+      } catch (error) {
+        console.error('❌ [useBLEDevices] Failed to trigger device discovery:', error);
+      }
+
     } catch (connectError) {
       console.error(`❌ Failed to connect to device ${deviceId}:`, connectError);
       setError({

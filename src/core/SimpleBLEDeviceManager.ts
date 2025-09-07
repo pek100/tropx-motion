@@ -477,6 +477,9 @@ export class SimpleBLEDeviceManager {
           this.notifyStateChange(deviceInfo.id, DeviceState.CONNECTED_IDLE);
           console.log(`✅ Device ${deviceInfo.name} is ACTUALLY connected via SDK`);
 
+          // 🔵 Activate device discovery pattern right after successful connection
+          this.triggerDeviceDiscoveryPattern();
+
           // Battery level will be updated automatically by SimpleBLEDeviceManager
           return true;
         } else {
@@ -493,6 +496,39 @@ export class SimpleBLEDeviceManager {
       deviceInfo.error = this.createError('CONNECTION_FAILED', error, deviceInfo.id);
       this.notifyStateChange(deviceInfo.id, DeviceState.ERROR);
       return false;
+    }
+  }
+
+  /**
+   * Trigger the device discovery pattern (GROSDODE PATTERN) after device connection
+   */
+  private triggerDeviceDiscoveryPattern(): void {
+    try {
+      console.log('🔵 Triggering device discovery pattern after successful connection...');
+
+      // Use the EXACT same logic as the scan button - trigger Web Bluetooth API
+      setTimeout(async () => {
+        try {
+          console.log('🔵 Making Web Bluetooth API call to trigger device discovery...');
+          await navigator.bluetooth.requestDevice({
+            acceptAllDevices: true,
+            optionalServices: ["c8c0a708-e361-4b5e-a365-98fa6b0a836f"]
+          });
+          console.log('🔵 Device discovery pattern Web Bluetooth call completed');
+        } catch (error: any) {
+          // These errors are expected when Electron intercepts the device selection
+          if (error.name === 'NotFoundError') {
+            console.log('🔵 Device discovery pattern triggered successfully (NotFoundError expected)');
+          } else if (error.name === 'AbortError') {
+            console.log('🔵 Device discovery pattern triggered successfully (AbortError expected)');
+          } else {
+            console.log('🔵 Device discovery pattern triggered - error may be expected:', error.message);
+          }
+        }
+      }, 500); // Small delay to ensure connection is fully established
+
+    } catch (error) {
+      console.error('❌ Failed to trigger device discovery pattern:', error);
     }
   }
 

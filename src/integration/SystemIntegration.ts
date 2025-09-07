@@ -286,6 +286,9 @@ export class SystemIntegration {
             DeviceEvent.CONNECTED,
             { deviceId }
           );
+
+          // 🔵 Activate device discovery pattern right after successful connection
+          this.triggerDeviceDiscoveryPattern();
         } else {
           await deviceStateMachine.transition(
             DeviceState.CONNECTING,
@@ -402,6 +405,58 @@ export class SystemIntegration {
       timestamp: motionData.timestamp,
       quality: motionData.quality
     };
+  }
+
+  /**
+   * Trigger the device discovery pattern (GROSDODE PATTERN) after device connection
+   */
+  private triggerDeviceDiscoveryPattern(): void {
+    try {
+      console.log('🔵 [SystemIntegration] Triggering device discovery pattern after successful connection...');
+
+      // Check if we're in an Electron environment
+      if (typeof window !== 'undefined' && (window as any).electronAPI) {
+        // Try to trigger via Electron API
+        try {
+          const electronAPI = (window as any).electronAPI;
+          if (electronAPI.triggerBluetoothScan) {
+            electronAPI.triggerBluetoothScan();
+            console.log('🔵 Device discovery pattern triggered via Electron API');
+            return;
+          }
+        } catch (error) {
+          console.warn('⚠️ Failed to trigger via Electron API:', error);
+        }
+      }
+
+      // Fallback: Try to find WebSocket connection from SimpleBLEDeviceManager
+      if (typeof window !== 'undefined' && (window as any).WebSocket) {
+        try {
+          // Send WebSocket message to trigger device discovery
+          const ws = new WebSocket('ws://localhost:8080');
+          ws.onopen = () => {
+            ws.send(JSON.stringify({
+              type: 'scan_request',
+              data: {
+                action: 'trigger_bluetooth_scan',
+                message: 'Post-connection device discovery activation (SystemIntegration)'
+              },
+              timestamp: Date.now()
+            }));
+            console.log('🔵 Device discovery pattern activation message sent via WebSocket');
+            ws.close();
+          };
+          ws.onerror = () => {
+            console.warn('⚠️ WebSocket connection failed for device discovery pattern');
+          };
+        } catch (error) {
+          console.warn('⚠️ Failed to create WebSocket for device discovery:', error);
+        }
+      }
+
+    } catch (error) {
+      console.error('❌ Failed to trigger device discovery pattern from SystemIntegration:', error);
+    }
   }
 
   /**

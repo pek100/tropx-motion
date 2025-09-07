@@ -28,6 +28,10 @@ export const useDeviceState = (): UseDeviceStateReturn => {
   const errorRef = useRef<AppError | null>(null);
   const connectionAttemptsRef = useRef<Map<string, number>>(new Map());
 
+  // 🔵 Track connected devices to detect new connections
+  const connectedDevicesRef = useRef<Set<string>>(new Set());
+  const lastConnectionTimeRef = useRef<number>(0);
+
   // Initialize SimpleBLEDeviceManager on first use
   useEffect(() => {
     simpleBLEDeviceManager.initialize().catch(error => {
@@ -440,5 +444,44 @@ export const useDeviceState = (): UseDeviceStateReturn => {
     errorRef.current,
   ]);
 
-  return returnValue;
-};
+  // 🔵 Monitor for newly connected devices and trigger device discovery pattern
+  useEffect(() => {
+    const checkForNewConnections = () => {
+      const currentTime = Date.now();
+      const currentlyConnectedDevices = new Set<string>();
+
+      // Find all currently SUCCESSFULLY connected devices (not just attempting)
+      devicesRef.current.forEach((device, deviceId) => {
+        // Only count as connected if:
+        // 1. State is CONNECTED_IDLE or STREAMING (success states)
+        // 2. No recent error (within last 5 seconds)
+        // 3. Connection was updated recently (within last 30 seconds)
+        const isInSuccessState = device.state === DeviceState.CONNECTED_IDLE || device.state === DeviceState.STREAMING;
+        const hasNoRecentError = !device.error || (currentTime - device.error.timestamp) > 5000;
+        const wasRecentlyUpdated = (currentTime - device.lastUpdate) < 30000;
+
+        if (isInSuccessState && hasNoRecentError && wasRecentlyUpdated) {
+          currentlyConnectedDevices.add(deviceId);
+          console.log(`📱 Device ${device.name} confirmed as successfully connected (state: ${device.state})`);
+        }
+      });
+
+      // Check for newly connected devices (devices that weren't in the previous connected set)
+      const newlyConnectedDevices = new Set<string>();
+      currentlyConnectedDevices.forEach(deviceId => {
+        if (!connectedDevicesRef.current.has(deviceId)) {
+          const device = devicesRef.current.get(deviceId);
+          if (device) {
+            console.log(`🔵 NEW successful connection detected: ${device.name} (${deviceId})`);
+            newlyConnectedDevices.add(deviceId);
+          }
+        }
+      });
+
+      // If we have newly successfully connected devices and enough cooldown time has passed
+      if (newlyConnectedDevices.size > 0 && (currentTime - lastConnectionTimeRef.current) > 3000) {
+        console.log(`🔵 Detected ${newlyConnectedDevices.size} newly SUCCESSFULLY connected devices:`, Array.from(newlyConnectedDevices));
+
+        newlyConnectedDevices.forEach(deviceId => {
+          const device = devicesRef.current.get(deviceId);
+          if

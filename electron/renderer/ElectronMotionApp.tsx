@@ -1067,6 +1067,33 @@ const ElectronMotionApp: React.FC = () => {
       if (connected) {
         console.log('✅ SDK connection established for:', deviceName);
 
+        // 🔵 Trigger device discovery pattern after successful connection
+        console.log('🔵 [ElectronMotionApp] Triggering device discovery pattern after successful connection...');
+        setTimeout(async () => {
+          try {
+            console.log('🔵 Sending WebSocket message to trigger device discovery...');
+
+            // Send WebSocket message to main process to trigger device discovery
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({
+                type: 'trigger_device_discovery',
+                data: {
+                  action: 'post_connection_scan',
+                  message: 'Device discovery after successful connection',
+                  deviceName: deviceName,
+                  deviceId: deviceId
+                },
+                timestamp: Date.now()
+              }));
+              console.log('🔵 Device discovery trigger message sent via WebSocket');
+            } else {
+              console.warn('⚠️ WebSocket not available for device discovery trigger');
+            }
+          } catch (error: any) {
+            console.error('❌ Failed to trigger device discovery pattern:', error);
+          }
+        }, 1000); // 1 second delay to ensure connection is fully established
+
         // Update battery levels
         await museManager.updateBatteryLevel(deviceName);
         const batteryLevel = museManager.getBatteryLevel(deviceName);
