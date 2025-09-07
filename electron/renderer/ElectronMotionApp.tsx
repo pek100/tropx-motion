@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Play, Pause, Wifi, WifiOff, Zap, Minimize2, Maximize2, X } from 'lucide-react';
-import { bluetoothTroubleshooter } from './BluetoothTroubleshooter';
 import { MotionProcessingCoordinator } from '../../motionProcessing/MotionProcessingCoordinator';
 import { EnhancedMotionDataDisplay } from './components';
 import { museManager } from '../../muse_sdk/core/MuseManager';
@@ -19,6 +18,9 @@ declare global {
         connectToDevice(deviceName: string): Promise<{ success: boolean; message?: string }>;
         startRecording(sessionData: any): Promise<{ success: boolean; message?: string }>;
         stopRecording(): Promise<{ success: boolean; message?: string }>;
+      };
+      bluetooth?: {
+        selectDevice(deviceId: string): Promise<any>;
       };
       window: {
         minimize(): void;
@@ -121,10 +123,6 @@ const useWebSocket = (url: string) => {
       websocket.onmessage = (event) => {
         try {
           const message: WSMessage = JSON.parse(event.data);
-          console.log('🔌 ===== WEBSOCKET MESSAGE RECEIVED =====');
-          console.log('🔌 Message type:', message.type);
-          console.log('🔌 Message data:', message.data);
-          console.log('🔌 Timestamp:', message.timestamp);
           setLastMessage(message);
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);
@@ -171,13 +169,7 @@ const useWebSocket = (url: string) => {
     };
   }, [connect]);
 
-  const sendMessage = useCallback((message: any) => {
-    if (ws && isConnected) {
-      ws.send(JSON.stringify(message));
-    }
-  }, [ws, isConnected]);
-
-  return { isConnected, lastMessage, sendMessage };
+  return { isConnected, lastMessage };
 };
 
 // Device Management Component - Always Open
@@ -225,7 +217,7 @@ const DeviceManagement: React.FC<{
         if (!newStates.has(device.id)) {
           const isConnected = museManager.isDeviceConnected(device.name);
           const isStreaming = museManager.isDeviceStreaming(device.name);
-          
+
           newStates.set(device.id, {
             id: device.id,
             name: device.name,
@@ -344,76 +336,6 @@ const DeviceManagement: React.FC<{
           </button>
         )}
       </div>
-
-      {/* Enhanced troubleshooting with manual connection option */}
-      {allDevices.length === 0 && !isScanning && (
-        <div className="p-6 bg-blue-50 border border-blue-200 rounded-lg">
-          <div className="text-sm text-blue-800 mb-3">
-            <strong>🔧 No devices found automatically?</strong>
-            <p className="text-xs mt-1 text-blue-600">
-              Windows Bluetooth sometimes requires manual connection. Try the options below:
-            </p>
-          </div>
-          <div className="space-y-2">
-            <div className="border-b border-blue-200 pb-2 mb-2">
-              <p className="text-xs font-medium text-blue-700 mb-2">Manual Connection</p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Enter device name (e.g., tropx_ln_001)"
-                  className="flex-1 px-2 py-1 text-xs border border-blue-300 rounded"
-                  onKeyPress={async (e) => {
-                    if (e.key === 'Enter') {
-                      const deviceName = (e.target as HTMLInputElement).value.trim();
-                      if (deviceName) {
-                        console.log('🔗 Manual connection attempt:', deviceName);
-                        try {
-                          await window.electronAPI?.bluetooth?.connectManual(deviceName);
-                          // Add to scanned devices for connection
-                          const mockDevice = {
-                            id: deviceName,
-                            name: deviceName,
-                            connected: false,
-                            batteryLevel: null,
-                            streaming: false
-                          };
-                          setScannedDevices([mockDevice]);
-                          (e.target as HTMLInputElement).value = '';
-                        } catch (error) {
-                          console.error('Manual connection error:', error);
-                        }
-                      }
-                    }
-                  }}
-                />
-              </div>
-            </div>
-            <button
-              onClick={() => {
-                bluetoothTroubleshooter.runDiagnostics().then(diagnostics => {
-                  console.log('🔧 Manual diagnostics:', diagnostics);
-                  alert(`Diagnostics completed! Check console for details.\n\nRecommendations:\n${diagnostics.recommendations.join('\n')}`);
-                });
-              }}
-              className="w-full py-2 px-3 bg-yellow-500 hover:bg-yellow-600 text-white text-sm rounded font-medium transition-colors"
-            >
-              🔧 Run Bluetooth Diagnostics
-            </button>
-            <button
-              onClick={() => bluetoothTroubleshooter.openChromeBluetoothDebugger()}
-              className="w-full py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded font-medium transition-colors"
-            >
-              🔍 Open Chrome Bluetooth Debugger
-            </button>
-            <button
-              onClick={() => bluetoothTroubleshooter.showManualPairingInstructions()}
-              className="w-full py-2 px-3 bg-green-500 hover:bg-green-600 text-white text-sm rounded font-medium transition-colors"
-            >
-              📋 Manual Pairing Instructions
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Device List */}
       <div className="p-6">
@@ -678,7 +600,7 @@ const ElectronMotionApp: React.FC = () => {
     }
   }, []);
 
-  const { isConnected, lastMessage, sendMessage } = useWebSocket(`ws://localhost:${wsPort}`);
+  const { isConnected, lastMessage } = useWebSocket(`ws://localhost:${wsPort}`);
 
   // Store WebSocket reference
   React.useEffect(() => {
@@ -698,8 +620,6 @@ const ElectronMotionApp: React.FC = () => {
     if (!lastMessage) return;
 
     try {
-      console.log('📨 Received WebSocket message:', lastMessage.type, lastMessage.data);
-
       switch (lastMessage.type) {
       case 'status_update':
         setStatus(lastMessage.data);
@@ -870,23 +790,7 @@ const ElectronMotionApp: React.FC = () => {
     } catch (error) {
       console.error('📨 Error processing WebSocket message:', error, lastMessage);
     }
-  }, [lastMessage]);
-
-  const handleConnect = async () => {
-    if (!window.electronAPI) return;
-
-    setIsConnecting(true);
-    try {
-      const result = await window.electronAPI.motion.connectDevices();
-      console.log('Connect result:', result);
-    } catch (error) {
-      console.error('Connect error:', error);
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-
+  }, [lastMessage, recordingStartTime]);
 
   const handleScan = async () => {
     const scanStartTime = Date.now();
@@ -1071,7 +975,7 @@ const ElectronMotionApp: React.FC = () => {
 
     try {
       console.log('🔗 Step 1: Selecting device via grosdode pattern...');
-      
+
       // Step 1: Select device via grosdode pattern (IPC to main process)
       try {
         const selectionResult = await window.electronAPI?.bluetooth?.selectDevice(deviceId);
@@ -1081,46 +985,46 @@ const ElectronMotionApp: React.FC = () => {
       }
 
       console.log('🔗 Step 2: Connecting via SDK after selection...');
-      
+
       // Step 2: Wait a moment for device selection to process
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       // Step 3: Use SDK to connect to the device
       console.log('🔗 Step 3: Using muse_sdk for actual connection...');
-      
+
       // Check if device is already connected and clean up if needed
       if (museManager.isDeviceConnected(deviceName)) {
         console.log('🔗 Device already connected, cleaning up first...');
         await museManager.disconnectDevice(deviceName);
         await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for cleanup
       }
-      
+
       // Try optimized connection with fast reconnection + fallback
       let connected = false;
-      
+
       try {
         // First attempt: Fast reconnection using getDevices()
         console.log(`\n🚀 ===== STARTING FAST RECONNECTION =====`);
         console.log(`🚀 Target device: ${deviceName} (${deviceId})`);
         console.log(`🚀 Current device registry size: ${museManager.getConnectedDeviceCount()}`);
         console.log(`🚀 Device currently connected: ${museManager.isDeviceConnected(deviceName)}`);
-        
+
         const previousDevices = await museManager.reconnectToPreviousDevices();
         console.log(`🚀 Previous devices found: ${previousDevices.length}`);
-        
+
         const targetDevice = previousDevices.find(d => {
           const nameMatch = d.name === deviceName;
           const idMatch = d.id === deviceId;
           console.log(`🚀   Checking device: ${d.name} (${d.id}) - Name match: ${nameMatch}, ID match: ${idMatch}`);
           return nameMatch || idMatch;
         });
-        
+
         if (targetDevice) {
           console.log(`✅ Target device found in previous devices: ${targetDevice.name}`);
           console.log(`🚀 Attempting connection with 5s timeout...`);
-          
+
           connected = await museManager.connectToDeviceWithTimeout(targetDevice, 5000);
-          
+
           if (connected) {
             console.log(`✅ Fast reconnection successful for ${deviceName}`);
           } else {
@@ -1129,23 +1033,23 @@ const ElectronMotionApp: React.FC = () => {
         } else {
           console.log(`❌ Target device not found in previous devices`);
         }
-        
+
         console.log(`🚀 =====================================\n`);
-        
+
       } catch (reconnectError) {
         console.warn(`\n❌ FAST RECONNECTION ERROR:`);
         console.warn(`❌ Device: ${deviceName}`);
         console.warn(`❌ Error:`, reconnectError);
         console.warn(`❌ Falling back to standard connection...\n`);
       }
-      
+
       // Fallback: Standard SDK connection with device cleanup
       if (!connected) {
         console.log(`\n🔗 ===== STANDARD SDK CONNECTION =====`);
         console.log(`🔗 Fast reconnection failed, trying fresh connection for ${deviceName}...`);
         console.log(`🔗 Device ID: ${deviceId}`);
         console.log(`🔗 Current connection state: ${museManager.isDeviceConnected(deviceName)}`);
-        
+
         // Clear any stale device state that might interfere
         if (museManager.isDeviceConnected(deviceName)) {
           console.log(`🧹 Cleaning up stale connection before retry...`);
@@ -1153,7 +1057,7 @@ const ElectronMotionApp: React.FC = () => {
           console.log(`🧹 Disconnection completed, waiting 1s for cleanup...`);
           await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for cleanup
         }
-        
+
         console.log(`🔗 Attempting SDK connection...`);
         connected = await museManager.connectToScannedDevice(deviceId, deviceName);
         console.log(`🔗 SDK connection result: ${connected}`);
@@ -1170,9 +1074,9 @@ const ElectronMotionApp: React.FC = () => {
         // Update both scanned devices and main devices with connection state
         setScannedDevices(prev => prev.map(device =>
           device.id === deviceId
-            ? { 
-                ...device, 
-                connected: true, 
+            ? {
+                ...device,
+                connected: true,
                 streaming: false,
                 batteryLevel: batteryLevel
               }
@@ -1184,9 +1088,9 @@ const ElectronMotionApp: React.FC = () => {
           if (existingDevice) {
             return prev.map(d =>
               d.id === deviceId
-                ? { 
-                    ...d, 
-                    connected: true, 
+                ? {
+                    ...d,
+                    connected: true,
                     streaming: false,
                     batteryLevel: batteryLevel
                   }
@@ -1212,23 +1116,23 @@ const ElectronMotionApp: React.FC = () => {
         console.log(`\n💥 ===== FINAL ATTEMPT WITH FULL RESET =====`);
         console.log(`💥 Both optimized and standard connections failed for ${deviceName}`);
         console.log(`💥 Attempting nuclear reset and final connection attempt...`);
-        
+
         try {
           // Nuclear option: clear all device state
           await museManager.forceResetAllDeviceState();
-          
+
           // Wait a moment for cleanup
           await new Promise(resolve => setTimeout(resolve, 2000));
-          
+
           // Need to re-add the device to scanned devices since we cleared everything
           museManager.addScannedDevices([{
             deviceId: deviceId,
             deviceName: deviceName
           }]);
-          
+
           console.log(`💥 Final attempt: SDK connection after full reset...`);
           const finalConnected = await museManager.connectToScannedDevice(deviceId, deviceName);
-          
+
           if (finalConnected) {
             console.log(`✅ Final attempt successful for ${deviceName}`);
             connected = true;
@@ -1236,18 +1140,18 @@ const ElectronMotionApp: React.FC = () => {
             console.log(`❌ Final attempt also failed for ${deviceName}`);
             throw new Error(`All connection attempts failed for ${deviceName}`);
           }
-          
+
         } catch (finalError) {
           console.error(`❌ Final connection attempt failed:`, finalError);
           throw new Error(`Both optimized reconnection and SDK connection failed, final attempt also failed: ${finalError instanceof Error ? finalError.message : finalError}`);
         }
-        
+
         console.log(`💥 =======================================\n`);
       }
 
     } catch (error) {
       console.error('❌ grosdode + SDK connection error:', error);
-      
+
       // Clean up any partial state
       try {
         await museManager.disconnectDevice(deviceName);
@@ -1260,12 +1164,12 @@ const ElectronMotionApp: React.FC = () => {
         if (error.message.includes('not found in paired devices')) {
           // Special handling for unpaired devices
           const shouldPair = confirm(`${deviceName} needs to be paired first.\n\nClick OK to pair this device now, or Cancel to pair it manually through system Bluetooth settings.`);
-          
+
           if (shouldPair) {
             try {
               console.log('🔗 User chose to pair device, starting pairing process...');
               const pairResult = await museManager.pairNewDevice();
-              
+
               if (pairResult.success) {
                 alert(`Success! ${pairResult.deviceName} is now paired. You can connect to it.`);
                 // Refresh the scanned devices list
@@ -1314,7 +1218,7 @@ const ElectronMotionApp: React.FC = () => {
       try {
         await museManager.updateAllBatteryLevels();
         const allBatteryLevels = museManager.getAllBatteryLevels();
-        
+
         // Update UI with new battery levels
         setScannedDevices(prev => prev.map(device => {
           const newLevel = allBatteryLevels.get(device.name);
@@ -1447,13 +1351,10 @@ const ElectronMotionApp: React.FC = () => {
         // 3. Start real quaternion streaming via GATT service
         const streamingSuccess = await museManager.startStreaming(
           (deviceName: string, data: any) => {
-            console.log('📡 SDK quaternion data from device', deviceName, ':', data);
-
             // Send data to motion processing pipeline
             if (motionProcessingCoordinator) {
               try {
                 motionProcessingCoordinator.processNewData(deviceName, data);
-                console.log('📊 SDK data sent to motion processing pipeline');
               } catch (error) {
                 console.error('❌ Error processing SDK motion data:', error);
               }
@@ -1554,7 +1455,7 @@ const ElectronMotionApp: React.FC = () => {
       // Stop streaming if active on component unmount
       if (museManager.getIsStreaming()) {
         console.log('🧹 Component unmounting, stopping active streaming...');
-        museManager.stopStreaming().catch(error => 
+        museManager.stopStreaming().catch(error =>
           console.warn('⚠️ Error stopping streaming during unmount:', error)
         );
       }

@@ -23,14 +23,11 @@ export class ElectronMotionService {
     constructor() {
         this.dataBatcher = new DataBatcher(
             (batchedData) => {
-                if (Array.isArray(batchedData)) {
-                    batchedData.forEach(data => this.broadcastMotionData(data));
-                } else {
-                    this.broadcastMotionData(batchedData);
-                }
+                // Real-time: data is always single item now
+                this.broadcastMotionData(batchedData as MotionDataUpdate);
             },
-            10,
-            16
+            1,    // Real-time: immediate processing
+            0     // No delays for real-time streaming
         );
     }
 
@@ -175,8 +172,6 @@ export class ElectronMotionService {
     private setupMotionProcessingCallbacks(): void {
         // Subscribe to UI updates from motion processing coordinator
         motionProcessingCoordinator.subscribeToUI((data: any) => {
-            console.log('📊 Motion processing UI update received:', data);
-            
             // Create formatted motion data
             const motionData = {
                 left: data.left || { current: 0, max: 0, min: 0, rom: 0 },
@@ -184,11 +179,8 @@ export class ElectronMotionService {
                 timestamp: Date.now()
             };
 
-            // Always broadcast to UI (not just when recording)
+            // Use batcher for efficient streaming (remove double broadcast)
             this.dataBatcher.addData(motionData);
-
-            // Also broadcast immediately for real-time UI updates
-            this.broadcastMotionData(motionData);
         });
 
         console.log('📊 Motion processing callbacks setup complete');
@@ -448,8 +440,6 @@ export class ElectronMotionService {
      */
     private processMotionDataFromRenderer(data: any): void {
         try {
-            console.log('📊 Raw motion data received from renderer:', data);
-            
             // Validate required data fields
             if (!data) {
                 console.error('❌ No motion data provided');
@@ -457,45 +447,20 @@ export class ElectronMotionService {
             }
 
             const deviceName = data.deviceName || `device_${Date.now()}`;
-            console.log(`📊 Processing motion data for device: ${deviceName}`);
-            
-            // Validate device name for joint assignment
-            const isValidForJoints = deviceName.toLowerCase().includes('tropx') && 
+
+            // Only validate device naming pattern once on first connection (reduce logging overhead)
+            const isValidForJoints = deviceName.toLowerCase().includes('tropx') &&
                                    (deviceName.includes('_ln_') || deviceName.includes('_rn_') || 
                                     deviceName.includes('ln_') || deviceName.includes('rn_'));
             
-            if (!isValidForJoints) {
-                console.warn(`⚠️ Device "${deviceName}" doesn't match joint naming patterns`);
-                console.warn('⚠️ Expected patterns: ln_top, ln_bottom, rn_top, rn_bottom');
-                console.warn('⚠️ This device may not contribute to joint angle calculations');
-            } else {
-                console.log(`✅ Device "${deviceName}" has valid joint naming pattern`);
-            }
-
-            // Log detailed data structure
-            console.log('📊 Motion data details:', {
-                deviceName,
-                timestamp: data.timestamp,
-                hasQuaternion: !!data.quaternion,
-                quaternion: data.quaternion,
-                gyroscope: data.gyroscope,
-                accelerometer: data.accelerometer,
-                magnetometer: data.magnetometer,
-                hasRawData: !!data.rawData
-            });
-
             // Convert renderer data to IMU format expected by motion processing
             const imuData: IMUData = {
                 timestamp: data.timestamp || Date.now(),
-                // Primary orientation data - quaternion is essential for motion processing
                 quaternion: data.quaternion || { w: 1, x: 0, y: 0, z: 0 },
-                // Traditional IMU sensor data (optional but useful)
-                gyr: data.gyroscope || { x: 0, y: 0, z: 0 },        // gyroscope → gyr
-                axl: data.accelerometer || { x: 0, y: 0, z: 0 },    // accelerometer → axl  
-                mag: data.magnetometer || { x: 0, y: 0, z: 0 }      // magnetometer → mag
+                gyr: data.gyroscope || { x: 0, y: 0, z: 0 },
+                axl: data.accelerometer || { x: 0, y: 0, z: 0 },
+                mag: data.magnetometer || { x: 0, y: 0, z: 0 }
             };
-
-            console.log('📊 Converted IMU data:', imuData);
 
             // Check if motion processing coordinator is ready
             if (!motionProcessingCoordinator.getInitializationStatus()) {
@@ -503,40 +468,11 @@ export class ElectronMotionService {
                 return;
             }
 
-            // Feed data into motion processing coordinator
-            console.log(`📊 Calling motionProcessingCoordinator.processNewData(${deviceName}, imuData)`);
-            console.log(`📊 Motion processing coordinator initialized: ${motionProcessingCoordinator.getInitializationStatus()}`);
-            console.log(`📊 Motion processing coordinator healthy: ${motionProcessingCoordinator.isHealthy()}`);
-            
+            // Feed data into motion processing coordinator (core processing)
             motionProcessingCoordinator.processNewData(deviceName, imuData);
-            
-            console.log('✅ Motion data processed successfully by coordinator');
-            
-            // Test if coordinator has current joint angles after processing
-            setTimeout(() => {
-                try {
-                    const currentAngles = motionProcessingCoordinator.getCurrentJointAngles();
-                    console.log('📊 Current joint angles after processing:', currentAngles);
-                    
-                    if (currentAngles && currentAngles.size > 0) {
-                        console.log('✅ Motion processing coordinator is working!');
-                    } else {
-                        console.warn('⚠️ Motion processing coordinator not producing joint angles');
-                    }
-                } catch (error) {
-                    console.error('❌ Error getting current joint angles:', error);
-                }
-            }, 200);
-
-            // Check if coordinator is now reporting as healthy (has recent data)
-            setTimeout(() => {
-                const isHealthy = motionProcessingCoordinator.isHealthy();
-                console.log(`📊 Motion processing coordinator health after data processing: ${isHealthy}`);
-            }, 100);
 
         } catch (error) {
             console.error('❌ Error processing motion data from renderer:', error);
-            console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack trace');
         }
     }
 
@@ -545,7 +481,6 @@ export class ElectronMotionService {
     private handleClientMessage(ws: WebSocket, message: string, clientId: string): void {
         try {
             const parsed = JSON.parse(message);
-            console.log(`📨 Message from ${clientId}:`, parsed.type);
 
             switch (parsed.type) {
                 case 'ping':
@@ -596,12 +531,22 @@ export class ElectronMotionService {
         this.broadcast(message);
     }
 
-    // Private broadcast method for internal use
+    // Private broadcast method for internal use - optimized to serialize once
     private broadcast(message: WSMessage): void {
+        if (this.clients.size === 0) return; // Early exit if no clients
+
         const data = JSON.stringify(message);
         this.clients.forEach(client => {
             if (client.readyState === WebSocket.OPEN) {
-                client.send(data);
+                try {
+                    client.send(data);
+                } catch (error) {
+                    console.error('❌ Failed to send data to client, removing:', error);
+                    this.clients.delete(client);
+                }
+            } else {
+                // Clean up disconnected clients
+                this.clients.delete(client);
             }
         });
     }

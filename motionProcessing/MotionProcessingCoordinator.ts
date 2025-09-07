@@ -47,9 +47,6 @@ export class MotionProcessingCoordinator {
         }
     }
 
-
-
-
     /**
      * Returns singleton instance, creating it if necessary with provided configuration.
      */
@@ -113,16 +110,21 @@ export class MotionProcessingCoordinator {
     }
 
     /**
-     * Stops current recording session and processes final data with dual upload flows.
+     * Stops the current recording session and processes the data.
      */
     async stopRecording(): Promise<boolean> {
-        if (!this.isRecording || !this.sessionContext) {
-            console.warn('⚠️ No active recording to stop');
+        if (!this.isRecording) {
+            console.warn('⚠️ No recording in progress');
             return false;
         }
 
         try {
-            console.log('🛑 Stopping recording and processing data...');
+            // Add null check for sessionContext
+            if (!this.sessionContext) {
+                console.error('❌ No session context available');
+                this.isRecording = false;
+                return false;
+            }
 
             const recording = this.dataParser.createFinalRecording(this.sessionContext);
             if (!recording) {
@@ -132,25 +134,15 @@ export class MotionProcessingCoordinator {
                 return false;
             }
 
-            // Store complete recording for AI analysis
+            // Store complete recording
             this.lastCompleteRecording = recording;
-            console.log('📋 Complete recording created:', {
-                id: recording.id,
-                duration: recording.duration,
-                jointsCount: recording.joints_arr?.length || 0,
-                measurementsCount: recording.measurement_sequences?.length || 0,
-                totalDataPoints: recording.measurement_sequences?.reduce(
-                    (sum: number, seq: any) => sum + (seq.values?.length || 0), 0
-                ) || 0
-            });
 
-            // Process recording with BOTH database upload AND AI analysis preparation
-            await this.processRecordingDualFlow(recording);
+            // Simple database upload only - remove AI processing
+            await this.uploadRecordingToDatabase(recording);
 
             this.isRecording = false;
             this.sessionContext = null;
 
-            console.log('✅ Recording stopped and processed successfully');
             return true;
 
         } catch (error) {
@@ -162,75 +154,16 @@ export class MotionProcessingCoordinator {
     }
 
     /**
-     * Processes recording with BOTH database upload (chunked) AND AI analysis (complete).
+     * Upload recording to database using chunking service.
      */
-    private async processRecordingDualFlow(recording: any): Promise<void> {
-        console.log('🔄 Processing recording with dual flow (DB + AI)...');
-
+    private async uploadRecordingToDatabase(recording: any): Promise<void> {
         try {
-            // PARALLEL PROCESSING:
-            // 1. Prepare chunks for database upload
             const chunks = this.chunkingService.splitRecordingIntoChunks(recording);
-            console.log(`📦 Created ${chunks.length} chunks for recording ${recording.id}`);
-
-            // 2. Execute both flows in parallel
-            const dbUploadPromise = this.uploadChunksToDatabase(chunks);
-            const aiPreparationPromise = this.prepareAIAnalysis(chunks, recording);
-
-            // Wait for both to complete
-            const results = await Promise.allSettled([dbUploadPromise, aiPreparationPromise]);
-
-            // Log results
-            if (results[0].status === 'fulfilled') {
-                console.log('✅ Database upload completed successfully');
-            } else {
-                console.error('❌ Database upload failed:', results[0].reason);
-            }
-
-            if (results[1].status === 'fulfilled') {
-                console.log('✅ AI analysis preparation completed successfully');
-            } else {
-                console.error('❌ AI analysis preparation failed:', results[1].reason);
-            }
-
-        } catch (error) {
-            console.error('❌ Dual flow processing failed:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Upload chunks to database (existing chunked upload flow).
-     */
-    private async uploadChunksToDatabase(chunks: any[]): Promise<void> {
-        try {
-            console.log('💾 Starting database upload of chunks...');
             await this.chunkingService.uploadChunks(chunks);
-            this.chunkingService.cleanupChunks(chunks[0]?.recordingId || 'unknown');
-            console.log('✅ Database upload completed');
+            this.chunkingService.cleanupChunks(recording.id);
         } catch (error) {
-            console.error('❌ Database upload failed, saving for retry:', error);
-            // Save for retry but don't block AI analysis
-            if (chunks.length > 0) {
-                // this.chunkingService.saveForRetry(chunks[0]);
-            }
-            throw error;
-        }
-    }
-
-    /**
-     * Send chunks to AI service for reassembly and analysis preparation.
-     */
-    private async prepareAIAnalysis(chunks: any[], originalRecording: any): Promise<void> {
-        try {
-            console.log('🧠 Preparing AI analysis by sending chunks for reassembly...');
-
-            // AI analysis preparation (placeholder for future implementation)
-            console.log('🧠 AI analysis prepared for recording:', originalRecording.id);
-            console.log(`📦 Recording has ${chunks.length} chunks ready for analysis`);
-        } catch (error) {
-            console.error('❌ AI analysis preparation failed:', error);
-            throw error;
+            console.error('❌ Database upload failed:', error);
+            // Continue without throwing to allow recording to complete
         }
     }
 

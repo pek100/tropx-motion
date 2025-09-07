@@ -67,15 +67,14 @@ export class ServerService {
     }
 
     /**
-     * Attempts to send recording data to server with automatic queue fallback on failure.
+     * Sends recording data to the server.
+     * If sending fails, adds to retry queue.
      */
     async sendToServer(data: APIRecording): Promise<void> {
-        console.log('=== DEBUG: ServerService.sendToServer called ===', data);
-
-        // Store the recording data for AI analysis
+        // Store the recording data
         this.lastSuccessfulRecording = data;
 
-        // Notify callback (for AI analysis)
+        // Notify callback if exists
         if (this.onRecordingCallback) {
             this.onRecordingCallback(data);
         }
@@ -83,9 +82,7 @@ export class ServerService {
         try {
             await apiClient.post('/recordings', data);
             this.removeFromQueue(data.id);
-            console.log('=== DEBUG: Recording successfully sent to server ===');
         } catch (error) {
-            console.log('=== DEBUG: Recording failed to send, adding to queue ===');
             this.handleSendError(data, error);
             throw error;
         }

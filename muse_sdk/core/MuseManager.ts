@@ -349,13 +349,13 @@ export class MuseManager {
     console.log(`🔗 Target ID: "${deviceId}"`);
     console.log(`🔗 Registry size: ${this.scannedDevices.size}`);
     console.log(`🔗 Connected devices: ${this.connectedDevices.size}`);
-    
+
     try {
 
       // Enhanced connection state validation
       if (this.connectedDevices.has(deviceName)) {
         const device = this.connectedDevices.get(deviceName);
-        
+
         if (device?.server?.connected) {
           console.log(`✅ SDK: Device ${deviceName} is already connected and active`);
           return true;
@@ -363,7 +363,7 @@ export class MuseManager {
           console.log(`🧹 SDK: Cleaning up stale connection for ${deviceName}`);
           this.connectedDevices.delete(deviceName);
           this.batteryLevels.delete(deviceName);
-          
+
           // Also clean up from scanned devices if GATT is stale
           const scannedDevice = this.scannedDevices.get(deviceName);
           if (scannedDevice && scannedDevice.gatt && !scannedDevice.gatt.connected) {
@@ -387,12 +387,12 @@ export class MuseManager {
       if (!bluetoothDevice) {
         console.error(`❌ SDK: Device ${deviceName} (${deviceId}) not found in scanned devices`);
         console.error(`❌ SDK: Available devices: ${Array.from(this.scannedDevices.keys()).join(', ')}`);
-        
+
         // Try to add the device to the registry if it's not there
         console.log(`❌ SDK: Attempting to add ${deviceName} to registry...`);
         this.addScannedDevices([{ deviceId, deviceName }]);
         bluetoothDevice = this.scannedDevices.get(deviceName);
-        
+
         if (!bluetoothDevice) {
           console.error(`❌ SDK: Still cannot find device after adding to registry`);
           return false;
@@ -408,7 +408,7 @@ export class MuseManager {
         // If GATT is not available, try to find it in previously paired devices
         if (!bluetoothDevice.gatt) {
           console.log(`🔧 SDK: Device ${deviceName} has no GATT interface, looking for paired device...`);
-          
+
           try {
             // Check if Web Bluetooth is available
             if (!navigator.bluetooth) {
@@ -418,18 +418,18 @@ export class MuseManager {
             // First try to find the device in already paired devices (no chooser!)
             let foundDevice = null;
             let pairedDevices: BluetoothDevice[] = [];
-            
+
             if (navigator.bluetooth.getDevices) {
               pairedDevices = await navigator.bluetooth.getDevices();
               console.log(`🔍 SDK: Searching for ${deviceName} among ${pairedDevices.length} paired devices`);
               console.log(`🔍 SDK: Paired device names: ${pairedDevices.map(d => d.name).join(', ')}`);
-              
+
               foundDevice = pairedDevices.find(d => d.name === deviceName || d.id === bluetoothDevice.id);
-              
+
               if (foundDevice) {
                 console.log(`✅ SDK: Found ${deviceName} in previously paired devices`);
                 deviceToConnect = foundDevice as any;
-                
+
                 // Update the registry with the GATT-enabled device
                 this.scannedDevices.set(deviceName, foundDevice as any);
                 console.log(`🔄 SDK: Updated registry with paired device GATT interface for ${deviceName}`);
@@ -437,7 +437,7 @@ export class MuseManager {
             } else {
               console.error(`❌ SDK: getDevices() API not available in this browser`);
             }
-            
+
             // If not found in paired devices, the device needs to be paired first
             if (!foundDevice) {
               console.error(`❌ SDK: ${deviceName} not found in previously paired devices`);
@@ -445,7 +445,7 @@ export class MuseManager {
               console.error(`❌ SDK: Available paired devices: ${pairedDevices.map(d => d.name || 'unnamed').join(', ')}`);
               throw new Error(`Device ${deviceName} not found in paired devices. Please pair it through system Bluetooth settings first, then scan again.`);
             }
-            
+
           } catch (gattError) {
             const errorMessage = gattError instanceof Error ? gattError.message : String(gattError);
             console.error(`❌ SDK: Failed to acquire GATT interface for ${deviceName}:`, gattError);
@@ -455,7 +455,7 @@ export class MuseManager {
 
         console.log(`✅ SDK: Using device with GATT interface for ${deviceName}`);
         console.log(`🔗 SDK: Connecting using optimized SDK method...`);
-        
+
         // Use device with GATT interface
         const connectionSuccess = await this.connectToDeviceWithTimeout(deviceToConnect as any, this.CONNECTION_TIMEOUT_MS);
 
@@ -504,18 +504,18 @@ export class MuseManager {
 
       } catch (error) {
         console.error(`❌ SDK: Failed to establish SDK connection for ${deviceName}:`, error);
-        
+
         // Enhanced cleanup for connection failures
         this.connectedDevices.delete(deviceName);
         this.batteryLevels.delete(deviceName);
-        
+
         // Reset device GATT interface for next attempt
         const scannedDevice = this.scannedDevices.get(deviceName);
         if (scannedDevice) {
           console.log(`🔄 SDK: Resetting GATT interface for ${deviceName} to enable retry`);
           scannedDevice.gatt = undefined;
         }
-        
+
         // Enhanced error analysis
         if (error instanceof Error) {
           switch (error.name) {
@@ -538,7 +538,7 @@ export class MuseManager {
               console.error(`❌ Unexpected error (${error.name}): ${error.message}`);
           }
         }
-        
+
         return false;
       }
 
@@ -648,7 +648,7 @@ export class MuseManager {
           // @ts-ignore - stopNotifications may not exist in all implementations
           await device.characteristics.data.stopNotifications();
         } catch (error) {
-          console.log('stopNotifications not available, continuing...');
+          // Silently handle missing stopNotifications
         }
         console.log(`✅ Stopped streaming for device ${deviceName} using SDK command`);
       }
