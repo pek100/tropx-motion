@@ -162,7 +162,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   const toggleKneeVisibility = (kneeKey: string) => {
     setKneeVisibility(prev => ({
       ...prev,
-      [kneeKey]: !prev[kneeKey]
+      [kneeKey as keyof typeof prev]: !prev[kneeKey as keyof typeof prev]
     }));
   };
 
@@ -371,7 +371,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
             yAxisId="angle"
             stroke={Colors.REFERENCE_LINE}
             strokeDasharray={CHART_LAYOUT.GRID_DASH_ARRAY}
-            label={{ value: Labels.STRAIGHT_REFERENCE, position: 'topLeft' }}
+            label={{ value: Labels.STRAIGHT_REFERENCE, position: 'top' }}
           />
 
           {KNEE_CONFIGS.map(renderKneeAreas)}

@@ -38,7 +38,8 @@
       "WebFetch(domain:webbluetoothcg.github.io)",
       "WebFetch(domain:github.com)",
       "Bash(npm run build:renderer:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(npx tsc:*)"
     ],
     "deny": [],
     "ask": [],
