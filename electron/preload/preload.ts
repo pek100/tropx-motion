@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import { ApiResponse, DeviceConnectionResponse, RecordingResponse, RecordingSession } from '../shared/types';
 
 export interface ElectronAPI {
     window: {
@@ -8,22 +9,21 @@ export interface ElectronAPI {
     };
 
     motion: {
-        getStatus: () => Promise<any>;
-        connectDevices: () => Promise<{ success: boolean; message: string }>;
-        scanDevices: () => Promise<{ success: boolean; message: string }>;
-        connectToDevice: (deviceName: string) => Promise<{ success: boolean; message: string }>;
-        startRecording: (sessionData: any) => Promise<{ success: boolean; message: string; recordingId?: string }>;
-        stopRecording: () => Promise<{ success: boolean; message: string; recordingId?: string }>;
+        getStatus: () => Promise<unknown>;
+        connectDevices: () => Promise<ApiResponse>;
+        scanDevices: () => Promise<ApiResponse>;
+        connectToDevice: (deviceName: string) => Promise<DeviceConnectionResponse>;
+        startRecording: (sessionData: RecordingSession) => Promise<RecordingResponse>;
+        stopRecording: () => Promise<RecordingResponse>;
         getWebSocketPort: () => Promise<number>;
     };
 
     bluetooth: {
-        selectDevice: (deviceId: string) => Promise<{ success: boolean; message: string }>;
-        connectManual: (deviceName: string) => Promise<{ success: boolean; message: string }>;
-        scanEnhanced: () => Promise<{ success: boolean; message: string }>;
-        cancelSelection: () => Promise<{ success: boolean; message: string }>;
-        pairingResponse: (response: any) => Promise<{ success: boolean; message: string }>;
-        getSystemInfo: () => Promise<any>;
+        selectDevice: (deviceId: string) => Promise<ApiResponse>;
+        connectManual: (deviceName: string) => Promise<DeviceConnectionResponse>;
+        cancelSelection: () => Promise<ApiResponse>;
+        pairingResponse: (response: unknown) => Promise<ApiResponse>;
+        getSystemInfo: () => Promise<unknown>;
     };
 
     system: {
@@ -53,9 +53,8 @@ const electronAPI: ElectronAPI = {
     bluetooth: {
         selectDevice: (deviceId: string) => ipcRenderer.invoke('bluetooth:selectDevice', deviceId),
         connectManual: (deviceName: string) => ipcRenderer.invoke('bluetooth:connectManual', deviceName),
-        scanEnhanced: () => ipcRenderer.invoke('bluetooth:scanEnhanced'),
         cancelSelection: () => ipcRenderer.invoke('bluetooth:cancelSelection'),
-        pairingResponse: (response: any) => ipcRenderer.invoke('bluetooth:pairingResponse', response),
+        pairingResponse: (response: unknown) => ipcRenderer.invoke('bluetooth:pairingResponse', response),
         getSystemInfo: () => ipcRenderer.invoke('bluetooth:getSystemInfo'),
     },
 
