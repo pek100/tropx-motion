@@ -32,7 +32,10 @@ export class MainProcess {
       'enable-blink-features=WebBluetooth,WebBluetoothScanning',
       'disable-features=OutOfBlinkCors',
       'enable-bluetooth-advertising',
-      'enable-bluetooth-device-discovery'
+      'enable-bluetooth-device-discovery',
+      'disable-web-security',
+      'disable-features=VizDisplayCompositor',
+      'autoplay-policy=no-user-gesture-required'
     ];
 
     flags.forEach(flag => {
@@ -86,10 +89,10 @@ export class MainProcess {
         nodeIntegration: false,
         contextIsolation: true,
         preload: path.join(__dirname, '../preload/preload.js'),
-        webSecurity: !isDev,
+        webSecurity: false, // Disable web security to allow programmatic Bluetooth access
         experimentalFeatures: true,
         enableBlinkFeatures: 'WebBluetooth,WebBluetoothScanning',
-        allowRunningInsecureContent: isDev
+        allowRunningInsecureContent: true
       },
       show: false
     });

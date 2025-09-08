@@ -202,8 +202,14 @@ export class MuseManager {
 
   private async connectToDevice(device: BluetoothDevice): Promise<boolean> {
     try {
-      if (!device || !device.gatt) {
-        throw new Error('Invalid device');
+      if (!device) {
+        throw new Error('Device is null or undefined');
+      }
+      if (!device.gatt) {
+        throw new Error('Device GATT interface is not available');
+      }
+      if (device.gatt.connected) {
+        console.log('🔵 Device already connected, proceeding with initialization');
       }
 
       const deviceName = device.name || `unknown_device_${device.id}`;
@@ -211,6 +217,11 @@ export class MuseManager {
 
       const server = await device.gatt.connect();
       console.log('🔵 Connected to GATT server');
+      
+      // Verify server connection
+      if (!server || !server.connected) {
+        throw new Error('GATT server connection failed or not connected');
+      }
 
       const service = await server.getPrimaryService(MuseHardware.BLEConfig.SERVICE_UUID);
       console.log('🔵 Got primary service');
@@ -252,6 +263,17 @@ export class MuseManager {
 
     } catch (error) {
       console.error('🔵 ❌ Connection error:', error);
+      
+      // Clean up on connection failure
+      try {
+        if (device && device.gatt && device.gatt.connected) {
+          console.log('🔧 Cleaning up failed connection...');
+          device.gatt.disconnect();
+        }
+      } catch (cleanupError) {
+        console.warn('⚠️ Error during connection cleanup:', cleanupError);
+      }
+      
       return false;
     }
   }
@@ -311,34 +333,23 @@ export class MuseManager {
 
   // Store devices from Electron's device discovery process
   addScannedDevices(devices: Array<{deviceId: string, deviceName: string}>): void {
-    const timestamp = new Date().toISOString();
-    console.log('\n📋 ===== SDK DEVICE REGISTRY UPDATE =====');
-    console.log(`📋 Timestamp: ${timestamp}`);
-    console.log(`📋 Method: addScannedDevices`);
-    console.log(`📋 Devices to add: ${devices.length}`);
+    if (devices.length === 0) return;
+    
+    console.log(`🗂️ SDK Registry: Adding ${devices.length} device(s) to registry`);
 
-    devices.forEach((device, index) => {
-      console.log(`📋 Device ${index + 1} analysis:`);
-      console.log(`📋   - Name: "${device.deviceName}"`);
-      console.log(`📋   - ID: "${device.deviceId}"`);
-      console.log(`📋   - Name validity: ${device.deviceName ? 'VALID' : 'INVALID'}`);
-      console.log(`📋   - ID validity: ${device.deviceId ? 'VALID' : 'INVALID'}`);
-      
+    devices.forEach((device) => {
+      // Mark these as Electron-discovered devices that need Web Bluetooth pairing
       const bluetoothDevice: BluetoothDevice = {
         id: device.deviceId,
         name: device.deviceName,
-        gatt: undefined
+        gatt: undefined // Will be acquired from Web Bluetooth when connecting
       };
 
       this.scannedDevices.set(device.deviceName, bluetoothDevice);
-      console.log(`📋   - Registry status: ADDED`);
+      console.log(`📋 Added scanned device: ${device.deviceName} (requires Web Bluetooth pairing)`);
     });
 
-    console.log(`\n📋 REGISTRY UPDATE COMPLETE:`);
-    console.log(`📋 - Previous size: ${this.scannedDevices.size - devices.length}`);
-    console.log(`📋 - New size: ${this.scannedDevices.size}`);
-    console.log(`📋 - Total devices available for connection: ${this.scannedDevices.size}`);
-    console.log('📋 =======================================\n');
+    console.log(`✅ SDK Registry updated: ${this.scannedDevices.size} total devices available`);
   }
 
   // Connect to a device that was already discovered through scanning
@@ -367,182 +378,122 @@ export class MuseManager {
           console.log(`🧹 SDK: Cleaning up stale connection for ${deviceName}`);
           this.connectedDevices.delete(deviceName);
           this.batteryLevels.delete(deviceName);
-
-          // Also clean up from scanned devices if GATT is stale
-          const scannedDevice = this.scannedDevices.get(deviceName);
-          if (scannedDevice && scannedDevice.gatt && !scannedDevice.gatt.connected) {
-            console.log(`🧹 SDK: Refreshing stale device entry for ${deviceName}`);
-            scannedDevice.gatt = undefined; // Force re-acquisition of GATT
-          }
         }
       }
 
-      let bluetoothDevice = this.scannedDevices.get(deviceName);
+      // Step 1: Get the device from registry (this is just metadata from Electron scan)
+      let registryDevice = this.scannedDevices.get(deviceName);
 
-      if (!bluetoothDevice) {
+      if (!registryDevice) {
+        // Try to find by ID as fallback
         for (const [key, device] of this.scannedDevices.entries()) {
           if (device.id === deviceId || key === deviceId) {
-            bluetoothDevice = device;
+            registryDevice = device;
             break;
           }
         }
       }
 
-      if (!bluetoothDevice) {
+      if (!registryDevice) {
         console.error(`❌ SDK: Device ${deviceName} (${deviceId}) not found in scanned devices`);
         console.error(`❌ SDK: Available devices: ${Array.from(this.scannedDevices.keys()).join(', ')}`);
-
-        // Try to add the device to the registry if it's not there
-        console.log(`❌ SDK: Attempting to add ${deviceName} to registry...`);
-        this.addScannedDevices([{ deviceId, deviceName }]);
-        bluetoothDevice = this.scannedDevices.get(deviceName);
-
-        if (!bluetoothDevice) {
-          console.error(`❌ SDK: Still cannot find device after adding to registry`);
-          return false;
-        }
+        return false;
       }
 
-      // 🔧 OPTIMIZED: Use already-discovered device from scan (no redundant requestDevice)
-      console.log(`🎯 SDK: Connecting to already-discovered device: ${deviceName}...`);
+      console.log(`📋 SDK: Found device ${deviceName} in registry`);
 
-      try {
-        let deviceToConnect = bluetoothDevice;
+      // Step 2: Find the actual Web Bluetooth device (with GATT interface)
+      let webBluetoothDevice: BluetoothDevice | null = null;
+      const targetNameLc = (deviceName || '').toLowerCase();
 
-        // If GATT is not available, try to find it in previously paired devices
-        if (!bluetoothDevice.gatt) {
-          console.log(`🔧 SDK: Device ${deviceName} has no GATT interface, looking for paired device...`);
+      if (!navigator.bluetooth) {
+        throw new Error('Web Bluetooth API not available');
+      }
 
-          try {
-            // Check if Web Bluetooth is available
-            if (!navigator.bluetooth) {
-              throw new Error('Web Bluetooth API not available');
-            }
+      // Try to find in previously paired Web Bluetooth devices
+      if (navigator.bluetooth.getDevices) {
+        const pairedDevices = await navigator.bluetooth.getDevices();
+        console.log(`🔍 SDK: Searching for ${deviceName} among ${pairedDevices.length} paired devices`);
+        console.log(`🔍 SDK: Paired device names: ${pairedDevices.map(d => d.name || 'unnamed').join(', ')}`);
 
-            // First try to find the device in already paired devices (no chooser!)
-            let foundDevice = null;
-            let pairedDevices: BluetoothDevice[] = [];
+        // Look for device by name (case-insensitive) first, then by ID
+        webBluetoothDevice = pairedDevices.find(d => {
+          const nameLc = (d.name || '').toLowerCase();
+          return nameLc === targetNameLc || d.id === deviceId || d.id === registryDevice!.id;
+        }) || null;
 
-            if (navigator.bluetooth.getDevices) {
-              pairedDevices = await navigator.bluetooth.getDevices();
-              console.log(`🔍 SDK: Searching for ${deviceName} among ${pairedDevices.length} paired devices`);
-              console.log(`🔍 SDK: Paired device names: ${pairedDevices.map(d => d.name).join(', ')}`);
+        if (webBluetoothDevice) {
+          console.log(`✅ SDK: Found ${deviceName} in previously paired devices`);
 
-              foundDevice = pairedDevices.find(d => d.name === deviceName || d.id === bluetoothDevice.id);
-
-              if (foundDevice) {
-                console.log(`✅ SDK: Found ${deviceName} in previously paired devices`);
-                deviceToConnect = foundDevice as any;
-
-                // Update the registry with the GATT-enabled device
-                this.scannedDevices.set(deviceName, foundDevice as any);
-                console.log(`🔄 SDK: Updated registry with paired device GATT interface for ${deviceName}`);
-              }
-            } else {
-              console.error(`❌ SDK: getDevices() API not available in this browser`);
-            }
-
-            // If not found in paired devices, the device needs to be paired first
-            if (!foundDevice) {
-              console.error(`❌ SDK: ${deviceName} not found in previously paired devices`);
-              console.error(`❌ SDK: Device needs to be paired through the system Bluetooth settings first`);
-              console.error(`❌ SDK: Available paired devices: ${pairedDevices.map(d => d.name || 'unnamed').join(', ')}`);
-              throw new Error(`Device ${deviceName} not found in paired devices. Please pair it through system Bluetooth settings first, then scan again.`);
-            }
-
-          } catch (gattError) {
-            const errorMessage = gattError instanceof Error ? gattError.message : String(gattError);
-            console.error(`❌ SDK: Failed to acquire GATT interface for ${deviceName}:`, gattError);
-            throw new Error(`Failed to acquire GATT interface for device ${deviceName}: ${errorMessage}`);
-          }
-        }
-
-        console.log(`✅ SDK: Using device with GATT interface for ${deviceName}`);
-        console.log(`🔗 SDK: Connecting using optimized SDK method...`);
-
-        // Use device with GATT interface
-        const connectionSuccess = await this.connectToDeviceWithTimeout(deviceToConnect as any, this.CONNECTION_TIMEOUT_MS);
-
-        if (connectionSuccess) {
-          const connectionDuration = Date.now() - connectionStartTime;
-      console.log('\n🔗 CONNECTION SUCCESS ANALYSIS:');
-      console.log(`🔗 - Connection duration: ${connectionDuration}ms`);
-      console.log(`🔗 - Method effectiveness: HIGHLY EFFECTIVE`);
-      console.log(`🔗 - Device name: "${deviceName}"`);
-      console.log(`🔗 - Connection type: SDK-based Web Bluetooth`);
-      console.log(`🔗 - Recommendation: KEEP THIS METHOD`);
-      console.log(`✅ SDK: Successfully connected to ${deviceName} using SDK commands`);
-
-          // Step 4: Verify connection by sending SDK commands
-          console.log(`🔍 SDK: Verifying connection to ${deviceName} using SDK commands...`);
-
-          // Use SDK command to get device state
-          const device = this.connectedDevices.get(deviceName);
-          if (device?.characteristics?.command) {
-            try {
-              const stateCommand = MuseCommands.Cmd_GetSystemState();
-              await device.characteristics.command.writeValue(stateCommand.buffer as ArrayBuffer);
-              console.log(`✅ SDK: State command sent successfully to ${deviceName}`);
-
-              // Get device ID using SDK command
-              const deviceIdCommand = MuseCommands.Cmd_GetDeviceID();
-              await device.characteristics.command.writeValue(deviceIdCommand.buffer as ArrayBuffer);
-              console.log(`✅ SDK: Device ID command sent successfully to ${deviceName}`);
-
-              console.log(`✅ SDK: Device ${deviceName} is TRULY connected and responding to SDK commands`);
-              return true;
-
-            } catch (cmdError) {
-              console.error(`❌ SDK: Device ${deviceName} connected but not responding to SDK commands:`, cmdError);
-              // Still return true since GATT connection succeeded
-              return true;
-            }
+          // Verify GATT interface is available
+          if (!webBluetoothDevice.gatt) {
+            console.warn(`⚠️ SDK: Found device ${deviceName} but GATT interface not available`);
+            // Even if GATT not pre-populated, connect() will create it; continue
           } else {
-            console.error(`❌ SDK: Device ${deviceName} missing command characteristics`);
-            return false;
+            console.log(`✅ SDK: Device ${deviceName} has valid GATT interface`);
           }
         } else {
-          console.error(`❌ SDK: Failed to connect to ${deviceName} using SDK connectToDevice method`);
-          return false;
+          console.log(`⚠️ SDK: Device ${deviceName} not found in paired devices`);
+          // Fail fast so UI can prompt user to pair
+          throw new Error(`Device ${deviceName} not found in paired devices`);
         }
+      } else {
+        console.warn(`⚠️ SDK: getDevices() API not available in this browser`);
+      }
 
-      } catch (error) {
-        console.error(`❌ SDK: Failed to establish SDK connection for ${deviceName}:`, error);
+      // Step 3: Attempt connection with the Web Bluetooth device (must be paired already)
+      console.log(`🔗 SDK: Connecting to Web Bluetooth device: ${deviceName}`);
 
-        // Enhanced cleanup for connection failures
-        this.connectedDevices.delete(deviceName);
-        this.batteryLevels.delete(deviceName);
+      const connectionSuccess = await this.connectToDeviceWithTimeout(webBluetoothDevice!, this.CONNECTION_TIMEOUT_MS);
 
-        // Reset device GATT interface for next attempt
-        const scannedDevice = this.scannedDevices.get(deviceName);
-        if (scannedDevice) {
-          console.log(`🔄 SDK: Resetting GATT interface for ${deviceName} to enable retry`);
-          scannedDevice.gatt = undefined;
-        }
+      if (connectionSuccess) {
+        const connectionDuration = Date.now() - connectionStartTime;
+        console.log('\n🔗 CONNECTION SUCCESS ANALYSIS:');
+        console.log(`🔗 - Connection duration: ${connectionDuration}ms`);
+        console.log(`🔗 - Method effectiveness: HIGHLY EFFECTIVE`);
+        console.log(`🔗 - Device name: "${deviceName}"`);
+        console.log(`🔗 - Connection type: Web Bluetooth with registry lookup + auto-pairing`);
+        console.log(`✅ SDK: Successfully connected to ${deviceName}`);
 
-        // Enhanced error analysis
-        if (error instanceof Error) {
-          switch (error.name) {
-            case 'NotFoundError':
-              console.error(`❌ Device not found: ${deviceName} may be out of range or turned off`);
+        // Step 5: Verify connection by sending SDK commands
+        console.log(`🔍 SDK: Verifying connection to ${deviceName} using SDK commands...`);
+
+        const actualKey = webBluetoothDevice!.name || deviceName;
+        let connectedEntry = this.connectedDevices.get(actualKey) || this.connectedDevices.get(deviceName);
+        if (!connectedEntry) {
+          // Fallback: find by device ID in case of key mismatch
+          for (const [key, entry] of this.connectedDevices.entries()) {
+            if (entry.device.id === webBluetoothDevice!.id) {
+              connectedEntry = entry;
+              console.log(`🔍 SDK: Resolved connected entry via ID under key: ${key}`);
               break;
-            case 'NetworkError':
-              console.error(`❌ Network error: Bluetooth connection issue with ${deviceName}`);
-              break;
-            case 'AbortError':
-              console.error(`❌ Connection aborted: Timeout or user cancellation for ${deviceName}`);
-              break;
-            case 'SecurityError':
-              console.error(`❌ Security error: Web Bluetooth access denied for ${deviceName}`);
-              break;
-            case 'InvalidStateError':
-              console.error(`❌ Invalid state: ${deviceName} is in an unexpected state`);
-              break;
-            default:
-              console.error(`❌ Unexpected error (${error.name}): ${error.message}`);
+            }
           }
         }
 
+        if (connectedEntry?.characteristics?.command) {
+          try {
+            const stateCommand = MuseCommands.Cmd_GetSystemState();
+            await connectedEntry.characteristics.command.writeValue(stateCommand.buffer as ArrayBuffer);
+            console.log(`✅ SDK: State command sent successfully to ${actualKey}`);
+
+            const deviceIdCommand = MuseCommands.Cmd_GetDeviceID();
+            await connectedEntry.characteristics.command.writeValue(deviceIdCommand.buffer as ArrayBuffer);
+            console.log(`✅ SDK: Device ID command sent successfully to ${actualKey}`);
+
+            console.log(`✅ SDK: Device ${actualKey} is TRULY connected and responding to SDK commands`);
+            return true;
+
+          } catch (cmdError) {
+            console.error(`❌ SDK: Device ${actualKey} connected but not responding to SDK commands:`, cmdError);
+            return true; // Still consider it connected since GATT succeeded
+          }
+        } else {
+          console.error(`❌ SDK: Device ${actualKey} missing command characteristics`);
+          return false;
+        }
+      } else {
+        console.error(`❌ SDK: Failed to connect to ${deviceName}`);
         return false;
       }
 
@@ -554,7 +505,18 @@ export class MuseManager {
       console.error(`🔗 - Error type: ${error instanceof Error ? error.name : 'Unknown'}`);
       console.error(`🔗 - Error message: ${error instanceof Error ? error.message : String(error)}`);
       console.error(`🔗 - Device availability in registry: ${this.scannedDevices.has(deviceName) ? 'PRESENT' : 'MISSING'}`);
-      console.error(`🔗 - Recommendation: CHECK DEVICE PAIRING AND POWER STATE`);
+
+      // Enhanced error guidance
+      if (error instanceof Error) {
+        if (error.message.includes('No device selected')) {
+          console.error(`🔗 - Recommendation: Retry pairing and ensure the correct device is selected`);
+        } else if (error.message.includes('Pairing failed')) {
+          console.error(`🔗 - Recommendation: Ensure Bluetooth is on and device is advertising, then retry`);
+        } else if (error.message.includes('not available')) {
+          console.error(`🔗 - Recommendation: Use a supported browser/electron version with Web Bluetooth`);
+        }
+      }
+
       console.error(`❌ SDK: Failed to connect to scanned device ${deviceName}:`, error);
       console.error('🔗 ============================================\n');
       return false;
@@ -1186,6 +1148,36 @@ export class MuseManager {
     this.scannedDevices.clear();
     
     console.log(`✅ SDK: State reset complete`);
+  }
+
+  /**
+   * Public wrapper to connect a Web Bluetooth device selected via requestDevice
+   * This allows the renderer to explicitly select a device (triggering Electron's
+   * select-bluetooth-device flow), then pass the selected device here to complete
+   * the GATT connection and SDK initialization.
+   */
+  public async connectWebBluetoothDevice(device: BluetoothDevice, timeoutMs: number = this.CONNECTION_TIMEOUT_MS): Promise<boolean> {
+    if (!device) {
+      throw new Error('No Bluetooth device provided');
+    }
+
+    // Prefer the provided device name as the key where possible
+    const deviceName = device.name || `unknown_device_${device.id}`;
+
+    // Clean up any stale entry under the same name
+    const existing = this.connectedDevices.get(deviceName);
+    if (existing?.server?.connected) {
+      console.log(`🔁 Device ${deviceName} already connected, reusing connection`);
+      return true;
+    } else if (existing) {
+      console.log(`🧹 Cleaning up stale connection for ${deviceName}`);
+      this.connectedDevices.delete(deviceName);
+      this.batteryLevels.delete(deviceName);
+    }
+
+    // Attempt connection using the same robust timeout/retry flow
+    const connected = await this.connectToDeviceWithTimeout(device, timeoutMs);
+    return connected;
   }
 }
 

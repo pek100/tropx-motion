@@ -1,10 +1,50 @@
 import * as React from 'react';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useReducer } from 'react';
 import { Play, Pause, Wifi, WifiOff, Zap, Minimize2, Maximize2, X } from 'lucide-react';
 import { MotionProcessingCoordinator } from '../../motionProcessing/MotionProcessingCoordinator';
 import { EnhancedMotionDataDisplay } from './components';
 import { museManager } from '../../muse_sdk/core/MuseManager';
 import { UnifiedBinaryProtocol } from '../shared/BinaryProtocol';
+import { WSMessage, DeviceInfo } from '../shared/types';
+
+// Constants
+const CONSTANTS = {
+  WEBSOCKET: {
+    DEFAULT_PORT: 8080,
+    RECONNECT_DELAY_BASE: 1000,
+    MAX_RECONNECT_DELAY: 10000,
+    MAX_RECONNECT_ATTEMPTS: 5,
+    CONNECTION_TIMEOUT: 120000
+  },
+  TIMEOUTS: {
+    DEVICE_SELECTION_WAIT: 500,
+    CONNECTION_CLEANUP: 1000,
+    DEVICE_DISCOVERY_TRIGGER: 1000,
+    SCAN_DURATION: 15000,
+    FINAL_RESET_WAIT: 2000,
+    FAST_CONNECTION_TIMEOUT: 5000
+  },
+  BATTERY: {
+    UPDATE_INTERVAL: 30000,
+    LOW_BATTERY_THRESHOLD: 20
+  },
+  SERVICES: {
+    TROPX_SERVICE_UUID: 'c8c0a708-e361-4b5e-a365-98fa6b0a836f'
+  },
+  UI: {
+    COLORS: {
+      PRIMARY: '#FF4D35',
+      PRIMARY_HOVER: '#e63e2b',
+      SUCCESS: 'bg-green-500',
+      WARNING: 'bg-yellow-500',
+      ERROR: 'bg-red-500',
+      STREAMING: 'bg-red-500',
+      DISCOVERED: 'bg-blue-500',
+      DISCONNECTED: 'bg-gray-400',
+      CONNECTING: 'bg-yellow-500'
+    }
+  }
+};
 
 // Create a global instance of MotionProcessingCoordinator
 let motionProcessingCoordinator: MotionProcessingCoordinator | null = null;
@@ -32,53 +72,7 @@ declare global {
   }
 }
 
-// Type definitions for Web Bluetooth API
-interface BluetoothDevice {
-  id: string;
-  name?: string;
-  gatt?: BluetoothRemoteGATTServer;
-}
-
-interface BluetoothRemoteGATTServer {
-  connected: boolean;
-  connect(): Promise<BluetoothRemoteGATTServer>;
-  disconnect(): void;
-}
-
-interface BluetoothRequestDeviceOptions {
-  filters?: Array<{ name?: string; namePrefix?: string; services?: string[] }>;
-  optionalServices?: string[];
-}
-
-interface BluetoothAPI {
-  requestDevice(options?: BluetoothRequestDeviceOptions): Promise<BluetoothDevice>;
-}
-
-declare global {
-  interface Navigator {
-    bluetooth?: BluetoothAPI;
-  }
-}
-
-interface WSMessage {
-  type: string;
-  data: any;
-  timestamp: number;
-}
-
-interface DeviceInfo {
-  id: string;
-  name: string;
-  connected: boolean;
-  batteryLevel: number | null;
-  streaming?: boolean;
-}
-
-interface MotionData {
-  left: { current: number; max: number; min: number; rom: number };
-  right: { current: number; max: number; min: number; rom: number };
-  timestamp: number;
-}
+// Remove custom Web Bluetooth declarations to avoid conflicts; use lib.dom types
 
 // Device state machine types
 type DeviceState = 'discovered' | 'connecting' | 'connected' | 'streaming' | 'disconnected' | 'error';
@@ -92,13 +86,136 @@ interface DeviceStateMachine {
   errorMessage?: string;
 }
 
+// Unified App State
+interface AppState {
+  // WebSocket
+  wsPort: number;
+  isConnected: boolean;
+  
+  // Devices - single source of truth
+  allDevices: Map<string, DeviceStateMachine>;
+  
+  // App States
+  isRecording: boolean;
+  isScanning: boolean;
+  
+  // Motion Data
+  motionData: any; // relaxed type; component handles parsing
+  status: any;
+  recordingStartTime: Date | null;
+}
+
+// Action Types
+type AppAction = 
+  | { type: 'SET_WS_PORT'; payload: number }
+  | { type: 'SET_WS_CONNECTED'; payload: boolean }
+  | { type: 'SET_DEVICE_STATE'; payload: { deviceId: string; device: DeviceStateMachine } }
+  | { type: 'UPDATE_DEVICE'; payload: { deviceId: string; updates: Partial<DeviceStateMachine> } }
+  | { type: 'REMOVE_DEVICE'; payload: string }
+  | { type: 'CLEAR_ALL_DEVICES' }
+  | { type: 'SET_SCANNING'; payload: boolean }
+  | { type: 'SET_RECORDING'; payload: { isRecording: boolean; startTime?: Date | null } }
+  | { type: 'SET_MOTION_DATA'; payload: any }
+  | { type: 'SET_STATUS'; payload: any }
+  | { type: 'TRANSITION_FROM_CONNECTING'; payload: { deviceId: string; newState: DeviceState } }
+  | { type: 'CLEAR_NON_CONNECTING_DEVICES' };
+
+// Initial State
+const initialState: AppState = {
+  wsPort: CONSTANTS.WEBSOCKET.DEFAULT_PORT,
+  isConnected: false,
+  allDevices: new Map(),
+  isRecording: false,
+  isScanning: false,
+  motionData: null,
+  status: null,
+  recordingStartTime: null
+};
+
+// App State Reducer
+function appStateReducer(state: AppState, action: AppAction): AppState {
+  switch (action.type) {
+    case 'SET_WS_PORT':
+      return { ...state, wsPort: action.payload };
+      
+    case 'SET_WS_CONNECTED':
+      return { ...state, isConnected: action.payload };
+      
+    case 'SET_DEVICE_STATE': {
+      const newDevices = new Map(state.allDevices);
+      newDevices.set(action.payload.deviceId, action.payload.device);
+      return { ...state, allDevices: newDevices };
+    }
+    
+    case 'UPDATE_DEVICE': {
+      const newDevices = new Map(state.allDevices);
+      const existing = newDevices.get(action.payload.deviceId);
+      if (existing) {
+        newDevices.set(action.payload.deviceId, { ...existing, ...action.payload.updates });
+      }
+      return { ...state, allDevices: newDevices };
+    }
+    
+    case 'REMOVE_DEVICE': {
+      const newDevices = new Map(state.allDevices);
+      newDevices.delete(action.payload);
+      return { ...state, allDevices: newDevices };
+    }
+    
+    case 'CLEAR_ALL_DEVICES':
+      return { ...state, allDevices: new Map() };
+      
+    case 'SET_SCANNING':
+      return { ...state, isScanning: action.payload };
+      
+    case 'SET_RECORDING':
+      return { 
+        ...state, 
+        isRecording: action.payload.isRecording,
+        recordingStartTime: action.payload.startTime ?? state.recordingStartTime
+      };
+      
+    case 'SET_MOTION_DATA':
+      return { ...state, motionData: action.payload };
+      
+    case 'SET_STATUS':
+      return { ...state, status: action.payload };
+      
+    case 'TRANSITION_FROM_CONNECTING': {
+      const newDevices = new Map(state.allDevices);
+      const device = newDevices.get(action.payload.deviceId);
+      if (device && device.state === 'connecting') {
+        newDevices.set(action.payload.deviceId, {
+          ...device,
+          state: action.payload.newState,
+          lastSeen: new Date()
+        });
+      }
+      return { ...state, allDevices: newDevices };
+    }
+    
+    case 'CLEAR_NON_CONNECTING_DEVICES': {
+      const newDevices = new Map();
+      state.allDevices.forEach((device, id) => {
+        // Preserve connecting, connected, and streaming devices - only remove discovered/disconnected
+        if (device.state === 'connecting' || device.state === 'connected' || device.state === 'streaming') {
+          newDevices.set(id, device);
+        }
+      });
+      return { ...state, allDevices: newDevices };
+    }
+    
+    default:
+      return state;
+  }
+}
+
 const useWebSocket = (url: string) => {
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WSMessage | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
   const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 5;
   const connectionInProgressRef = useRef(false);
 
   const connect = useCallback(() => {
@@ -177,8 +294,8 @@ const useWebSocket = (url: string) => {
         setWs(null);
         connectionInProgressRef.current = false;
 
-        if (reconnectAttemptsRef.current < maxReconnectAttempts) {
-          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 10000);
+        if (reconnectAttemptsRef.current < CONSTANTS.WEBSOCKET.MAX_RECONNECT_ATTEMPTS) {
+          const delay = Math.min(CONSTANTS.WEBSOCKET.RECONNECT_DELAY_BASE * Math.pow(2, reconnectAttemptsRef.current), CONSTANTS.WEBSOCKET.MAX_RECONNECT_DELAY);
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectAttemptsRef.current++;
             connect();
@@ -216,76 +333,29 @@ const useWebSocket = (url: string) => {
 
 // Device Management Component - Always Open
 const DeviceManagement: React.FC<{
-  devices: DeviceInfo[];
-  scannedDevices: DeviceInfo[];
+  allDevices: Map<string, DeviceStateMachine>;
   onScan: () => void;
   onCancelScan: () => void;
   onConnectDevice: (deviceId: string, deviceName: string) => void;
+  onDisconnectDevice: (deviceId: string, deviceName: string) => void;
+  onConnectAll: () => void;
   isScanning: boolean;
-  connectingDevices: Set<string>;
-  setScannedDevices: React.Dispatch<React.SetStateAction<DeviceInfo[]>>;
+  onClearDevices: () => void;
   isRecording: boolean;
-}> = ({ devices, scannedDevices, onScan, onCancelScan, onConnectDevice, isScanning, connectingDevices, setScannedDevices, isRecording }) => {
-  const [deviceStates, setDeviceStates] = useState<Map<string, DeviceStateMachine>>(new Map());
+}> = ({ allDevices, onScan, onCancelScan, onConnectDevice, onDisconnectDevice, onConnectAll, isScanning, onClearDevices, isRecording }) => {
 
-  // Update device states based on current device status
-  useEffect(() => {
-    setDeviceStates(prevStates => {
-      const newStates = new Map(prevStates);
-
-      // Process scanned devices
-      scannedDevices.forEach(device => {
-        const isConnected = museManager.isDeviceConnected(device.name);
-        const isConnecting = connectingDevices.has(device.id);
-        const isStreaming = museManager.isDeviceStreaming(device.name);
-
-        let state: DeviceState = 'discovered';
-        if (isConnecting) state = 'connecting';
-        else if (isConnected) {
-          state = isStreaming ? 'streaming' : 'connected';
-        }
-
-        newStates.set(device.id, {
-          id: device.id,
-          name: device.name,
-          state,
-          batteryLevel: device.batteryLevel,
-          lastSeen: new Date()
-        });
-      });
-
-      // Process connected devices not in scanned list
-      devices.forEach(device => {
-        if (!newStates.has(device.id)) {
-          const isConnected = museManager.isDeviceConnected(device.name);
-          const isStreaming = museManager.isDeviceStreaming(device.name);
-
-          newStates.set(device.id, {
-            id: device.id,
-            name: device.name,
-            state: isConnected ? (isStreaming ? 'streaming' : 'connected') : 'disconnected',
-            batteryLevel: device.batteryLevel,
-            lastSeen: new Date()
-          });
-        }
-      });
-
-      return newStates;
-    });
-  }, [scannedDevices, devices, connectingDevices]);
-
-  const allDevices = Array.from(deviceStates.values());
-  const connectedCount = allDevices.filter(d => d.state === 'connected' || d.state === 'streaming').length;
+  const allDevicesArray = Array.from(allDevices.values());
+  const connectedCount = allDevicesArray.filter(d => d.state === 'connected' || d.state === 'streaming').length;
 
   const getStateColor = (state: DeviceState) => {
     switch (state) {
-      case 'discovered': return 'bg-blue-500';
-      case 'connecting': return 'bg-yellow-500';
-      case 'connected': return 'bg-green-500';
-      case 'streaming': return 'bg-red-500';
-      case 'disconnected': return 'bg-gray-400';
-      case 'error': return 'bg-red-600';
-      default: return 'bg-gray-400';
+      case 'discovered': return CONSTANTS.UI.COLORS.DISCOVERED;
+      case 'connecting': return CONSTANTS.UI.COLORS.CONNECTING;
+      case 'connected': return CONSTANTS.UI.COLORS.SUCCESS;
+      case 'streaming': return CONSTANTS.UI.COLORS.STREAMING;
+      case 'disconnected': return CONSTANTS.UI.COLORS.DISCONNECTED;
+      case 'error': return CONSTANTS.UI.COLORS.ERROR;
+      default: return CONSTANTS.UI.COLORS.DISCONNECTED;
     }
   };
 
@@ -317,16 +387,16 @@ const DeviceManagement: React.FC<{
               ) : (
                 <WifiOff className="w-4 h-4 text-gray-400" />
               )}
-              <span className="text-sm font-medium">{connectedCount}/{allDevices.length}</span>
+              <span className="text-sm font-medium">{connectedCount}/{allDevicesArray.length}</span>
             </div>
             <span className={`text-xs px-2 py-1 rounded ${
-              connectedCount === allDevices.length && allDevices.length > 0
+              connectedCount === allDevicesArray.length && allDevicesArray.length > 0
                 ? 'bg-green-500 text-white'
                 : connectedCount > 0
                 ? 'bg-amber-500 text-white'
                 : 'bg-gray-200 text-gray-600'
             }`}>
-              {connectedCount === allDevices.length && allDevices.length > 0
+              {connectedCount === allDevicesArray.length && allDevicesArray.length > 0
                 ? 'All Connected'
                 : connectedCount > 0
                 ? 'Partial'
@@ -336,22 +406,25 @@ const DeviceManagement: React.FC<{
         </div>
 
         {/* Connection Progress */}
-        {allDevices.length > 0 && (
+        {allDevicesArray.length > 0 && (
           <div className="mb-4">
             <div className="flex items-center justify-between text-sm mb-2">
               <span className="text-gray-600">Connection Progress</span>
-              <span className="font-medium">{Math.round((connectedCount / allDevices.length) * 100)}%</span>
+              <span className="font-medium">{Math.round((connectedCount / allDevicesArray.length) * 100)}%</span>
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2">
               <div
-                className="bg-[#FF4D35] h-2 rounded-full transition-all duration-300"
-                style={{ width: `${(connectedCount / allDevices.length) * 100}%` }}
+                className="h-2 rounded-full transition-all duration-300"
+                style={{ 
+                  width: `${(connectedCount / allDevicesArray.length) * 100}%`,
+                  backgroundColor: CONSTANTS.UI.COLORS.PRIMARY
+                }}
               />
             </div>
           </div>
         )}
 
-        {/* Scan Button */}
+        {/* Scan and Connect All Buttons */}
         {isScanning ? (
           <div className="space-y-2">
             <div className="w-full py-3 px-4 rounded-lg bg-blue-100 text-blue-800 flex items-center justify-center gap-2">
@@ -366,31 +439,43 @@ const DeviceManagement: React.FC<{
             </button>
           </div>
         ) : (
-          <button
-            onClick={onScan}
-            className="w-full py-3 px-4 rounded-lg font-medium transition-all duration-200 bg-blue-500 hover:bg-blue-600 text-white shadow-md hover:shadow-lg"
-          >
-            {allDevices.length > 0 ? (
-              `📡 Scan for More Devices (${allDevices.length} found)`
-            ) : (
-              '📡 Scan for Devices'
+          <div className="space-y-2">
+            <button
+              onClick={onScan}
+              className="w-full py-3 px-4 rounded-lg font-medium transition-all duration-200 bg-blue-500 hover:bg-blue-600 text-white shadow-md hover:shadow-lg"
+            >
+              {allDevicesArray.length > 0 ? (
+                `📡 Scan for More Devices (${allDevicesArray.length} found)`
+              ) : (
+                '📡 Scan for Devices'
+              )}
+            </button>
+            
+            {/* Connect All Button */}
+            {allDevicesArray.filter(d => d.state === 'discovered').length > 0 && (
+              <button
+                onClick={onConnectAll}
+                className="w-full py-2 px-4 rounded-lg font-medium transition-all duration-200 bg-green-500 hover:bg-green-600 text-white shadow-md hover:shadow-lg text-sm"
+              >
+                🔗 Connect All ({allDevicesArray.filter(d => d.state === 'discovered').length} devices)
+              </button>
             )}
-          </button>
+          </div>
         )}
       </div>
 
       {/* Device List */}
       <div className="p-6">
-        {allDevices.length > 0 ? (
+        {allDevicesArray.length > 0 ? (
           <div className="space-y-3">
-            {allDevices.map((device) => {
-              const isLowBattery = device.batteryLevel !== null && device.batteryLevel !== undefined && device.batteryLevel < 20;
+            {allDevicesArray.map((device) => {
+              const isLowBattery = device.batteryLevel !== null && device.batteryLevel !== undefined && device.batteryLevel < CONSTANTS.BATTERY.LOW_BATTERY_THRESHOLD;
               const canConnect = device.state === 'discovered' || device.state === 'disconnected';
 
               return (
                 <div
                   key={device.id}
-                  data-device-item
+                  data-device-item="1"
                   className="flex items-center justify-between p-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors border"
                 >
                   <div className="flex items-center gap-3">
@@ -437,11 +522,10 @@ const DeviceManagement: React.FC<{
                       </span>
                     </div>
 
-                    {/* Connect Button */}
+                    {/* Connect/Disconnect Buttons */}
                     {canConnect && (
                       <button
                         onClick={() => {
-                          // grosdode pattern is handled in connection method
                           console.log('grosdode: Connecting to device:', device.name, device.id);
                           onConnectDevice(device.id, device.name);
                         }}
@@ -462,6 +546,19 @@ const DeviceManagement: React.FC<{
                         )}
                       </button>
                     )}
+
+                    {/* Disconnect Button */}
+                    {(device.state === 'connected' || device.state === 'streaming') && (
+                      <button
+                        onClick={() => {
+                          console.log('Disconnecting device:', device.name, device.id);
+                          onDisconnectDevice(device.id, device.name);
+                        }}
+                        className="text-sm font-medium px-4 py-2 rounded-lg transition-colors bg-gray-500 hover:bg-gray-600 text-white"
+                      >
+                        Disconnect
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -479,14 +576,10 @@ const DeviceManagement: React.FC<{
         )}
 
         {/* Clear Devices Button */}
-        {allDevices.length > 0 && (
+        {allDevicesArray.length > 0 && (
           <div className="mt-4 pt-4 border-t border-gray-200">
             <button
-              onClick={() => {
-                console.log('🗑️ Clearing all device lists');
-                setScannedDevices([]);
-                setDeviceStates(new Map());
-              }}
+              onClick={onClearDevices}
               className="w-full py-2 px-4 rounded-lg text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 transition-colors"
             >
               🗑️ Clear All Devices
@@ -607,24 +700,12 @@ const WindowControls: React.FC = () => {
 };
 
 const ElectronMotionApp: React.FC = () => {
-  const [wsPort, setWsPort] = useState<number>(8080);
-  const [devices, setDevices] = useState<DeviceInfo[]>([]);
-  const [scannedDevices, setScannedDevices] = useState<DeviceInfo[]>([]);
+  const [state, dispatch] = useReducer(appStateReducer, initialState);
   const wsRef = React.useRef<WebSocket | null>(null);
-
-  // Debug: Log when scannedDevices changes
-  useEffect(() => {
-    console.log('🔍 scannedDevices state changed:', scannedDevices.length, scannedDevices);
-  }, [scannedDevices]);
-
-  const [isRecording, setIsRecording] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
-  const [connectingDevices, setConnectingDevices] = useState<Set<string>>(new Set());
-  const [motionData, setMotionData] = useState<MotionData | null>(null);
-  const [status, setStatus] = useState<any>(null);
-  const [recordingStartTime, setRecordingStartTime] = useState<Date | null>(null);
   const batteryTimerRef = useRef<NodeJS.Timeout | null>(null);
   const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastScanTimeRef = useRef<number>(0);
+  const SCAN_COOLDOWN = 3000; // 3 seconds between scans
 
   useEffect(() => {
     console.log('🔵 RENDERER LOADED: Testing Web Bluetooth availability...');
@@ -635,20 +716,23 @@ const ElectronMotionApp: React.FC = () => {
     if (window.electronAPI) {
       window.electronAPI.motion.getWebSocketPort().then(port => {
         console.log('🌐 Got WebSocket port from main process:', port);
-        setWsPort(port);
+        dispatch({ type: 'SET_WS_PORT', payload: port });
       });
     } else {
       console.error('🌐 window.electronAPI not available');
     }
   }, []);
 
-  const { isConnected, lastMessage } = useWebSocket(`ws://localhost:${wsPort}`);
+  const { isConnected, lastMessage } = useWebSocket(`ws://localhost:${state.wsPort}`);
 
   // Store WebSocket reference
   React.useEffect(() => {
     if (isConnected) {
       // Create a new WebSocket reference for sending data
-      wsRef.current = new WebSocket(`ws://localhost:${wsPort}`);
+      wsRef.current = new WebSocket(`ws://localhost:${state.wsPort}`);
+      dispatch({ type: 'SET_WS_CONNECTED', payload: true });
+    } else {
+      dispatch({ type: 'SET_WS_CONNECTED', payload: false });
     }
     return () => {
       if (wsRef.current) {
@@ -656,54 +740,67 @@ const ElectronMotionApp: React.FC = () => {
         wsRef.current = null;
       }
     };
-  }, [isConnected, wsPort]);
+  }, [isConnected, state.wsPort]);
 
   useEffect(() => {
     if (!lastMessage) return;
 
     try {
       switch (lastMessage.type) {
-      case 'status_update':
-        setStatus(lastMessage.data);
-        setDevices(lastMessage.data.connectedDevices || []);
-        setIsRecording(lastMessage.data.isRecording || false);
+      case 'status_update': {
+        const statusData: any = lastMessage.data as any;
+        dispatch({ type: 'SET_STATUS', payload: statusData });
+        const statusDevices = statusData.connectedDevices || [];
+        statusDevices.forEach((device: DeviceInfo) => {
+          const streaming = (device as any).streaming ? true : false;
+          const deviceState: DeviceStateMachine = {
+            id: device.id,
+            name: device.name,
+            state: device.connected ? (streaming ? 'streaming' : 'connected') : 'disconnected',
+            batteryLevel: device.batteryLevel,
+            lastSeen: new Date()
+          };
+          dispatch({ type: 'SET_DEVICE_STATE', payload: { deviceId: device.id, device: deviceState } });
+        });
+        dispatch({ type: 'SET_RECORDING', payload: { isRecording: !!statusData.isRecording } });
         break;
+      }
 
-      case 'device_status':
-        const connectedDevices = lastMessage.data.connectedDevices || [];
-        setDevices(connectedDevices);
-
-        // Clear connecting state for any newly connected devices
-        setConnectingDevices(prev => {
-          const newSet = new Set(prev);
-          connectedDevices.forEach(device => {
-            if (device.connected) {
-              newSet.delete(device.id);
-            }
-          });
-          return newSet;
+      case 'device_status': {
+        const devStatusData: any = lastMessage.data as any;
+        const connectedDevices = devStatusData.connectedDevices || [];
+        connectedDevices.forEach((device: DeviceInfo) => {
+          const streaming = (device as any).streaming ? true : false;
+          const deviceState: DeviceStateMachine = {
+            id: device.id,
+            name: device.name,
+            state: device.connected ? (streaming ? 'streaming' : 'connected') : 'disconnected',
+            batteryLevel: device.batteryLevel,
+            lastSeen: new Date()
+          };
+          dispatch({ type: 'SET_DEVICE_STATE', payload: { deviceId: device.id, device: deviceState } });
+          if (device.connected) {
+            dispatch({ type: 'TRANSITION_FROM_CONNECTING', payload: { deviceId: device.id, newState: streaming ? 'streaming' : 'connected' } });
+          }
         });
         break;
+      }
 
-      case 'scan_request':
-        // grosdode pattern: Simple scan trigger
+      case 'scan_request': {
+        const scanReq: any = lastMessage.data as any;
         console.log('📨 grosdode pattern: Received scan request');
-        if (lastMessage.data.action === 'trigger_bluetooth_scan') {
+        if (scanReq.action === 'trigger_bluetooth_scan') {
           console.log('📨 grosdode: Triggering simple Web Bluetooth scan...');
-          
           (async () => {
             try {
               if (!navigator.bluetooth) {
                 console.error('❌ Web Bluetooth not available');
                 return;
               }
-
-              // Simple single Web Bluetooth call - grosdode pattern will handle device selection
               await navigator.bluetooth.requestDevice({
                 acceptAllDevices: true,
-                optionalServices: ['c8c0a708-e361-4b5e-a365-98fa6b0a836f']
+                optionalServices: [CONSTANTS.SERVICES.TROPX_SERVICE_UUID]
               });
-              
             } catch (error: any) {
               console.log('📨 grosdode: Web Bluetooth triggered, main process should handle device selection');
               console.log(`📨 Error: ${error?.name} (expected for grosdode pattern)`);
@@ -711,120 +808,70 @@ const ElectronMotionApp: React.FC = () => {
           })();
         }
         break;
+      }
 
-      case 'device_scan_result':
-        const wsTimestamp = new Date().toISOString();
-        console.log('\n📨 ===== WEBSOCKET DEVICE SCAN RESULT ANALYSIS =====');
-        console.log('📨 Timestamp:', wsTimestamp);
-        console.log('📨 Message source: WebSocket from main process');
-        console.log('📨 Pattern: grosdode device selection result');
-        
+      case 'device_scan_result': {
+        const data: any = lastMessage.data as any;
         try {
-          const data = lastMessage.data;
           const devices = data.devices || [];
-          
-          console.log('📨 WEBSOCKET RESULT ANALYSIS:');
-          console.log(`📨 - Success: ${data.success}`);
-          console.log(`📨 - Message: "${data.message}"`);
-          console.log(`📨 - Devices received: ${devices.length}`);
-          console.log(`📨 - Scan complete: ${data.scanComplete}`);
-          console.log(`📨 - Manual entry option: ${data.showManualEntry}`);
-          
+          console.log(`📡 Scan result: ${data.success ? 'SUCCESS' : 'FAILED'} - ${devices.length} device(s) found`);
           if (devices.length > 0) {
-            console.log('\n📨 DEVICE DETAILS FROM MAIN PROCESS:');
-            devices.forEach((device, index) => {
-              console.log(`📨 Device ${index + 1}:`);
-              console.log(`📨   - ID: "${device.id}"`);
-              console.log(`📨   - Name: "${device.name}"`);
-              console.log(`📨   - Connected: ${device.connected}`);
-              console.log(`📨   - Battery: ${device.batteryLevel}`);
-            });
-            
-            console.log('\n📨 SDK INTEGRATION:');
-            console.log('📨 Adding devices to muse_sdk registry...');
-            
-            // Add devices to SDK registry
-            const sdkDevices = devices.map(device => ({
-              deviceId: device.id,
-              deviceName: device.name
-            }));
-            
-            museManager.addScannedDevices(sdkDevices);
-            console.log(`📨 SDK: Added ${sdkDevices.length} devices to registry`);
-            
-            // Update UI - merge with existing devices instead of replacing
-            const newDevices = devices.map(device => ({
-              id: device.id,
-              name: device.name,
-              connected: device.connected || false,
-              batteryLevel: device.batteryLevel || null,
-              streaming: false
-            }));
-
-            setScannedDevices(prevDevices => {
-              const merged = [...prevDevices];
-              
-              // Add new devices, but preserve existing ones
-              newDevices.forEach(newDevice => {
-                const existingIndex = merged.findIndex(d => d.id === newDevice.id || d.name === newDevice.name);
-                if (existingIndex >= 0) {
-                  // Update existing device but preserve connection/streaming state
-                  merged[existingIndex] = {
-                    ...merged[existingIndex],
-                    batteryLevel: newDevice.batteryLevel || merged[existingIndex].batteryLevel,
-                    // Preserve critical states during scan updates
-                    connected: merged[existingIndex].connected || newDevice.connected,
-                    streaming: merged[existingIndex].streaming || newDevice.streaming
-                  };
-                  console.log(`📨 UI: Updated existing device: ${newDevice.name}`);
+            const newDevices = devices.filter((device: DeviceInfo) => !state.allDevices.has(device.id));
+            if (newDevices.length > 0) {
+              const sdkDevices = newDevices.map((device: DeviceInfo) => ({
+                deviceId: device.id,
+                deviceName: device.name
+              }));
+              museManager.addScannedDevices(sdkDevices);
+            }
+            devices.forEach((device: DeviceInfo) => {
+              const existingDevice = state.allDevices.get(device.id);
+              let deviceState: DeviceState = 'discovered';
+              if (existingDevice) {
+                if (existingDevice.state === 'connected' || existingDevice.state === 'streaming') {
+                  const isActuallyConnected = museManager.isDeviceConnected(device.name);
+                  const isActuallyStreaming = museManager.isDeviceStreaming(device.name);
+                  if (isActuallyStreaming) deviceState = 'streaming';
+                  else if (isActuallyConnected) deviceState = 'connected';
+                  else deviceState = 'discovered';
+                } else if (existingDevice.state === 'connecting') {
+                  deviceState = 'connecting';
                 } else {
-                  // Add new device
-                  merged.push(newDevice);
-                  console.log(`📨 UI: Added new device: ${newDevice.name}`);
+                  deviceState = 'discovered';
                 }
-              });
-              
-              return merged;
+              }
+              const newDeviceState: DeviceStateMachine = {
+                id: device.id,
+                name: device.name,
+                state: deviceState,
+                batteryLevel: device.batteryLevel || existingDevice?.batteryLevel || null,
+                lastSeen: new Date()
+              };
+              dispatch({ type: 'SET_DEVICE_STATE', payload: { deviceId: device.id, device: newDeviceState } });
+              console.log(`📱 ${existingDevice ? 'Updated' : 'Added'} device: ${device.name} (${deviceState})`);
             });
-            console.log(`📨 UI: Merged ${newDevices.length} new devices with existing devices`);
-            console.log('📨 RESULT: SUCCESS - Devices available for connection');
-            
           } else {
-            console.log('\n📨 NO DEVICES RECEIVED:');
-            console.log('📨 - This indicates the main process discovery method failed');
-            console.log('📨 - Check main process logs for select-bluetooth-device events');
-            console.log('📨 - Manual connection option should be available');
-            console.log('📨 RESULT: FAILED - No devices discovered via main process');
+            console.log('⚠️ No devices discovered - check Bluetooth settings');
           }
-            
-          // Clear scanning state
-          setIsScanning(false);
-          
-          console.log('\n📨 WEBSOCKET PROCESSING COMPLETE');
-          console.log('📨 ===============================================\n');
-
+          dispatch({ type: 'SET_SCANNING', payload: false });
         } catch (error) {
-          console.error('\n📨 ===== WEBSOCKET ERROR =====');
-          console.error('📨 Error processing device scan result:', error);
-          console.error('📨 Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
-          console.error('📨 ==========================\n');
-          setIsScanning(false);
+          console.error('❌ Error processing scan result:', error);
+          dispatch({ type: 'SET_SCANNING', payload: false });
         }
         break;
+      }
 
       case 'motion_data':
-        setMotionData(lastMessage.data);
+        dispatch({ type: 'SET_MOTION_DATA', payload: lastMessage.data as any });
         break;
 
-      case 'recording_state':
-        const newIsRecording = lastMessage.data.isRecording || false;
-        setIsRecording(newIsRecording);
-        if (newIsRecording && !recordingStartTime) {
-          setRecordingStartTime(new Date());
-        } else if (!newIsRecording) {
-          setRecordingStartTime(null);
-        }
+      case 'recording_state': {
+        const recData: any = lastMessage.data as any;
+        const newIsRecording = !!recData.isRecording;
+        const startTime = newIsRecording && !state.recordingStartTime ? new Date() : (!newIsRecording ? null : undefined);
+        dispatch({ type: 'SET_RECORDING', payload: { isRecording: newIsRecording, startTime } });
         break;
+      }
 
       default:
         console.log('📨 Unhandled message type:', lastMessage.type);
@@ -832,290 +879,180 @@ const ElectronMotionApp: React.FC = () => {
     } catch (error) {
       console.error('📨 Error processing WebSocket message:', error, lastMessage);
     }
-  }, [lastMessage, recordingStartTime]);
+  }, [lastMessage, state.recordingStartTime]);
 
   const handleScan = async () => {
-    const scanStartTime = Date.now();
-    const timestamp = new Date().toISOString();
-    console.log('\n🔍 ===== DISCOVERY METHOD TESTING SESSION =====');
-    console.log('🔍 Session start:', timestamp);
-    console.log('🔍 Platform:', navigator.platform);
-    console.log('🔍 User agent:', navigator.userAgent);
-    console.log('🔍 Testing multiple discovery methods...');
-    console.log('🔍 ============================================\n');
+    // Prevent multiple simultaneous scans
+    if (state.isScanning) {
+      console.log('⚠️ Scan already in progress, skipping...');
+      return;
+    }
+
+    // Enforce cooldown period
+    const now = Date.now();
+    if (now - lastScanTimeRef.current < SCAN_COOLDOWN) {
+      console.log(`⏳ Scan cooldown active (${Math.ceil((SCAN_COOLDOWN - (now - lastScanTimeRef.current)) / 1000)}s remaining)`);
+      return;
+    }
+
+    lastScanTimeRef.current = now;
+    console.log(`🔍 Starting device scan... (${state.allDevices.size} existing devices)`);
     
-    setIsScanning(true);
-    
-    // Simplified method tracking - keeping only effective method
-    const methodResults = {
-      method1_standard: { attempted: false, success: false, devices: 0, error: null }
-    };
+    dispatch({ type: 'SET_SCANNING', payload: true });
 
     try {
       if (!navigator.bluetooth) {
         throw new Error('Web Bluetooth not available');
       }
 
-      console.log('🔍 METHOD 1: Standard Web Bluetooth scan with service UUID');
-      console.log('🔍 - Type: acceptAllDevices with optionalServices');
-      console.log('🔍 - Service UUID: c8c0a708-e361-4b5e-a365-98fa6b0a836f');
-      
-      // Don't clear previous scan results - preserve existing devices
-      console.log(`🔍 Preserving ${scannedDevices.length} existing scanned devices`);
-      
-      // Method 1: Standard Web Bluetooth scan
-      methodResults.method1_standard.attempted = true;
-      const startTime = Date.now(); // Move startTime declaration to correct scope
-      
-      try {
-        console.log('🔍 Method 1: Executing requestDevice...');
-        
-        await navigator.bluetooth.requestDevice({
-          acceptAllDevices: true,
-          optionalServices: ['c8c0a708-e361-4b5e-a365-98fa6b0a836f'] // Tropx service UUID
-        });
-        
-        const duration = Date.now() - startTime;
-        methodResults.method1_standard.success = true;
-        console.log(`🔍 Method 1: Completed in ${duration}ms - SUCCESS`);
-        
-      } catch (error: any) {
-        const duration = Date.now() - startTime;
-        methodResults.method1_standard.error = error.name;
-        console.log(`🔍 Method 1: Completed in ${duration}ms - ${error.name}`);
-        console.log(`🔍 Method 1: Expected behavior - main process should handle device selection`);
-      }
-      
-      // REMOVED: Methods 2 & 3 based on data analysis
-      // The grosdode pattern (Method 1) is highly effective
-      // Additional methods are unnecessary and add complexity
+      // Create a timeout promise to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Scan timeout')), 5000);
+      });
 
+      // Race between Bluetooth scan and timeout
+      await Promise.race([
+        navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [CONSTANTS.SERVICES.TROPX_SERVICE_UUID]
+        }),
+        timeoutPromise
+      ]);
+      
+      console.log('✅ Scan request completed - main process will handle device selection');
+      
     } catch (error: any) {
-      console.error('🔍 Scan error:', error);
-      setIsScanning(false);
+      console.log(`🔍 Scan trigger: ${error.name} (expected for grosdode pattern)`);
+      
+      // Handle timeout specifically
+      if (error.message === 'Scan timeout') {
+        console.log('⏰ Scan timed out - this may be normal for auto-scans');
+        dispatch({ type: 'SET_SCANNING', payload: false });
+        return;
+      }
       
       // Show user-friendly message for Windows Bluetooth issues
       const isWindowsBluetoothIssue = error?.name === 'NotFoundError' || 
                                       error?.name === 'NotAllowedError' || 
-                                      error?.message?.includes('chooser');
+                                      error?.name === 'SecurityError' ||
+                                      error?.message?.includes('chooser') ||
+                                      error?.message?.includes('user gesture');
       
-      if (isWindowsBluetoothIssue) {
-        console.log('🔍 Detected Windows Bluetooth limitation - offering manual connection');
-        // Don't show error alert - this is expected behavior
-      } else {
+      if (!isWindowsBluetoothIssue) {
+        console.error('❌ Unexpected scan error:', error);
+        dispatch({ type: 'SET_SCANNING', payload: false });
         alert(`Scan error: ${error?.message || 'Unknown error'}`);
+        return;
       }
     }
     
-    // Set timeout with comprehensive method analysis
+    // Timeout to stop scanning if no results
     setTimeout(() => {
-      const totalDuration = Date.now() - scanStartTime;
-      
-      console.log('\n🔍 ===== DISCOVERY METHOD ANALYSIS COMPLETE =====');
-      console.log(`🔍 Total scan duration: ${totalDuration}ms`);
-      console.log(`🔍 Session end: ${new Date().toISOString()}`);
-      console.log('\n🔍 OPTIMIZED DISCOVERY ANALYSIS:');
-      console.log(`🔍 - Method used: grosdode pattern (data-driven decision)`);
-      console.log(`🔍 - Method 1 attempted: ${methodResults.method1_standard.attempted}`);
-      console.log(`🔍 - Method 1 success: ${methodResults.method1_standard.success}`);
-      console.log(`🔍 - Platform compatibility: EXCELLENT (based on real device testing)`);
-      console.log(`🔍 - Unused methods removed: 2 (methods 2 & 3 were ineffective)`);
-      console.log('\n🔍 NOTE: Check main process logs for actual device discovery results');
-      console.log('🔍 =================================================\n');
-      
-      setIsScanning(false);
-    }, 15000);
+      dispatch({ type: 'SET_SCANNING', payload: false });
+    }, CONSTANTS.TIMEOUTS.SCAN_DURATION);
   };
 
-  // Fallback method for direct Web Bluetooth scanning (used only when main process fails)
-  const handleDirectBluetoothScan = async () => {
-    try {
-      console.log('🔍 Fallback: Direct Web Bluetooth scan...');
-      
-      // Use Web Bluetooth API to scan for devices (fallback only)
-      const device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: ['c8c0a708-e361-4b5e-a365-98fa6b0a836f'] // Tropx service UUID
-      });
-
-      if (device) {
-        console.log('✅ Fallback device found:', device.name, device.id);
-
-        // Validate device name immediately
-        const deviceName = device.name || '';
-        const isValidTropxDevice = deviceName.toLowerCase().includes('tropx') &&
-                                 (deviceName.includes('_ln_') || deviceName.includes('_rn_') ||
-                                  device.name.includes('ln_') || device.name.includes('rn_'));
-
-        if (!isValidTropxDevice) {
-          console.warn('❌ Invalid device name pattern, skipping:', deviceName);
-          return;
-        }
-
-        const deviceInfo = {
-          id: device.id,
-          name: deviceName,
-          connected: false,
-          batteryLevel: null,
-          streaming: false
-        };
-
-        console.log('✅ Valid Tropx device found via fallback:', deviceInfo);
-
-        // Add device to scanned list
-        setScannedDevices(prev => {
-          const existingById = prev.find(d => d.id === device.id);
-          const existingByName = prev.find(d => d.name === deviceName);
-
-          if (existingById || existingByName) {
-            console.log(`🔍 Device already in list: ${deviceName}`);
-            return prev;
-          } else {
-            console.log('🔍 Adding fallback device to UI:', deviceInfo);
-
-            // Add device to MuseManager registry
-            museManager.addScannedDevices([{
-              deviceId: device.id,
-              deviceName: deviceName
-            }]);
-
-            // Store in SDK
-            const deviceKey = device.name || device.id;
-            museManager.getScannedDevices().set(deviceKey, device);
-
-            return [...prev, deviceInfo];
-          }
-        });
-
-        console.log('✅ Fallback device added successfully');
-      }
-
-    } catch (scanError) {
-      console.error('🔍 Fallback scan error:', scanError);
-
-      if (scanError.name === 'NotFoundError') {
-        console.log('🔍 No device selected or user cancelled');
-      } else if (scanError.name === 'NotAllowedError') {
-        console.log('🔍 User denied Bluetooth access');
-      } else if (scanError.name === 'InvalidStateError') {
-        console.log('🔍 Bluetooth adapter not available');
-      }
-    }
-  };
+  // Removed handleDirectBluetoothScan - only using Method 1 (grosdode pattern)
 
   const handleConnectDevice = async (deviceId: string, deviceName: string) => {
     console.log('🔗 grosdode + SDK: Starting connection flow for:', deviceName, deviceId);
 
     // Safety check: Prevent multiple simultaneous connection attempts
-    if (connectingDevices.has(deviceId)) {
+    const currentDevice = state.allDevices.get(deviceId);
+    if (currentDevice?.state === 'connecting') {
       console.log('⚠️ Connection already in progress for device:', deviceName);
       return;
     }
 
-    // Add device to connecting set to show loading state
-    setConnectingDevices(prev => new Set(prev).add(deviceId));
+    // Set device to connecting state
+    dispatch({ type: 'UPDATE_DEVICE', payload: { deviceId, updates: { state: 'connecting' } } });
 
     try {
-      console.log('🔗 Step 1: Selecting device via grosdode pattern...');
+      console.log('🔗 Step 1: Acquire Web Bluetooth device via programmatic selection...');
 
-      // Step 1: Select device via grosdode pattern (IPC to main process)
+      if (!navigator.bluetooth) {
+        throw new Error('Web Bluetooth not available');
+      }
+
+      // Kick off requestDevice FIRST to trigger select-bluetooth-device event in main
+      const requestPromise = navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [CONSTANTS.SERVICES.TROPX_SERVICE_UUID]
+      });
+
+      // Immediately instruct main process to select our target deviceId
       try {
-        const selectionResult = await window.electronAPI?.bluetooth?.selectDevice(deviceId);
-        console.log('🔗 Device selection result:', selectionResult);
+        await window.electronAPI?.bluetooth?.selectDevice(deviceId);
       } catch (selectionError) {
         console.warn('🔗 Device selection warning (may be normal):', selectionError);
       }
 
-      console.log('🔗 Step 2: Connecting via SDK after selection...');
+      // Await the actual BluetoothDevice returned from requestDevice
+      let webBtDevice: any = null;
+      try {
+        webBtDevice = await requestPromise as any;
+        console.log('🔗 Web Bluetooth device acquired:', webBtDevice?.name, webBtDevice?.id);
+      } catch (reqErr: any) {
+        console.error('❌ requestDevice failed:', reqErr?.name || reqErr);
+        // Fallbacks will handle pairing status below
+      }
 
-      // Step 2: Wait a moment for device selection to process
-      await new Promise(resolve => setTimeout(resolve, 500));
+      console.log('🔗 Step 2: Connecting via SDK...');
 
-      // Step 3: Use SDK to connect to the device
-      console.log('🔗 Step 3: Using muse_sdk for actual connection...');
-
-      // Check if device is already connected and clean up if needed
+      // If device already connected, clean up first
       if (museManager.isDeviceConnected(deviceName)) {
         console.log('🔗 Device already connected, cleaning up first...');
         await museManager.disconnectDevice(deviceName);
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for cleanup
+        await new Promise(resolve => setTimeout(resolve, CONSTANTS.TIMEOUTS.CONNECTION_CLEANUP));
       }
 
-      // Try optimized connection with fast reconnection + fallback
       let connected = false;
 
-      try {
-        // First attempt: Fast reconnection using getDevices()
-        console.log(`\n🚀 ===== STARTING FAST RECONNECTION =====`);
-        console.log(`🚀 Target device: ${deviceName} (${deviceId})`);
-        console.log(`🚀 Current device registry size: ${museManager.getConnectedDeviceCount()}`);
-        console.log(`🚀 Device currently connected: ${museManager.isDeviceConnected(deviceName)}`);
-
-        const previousDevices = await museManager.reconnectToPreviousDevices();
-        console.log(`🚀 Previous devices found: ${previousDevices.length}`);
-
-        const targetDevice = previousDevices.find(d => {
-          const nameMatch = d.name === deviceName;
-          const idMatch = d.id === deviceId;
-          console.log(`🚀   Checking device: ${d.name} (${d.id}) - Name match: ${nameMatch}, ID match: ${idMatch}`);
-          return nameMatch || idMatch;
-        });
-
-        if (targetDevice) {
-          console.log(`✅ Target device found in previous devices: ${targetDevice.name}`);
-          console.log(`🚀 Attempting connection with 5s timeout...`);
-
-          connected = await museManager.connectToDeviceWithTimeout(targetDevice, 5000);
-
-          if (connected) {
-            console.log(`✅ Fast reconnection successful for ${deviceName}`);
-          } else {
-            console.log(`❌ Fast reconnection failed for ${deviceName}`);
-          }
-        } else {
-          console.log(`❌ Target device not found in previous devices`);
+      // Preferred: If we obtained a Web Bluetooth device from requestDevice, connect with it directly
+      if (webBtDevice) {
+        try {
+          connected = await museManager.connectWebBluetoothDevice(webBtDevice, CONSTANTS.TIMEOUTS.FAST_CONNECTION_TIMEOUT);
+          console.log(`${connected ? '✅' : '❌'} Direct SDK connection via Web Bluetooth ${connected ? 'successful' : 'failed'}`);
+        } catch (directErr) {
+          console.warn('⚠️ Direct SDK connection via Web Bluetooth failed, will try fallbacks:', directErr);
         }
-
-        console.log(`🚀 =====================================\n`);
-
-      } catch (reconnectError) {
-        console.warn(`\n❌ FAST RECONNECTION ERROR:`);
-        console.warn(`❌ Device: ${deviceName}`);
-        console.warn(`❌ Error:`, reconnectError);
-        console.warn(`❌ Falling back to standard connection...\n`);
       }
 
-      // Fallback: Standard SDK connection with device cleanup
+      // Fallback 1: Fast reconnection using previously authorized devices
       if (!connected) {
-        console.log(`\n🔗 ===== STANDARD SDK CONNECTION =====`);
-        console.log(`🔗 Fast reconnection failed, trying fresh connection for ${deviceName}...`);
-        console.log(`🔗 Device ID: ${deviceId}`);
-        console.log(`🔗 Current connection state: ${museManager.isDeviceConnected(deviceName)}`);
+        try {
+          const previousDevices = await museManager.reconnectToPreviousDevices();
+          const targetDevice = previousDevices.find(d => d.name === deviceName || d.id === deviceId);
+          if (targetDevice) {
+            console.log(`🚀 Attempting fast reconnection to ${deviceName}...`);
+            connected = await museManager.connectWebBluetoothDevice(targetDevice as any, CONSTANTS.TIMEOUTS.FAST_CONNECTION_TIMEOUT);
+            console.log(`${connected ? '✅' : '❌'} Fast reconnection ${connected ? 'successful' : 'failed'}`);
+          }
+        } catch (reconnectError) {
+          console.log('⚠️ Fast reconnection failed:', reconnectError);
+        }
+      }
+
+      // Fallback 2: Standard SDK connection via registry + getDevices
+      if (!connected) {
+        console.log(`🔗 Trying standard SDK connection for ${deviceName}...`);
 
         // Clear any stale device state that might interfere
         if (museManager.isDeviceConnected(deviceName)) {
-          console.log(`🧹 Cleaning up stale connection before retry...`);
           await museManager.disconnectDevice(deviceName);
-          console.log(`🧹 Disconnection completed, waiting 1s for cleanup...`);
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for cleanup
+          await new Promise(resolve => setTimeout(resolve, CONSTANTS.TIMEOUTS.CONNECTION_CLEANUP));
         }
 
-        console.log(`🔗 Attempting SDK connection...`);
         connected = await museManager.connectToScannedDevice(deviceId, deviceName);
-        console.log(`🔗 SDK connection result: ${connected}`);
-        console.log(`🔗 ===================================\n`);
+        console.log(`${connected ? '✅' : '❌'} Standard SDK connection ${connected ? 'successful' : 'failed'}`);
       }
 
       if (connected) {
         console.log('✅ SDK connection established for:', deviceName);
 
-        // 🔵 Trigger device discovery pattern after successful connection
-        console.log('🔵 [ElectronMotionApp] Triggering device discovery pattern after successful connection...');
+        // Trigger device discovery after successful connection
         setTimeout(async () => {
           try {
-            console.log('🔵 Sending WebSocket message to trigger device discovery...');
-
-            // Send WebSocket message to main process to trigger device discovery
             if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({
                 type: 'trigger_device_discovery',
@@ -1127,54 +1064,20 @@ const ElectronMotionApp: React.FC = () => {
                 },
                 timestamp: Date.now()
               }));
-              console.log('🔵 Device discovery trigger message sent via WebSocket');
-            } else {
-              console.warn('⚠️ WebSocket not available for device discovery trigger');
+              console.log('🔄 Triggered post-connection device discovery');
             }
           } catch (error: any) {
-            console.error('❌ Failed to trigger device discovery pattern:', error);
+            console.error('❌ Failed to trigger device discovery:', error);
           }
-        }, 1000); // 1 second delay to ensure connection is fully established
+        }, CONSTANTS.TIMEOUTS.DEVICE_DISCOVERY_TRIGGER);
 
         // Update battery levels
         await museManager.updateBatteryLevel(deviceName);
         const batteryLevel = museManager.getBatteryLevel(deviceName);
 
-        // Update both scanned devices and main devices with connection state
-        setScannedDevices(prev => prev.map(device =>
-          device.id === deviceId
-            ? {
-                ...device,
-                connected: true,
-                streaming: false,
-                batteryLevel: batteryLevel
-              }
-            : device
-        ));
-
-        setDevices(prev => {
-          const existingDevice = prev.find(d => d.id === deviceId);
-          if (existingDevice) {
-            return prev.map(d =>
-              d.id === deviceId
-                ? {
-                    ...d,
-                    connected: true,
-                    streaming: false,
-                    batteryLevel: batteryLevel
-                  }
-                : d
-            );
-          } else {
-            return [...prev, {
-              id: deviceId,
-              name: deviceName,
-              connected: true,
-              batteryLevel: batteryLevel,
-              streaming: false
-            }];
-          }
-        });
+        // Update unified device state with successful connection
+        dispatch({ type: 'TRANSITION_FROM_CONNECTING', payload: { deviceId, newState: 'connected' } });
+        dispatch({ type: 'UPDATE_DEVICE', payload: { deviceId, updates: { batteryLevel } } });
 
         console.log('✅ SDK connection completed with battery info');
 
@@ -1182,40 +1085,29 @@ const ElectronMotionApp: React.FC = () => {
         startBatteryUpdateTimer();
 
       } else {
-        console.log(`\n💥 ===== FINAL ATTEMPT WITH FULL RESET =====`);
-        console.log(`💥 Both optimized and standard connections failed for ${deviceName}`);
-        console.log(`💥 Attempting nuclear reset and final connection attempt...`);
+        console.log(`💥 Attempting final connection with full reset for ${deviceName}...`);
 
         try {
           // Nuclear option: clear all device state
           await museManager.forceResetAllDeviceState();
+          await new Promise(resolve => setTimeout(resolve, CONSTANTS.TIMEOUTS.FINAL_RESET_WAIT));
 
-          // Wait a moment for cleanup
-          await new Promise(resolve => setTimeout(resolve, 2000));
-
-          // Need to re-add the device to scanned devices since we cleared everything
+          // Re-add the device to scanned devices since we cleared everything
           museManager.addScannedDevices([{
             deviceId: deviceId,
             deviceName: deviceName
           }]);
 
-          console.log(`💥 Final attempt: SDK connection after full reset...`);
           const finalConnected = await museManager.connectToScannedDevice(deviceId, deviceName);
-
           if (finalConnected) {
             console.log(`✅ Final attempt successful for ${deviceName}`);
-            connected = true;
           } else {
-            console.log(`❌ Final attempt also failed for ${deviceName}`);
             throw new Error(`All connection attempts failed for ${deviceName}`);
           }
 
         } catch (finalError) {
-          console.error(`❌ Final connection attempt failed:`, finalError);
-          throw new Error(`Both optimized reconnection and SDK connection failed, final attempt also failed: ${finalError instanceof Error ? finalError.message : finalError}`);
+          throw new Error(`All connection attempts failed: ${finalError instanceof Error ? finalError.message : finalError}`);
         }
-
-        console.log(`💥 =======================================\n`);
       }
 
     } catch (error) {
@@ -1265,13 +1157,14 @@ const ElectronMotionApp: React.FC = () => {
         alert(`Failed to connect to ${deviceName}. Please try again.`);
       }
     } finally {
-      // Always remove device from connecting set
-      setConnectingDevices(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(deviceId);
-        return newSet;
-      });
+      // Always reset device from connecting state if not actually connected
+      const isConnectedNow = museManager.isDeviceConnected(deviceName);
+      if (!isConnectedNow) {
+        dispatch({ type: 'UPDATE_DEVICE', payload: { deviceId, updates: { state: 'discovered' } } });
+      }
       console.log('🔗 Connection attempt completed for:', deviceName);
+      
+      // Auto-scan removed - was causing issues and not working properly
     }
   };
 
@@ -1282,29 +1175,28 @@ const ElectronMotionApp: React.FC = () => {
       clearInterval(batteryTimerRef.current);
     }
 
-    // Update battery levels every 30 seconds for connected devices
+    // Update battery levels periodically for connected devices
     batteryTimerRef.current = setInterval(async () => {
       try {
         await museManager.updateAllBatteryLevels();
         const allBatteryLevels = museManager.getAllBatteryLevels();
 
-        // Update UI with new battery levels
-        setScannedDevices(prev => prev.map(device => {
-          const newLevel = allBatteryLevels.get(device.name);
-          return newLevel !== undefined ? { ...device, batteryLevel: newLevel } : device;
-        }));
+        // Update unified device state with new battery levels
+        allBatteryLevels.forEach((batteryLevel, deviceName) => {
+          // Find device by name and update its battery level
+          const deviceEntry = Array.from(state.allDevices.entries()).find(([_, device]) => device.name === deviceName);
+          if (deviceEntry) {
+            const [deviceId] = deviceEntry;
+            dispatch({ type: 'UPDATE_DEVICE', payload: { deviceId, updates: { batteryLevel } } });
+          }
+        });
 
-        setDevices(prev => prev.map(device => {
-          const newLevel = allBatteryLevels.get(device.name);
-          return newLevel !== undefined ? { ...device, batteryLevel: newLevel } : device;
-        }));
-
-        console.log('🔋 Battery levels updated for UI');
+        console.log(`🔋 Updated battery levels for ${allBatteryLevels.size} devices`);
 
       } catch (error) {
         console.error('❌ Battery update timer error:', error);
       }
-    }, 30000); // 30 seconds
+    }, CONSTANTS.BATTERY.UPDATE_INTERVAL);
 
     console.log('✅ Battery update timer started');
   };
@@ -1320,7 +1212,7 @@ const ElectronMotionApp: React.FC = () => {
     }
     
     // Set scanning to false
-    setIsScanning(false);
+    dispatch({ type: 'SET_SCANNING', payload: false });
     
     // Try to cancel scan in main process if possible
     // Note: This is a nice-to-have since the main process has its own timeout
@@ -1334,9 +1226,9 @@ const ElectronMotionApp: React.FC = () => {
   const handleRecording = async () => {
     try {
       const currentStreamingState = museManager.getIsStreaming();
-      console.log(`🎬 RECORDING STATE CHANGE: isRecording=${isRecording}, SDK streaming=${currentStreamingState}`);
+      console.log(`🎬 RECORDING STATE CHANGE: isRecording=${state.isRecording}, SDK streaming=${currentStreamingState}`);
 
-      if (isRecording) {
+      if (state.isRecording) {
         // Stop recording and streaming
         console.log('🛑 Stopping recording and real quaternion streaming...');
 
@@ -1362,17 +1254,14 @@ const ElectronMotionApp: React.FC = () => {
         }
 
         // Update recording state immediately
-        setIsRecording(false);
-        setRecordingStartTime(null);
+        dispatch({ type: 'SET_RECORDING', payload: { isRecording: false, startTime: null } });
 
-        // Update devices to stop streaming state
-        setDevices(prev => prev.map(device =>
-          ({ ...device, streaming: false })
-        ));
-
-        setScannedDevices(prev => prev.map(device =>
-          ({ ...device, streaming: false })
-        ));
+        // Update all devices to stop streaming state
+        state.allDevices.forEach((device, deviceId) => {
+          if (device.state === 'streaming') {
+            dispatch({ type: 'UPDATE_DEVICE', payload: { deviceId, updates: { state: 'connected' } } });
+          }
+        });
 
         console.log('✅ Recording and streaming stopped successfully');
 
@@ -1448,22 +1337,18 @@ const ElectronMotionApp: React.FC = () => {
           console.log('✅ SDK quaternion streaming started successfully');
 
           // Update recording state immediately
-          setIsRecording(true);
-          setRecordingStartTime(new Date());
+          dispatch({ type: 'SET_RECORDING', payload: { isRecording: true, startTime: new Date() } });
 
           // Update devices to show streaming state - only for devices that are actually streaming
           const streamingDeviceNames = museManager.getStreamingDeviceNames();
           console.log('📡 Devices now streaming:', streamingDeviceNames);
           
-          setDevices(prev => prev.map(device => ({
-            ...device,
-            streaming: streamingDeviceNames.includes(device.name)
-          })));
-
-          setScannedDevices(prev => prev.map(device => ({
-            ...device,
-            streaming: streamingDeviceNames.includes(device.name)
-          })));
+          // Update unified device state for streaming devices
+          state.allDevices.forEach((device, deviceId) => {
+            if (streamingDeviceNames.includes(device.name) && device.state === 'connected') {
+              dispatch({ type: 'UPDATE_DEVICE', payload: { deviceId, updates: { state: 'streaming' } } });
+            }
+          });
 
           // 4. Start recording in main process (for storage/backup)
           if (window.electronAPI) {
@@ -1482,8 +1367,7 @@ const ElectronMotionApp: React.FC = () => {
           }
 
           // Ensure recording state remains false on failure
-          setIsRecording(false);
-          setRecordingStartTime(null);
+          dispatch({ type: 'SET_RECORDING', payload: { isRecording: false, startTime: null } });
           
           alert('Failed to start quaternion streaming. Please check device connections.');
         }
@@ -1492,8 +1376,7 @@ const ElectronMotionApp: React.FC = () => {
       console.error('❌ Recording error:', error);
       
       // Ensure clean state on error
-      setIsRecording(false);
-      setRecordingStartTime(null);
+      dispatch({ type: 'SET_RECORDING', payload: { isRecording: false, startTime: null } });
       
       // Stop any partial streaming that might have started
       try {
@@ -1507,7 +1390,7 @@ const ElectronMotionApp: React.FC = () => {
   };
 
 
-  const connectedCount = devices.filter(d => d.connected).length;
+  const connectedCount = Array.from(state.allDevices.values()).filter(d => d.state === 'connected' || d.state === 'streaming').length;
 
   // Cleanup effect
   useEffect(() => {
@@ -1531,11 +1414,59 @@ const ElectronMotionApp: React.FC = () => {
     };
   }, []);
 
+  // Helper function to clear all devices
+  const handleClearDevices = () => {
+    console.log('🗑️ Clearing all device lists');
+    dispatch({ type: 'CLEAR_ALL_DEVICES' });
+  };
+
+  // Function to disconnect a device
+  const handleDisconnectDevice = async (deviceId: string, deviceName: string) => {
+    console.log('🔌 Disconnecting device:', deviceName, deviceId);
+    
+    try {
+      // Disconnect via SDK
+      await museManager.disconnectDevice(deviceName);
+      
+      // Update device state
+      dispatch({ type: 'UPDATE_DEVICE', payload: { deviceId, updates: { state: 'discovered' } } });
+      
+      console.log('✅ Device disconnected successfully:', deviceName);
+    } catch (error) {
+      console.error('❌ Failed to disconnect device:', error);
+      alert(`Failed to disconnect ${deviceName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  // Function to connect all discovered devices
+  const handleConnectAll = async () => {
+    const discoveredDevices = Array.from(state.allDevices.values()).filter(d => d.state === 'discovered');
+    if (discoveredDevices.length === 0) {
+      alert('No devices available to connect');
+      return;
+    }
+    console.log(`🔗 Connecting to ${discoveredDevices.length} devices...`);
+    // Connect sequentially to avoid concurrent Web Bluetooth chooser conflicts
+    for (const device of discoveredDevices) {
+      // Update UI state to connecting
+      dispatch({ type: 'UPDATE_DEVICE', payload: { deviceId: device.id, updates: { state: 'connecting' } } });
+      try {
+        await handleConnectDevice(device.id, device.name);
+      } catch (error) {
+        console.error(`❌ Connection failed for ${device.name}:`, error);
+      }
+    }
+    console.log('✅ All connection attempts completed');
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between drag-region">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-[#FF4D35] rounded-lg flex items-center justify-center">
+          <div 
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ backgroundColor: CONSTANTS.UI.COLORS.PRIMARY }}
+          >
             <Wifi className="w-4 h-4 text-white" />
           </div>
           <h1 className="text-lg font-semibold text-gray-900">Motion Capture</h1>
@@ -1543,8 +1474,8 @@ const ElectronMotionApp: React.FC = () => {
 
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 text-sm text-gray-600">
-            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-            {isConnected ? 'Connected' : 'Disconnected'}
+            <div className={`w-2 h-2 rounded-full ${state.isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            {state.isConnected ? 'Connected' : 'Disconnected'}
           </div>
           <WindowControls />
         </div>
@@ -1553,40 +1484,40 @@ const ElectronMotionApp: React.FC = () => {
       <div className="p-6 max-w-4xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
           <DeviceManagement
-            devices={devices}
-            scannedDevices={scannedDevices}
+            allDevices={state.allDevices}
             onScan={handleScan}
             onCancelScan={cancelScan}
             onConnectDevice={handleConnectDevice}
-            isScanning={isScanning}
-            connectingDevices={connectingDevices}
-            setScannedDevices={setScannedDevices}
-            isRecording={isRecording}
+            onDisconnectDevice={handleDisconnectDevice}
+            onConnectAll={handleConnectAll}
+            isScanning={state.isScanning}
+            onClearDevices={handleClearDevices}
+            isRecording={state.isRecording}
           />
 
           <RecordingControl
-            isRecording={isRecording}
+            isRecording={state.isRecording}
             onStartStop={handleRecording}
             connectedDevices={connectedCount}
           />
         </div>
 
         <EnhancedMotionDataDisplay
-          data={motionData}
-          isRecording={isRecording}
-          recordingStartTime={recordingStartTime}
+          data={state.motionData}
+          isRecording={state.isRecording}
+          recordingStartTime={state.recordingStartTime}
         />
 
         <div className="mt-6 bg-white rounded-xl shadow-lg p-4 border border-gray-200">
           <div className="flex items-center justify-between text-sm text-gray-600">
             <div>
-              Status: <span className="font-medium">{status?.isInitialized ? 'Ready' : 'Initializing'}</span>
+              Status: <span className="font-medium">{state.status?.isInitialized ? 'Ready' : 'Initializing'}</span>
             </div>
             <div>
-              WebSocket: <span className="font-medium">{isConnected ? 'Connected' : 'Disconnected'}</span>
+              WebSocket: <span className="font-medium">{state.isConnected ? 'Connected' : 'Disconnected'}</span>
             </div>
             <div>
-              Clients: <span className="font-medium">{status?.clientCount || 0}</span>
+              Clients: <span className="font-medium">{state.status?.clientCount || 0}</span>
             </div>
           </div>
         </div>
