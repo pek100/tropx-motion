@@ -91,14 +91,14 @@ interface AppState {
   // WebSocket
   wsPort: number;
   isConnected: boolean;
-  
+
   // Devices - single source of truth
   allDevices: Map<string, DeviceStateMachine>;
-  
+
   // App States
   isRecording: boolean;
   isScanning: boolean;
-  
+
   // Motion Data
   motionData: any; // relaxed type; component handles parsing
   status: any;
@@ -106,7 +106,7 @@ interface AppState {
 }
 
 // Action Types
-type AppAction = 
+type AppAction =
   | { type: 'SET_WS_PORT'; payload: number }
   | { type: 'SET_WS_CONNECTED'; payload: boolean }
   | { type: 'SET_DEVICE_STATE'; payload: { deviceId: string; device: DeviceStateMachine } }
@@ -137,16 +137,16 @@ function appStateReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'SET_WS_PORT':
       return { ...state, wsPort: action.payload };
-      
+
     case 'SET_WS_CONNECTED':
       return { ...state, isConnected: action.payload };
-      
+
     case 'SET_DEVICE_STATE': {
       const newDevices = new Map(state.allDevices);
       newDevices.set(action.payload.deviceId, action.payload.device);
       return { ...state, allDevices: newDevices };
     }
-    
+
     case 'UPDATE_DEVICE': {
       const newDevices = new Map(state.allDevices);
       const existing = newDevices.get(action.payload.deviceId);
@@ -155,32 +155,32 @@ function appStateReducer(state: AppState, action: AppAction): AppState {
       }
       return { ...state, allDevices: newDevices };
     }
-    
+
     case 'REMOVE_DEVICE': {
       const newDevices = new Map(state.allDevices);
       newDevices.delete(action.payload);
       return { ...state, allDevices: newDevices };
     }
-    
+
     case 'CLEAR_ALL_DEVICES':
       return { ...state, allDevices: new Map() };
-      
+
     case 'SET_SCANNING':
       return { ...state, isScanning: action.payload };
-      
+
     case 'SET_RECORDING':
-      return { 
-        ...state, 
+      return {
+        ...state,
         isRecording: action.payload.isRecording,
         recordingStartTime: action.payload.startTime ?? state.recordingStartTime
       };
-      
+
     case 'SET_MOTION_DATA':
       return { ...state, motionData: action.payload };
-      
+
     case 'SET_STATUS':
       return { ...state, status: action.payload };
-      
+
     case 'TRANSITION_FROM_CONNECTING': {
       const newDevices = new Map(state.allDevices);
       const device = newDevices.get(action.payload.deviceId);
@@ -193,7 +193,7 @@ function appStateReducer(state: AppState, action: AppAction): AppState {
       }
       return { ...state, allDevices: newDevices };
     }
-    
+
     case 'CLEAR_NON_CONNECTING_DEVICES': {
       const newDevices = new Map();
       state.allDevices.forEach((device, id) => {
@@ -204,7 +204,7 @@ function appStateReducer(state: AppState, action: AppAction): AppState {
       });
       return { ...state, allDevices: newDevices };
     }
-    
+
     default:
       return state;
   }
@@ -228,6 +228,8 @@ const useWebSocket = (url: string) => {
       connectionInProgressRef.current = true;
       console.log('🔌 Attempting WebSocket connection to:', url);
       const websocket = new WebSocket(url);
+      // Prefer ArrayBuffer for binary frames to reduce overhead
+      try { (websocket as any).binaryType = 'arraybuffer'; } catch {}
 
       websocket.onopen = () => {
         console.log('🔌 WebSocket connected to:', url);
@@ -246,7 +248,7 @@ const useWebSocket = (url: string) => {
           if (event.data instanceof Blob) {
             const arrayBuffer = await event.data.arrayBuffer();
             const parsedMessage = UnifiedBinaryProtocol.deserialize(arrayBuffer);
-            
+
             if (parsedMessage) {
               message = {
                 type: parsedMessage.type as any,
@@ -260,7 +262,7 @@ const useWebSocket = (url: string) => {
           } else if (event.data instanceof ArrayBuffer) {
             // Handle direct ArrayBuffer
             const parsedMessage = UnifiedBinaryProtocol.deserialize(event.data);
-            
+
             if (parsedMessage) {
               message = {
                 type: parsedMessage.type as any,
@@ -283,7 +285,7 @@ const useWebSocket = (url: string) => {
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);
           console.error('Message data type:', typeof event.data);
-          console.error('Message data preview:', event.data instanceof ArrayBuffer ? 
+          console.error('Message data preview:', event.data instanceof ArrayBuffer ?
             `ArrayBuffer(${event.data.byteLength} bytes)` : event.data);
         }
       };
@@ -415,7 +417,7 @@ const DeviceManagement: React.FC<{
             <div className="w-full bg-gray-200 rounded-full h-2">
               <div
                 className="h-2 rounded-full transition-all duration-300"
-                style={{ 
+                style={{
                   width: `${(connectedCount / allDevicesArray.length) * 100}%`,
                   backgroundColor: CONSTANTS.UI.COLORS.PRIMARY
                 }}
@@ -450,7 +452,7 @@ const DeviceManagement: React.FC<{
                 '📡 Scan for Devices'
               )}
             </button>
-            
+
             {/* Connect All Button */}
             {allDevicesArray.filter(d => d.state === 'discovered').length > 0 && (
               <button
@@ -897,7 +899,7 @@ const ElectronMotionApp: React.FC = () => {
 
     lastScanTimeRef.current = now;
     console.log(`🔍 Starting device scan... (${state.allDevices.size} existing devices)`);
-    
+
     dispatch({ type: 'SET_SCANNING', payload: true });
 
     try {
@@ -918,26 +920,26 @@ const ElectronMotionApp: React.FC = () => {
         }),
         timeoutPromise
       ]);
-      
+
       console.log('✅ Scan request completed - main process will handle device selection');
-      
+
     } catch (error: any) {
       console.log(`🔍 Scan trigger: ${error.name} (expected for grosdode pattern)`);
-      
+
       // Handle timeout specifically
       if (error.message === 'Scan timeout') {
         console.log('⏰ Scan timed out - this may be normal for auto-scans');
         dispatch({ type: 'SET_SCANNING', payload: false });
         return;
       }
-      
+
       // Show user-friendly message for Windows Bluetooth issues
-      const isWindowsBluetoothIssue = error?.name === 'NotFoundError' || 
-                                      error?.name === 'NotAllowedError' || 
+      const isWindowsBluetoothIssue = error?.name === 'NotFoundError' ||
+                                      error?.name === 'NotAllowedError' ||
                                       error?.name === 'SecurityError' ||
                                       error?.message?.includes('chooser') ||
                                       error?.message?.includes('user gesture');
-      
+
       if (!isWindowsBluetoothIssue) {
         console.error('❌ Unexpected scan error:', error);
         dispatch({ type: 'SET_SCANNING', payload: false });
@@ -945,7 +947,7 @@ const ElectronMotionApp: React.FC = () => {
         return;
       }
     }
-    
+
     // Timeout to stop scanning if no results
     setTimeout(() => {
       dispatch({ type: 'SET_SCANNING', payload: false });
@@ -1119,7 +1121,7 @@ const ElectronMotionApp: React.FC = () => {
       } catch (cleanupError) {
         console.warn('⚠️ Cleanup error:', cleanupError);
       }
-      
+
       // More specific error handling
       if (error instanceof Error) {
         if (error.message.includes('not found in paired devices')) {
@@ -1163,7 +1165,7 @@ const ElectronMotionApp: React.FC = () => {
         dispatch({ type: 'UPDATE_DEVICE', payload: { deviceId, updates: { state: 'discovered' } } });
       }
       console.log('🔗 Connection attempt completed for:', deviceName);
-      
+
       // Auto-scan removed - was causing issues and not working properly
     }
   };
@@ -1204,16 +1206,16 @@ const ElectronMotionApp: React.FC = () => {
   // Cancel current scan
   const cancelScan = () => {
     console.log('🚫 Canceling current scan...');
-    
+
     // Clear scan timeout
     if (scanTimeoutRef.current) {
       clearTimeout(scanTimeoutRef.current);
       scanTimeoutRef.current = null;
     }
-    
+
     // Set scanning to false
     dispatch({ type: 'SET_SCANNING', payload: false });
-    
+
     // Try to cancel scan in main process if possible
     // Note: This is a nice-to-have since the main process has its own timeout
     console.log('🚫 Scan canceled by user');
@@ -1342,7 +1344,7 @@ const ElectronMotionApp: React.FC = () => {
           // Update devices to show streaming state - only for devices that are actually streaming
           const streamingDeviceNames = museManager.getStreamingDeviceNames();
           console.log('📡 Devices now streaming:', streamingDeviceNames);
-          
+
           // Update unified device state for streaming devices
           state.allDevices.forEach((device, deviceId) => {
             if (streamingDeviceNames.includes(device.name) && device.state === 'connected') {
@@ -1368,23 +1370,23 @@ const ElectronMotionApp: React.FC = () => {
 
           // Ensure recording state remains false on failure
           dispatch({ type: 'SET_RECORDING', payload: { isRecording: false, startTime: null } });
-          
+
           alert('Failed to start quaternion streaming. Please check device connections.');
         }
       }
     } catch (error) {
       console.error('❌ Recording error:', error);
-      
+
       // Ensure clean state on error
       dispatch({ type: 'SET_RECORDING', payload: { isRecording: false, startTime: null } });
-      
+
       // Stop any partial streaming that might have started
       try {
         await museManager.stopStreaming();
       } catch (stopError) {
         console.warn('⚠️ Error stopping streaming during cleanup:', stopError);
       }
-      
+
       alert(`Recording error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
@@ -1403,7 +1405,7 @@ const ElectronMotionApp: React.FC = () => {
       if (scanTimeoutRef.current) {
         clearTimeout(scanTimeoutRef.current);
       }
-      
+
       // Stop streaming if active on component unmount
       if (museManager.getIsStreaming()) {
         console.log('🧹 Component unmounting, stopping active streaming...');
@@ -1423,14 +1425,14 @@ const ElectronMotionApp: React.FC = () => {
   // Function to disconnect a device
   const handleDisconnectDevice = async (deviceId: string, deviceName: string) => {
     console.log('🔌 Disconnecting device:', deviceName, deviceId);
-    
+
     try {
       // Disconnect via SDK
       await museManager.disconnectDevice(deviceName);
-      
+
       // Update device state
       dispatch({ type: 'UPDATE_DEVICE', payload: { deviceId, updates: { state: 'discovered' } } });
-      
+
       console.log('✅ Device disconnected successfully:', deviceName);
     } catch (error) {
       console.error('❌ Failed to disconnect device:', error);
@@ -1463,7 +1465,7 @@ const ElectronMotionApp: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between drag-region">
         <div className="flex items-center gap-3">
-          <div 
+          <div
             className="w-8 h-8 rounded-lg flex items-center justify-center"
             style={{ backgroundColor: CONSTANTS.UI.COLORS.PRIMARY }}
           >

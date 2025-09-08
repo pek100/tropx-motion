@@ -1,4 +1,5 @@
 import { MotionDataUpdate } from '../../shared/types';
+import { MESSAGE_TYPES } from '../../shared/config';
 
 interface BatchedMessage {
   type: string;
@@ -9,7 +10,6 @@ interface BatchedMessage {
 export class StreamBatcher {
   private motionDataQueue: MotionDataUpdate[] = [];
   private batchTimer: NodeJS.Timeout | null = null;
-  private lastFlush = 0;
   private subscribers = new Set<(messages: BatchedMessage[]) => void>();
 
   constructor(
@@ -47,32 +47,21 @@ export class StreamBatcher {
     }
 
     const now = Date.now();
-    
-    // Skip if we just flushed recently (prevent excessive flushing)
-    if (now - this.lastFlush < this.batchInterval / 2) {
-      this.scheduleBatchFlush();
-      return;
-    }
-
     const messages: BatchedMessage[] = [];
 
     // Batch motion data - send only the latest data to prevent flooding
     if (this.motionDataQueue.length > 0) {
-      // For motion data, we only need the most recent value
       const latestMotionData = this.motionDataQueue[this.motionDataQueue.length - 1];
       messages.push({
-        type: 'motion_data',
+        type: MESSAGE_TYPES.MOTION_DATA,
         data: latestMotionData,
         timestamp: now
       });
-      
       this.motionDataQueue = [];
     }
 
-    // Send batched messages to subscribers
     if (messages.length > 0) {
       this.notifySubscribers(messages);
-      this.lastFlush = now;
     }
   }
 
