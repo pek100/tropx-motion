@@ -182,23 +182,20 @@ export class UnifiedBinaryProtocol {
     }
   }
 
-  // Motion data serialization (24 bytes)
+  // Motion data serialization (24 bytes) - Optimized with Float32Array
   private static serializeMotionData(data: any): Buffer {
-    const buffer = Buffer.allocUnsafe(24);
-    let offset = 0;
-
-    // Left knee (12 bytes)
-    buffer.writeFloatLE(data.left?.current || 0, offset);
-    buffer.writeFloatLE(data.left?.max || 0, offset + 4);
-    buffer.writeFloatLE(data.left?.min || 0, offset + 8);
-    offset += 12;
-
-    // Right knee (12 bytes)
-    buffer.writeFloatLE(data.right?.current || 0, offset);
-    buffer.writeFloatLE(data.right?.max || 0, offset + 4);
-    buffer.writeFloatLE(data.right?.min || 0, offset + 8);
-
-    return buffer;
+    // Use Float32Array for optimal performance - single allocation and copy
+    const floatArray = new Float32Array([
+      data.left?.current || 0,
+      data.left?.max || 0, 
+      data.left?.min || 0,
+      data.right?.current || 0,
+      data.right?.max || 0,
+      data.right?.min || 0
+    ]);
+    
+    // Convert Float32Array buffer to Node.js Buffer
+    return Buffer.from(floatArray.buffer);
   }
 
   // Motion data deserialization
