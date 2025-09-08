@@ -1,6 +1,8 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { CONFIG, MESSAGE_TYPES, ERROR_CODES } from '../../shared/config';
 import { WSMessage, ClientMessage, ErrorMessage } from '../../shared/types';
+import { UnifiedBinaryProtocol } from '../../shared/BinaryProtocol';
+import { StreamBatcher } from './StreamBatcher';
 
 export class WebSocketService {
   private server: WebSocketServer | null = null;
@@ -8,10 +10,15 @@ export class WebSocketService {
   private port: number = CONFIG.WEBSOCKET.DEFAULT_PORT;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private messageHandlers = new Map<string, (data: unknown, clientId: string) => void>();
+  private streamBatcher!: StreamBatcher;
+  
+  // Performance optimization: pre-allocated buffers
+  private messageBuffer = new Map<string, Buffer>();
 
   async initialize(): Promise<void> {
     this.port = await this.findAvailablePort();
     await this.createServer();
+    this.initializeBatcher();
     this.startHeartbeat();
   }
 
@@ -20,11 +27,60 @@ export class WebSocketService {
     this.messageHandlers.set(type, handler);
   }
 
-  // Broadcast message to all connected clients
+  // Broadcast message to all connected clients using unified binary protocol
   broadcast(message: WSMessage): void {
     if (this.clients.size === 0) return;
 
-    const data = JSON.stringify(message);
+    try {
+      // Use unified binary protocol for ALL messages
+      const binaryData = UnifiedBinaryProtocol.serialize(
+        message.type,
+        message.data,
+        message.timestamp
+      );
+      
+      this.broadcastBinary(binaryData);
+    } catch (error) {
+      console.error('Failed to serialize message to binary:', error);
+      // Fallback to JSON if binary serialization fails
+      this.broadcastJSON(message);
+    }
+  }
+
+  // High-performance binary broadcasting
+  private broadcastBinary(data: Buffer): void {
+    this.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        try {
+          client.send(data);
+        } catch (error) {
+          console.error('Failed to send binary data to client:', error);
+          this.clients.delete(client);
+        }
+      } else {
+        this.clients.delete(client);
+      }
+    });
+  }
+
+  // Standard JSON broadcasting with serialization optimization
+  private broadcastJSON(message: WSMessage): void {
+    const messageKey = `${message.type}_${Date.now()}`;
+    let data = this.messageBuffer.get(messageKey);
+    
+    if (!data) {
+      const jsonString = JSON.stringify(message);
+      data = Buffer.from(jsonString, 'utf8');
+      this.messageBuffer.set(messageKey, data);
+      
+      // Clean old buffers to prevent memory leaks
+      if (this.messageBuffer.size > CONFIG.WEBSOCKET.BUFFER_CLEANUP_THRESHOLD) {
+        const keys = Array.from(this.messageBuffer.keys());
+        keys.slice(0, Math.floor(CONFIG.WEBSOCKET.BUFFER_CLEANUP_THRESHOLD / 2))
+           .forEach(key => this.messageBuffer.delete(key));
+      }
+    }
+
     this.clients.forEach(client => {
       if (client.readyState === WebSocket.OPEN) {
         try {
@@ -39,15 +95,28 @@ export class WebSocketService {
     });
   }
 
-  // Send message to specific client
+  // Send message to specific client using unified binary protocol
   sendToClient(client: WebSocket, message: WSMessage): void {
     if (client.readyState !== WebSocket.OPEN) return;
 
     try {
-      client.send(JSON.stringify(message));
+      // Use unified binary protocol for ALL messages
+      const binaryData = UnifiedBinaryProtocol.serialize(
+        message.type,
+        message.data,
+        message.timestamp
+      );
+      
+      client.send(binaryData);
     } catch (error) {
-      console.error('Failed to send message to client:', error);
-      this.clients.delete(client);
+      console.error('Failed to send binary message to client:', error);
+      // Fallback to JSON if binary serialization fails
+      try {
+        client.send(JSON.stringify(message));
+      } catch (fallbackError) {
+        console.error('Failed to send fallback JSON message:', fallbackError);
+        this.clients.delete(client);
+      }
     }
   }
 
@@ -65,6 +134,10 @@ export class WebSocketService {
       this.heartbeatInterval = null;
     }
 
+    if (this.streamBatcher) {
+      this.streamBatcher.cleanup();
+    }
+
     this.clients.forEach(client => client.close());
     this.clients.clear();
 
@@ -74,6 +147,7 @@ export class WebSocketService {
     }
 
     this.messageHandlers.clear();
+    this.messageBuffer.clear();
   }
 
   // Find available port starting from default
@@ -100,12 +174,36 @@ export class WebSocketService {
     throw new Error(`No available ports found starting from ${CONFIG.WEBSOCKET.DEFAULT_PORT}`);
   }
 
-  // Create and configure WebSocket server
+  // Initialize stream batcher for performance optimization
+  private initializeBatcher(): void {
+    this.streamBatcher = new StreamBatcher(
+      CONFIG.WEBSOCKET.BATCH_INTERVAL, 
+      CONFIG.WEBSOCKET.MAX_BATCH_SIZE
+    );
+    
+    // Subscribe to batched messages
+    this.streamBatcher.subscribe((messages) => {
+      messages.forEach(message => {
+        this.broadcastJSON({
+          type: message.type as any,
+          data: message.data,
+          timestamp: message.timestamp
+        });
+      });
+    });
+  }
+
+  // Create and configure WebSocket server with performance optimizations
   private async createServer(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.server = new WebSocketServer({
         port: this.port,
-        perMessageDeflate: false,
+        perMessageDeflate: !CONFIG.WEBSOCKET.DISABLE_COMPRESSION,
+        maxPayload: CONFIG.WEBSOCKET.MAX_PAYLOAD_SIZE,
+        backlog: CONFIG.WEBSOCKET.CONNECTION_BACKLOG,
+        // Disable client verification for speed
+        handleProtocols: () => false, // No subprotocol handling for speed
+        clientTracking: true, // Enable client tracking
       });
 
       this.server.on('listening', () => {

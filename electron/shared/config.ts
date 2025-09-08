@@ -1,6 +1,6 @@
 // Core application configuration constants
 export const CONFIG = {
-  // WebSocket Configuration
+  // WebSocket Configuration - Optimized for performance
   WEBSOCKET: {
     DEFAULT_PORT: 8080,
     PORT_SCAN_RANGE: 10,
@@ -9,6 +9,18 @@ export const CONFIG = {
     RECONNECT_BASE_DELAY: 1000,
     RECONNECT_MAX_DELAY: 10000,
     CONNECTION_TIMEOUT: 5000,
+    
+    // Performance optimizations
+    MAX_PAYLOAD_SIZE: 100 * 1024, // 100KB
+    CONNECTION_BACKLOG: 511,
+    DISABLE_COMPRESSION: true, // Better latency for real-time data
+    BATCH_INTERVAL: 16, // ~60fps batching (16ms)
+    MAX_BATCH_SIZE: 10,
+    BUFFER_CLEANUP_THRESHOLD: 50,
+    
+    // Binary protocol settings
+    BINARY_MESSAGE_SIZE: 32,
+    USE_BINARY_FOR_MOTION: true,
   },
 
   // Bluetooth Configuration

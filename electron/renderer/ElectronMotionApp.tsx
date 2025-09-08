@@ -4,6 +4,7 @@ import { Play, Pause, Wifi, WifiOff, Zap, Minimize2, Maximize2, X } from 'lucide
 import { MotionProcessingCoordinator } from '../../motionProcessing/MotionProcessingCoordinator';
 import { EnhancedMotionDataDisplay } from './components';
 import { museManager } from '../../muse_sdk/core/MuseManager';
+import { UnifiedBinaryProtocol } from '../shared/BinaryProtocol';
 
 // Create a global instance of MotionProcessingCoordinator
 let motionProcessingCoordinator: MotionProcessingCoordinator | null = null;
@@ -120,12 +121,53 @@ const useWebSocket = (url: string) => {
         websocket.send(JSON.stringify({ type: 'request_status' }));
       };
 
-      websocket.onmessage = (event) => {
+      websocket.onmessage = async (event) => {
         try {
-          const message: WSMessage = JSON.parse(event.data);
+          let message: WSMessage;
+
+          // Handle binary data using unified binary protocol
+          if (event.data instanceof Blob) {
+            const arrayBuffer = await event.data.arrayBuffer();
+            const parsedMessage = UnifiedBinaryProtocol.deserialize(arrayBuffer);
+            
+            if (parsedMessage) {
+              message = {
+                type: parsedMessage.type as any,
+                data: parsedMessage.data,
+                timestamp: parsedMessage.timestamp
+              };
+            } else {
+              console.warn('Failed to parse binary message');
+              return;
+            }
+          } else if (event.data instanceof ArrayBuffer) {
+            // Handle direct ArrayBuffer
+            const parsedMessage = UnifiedBinaryProtocol.deserialize(event.data);
+            
+            if (parsedMessage) {
+              message = {
+                type: parsedMessage.type as any,
+                data: parsedMessage.data,
+                timestamp: parsedMessage.timestamp
+              };
+            } else {
+              console.warn('Failed to parse ArrayBuffer message');
+              return;
+            }
+          } else if (typeof event.data === 'string') {
+            // Fallback: Handle JSON data for backward compatibility
+            message = JSON.parse(event.data);
+          } else {
+            console.warn('Received unknown message format:', typeof event.data);
+            return;
+          }
+
           setLastMessage(message);
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);
+          console.error('Message data type:', typeof event.data);
+          console.error('Message data preview:', event.data instanceof ArrayBuffer ? 
+            `ArrayBuffer(${event.data.byteLength} bytes)` : event.data);
         }
       };
 

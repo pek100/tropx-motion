@@ -121,5 +121,9 @@
   },
   "electronDownload": {
     "cache": "./electron-cache"
+  },
+  "optionalDependencies": {
+    "bufferutil": "^4.0.9",
+    "utf-8-validate": "^6.0.5"
   }
 }

@@ -3,6 +3,7 @@ import { IMUData } from './MuseData';
 import { MuseDataParser } from './MuseDataParser';
 import { MuseHardware } from './MuseHardware';
 import { MuseCommands } from './Commands';
+import { GATTOperationQueue } from './GATTOperationQueue';
 
 // Extended Bluetooth Web API types to include newer methods
 interface RequestDeviceOptions {
@@ -78,6 +79,9 @@ export class MuseManager {
   
   // GATT operation queuing (Web Bluetooth best practice)
   private gattOperationQueue = new Map<string, Promise<any>>();
+  private gattQueue = GATTOperationQueue.getInstance();
+  private lastBatteryUpdate = new Map<string, number>();
+  private readonly BATTERY_UPDATE_INTERVAL = 30000; // 30 seconds minimum between battery reads
   
   // Connection timeouts (1.2s recommended by Web Bluetooth spec)
   private readonly CONNECTION_TIMEOUT_MS = 10000; // 10s for initial connection
@@ -813,17 +817,21 @@ export class MuseManager {
           continue;
         }
 
-        const recordingPromise = (async () => {
-          try {
+        const recordingPromise = this.gattQueue.queueOperation(
+          deviceName,
+          'start_recording',
+          async () => {
             const startRecordCommand = MuseCommands.Cmd_StartRecording();
             await device.characteristics!.command.writeValue(startRecordCommand.buffer as ArrayBuffer);
             console.log(`✅ Start recording command sent to ${deviceName}`);
             return true;
-          } catch (error) {
-            console.error(`❌ Failed to send start recording command to ${deviceName}:`, error);
-            return false;
-          }
-        })();
+          },
+          10, // HIGH priority - recording commands are critical
+          5000 // 5s timeout
+        ).catch(error => {
+          console.error(`❌ Failed to send start recording command to ${deviceName}:`, error);
+          return false;
+        });
 
         recordingPromises.push(recordingPromise);
       }
@@ -858,17 +866,21 @@ export class MuseManager {
           continue;
         }
 
-        const recordingPromise = (async () => {
-          try {
+        const recordingPromise = this.gattQueue.queueOperation(
+          deviceName,
+          'stop_recording',
+          async () => {
             const stopRecordCommand = MuseCommands.Cmd_StopRecording();
             await device.characteristics!.command.writeValue(stopRecordCommand.buffer as ArrayBuffer);
             console.log(`✅ Stop recording command sent to ${deviceName}`);
             return true;
-          } catch (error) {
-            console.error(`❌ Failed to send stop recording command to ${deviceName}:`, error);
-            return false;
-          }
-        })();
+          },
+          10, // HIGH priority - recording commands are critical
+          5000 // 5s timeout
+        ).catch(error => {
+          console.error(`❌ Failed to send stop recording command to ${deviceName}:`, error);
+          return false;
+        });
 
         recordingPromises.push(recordingPromise);
       }
@@ -885,54 +897,77 @@ export class MuseManager {
     }
   }
 
-  // Update battery level with proper SDK command
+  // Update battery level with proper SDK command (throttled to prevent GATT conflicts)
   async updateBatteryLevel(deviceName: string): Promise<void> {
+    const now = Date.now();
+    const lastUpdate = this.lastBatteryUpdate.get(deviceName) || 0;
+    
+    // Throttle battery reads to prevent GATT conflicts
+    if (now - lastUpdate < this.BATTERY_UPDATE_INTERVAL) {
+      return; // Skip if updated recently
+    }
+
     const device = this.connectedDevices.get(deviceName);
     if (!device?.characteristics?.command) {
-      console.log(`🔋 No command characteristic for ${deviceName}`);
       return;
     }
 
     try {
-      console.log(`🔋 Requesting battery level for ${deviceName}...`);
-      
-      // Use queued GATT operations to prevent conflicts
-      await this.executeGattOperationWithTimeout(deviceName, async () => {
-        const batteryCommand = MuseCommands.Cmd_GetBatteryCharge();
-        await device.characteristics!.command.writeValue(batteryCommand.buffer as ArrayBuffer);
-        
-        // Wait for response
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
-        const response = await device.characteristics!.command.readValue();
-        console.log(`🔋 Battery response for ${deviceName}:`, new Uint8Array(response.buffer));
-        
-        const batteryLevel = response.getUint8(4);
-        
-        this.batteryLevels.set(deviceName, batteryLevel);
-        this.notifyBatteryUpdateListeners();
-        
-        console.log(`🔋 Battery level for ${deviceName}: ${batteryLevel}%`);
-        
-        return batteryLevel;
-      });
+      // Use GATT queue with LOW priority for battery reads (priority = 1)
+      await this.gattQueue.queueOperation(
+        deviceName,
+        'battery_read',
+        async () => {
+          const batteryCommand = MuseCommands.Cmd_GetBatteryCharge();
+          await device.characteristics!.command.writeValue(batteryCommand.buffer as ArrayBuffer);
+          
+          // Wait for response
+          await new Promise(resolve => setTimeout(resolve, 300));
+          
+          const response = await device.characteristics!.command.readValue();
+          const batteryLevel = response.getUint8(4);
+          
+          this.batteryLevels.set(deviceName, batteryLevel);
+          this.lastBatteryUpdate.set(deviceName, now);
+          this.notifyBatteryUpdateListeners();
+          
+          return batteryLevel;
+        },
+        1, // LOW priority - don't interfere with recording commands
+        3000 // 3s timeout
+      );
       
     } catch (error) {
-      console.error(`🔋 Battery level read error for ${deviceName}:`, error);
+      // Only log non-timeout errors to reduce noise
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('timeout') && !errorMessage.includes('cancelled')) {
+        console.warn(`🔋 Battery read skipped for ${deviceName}:`, errorMessage);
+      }
     }
   }
 
-  // Force battery level update for all connected devices
+  // Force battery level update for all connected devices (throttled)
   async updateAllBatteryLevels(): Promise<void> {
-    console.log('🔋 Manually updating battery levels for all connected devices...');
+    // Only update if we have connected devices
+    if (this.connectedDevices.size === 0) return;
+
     const updatePromises: Promise<void>[] = [];
+    let updateCount = 0;
 
     this.connectedDevices.forEach((device, deviceName) => {
-      updatePromises.push(this.updateBatteryLevel(deviceName));
+      const now = Date.now();
+      const lastUpdate = this.lastBatteryUpdate.get(deviceName) || 0;
+      
+      // Only update if enough time has passed
+      if (now - lastUpdate >= this.BATTERY_UPDATE_INTERVAL) {
+        updatePromises.push(this.updateBatteryLevel(deviceName));
+        updateCount++;
+      }
     });
 
-    await Promise.all(updatePromises);
-    console.log('🔋 Battery update complete for all devices');
+    if (updateCount > 0) {
+      await Promise.all(updatePromises);
+    }
   }
 
   // Update battery level with proper SDK command
