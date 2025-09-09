@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import KneeAreaChart from './KneeAreaChart';
+import { LineChart } from 'lucide-react';
 
 interface KneeData {
   current: number;
@@ -166,7 +167,9 @@ const EnhancedMotionDataDisplay: React.FC<EnhancedMotionDataDisplayProps> = ({
             </div>
           ) : (
             <div className="text-center text-gray-500 py-12">
-              <div className="text-6xl mb-4">📊</div>
+              <div className="flex justify-center">
+                <LineChart size={86} className="text-[#FF4D35] mb-6" />
+              </div>
               <div className="text-lg font-medium mb-2">No Motion Data</div>
               <div className="text-sm text-gray-400">Connect devices and start recording to see real-time knee angle analysis</div>
             </div>

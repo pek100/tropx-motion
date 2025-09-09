@@ -102,7 +102,7 @@ export class MainProcess {
     if (isDev) {
       console.log('Loading development URL:', url);
       this.mainWindow.loadURL(url);
-      this.mainWindow.webContents.openDevTools();
+      // Dev tools can still be opened with Ctrl+Shift+I if needed
     } else {
       console.log('Loading production file');
       this.mainWindow.loadFile(url);
