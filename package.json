@@ -14,12 +14,15 @@
     "build:renderer": "vite build",
     "electron": "electron .",
     "electron:dev": "NODE_ENV=development electron .",
-    "package": "npm run build && electron-builder",
-    "package:win": "npm run build && electron-builder --win",
+    "package": "electron-forge package",
+    "package:win": "npm run build && electron-builder --win nsis",
+    "package:win:portable": "npm run build && electron-builder --win portable",
     "package:mac": "npm run build && electron-builder --mac",
     "package:linux": "npm run build && electron-builder --linux",
     "clean": "rimraf dist build",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "start": "electron-forge start",
+    "make": "electron-forge make"
   },
   "keywords": [
     "electron",
@@ -29,9 +32,17 @@
     "imu",
     "sensors"
   ],
-  "author": "Motion Capture Team",
+  "author": "TropX",
   "license": "MIT",
   "devDependencies": {
+    "@electron-forge/cli": "^7.8.3",
+    "@electron-forge/maker-deb": "^7.8.3",
+    "@electron-forge/maker-rpm": "^7.8.3",
+    "@electron-forge/maker-squirrel": "^7.8.3",
+    "@electron-forge/maker-zip": "^7.8.3",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.8.3",
+    "@electron-forge/plugin-fuses": "^7.8.3",
+    "@electron/fuses": "^1.8.0",
     "@types/node": "^20.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
@@ -41,9 +52,12 @@
     "autoprefixer": "^10.4.0",
     "concurrently": "^8.0.0",
     "electron": "^30.0.0",
-    "electron-builder": "^24.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-icon-builder": "^2.0.1",
+    "png2icons": "^2.0.1",
     "postcss": "^8.4.0",
     "rimraf": "^5.0.0",
+    "sharp": "^0.34.3",
     "tailwindcss": "^3.3.0",
     "tsc-watch": "^6.0.0",
     "typescript": "^5.0.0",
@@ -75,15 +89,22 @@
     "ws": "^8.14.0"
   },
   "build": {
-    "appId": "com.motioncapture.electron",
-    "productName": "Motion Capture",
+    "appId": "com.tropx.motion",
+    "productName": "TropX Motion",
+    "icon": "assets/icon.png",
     "directories": {
       "output": "build",
       "buildResources": "assets"
     },
     "files": [
       "dist/**/*",
-      "node_modules/**/*"
+      "package.json",
+      "node_modules/**/*",
+      "!node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!node_modules/*.d.ts",
+      "!node_modules/.bin",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rcs,swp,dSYM,DS_Store}"
     ],
     "extraFiles": [
       {
@@ -110,6 +131,10 @@
       "gatekeeperAssess": false
     },
     "win": {
+      "icon": "assets/icon.png",
+      "sign": null,
+      "certificateFile": null,
+      "certificatePassword": null,
       "target": [
         {
           "target": "nsis",
@@ -118,6 +143,18 @@
           ]
         }
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.png",
+      "uninstallerIcon": "assets/icon.png",
+      "installerHeader": "assets/icon.png",
+      "installerSidebar": "assets/icon.png",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TropX Motion"
     },
     "linux": {
       "target": [
@@ -130,10 +167,13 @@
       ],
       "category": "Science"
     },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/native-*/**",
+      "**/node_modules/bufferutil/**",
+      "**/node_modules/utf-8-validate/**"
+    ],
+    "compression": "store"
   },
   "electronDownload": {
     "cache": "./electron-cache"

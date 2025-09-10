@@ -42,3 +42,4 @@ electron-cache/
 # Temporary files
 *.tmp
 *.temp
+out/

@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol } from 'electron';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
 import { MotionService } from './services/MotionService';
 import { BluetoothService } from './services/BluetoothService';
 import { isDev } from './utils/environment';
@@ -14,7 +15,13 @@ export class MainProcess {
   constructor() {
     this.motionService = new MotionService();
     this.bluetoothService = new BluetoothService();
-    
+
+    // Optional safe mode: disable GPU if env var is set
+    if (process.env.TROPX_DISABLE_GPU === '1') {
+      console.log('TROPX_DISABLE_GPU=1 -> Disabling hardware acceleration');
+      app.disableHardwareAcceleration();
+    }
+
     this.enableWebBluetoothFeatures();
     this.setupAppEvents();
     this.setupIpcHandlers();
@@ -23,7 +30,12 @@ export class MainProcess {
   // Enable Web Bluetooth API features
   private enableWebBluetoothFeatures(): void {
     console.log('Enabling Web Bluetooth features...');
-    
+
+    if (process.env.TROPX_SAFE_MODE === '1') {
+      console.log('TROPX_SAFE_MODE=1 -> Skipping all Chromium feature flags');
+      return;
+    }
+
     const flags = [
       'enable-experimental-web-platform-features',
       'enable-web-bluetooth',
@@ -34,7 +46,6 @@ export class MainProcess {
       'enable-bluetooth-advertising',
       'enable-bluetooth-device-discovery',
       'disable-web-security',
-      'disable-features=VizDisplayCompositor',
       'autoplay-policy=no-user-gesture-required'
     ];
 
@@ -53,6 +64,7 @@ export class MainProcess {
   private setupAppEvents(): void {
     app.whenReady().then(() => {
       console.log('Electron app ready, initializing...');
+      this.registerAppProtocol();
       this.createMainWindow();
       this.initializeServices();
       this.setupPermissionHandlers();
@@ -77,8 +89,68 @@ export class MainProcess {
     });
   }
 
+  private registerAppProtocol(): void {
+    const root = app.getAppPath();
+    const rendererDir = path.join(root, 'dist', 'renderer');
+    protocol.registerFileProtocol('app', (request, callback) => {
+      try {
+        const urlPath = new URL(request.url).pathname || '/index.html';
+        const target = path.normalize(path.join(rendererDir, decodeURIComponent(urlPath.replace(/^\//, ''))));
+        if (!target.startsWith(rendererDir)) return callback({ error: -3 }); // ABORT
+        callback({ path: target });
+      } catch (e) {
+        console.error('app:// protocol error', e);
+        callback({ error: -2 }); // FAILED
+      }
+    });
+  }
+
+  private resolveRendererIndex(): string | null {
+    const candidates = [
+      path.join(app.getAppPath(), 'dist', 'renderer', 'index.html'),
+      path.join(process.resourcesPath, 'app.asar', 'dist', 'renderer', 'index.html'),
+      path.join(process.resourcesPath, 'app', 'dist', 'renderer', 'index.html'),
+      path.join(__dirname, '../renderer/index.html'),
+      path.join(__dirname, '../../renderer/index.html'),
+    ];
+    const fs = require('fs');
+    for (const p of candidates) {
+      try { if (fs.existsSync(p)) return p; } catch {}
+    }
+    return null;
+  }
+
+  private copyRendererToUserData(): string | null {
+    try {
+      const fs = require('fs');
+      const srcIndex = this.resolveRendererIndex();
+      if (!srcIndex) return null;
+      const srcDir = path.dirname(srcIndex);
+      const destDir = path.join(app.getPath('userData'), 'renderer');
+      if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+      }
+      // Prefer cpSync if available; fallback to manual copy
+      if (fs.cpSync) {
+        fs.cpSync(srcDir, destDir, { recursive: true, force: true });
+      } else {
+        const fse = require('fs-extra');
+        fse.copySync(srcDir, destDir, { overwrite: true });
+      }
+      const destIndex = path.join(destDir, 'index.html');
+      return destIndex;
+    } catch (e) {
+      console.error('Failed to copy renderer to userData:', e);
+      return null;
+    }
+  }
+
   // Create main application window
   private createMainWindow(): void {
+    const preloadPath = app.isPackaged
+      ? path.join(app.getAppPath(), 'dist', 'main', 'electron', 'preload', 'preload.js')
+      : path.join(__dirname, '../preload/preload.js');
+
     this.mainWindow = new BrowserWindow({
       width: WINDOW_CONFIG.DEFAULT_WIDTH,
       height: WINDOW_CONFIG.DEFAULT_HEIGHT,
@@ -88,38 +160,120 @@ export class MainProcess {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        preload: path.join(__dirname, '../preload/preload.js'),
-        webSecurity: false, // Disable web security to allow programmatic Bluetooth access
+        preload: preloadPath,
+        webSecurity: false,
         experimentalFeatures: true,
         enableBlinkFeatures: 'WebBluetooth,WebBluetoothScanning',
-        allowRunningInsecureContent: true
+        allowRunningInsecureContent: true,
       },
-      show: false
+      show: false,
     });
 
-    const url = isDev ? 'http://localhost:3000' : path.join(__dirname, '../renderer/index.html');
-    
-    if (isDev) {
-      console.log('Loading development URL:', url);
-      this.mainWindow.loadURL(url);
-      // Dev tools can still be opened with Ctrl+Shift+I if needed
+    if (isDev && process.env.ELECTRON_START_URL) {
+      this.mainWindow.loadURL(process.env.ELECTRON_START_URL);
     } else {
-      console.log('Loading production file');
-      this.mainWindow.loadFile(url);
+      // Load renderer from built files - try multiple approaches
+      const rendererIndex = this.resolveRendererIndex();
+      if (rendererIndex) {
+        console.log('Loading renderer from:', rendererIndex);
+        const fileUrl = pathToFileURL(rendererIndex).href;
+        console.log('File URL:', fileUrl);
+        this.mainWindow.loadURL(fileUrl).catch(async (err: any) => {
+          console.error('File URL load failed:', err);
+          // Try copying to userData as fallback
+          const fallback = this.copyRendererToUserData();
+          if (fallback) {
+            try {
+              console.log('Trying fallback at:', fallback);
+              await this.mainWindow!.loadURL(pathToFileURL(fallback).href);
+              console.log('Loaded renderer from fallback');
+            } catch (e2) {
+              console.error('Fallback renderer load failed:', e2);
+              this.loadFallbackPage();
+            }
+          } else {
+            this.loadFallbackPage();
+          }
+        });
+      } else {
+        console.error('No renderer index found');
+        this.loadFallbackPage();
+      }
     }
 
-    this.mainWindow.once('ready-to-show', () => {
-      this.mainWindow?.show();
+    if (process.env.TROPX_DEVTOOLS === '1') {
+      this.mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
+
+    this.mainWindow.once('ready-to-show', () => this.mainWindow?.show());
+
+    // Robust renderer diagnostics
+    const logToFile = (msg: string) => {
+      try {
+        const fs = require('fs');
+        const logDir = app.getPath('userData');
+        fs.appendFileSync(path.join(logDir, 'renderer.log'), `[${new Date().toISOString()}] ${msg}\n`);
+      } catch {}
+    };
+
+    this.mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+      const lvl = ['LOG', 'WARN', 'ERROR'][level] || String(level);
+      const msg = `CONSOLE ${lvl}: ${message} (${sourceId}:${line})`;
+      console.log(msg);
+      logToFile(msg);
+    });
+    this.mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
+      const msg = `did-fail-load code=${errorCode} desc=${errorDescription} url=${validatedURL}`;
+      console.error(msg);
+      logToFile(msg);
+    });
+    this.mainWindow.webContents.on('render-process-gone', (_e, details) => {
+      const msg = `render-process-gone: ${JSON.stringify(details)}`;
+      console.error(msg);
+      logToFile(msg);
     });
 
     this.mainWindow.webContents.once('did-finish-load', () => {
-      console.log('WebContents finished loading, setting up Bluetooth handlers...');
+      console.log('Renderer finished load; initializing Bluetooth handlers');
       this.setupBluetoothHandlers();
     });
 
     this.mainWindow.on('closed', () => {
       this.mainWindow = null;
     });
+  }
+
+  private loadFallbackPage(): void {
+    const fallbackHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Tropx Motion</title>
+          <style>
+            body { 
+              font-family: Arial, sans-serif; 
+              padding: 40px; 
+              background: #1a1a1a; 
+              color: white; 
+              text-align: center; 
+            }
+            .error { color: #ff6b6b; }
+            .info { color: #51cf66; }
+          </style>
+        </head>
+        <body>
+          <h1 class="info">Tropx Motion</h1>
+          <p class="error">Unable to load the main application interface.</p>
+          <p>This usually indicates a packaging issue with the renderer files.</p>
+          <p>Please check the console for detailed error messages.</p>
+          <p><strong>Debug Info:</strong></p>
+          <p>Process path: ${process.resourcesPath}</p>
+          <p>__dirname: ${__dirname}</p>
+        </body>
+      </html>
+    `;
+
+    this.mainWindow?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fallbackHtml)}`);
   }
 
   // Setup Bluetooth device selection handlers

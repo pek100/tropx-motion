@@ -1,5 +1,5 @@
-export const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
+import { app } from 'electron';
 
-export const getAppPath = () => {
-    return isDev ? process.cwd() : process.resourcesPath;
-};
+export const isDev = !app.isPackaged;
+
+export const getAppPath = () => app.getAppPath();
