@@ -1345,7 +1345,7 @@ const ElectronMotionApp: React.FC = () => {
       
       try {
         const result = await electronBLE.scanDevices();
-        console.log("🎛️ ElectronBLE scan result:", result);
+        console.log("🎛️ ElectronBLE scan result:", JSON.stringify(result, null, 2));
         
         if (result.success && result.devices) {
           // Sync ElectronBLE devices to React state
@@ -1872,7 +1872,7 @@ const ElectronMotionApp: React.FC = () => {
       
       try {
         const result = await electronBLE.connectDevice(deviceId, deviceName);
-        console.log("🎛️ ElectronBLE connect result:", result);
+        console.log("🎛️ ElectronBLE connect result:", JSON.stringify(result, null, 2));
         
         if (result.success) {
           console.log(`✅ ElectronBLE connection successful: ${deviceName}`);
@@ -1938,7 +1938,7 @@ const ElectronMotionApp: React.FC = () => {
       
       try {
         const result = await electronBLE.connectAllDevices();
-        console.log("🎛️ ElectronBLE connectAll result:", result);
+        console.log("🎛️ ElectronBLE connectAll result:", JSON.stringify(result, null, 2));
         
         if (result.success) {
           console.log(`✅ ElectronBLE connect all completed: ${result.message}`);

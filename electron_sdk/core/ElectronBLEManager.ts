@@ -421,10 +421,8 @@ export class ElectronBLEManager implements IElectronBLEManager {
     
     // Connect sequentially to avoid concurrent Web Bluetooth chooser conflicts
     for (const device of discoveredDevices) {
-      // Update UI state to connecting
-      this.registry.updateDevice(device.id, { state: "connecting" });
-      
       try {
+        // Let connectDevice handle the state management itself
         const result = await this.connectDevice(device.id, device.name);
         results.push(result);
         if (result.success) {
@@ -439,6 +437,9 @@ export class ElectronBLEManager implements IElectronBLEManager {
           deviceName: device.name,
           connected: false
         });
+        
+        // Ensure device state is reset on error
+        this.registry.updateDevice(device.id, { state: "discovered" });
       }
     }
     
