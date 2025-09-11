@@ -1438,7 +1438,8 @@ const ElectronMotionApp: React.FC = () => {
     }, CONSTANTS.TIMEOUTS.SCAN_DURATION);
   };
 
-  const handleConnectDevice = async (deviceId: string, deviceName: string) => {
+  // Legacy connection implementation (preserved exactly)
+  const handleConnectDeviceLegacy = async (deviceId: string, deviceName: string) => {
     console.log("🔗 grosdode + SDK: Starting connection flow for:", deviceName, deviceId);
     // Safety check: Prevent multiple simultaneous connection attempts
     const currentDevice = state.allDevices.get(deviceId);
@@ -1863,6 +1864,64 @@ const ElectronMotionApp: React.FC = () => {
     }
   };
 
+  // NEW: Feature-flag enabled connection handler
+  const handleConnectDevice = async (deviceId: string, deviceName: string) => {
+    // 🎛️ FEATURE FLAG: Use ElectronBLE or legacy connection system
+    if (featureFlags.USE_ELECTRON_BLE_CONNECT) {
+      console.log("🎛️ Using ElectronBLE connection system");
+      
+      try {
+        const result = await electronBLE.connectDevice(deviceId, deviceName);
+        console.log("🎛️ ElectronBLE connect result:", result);
+        
+        if (result.success) {
+          console.log(`✅ ElectronBLE connection successful: ${deviceName}`);
+          
+          // Trigger device discovery after successful connection (matching legacy behavior)
+          setTimeout(async () => {
+            try {
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(
+                  JSON.stringify({
+                    type: "trigger_device_discovery", 
+                    data: {
+                      action: "post_connection_scan",
+                      message: "Device discovery after successful ElectronBLE connection",
+                      deviceName: deviceName,
+                      deviceId: deviceId,
+                    },
+                    timestamp: Date.now(),
+                  }),
+                );
+              }
+            } catch (error) {
+              console.warn("⚠️ Error triggering post-connection device discovery:", error);
+            }
+          }, CONSTANTS.TIMEOUTS.DEVICE_DISCOVERY_TRIGGER);
+          
+        } else {
+          console.error(`❌ ElectronBLE connection failed: ${result.message}`);
+          // Show error to user
+          alert(`Connection failed: ${result.message}`);
+        }
+        
+        // ElectronBLE handles its own state management, so we don't need additional React state updates
+        return;
+        
+      } catch (error) {
+        console.error("❌ ElectronBLE connection error:", error);
+        alert(`ElectronBLE connection error: ${error instanceof Error ? error.message : String(error)}`);
+        
+        // Fallback to legacy system if ElectronBLE fails
+        console.log("🔄 Falling back to legacy connection system...");
+      }
+    }
+    
+    // 🔄 LEGACY CONNECTION SYSTEM (fallback or when feature flag disabled)
+    console.log("🔄 Using legacy connection system");
+    return handleConnectDeviceLegacy(deviceId, deviceName);
+  };
+
   // Function to connect all discovered devices
   const handleConnectAll = async () => {
     const discoveredDevices = Array.from(state.allDevices.values()).filter((d) => d.state === "discovered");
@@ -1870,7 +1929,38 @@ const ElectronMotionApp: React.FC = () => {
       alert("No devices available to connect");
       return;
     }
+    
     console.log(`🔗 Connecting to ${discoveredDevices.length} devices...`);
+    
+    // 🎛️ FEATURE FLAG: Use ElectronBLE or legacy connect-all system
+    if (featureFlags.USE_ELECTRON_BLE_CONNECT) {
+      console.log("🎛️ Using ElectronBLE connectAllDevices system");
+      
+      try {
+        const result = await electronBLE.connectAllDevices();
+        console.log("🎛️ ElectronBLE connectAll result:", result);
+        
+        if (result.success) {
+          console.log(`✅ ElectronBLE connect all completed: ${result.message}`);
+        } else {
+          console.error(`❌ ElectronBLE connect all failed: ${result.message}`);
+          alert(`Connect all failed: ${result.message}`);
+        }
+        
+        return;
+        
+      } catch (error) {
+        console.error("❌ ElectronBLE connect all error:", error);
+        alert(`ElectronBLE connect all error: ${error instanceof Error ? error.message : String(error)}`);
+        
+        // Fallback to legacy system
+        console.log("🔄 Falling back to legacy connect all system...");
+      }
+    }
+    
+    // 🔄 LEGACY CONNECT ALL SYSTEM (fallback or when feature flag disabled)
+    console.log("🔄 Using legacy connect all system");
+    
     // Connect sequentially to avoid concurrent Web Bluetooth chooser conflicts
     for (const device of discoveredDevices) {
       // Update UI state to connecting

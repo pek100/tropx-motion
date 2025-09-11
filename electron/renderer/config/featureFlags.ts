@@ -8,8 +8,8 @@ export const ELECTRON_BLE_FEATURE_FLAGS: ElectronBLEFeatureFlags = {
   // Phase 5.1: Scan operation migration
   USE_ELECTRON_BLE_SCAN: true,  // 🟢 ENABLED for testing
   
-  // Phase 5.2: Connect operation migration (disabled until scan is verified)
-  USE_ELECTRON_BLE_CONNECT: false,
+  // Phase 5.2: Connect operation migration
+  USE_ELECTRON_BLE_CONNECT: true,  // 🟢 ENABLED for testing
   
   // Phase 5.3: Recording operation migration (disabled until connect is verified)  
   USE_ELECTRON_BLE_RECORD: false,
