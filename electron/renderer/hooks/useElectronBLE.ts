@@ -77,7 +77,7 @@ export function useElectronBLE(options: UseElectronBLEOptions = {}): UseElectron
   // Initialize ElectronBLEManager
   useEffect(() => {
     console.log('🎣 useElectronBLE: Initializing ElectronBLEManager...');
-    console.log('🎛️ Feature flags:', featureFlags);
+    console.log('🎛️ Feature flags:', JSON.stringify(featureFlags, null, 2));
     
     try {
       bleManagerRef.current = new ElectronBLEManager(featureFlags);

@@ -3,6 +3,8 @@
 
 // Export all types and interfaces
 export * from './core/types';
+// Ensure DEFAULT_FEATURE_FLAGS is explicitly exported
+export { DEFAULT_FEATURE_FLAGS } from './core/types';
 
 // Export all implementations
 export { ElectronDeviceRegistry } from './core/ElectronDeviceRegistry';

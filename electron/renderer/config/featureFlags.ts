@@ -25,7 +25,7 @@ export const getFeatureFlags = (): ElectronBLEFeatureFlags => {
 };
 
 // Logging for feature flag changes
-console.log('🎛️ ElectronBLE Feature Flags:', ELECTRON_BLE_FEATURE_FLAGS);
+console.log('🎛️ ElectronBLE Feature Flags:', JSON.stringify(ELECTRON_BLE_FEATURE_FLAGS, null, 2));
 
 // Quick rollback - set all to false if anything breaks
 export const EMERGENCY_DISABLE_ALL: ElectronBLEFeatureFlags = {
