@@ -1677,9 +1677,69 @@ const ElectronMotionApp: React.FC = () => {
         alert(`Connection failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     } else {
-      // ElectronBLE feature disabled
-      console.warn("⚠️ ElectronBLE connect feature is disabled. Please enable USE_ELECTRON_BLE_CONNECT in feature flags.");
-      alert("Connection feature is currently disabled. Please contact support.");
+      // 🔄 LEGACY CONNECTION SYSTEM (using batch fresh device acquisition)
+      console.log("🔄 Using legacy connection system with fresh device acquisition");
+      
+      try {
+        // Set device to connecting state
+        dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "connecting" } } });
+        
+        // Step 1: Acquire fresh BluetoothDevice
+        console.log(`🔗 Acquiring fresh BluetoothDevice for ${deviceName}...`);
+        const requestPromise = navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [CONSTANTS.SERVICES.TROPX_SERVICE_UUID],
+        });
+        
+        // Instruct main process to select our target device
+        try {
+          await window.electronAPI?.bluetooth?.selectDevice(deviceId);
+        } catch (selectionError) {
+          console.warn(`🔗 Device selection warning for ${deviceName}:`, selectionError);
+        }
+        
+        // Get the fresh BluetoothDevice
+        const freshDevice = await requestPromise;
+        if (freshDevice && freshDevice.name) {
+          console.log(`✅ Fresh BluetoothDevice acquired: ${freshDevice.name}`);
+          
+          // Cache the fresh device
+          museManager.cacheRealBluetoothDevice(freshDevice.name, freshDevice);
+          
+          // Step 2: Connect using fresh device directly with MuseManager
+          const connected = await museManager.connectWebBluetoothDevice(
+            freshDevice,
+            CONSTANTS.TIMEOUTS.FAST_CONNECTION_TIMEOUT
+          );
+          
+          if (connected) {
+            // Update battery info and React state
+            await museManager.updateBatteryLevel(deviceName);
+            const batteryLevel = museManager.getBatteryLevel(deviceName);
+            
+            dispatch({ type: "UPDATE_DEVICE", payload: { 
+              deviceId, 
+              updates: { 
+                state: "connected",
+                batteryLevel: batteryLevel || null
+              } 
+            }});
+            
+            console.log(`✅ Successfully connected to ${deviceName} using fresh device`);
+            
+            // Start battery update timer
+            startBatteryUpdateTimer();
+          } else {
+            throw new Error(`Connection failed: SDK returned false`);
+          }
+        } else {
+          throw new Error(`No valid fresh device returned`);
+        }
+      } catch (error) {
+        console.error(`❌ Connection error for ${deviceName}:`, error);
+        dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "discovered" } } });
+        alert(`Failed to connect to ${deviceName}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   };
 

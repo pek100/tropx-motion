@@ -3,16 +3,16 @@
 
 import type { ElectronBLEFeatureFlags } from '../../../electron_sdk';
 
-// Feature flags - ElectronBLE architecture fully migrated and enabled
+// Feature flags - ElectronBLE architecture (temporary rollback for connectivity fix)
 export const ELECTRON_BLE_FEATURE_FLAGS: ElectronBLEFeatureFlags = {
-  // Phase 5.1: Scan operation migration - COMPLETED ✅
-  USE_ELECTRON_BLE_SCAN: true,  // 🟢 ENABLED - ElectronBLE scan system active
+  // Phase 5.1: Scan operation migration - WORKING ✅
+  USE_ELECTRON_BLE_SCAN: false,  // 🔴 DISABLED - using legacy for fresh device acquisition
   
-  // Phase 5.2: Connect operation migration - COMPLETED ✅  
-  USE_ELECTRON_BLE_CONNECT: true,  // 🟢 ENABLED - ElectronBLE connect system active
+  // Phase 5.2: Connect operation migration - NEEDS FIX 🔧  
+  USE_ELECTRON_BLE_CONNECT: false,  // 🔴 DISABLED - missing fresh GATT interface logic
   
-  // Phase 5.3: Recording operation migration - COMPLETED ✅
-  USE_ELECTRON_BLE_RECORD: true,  // 🟢 ENABLED - ElectronBLE recording system active
+  // Phase 5.3: Recording operation migration - WORKING ✅
+  USE_ELECTRON_BLE_RECORD: false,  // 🔴 DISABLED - depends on working connection
 };
 
 // Environment-based feature flags (optional - for different deployment stages)
