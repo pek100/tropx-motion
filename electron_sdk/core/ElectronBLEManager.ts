@@ -380,7 +380,7 @@ export class ElectronBLEManager implements IElectronBLEManager {
       // 🔧 ENHANCED ERROR HANDLING: Check if device needs pairing
       const errorMessage = error instanceof Error ? error.message : String(error);
       
-      if (errorMessage.includes('not found in paired devices')) {
+      if (errorMessage.includes('not found in paired devices') || errorMessage.includes('All connection attempts failed')) {
         console.log(`🔗 Device ${deviceName} needs pairing - attempting automatic pairing...`);
         
         try {
