@@ -26,6 +26,8 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { useElectronBLE } from "./hooks/useElectronBLE"
+import { getFeatureFlags } from "./config/featureFlags"
 
 // Company Logo SVG Component
 const CompanyLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" }) => (
@@ -1132,6 +1134,33 @@ const ElectronMotionApp: React.FC = () => {
   const lastScanTimeRef = useRef<number>(0);
   const SCAN_COOLDOWN = 3000;
 
+  // ElectronBLE SDK integration with feature flags
+  const featureFlags = getFeatureFlags();
+  const electronBLE = useElectronBLE({
+    featureFlags,
+    onDeviceStateChange: (deviceId, device) => {
+      // Sync ElectronBLE device changes back to React state
+      if (featureFlags.USE_ELECTRON_BLE_SCAN) {
+        const deviceStateMachine: DeviceStateMachine = {
+          id: device.id,
+          name: device.name,
+          state: device.state,
+          batteryLevel: device.batteryLevel,
+          lastSeen: device.lastSeen,
+          errorMessage: device.errorMessage
+        };
+        dispatch({ type: "SET_DEVICE_STATE", payload: { deviceId, device: deviceStateMachine } });
+      }
+    },
+    onStreamingData: (deviceName, data) => {
+      // Handle streaming data from ElectronBLE if recording features are enabled
+      if (featureFlags.USE_ELECTRON_BLE_RECORD) {
+        // This will be used when recording migration is enabled
+        console.log(`📡 ElectronBLE streaming data from ${deviceName}`);
+      }
+    }
+  });
+
   useEffect(() => {
     console.log("🔵 RENDERER LOADED: Testing Web Bluetooth availability...");
     console.log("🔵 navigator.bluetooth available:", !!navigator.bluetooth);
@@ -1233,8 +1262,17 @@ const ElectronMotionApp: React.FC = () => {
                 const sdkDevices = newDevices.map((device: DeviceInfo) => ({
                   deviceId: device.id,
                   deviceName: device.name,
+                  batteryLevel: device.batteryLevel
                 }));
+                
+                // Sync to legacy MuseManager (always)
                 museManager.addScannedDevices(sdkDevices);
+                
+                // 🎛️ FEATURE FLAG: Also sync to ElectronBLE system
+                if (featureFlags.USE_ELECTRON_BLE_SCAN) {
+                  electronBLE.addScannedDevices(sdkDevices);
+                  console.log("🎛️ Synced scanned devices to ElectronBLE system");
+                }
               }
               devices.forEach((device: DeviceInfo) => {
                 const existingDevice = state.allDevices.get(device.id);
@@ -1292,6 +1330,53 @@ const ElectronMotionApp: React.FC = () => {
   }, [lastMessage, state.recordingStartTime]);
 
   const handleScan = async () => {
+    // 🎛️ FEATURE FLAG: Use ElectronBLE or legacy scan system
+    if (featureFlags.USE_ELECTRON_BLE_SCAN) {
+      console.log("🎛️ Using ElectronBLE scan system");
+      
+      // Prevent multiple simultaneous scans
+      if (electronBLE.isScanning || state.isScanning) {
+        console.log("⚠️ Scan already in progress, skipping...");
+        return;
+      }
+      
+      // Update React state to show scanning
+      dispatch({ type: "SET_SCANNING", payload: true });
+      
+      try {
+        const result = await electronBLE.scanDevices();
+        console.log("🎛️ ElectronBLE scan result:", result);
+        
+        if (result.success && result.devices) {
+          // Sync ElectronBLE devices to React state
+          result.devices.forEach((device) => {
+            const deviceStateMachine: DeviceStateMachine = {
+              id: device.id,
+              name: device.name,
+              state: device.state,
+              batteryLevel: device.batteryLevel,
+              lastSeen: device.lastSeen,
+              errorMessage: device.errorMessage
+            };
+            dispatch({ type: "SET_DEVICE_STATE", payload: { deviceId: device.id, device: deviceStateMachine } });
+          });
+        }
+        
+        // Note: ElectronBLE manages its own scanning state, but we sync to React for UI
+        
+      } catch (error) {
+        console.error("❌ ElectronBLE scan error:", error);
+        alert(`ElectronBLE scan error: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        dispatch({ type: "SET_SCANNING", payload: false });
+      }
+      
+      return;
+    }
+    
+    // 🔄 LEGACY SCAN SYSTEM (unchanged)
+    console.log("🔄 Using legacy scan system");
+    
     // Prevent multiple simultaneous scans
     if (state.isScanning) {
       console.log("⚠️ Scan already in progress, skipping...");

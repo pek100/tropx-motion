@@ -153,7 +153,7 @@
       "installerHeader": "assets/icon.png",
       "installerSidebar": "assets/icon.png",
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
+      "createStartMenuShortcut": true
     },
     "linux": {
       "target": [

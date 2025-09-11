@@ -40,7 +40,8 @@
       "Bash(npm run build:renderer:*)",
       "Bash(git add:*)",
       "Bash(npx tsc:*)",
-      "Bash(git diff:*)"
+      "Bash(git diff:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": [],
