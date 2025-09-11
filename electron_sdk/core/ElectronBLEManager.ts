@@ -13,7 +13,6 @@ import type {
   DeviceStateChangeCallback,
   BatteryUpdateCallback,
   ElectronBLEResult,
-  DEFAULT_FEATURE_FLAGS,
   ElectronBLEFeatureFlags
 } from './types';
 
@@ -39,7 +38,7 @@ export class ElectronBLEManager implements IElectronBLEManager {
   private scanInProgress: boolean = false;
   
   // Feature flags for safe migration
-  private featureFlags: ElectronBLEFeatureFlags = { ...DEFAULT_FEATURE_FLAGS };
+  private featureFlags: ElectronBLEFeatureFlags;
   
   // Constants
   private readonly BATTERY_UPDATE_INTERVAL = 30000; // 30 seconds
@@ -64,10 +63,13 @@ export class ElectronBLEManager implements IElectronBLEManager {
     this.registry = new ElectronDeviceRegistry();
     this.ipcHandler = new ElectronIPCHandler();
     
-    // Apply any custom feature flags
-    if (featureFlags) {
-      this.featureFlags = { ...this.featureFlags, ...featureFlags };
-    }
+    // Initialize feature flags with defaults and apply custom flags
+    this.featureFlags = {
+      USE_ELECTRON_BLE_SCAN: false,
+      USE_ELECTRON_BLE_CONNECT: false,
+      USE_ELECTRON_BLE_RECORD: false,
+      ...featureFlags
+    };
     
     // Subscribe to registry changes to propagate to UI callbacks
     this.registry.onDeviceChange((deviceId, device) => {
