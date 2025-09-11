@@ -265,6 +265,14 @@ export class MuseManager {
   getScannedDevices(): Map<string, BluetoothDevice> {
     return new Map(this.scannedDevices);
   }
+  
+  // 🚀 NEW: Cache real BluetoothDevice objects from requestDevice() calls
+  cacheRealBluetoothDevice(deviceName: string, device: BluetoothDevice): void {
+    console.log(`🗂️ SDK: Caching REAL BluetoothDevice: ${deviceName} (ID: ${device.id})`);
+    console.log(`🗂️ SDK: Device has GATT interface: ${!!device.gatt}`);
+    this.scannedDevices.set(deviceName, device);
+    console.log(`🗂️ SDK: Cache now contains ${this.scannedDevices.size} real devices`);
+  }
 
   // Get all devices (both scanned and connected) in a unified format
   getAllDevices(): Array<{id: string, name: string, connected: boolean, batteryLevel: number | null, device?: BluetoothDevice}> {
@@ -377,35 +385,35 @@ export class MuseManager {
         throw new Error('Web Bluetooth API not available');
       }
 
-      // Try to find in previously paired Web Bluetooth devices
-      if (navigator.bluetooth.getDevices) {
-        const pairedDevices = await navigator.bluetooth.getDevices();
-        console.log(`🔍 SDK: Searching for ${deviceName} among ${pairedDevices.length} paired devices`);
-        console.log(`🔍 SDK: Paired device names: ${pairedDevices.map(d => d.name || 'unnamed').join(', ')}`);
-
-        // Look for device by name (case-insensitive) first, then by ID
-        webBluetoothDevice = pairedDevices.find(d => {
-          const nameLc = (d.name || '').toLowerCase();
-          return nameLc === targetNameLc || d.id === deviceId || d.id === registryDevice!.id;
-        }) || null;
-
-        if (webBluetoothDevice) {
-          console.log(`✅ SDK: Found ${deviceName} in previously paired devices`);
-
-          // Verify GATT interface is available
-          if (!webBluetoothDevice.gatt) {
-            console.warn(`⚠️ SDK: Found device ${deviceName} but GATT interface not available`);
-            // Even if GATT not pre-populated, connect() will create it; continue
-          } else {
-            console.log(`✅ SDK: Device ${deviceName} has valid GATT interface`);
-          }
-        } else {
-          console.log(`⚠️ SDK: Device ${deviceName} not found in paired devices`);
-          // Fail fast so UI can prompt user to pair
-          throw new Error(`Device ${deviceName} not found in paired devices`);
-        }
+      // 🚀 USE REAL BLUETOOTHDEVICE FROM SCAN CACHE: This is the key to success!
+      console.log(`🚀 SDK: Looking for REAL BluetoothDevice in scan cache for ${deviceName}`);
+      
+      // First, try to find the real BluetoothDevice from our scan cache
+      webBluetoothDevice = null;
+      
+      // Search by device name (primary)
+      if (this.scannedDevices.has(deviceName)) {
+        webBluetoothDevice = this.scannedDevices.get(deviceName)!;
+        console.log(`✅ SDK: Found REAL BluetoothDevice for ${deviceName} by name in scan cache`);
       } else {
-        console.warn(`⚠️ SDK: getDevices() API not available in this browser`);
+        // Search by device ID (fallback)
+        for (const [cachedName, cachedDevice] of this.scannedDevices.entries()) {
+          if (cachedDevice.id === deviceId) {
+            webBluetoothDevice = cachedDevice;
+            console.log(`✅ SDK: Found REAL BluetoothDevice for ${deviceName} by ID (${deviceId}) under name ${cachedName}`);
+            break;
+          }
+        }
+      }
+      
+      if (webBluetoothDevice) {
+        console.log(`🔍 SDK: Using REAL BluetoothDevice - ID: ${webBluetoothDevice.id}, Name: ${webBluetoothDevice.name}`);
+        console.log(`🔍 SDK: Device has GATT interface: ${!!webBluetoothDevice.gatt}`);
+        console.log(`🔍 SDK: GATT connected status: ${webBluetoothDevice.gatt?.connected || false}`);
+      } else {
+        console.error(`❌ SDK: REAL BluetoothDevice not found for ${deviceName} (${deviceId}) in scan cache!`);
+        console.error(`❌ SDK: Available devices in cache: ${Array.from(this.scannedDevices.keys()).join(', ')}`);
+        throw new Error(`Real BluetoothDevice not found for ${deviceName}. Please scan first to populate device cache.`);
       }
 
       // Step 3: Attempt connection with the Web Bluetooth device (must be paired already)

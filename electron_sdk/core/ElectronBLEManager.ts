@@ -469,14 +469,76 @@ export class ElectronBLEManager implements IElectronBLEManager {
     const results: DeviceConnectionResult[] = [];
     let successCount = 0;
     
-    // Connect sequentially to avoid concurrent Web Bluetooth chooser conflicts
+    // Try fast reconnection first for all devices
+    console.log('🚀 Step 1: Attempting fast reconnection to previously paired devices...');
+    const previousDevices = await museManager.reconnectToPreviousDevices();
+    
     for (const device of discoveredDevices) {
       try {
-        // Let connectDevice handle the state management itself
-        const result = await this.connectDevice(device.id, device.name);
-        results.push(result);
-        if (result.success) {
-          successCount++;
+        // Check if device is already paired and can use fast reconnection
+        const pairedDevice = previousDevices.find((d) => d.name === device.name || d.id === device.id);
+        
+        if (pairedDevice) {
+          console.log(`🚀 Fast reconnecting to ${device.name}...`);
+          this.registry.updateDevice(device.id, { state: "connecting" });
+          
+          const connected = await museManager.connectWebBluetoothDevice(
+            pairedDevice as any,
+            this.CONSTANTS.TIMEOUTS.FAST_CONNECTION_TIMEOUT,
+          );
+          
+          if (connected) {
+            await museManager.updateBatteryLevel(device.name);
+            const batteryLevel = museManager.getBatteryLevel(device.name);
+            this.registry.transitionFromConnecting(device.id, "connected");
+            this.registry.updateDevice(device.id, { batteryLevel });
+            
+            results.push({
+              success: true,
+              message: 'Fast reconnection successful',
+              deviceId: device.id,
+              deviceName: device.name,
+              connected: true
+            });
+            successCount++;
+            continue;
+          }
+        }
+        
+        // Use same fast connection method for unpaired devices
+        console.log(`🔗 Attempting direct SDK connection for unpaired device: ${device.name}...`);
+        this.registry.updateDevice(device.id, { state: "connecting" });
+        
+        try {
+          const connected = await museManager.connectToScannedDevice(device.id, device.name);
+          
+          if (connected) {
+            await museManager.updateBatteryLevel(device.name);
+            const batteryLevel = museManager.getBatteryLevel(device.name);
+            this.registry.transitionFromConnecting(device.id, "connected");
+            this.registry.updateDevice(device.id, { batteryLevel });
+            
+            results.push({
+              success: true,
+              message: 'Direct SDK connection successful',
+              deviceId: device.id,
+              deviceName: device.name,
+              connected: true
+            });
+            successCount++;
+          } else {
+            throw new Error('SDK connection returned false');
+          }
+        } catch (sdkError) {
+          console.error(`❌ Direct SDK connection failed for ${device.name}:`, sdkError);
+          this.registry.updateDevice(device.id, { state: "discovered" });
+          results.push({
+            success: false,
+            message: `Direct SDK connection failed: ${sdkError instanceof Error ? sdkError.message : String(sdkError)}`,
+            deviceId: device.id,
+            deviceName: device.name,
+            connected: false
+          });
         }
       } catch (error) {
         console.error(`❌ Connection failed for ${device.name}:`, error);

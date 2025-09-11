@@ -6,10 +6,10 @@ import type { ElectronBLEFeatureFlags } from '../../../electron_sdk';
 // Feature flags for safe incremental migration
 export const ELECTRON_BLE_FEATURE_FLAGS: ElectronBLEFeatureFlags = {
   // Phase 5.1: Scan operation migration
-  USE_ELECTRON_BLE_SCAN: true,  // 🟢 ENABLED for testing
+  USE_ELECTRON_BLE_SCAN: false,  // 🔴 DISABLED - revert to working system
   
   // Phase 5.2: Connect operation migration
-  USE_ELECTRON_BLE_CONNECT: true,  // 🟢 ENABLED for testing
+  USE_ELECTRON_BLE_CONNECT: false,  // 🔴 DISABLED - revert to working system
   
   // Phase 5.3: Recording operation migration (disabled until connect is verified)  
   USE_ELECTRON_BLE_RECORD: false,

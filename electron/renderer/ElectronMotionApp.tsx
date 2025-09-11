@@ -1382,11 +1382,18 @@ const ElectronMotionApp: React.FC = () => {
       console.log("⚠️ Scan already in progress, skipping...");
       return;
     }
-    // Enforce cooldown period
+    // 🎙️ SMART SCAN CONTROL: Allow infinite scans EXCEPT during recording
+    if (state.isRecording) {
+      console.log("🎙️ Scan blocked: Recording in progress - avoiding interference");
+      return;
+    }
+    
+    // Relaxed cooldown period to allow more frequent scans (for connection reliability)
     const now = Date.now();
-    if (now - lastScanTimeRef.current < SCAN_COOLDOWN) {
+    const RELAXED_SCAN_COOLDOWN = 1000; // 1 second instead of 5 seconds
+    if (now - lastScanTimeRef.current < RELAXED_SCAN_COOLDOWN) {
       console.log(
-          `⏳ Scan cooldown active (${Math.ceil((SCAN_COOLDOWN - (now - lastScanTimeRef.current)) / 1000)}s remaining)`,
+          `⏳ Scan cooldown active (${Math.ceil((RELAXED_SCAN_COOLDOWN - (now - lastScanTimeRef.current)) / 1000)}s remaining)`,
       );
       return;
     }
@@ -1470,6 +1477,12 @@ const ElectronMotionApp: React.FC = () => {
       try {
         webBtDevice = (await requestPromise) as any;
         console.log("🔗 Web Bluetooth device acquired:", webBtDevice?.name, webBtDevice?.id);
+        
+        // 🚀 CACHE THE REAL BLUETOOTHDEVICE: This is the key to controlled success!
+        if (webBtDevice && webBtDevice.name) {
+          console.log(`🔗 Caching REAL BluetoothDevice for future connections: ${webBtDevice.name}`);
+          museManager.cacheRealBluetoothDevice(webBtDevice.name, webBtDevice);
+        }
       } catch (reqErr: any) {
         console.error("❌ requestDevice failed:", reqErr?.name || reqErr);
         // Fallbacks will handle pairing status below
@@ -1555,6 +1568,17 @@ const ElectronMotionApp: React.FC = () => {
         dispatch({ type: "TRANSITION_FROM_CONNECTING", payload: { deviceId, newState: "connected" } });
         dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { batteryLevel } } });
         console.log("✅ SDK connection completed with battery info");
+        
+        // 🔄 SYNC REACT STATE: Update UI state to match successful SDK connection
+        dispatch({ type: "UPDATE_DEVICE", payload: { 
+          deviceId, 
+          updates: { 
+            state: "connected",
+            batteryLevel: museManager.getBatteryLevel(deviceName) || null
+          } 
+        }});
+        console.log(`🔄 Updated React state: ${deviceName} → connected`);
+        
         // Update battery levels periodically
         startBatteryUpdateTimer();
       } else {
@@ -1713,6 +1737,14 @@ const ElectronMotionApp: React.FC = () => {
           }
         });
         console.log("✅ Recording and streaming stopped successfully");
+        
+        // 🔄 RESUME SCANNING: Restart scan loop after recording stops to refresh device registry
+        console.log("🔄 Resuming scan loop after recording stopped...");
+        setTimeout(() => {
+          handleScan().catch(error => {
+            console.warn("⚠️ Failed to resume scanning after recording:", error);
+          });
+        }, 1000); // Wait 1 second then resume
       } else {
         // Start recording and streaming
         console.log("🎬 Starting recording with real quaternion streaming...");
@@ -1958,20 +1990,97 @@ const ElectronMotionApp: React.FC = () => {
       }
     }
     
-    // 🔄 LEGACY CONNECT ALL SYSTEM (fallback or when feature flag disabled)
-    console.log("🔄 Using legacy connect all system");
+    // 🔄 BATCH FRESH DEVICE ACQUISITION SYSTEM
+    console.log("🚀 Using batch fresh device acquisition for reliable connections");
     
-    // Connect sequentially to avoid concurrent Web Bluetooth chooser conflicts
-    for (const device of discoveredDevices) {
-      // Update UI state to connecting
-      dispatch({ type: "UPDATE_DEVICE", payload: { deviceId: device.id, updates: { state: "connecting" } } });
+    // Step 1: Acquire fresh BluetoothDevice objects for all devices at once
+    console.log(`🔗 Step 1: Acquiring fresh BluetoothDevices for ${discoveredDevices.length} devices...`);
+    const freshDeviceMap = new Map<string, any>(); // deviceName -> fresh BluetoothDevice
+    
+    for (let i = 0; i < discoveredDevices.length; i++) {
+      const device = discoveredDevices[i];
+      console.log(`🔗 [${i+1}/${discoveredDevices.length}] Acquiring fresh BluetoothDevice for ${device.name}...`);
+      
       try {
-        await handleConnectDevice(device.id, device.name);
+        // Update UI to show connecting status
+        dispatch({ type: "UPDATE_DEVICE", payload: { deviceId: device.id, updates: { state: "connecting" } } });
+        
+        // Get fresh device via requestDevice
+        const requestPromise = navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [CONSTANTS.SERVICES.TROPX_SERVICE_UUID],
+        });
+        
+        // Instruct main process to select our target device
+        try {
+          await window.electronAPI?.bluetooth?.selectDevice(device.id);
+        } catch (selectionError) {
+          console.warn(`🔗 Device selection warning for ${device.name}:`, selectionError);
+        }
+        
+        // Get the fresh BluetoothDevice
+        const freshDevice = await requestPromise;
+        if (freshDevice && freshDevice.name) {
+          freshDeviceMap.set(device.name, freshDevice);
+          console.log(`✅ [${i+1}/${discoveredDevices.length}] Fresh BluetoothDevice acquired: ${freshDevice.name}`);
+        } else {
+          console.warn(`⚠️ [${i+1}/${discoveredDevices.length}] No valid device returned for ${device.name}`);
+        }
+        
+        // Small delay between acquisitions
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
       } catch (error) {
-        console.error(`❌ Connection failed for ${device.name}:`, error);
+        console.error(`❌ [${i+1}/${discoveredDevices.length}] Failed to acquire fresh device for ${device.name}:`, error);
       }
     }
-    console.log("✅ All connection attempts completed");
+    
+    console.log(`🔗 Step 2: Connecting to ${freshDeviceMap.size} fresh devices immediately...`);
+    
+    // Step 2: Connect to all fresh devices immediately while GATT interfaces are active
+    let successCount = 0;
+    for (const device of discoveredDevices) {
+      const freshDevice = freshDeviceMap.get(device.name);
+      if (!freshDevice) {
+        console.error(`❌ No fresh device available for ${device.name}, skipping...`);
+        continue;
+      }
+      
+      console.log(`🔗 Connecting to ${device.name} with fresh GATT interface...`);
+      
+      try {
+        // Connect using fresh device directly with MuseManager
+        const connected = await museManager.connectWebBluetoothDevice(
+          freshDevice,
+          CONSTANTS.TIMEOUTS.FAST_CONNECTION_TIMEOUT
+        );
+        
+        if (connected) {
+          // Update battery info and React state
+          await museManager.updateBatteryLevel(device.name);
+          const batteryLevel = museManager.getBatteryLevel(device.name);
+          
+          dispatch({ type: "UPDATE_DEVICE", payload: { 
+            deviceId: device.id, 
+            updates: { 
+              state: "connected",
+              batteryLevel: batteryLevel || null
+            } 
+          }});
+          
+          successCount++;
+          console.log(`✅ Successfully connected to ${device.name} using fresh device`);
+        } else {
+          console.error(`❌ Connection failed for ${device.name}: SDK returned false`);
+          dispatch({ type: "UPDATE_DEVICE", payload: { deviceId: device.id, updates: { state: "discovered" } } });
+        }
+      } catch (error) {
+        console.error(`❌ Connection error for ${device.name}:`, error);
+        dispatch({ type: "UPDATE_DEVICE", payload: { deviceId: device.id, updates: { state: "discovered" } } });
+      }
+    }
+    
+    console.log(`✅ Batch fresh device connection completed: ${successCount}/${discoveredDevices.length} devices connected`);
   };
 
   return (
