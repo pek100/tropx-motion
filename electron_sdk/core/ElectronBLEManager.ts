@@ -377,6 +377,56 @@ export class ElectronBLEManager implements IElectronBLEManager {
     } catch (error) {
       console.error('❌ ElectronBLE connection error:', error);
       
+      // 🔧 ENHANCED ERROR HANDLING: Check if device needs pairing
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      if (errorMessage.includes('not found in paired devices')) {
+        console.log(`🔗 Device ${deviceName} needs pairing - attempting automatic pairing...`);
+        
+        try {
+          // Attempt to pair the device using MuseManager's pairing method
+          const pairResult = await museManager.pairNewDevice();
+          
+          if (pairResult.success && pairResult.deviceName === deviceName) {
+            console.log(`✅ Successfully paired ${deviceName} - attempting connection again...`);
+            
+            // Add a small delay to ensure pairing is complete
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Retry connection after successful pairing
+            try {
+              const retryConnected = await museManager.connectToScannedDevice(deviceId, deviceName);
+              
+              if (retryConnected) {
+                console.log(`✅ Connection successful after pairing: ${deviceName}`);
+                
+                // Update battery levels
+                await museManager.updateBatteryLevel(deviceName);
+                const batteryLevel = museManager.getBatteryLevel(deviceName);
+                
+                // Update unified device state with successful connection
+                this.registry.transitionFromConnecting(deviceId, "connected");
+                this.registry.updateDevice(deviceId, { batteryLevel });
+                
+                return {
+                  success: true,
+                  message: 'Device connected after pairing',
+                  deviceId,
+                  deviceName,
+                  connected: true
+                };
+              }
+            } catch (retryError) {
+              console.warn('⚠️ Connection retry after pairing failed:', retryError);
+            }
+          } else {
+            console.warn('⚠️ Pairing failed or paired different device:', pairResult);
+          }
+        } catch (pairError) {
+          console.warn('⚠️ Automatic pairing failed:', pairError);
+        }
+      }
+      
       // Clean up any partial state
       try {
         await museManager.disconnectDevice(deviceName);
@@ -392,7 +442,7 @@ export class ElectronBLEManager implements IElectronBLEManager {
       
       return {
         success: false,
-        message: `Connection failed: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Connection failed: ${errorMessage}`,
         deviceId,
         deviceName,
         connected: false
