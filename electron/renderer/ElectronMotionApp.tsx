@@ -1573,9 +1573,163 @@ const ElectronMotionApp: React.FC = () => {
         alert(`Recording failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     } else {
-      // ElectronBLE recording feature disabled
-      console.warn("⚠️ ElectronBLE recording feature is disabled. Please enable USE_ELECTRON_BLE_RECORD in feature flags.");
-      alert("Recording feature is currently disabled. Please contact support.");
+      // 🔄 LEGACY RECORDING SYSTEM (fallback when ElectronBLE disabled)
+      console.log("🔄 Using legacy recording system");
+      
+      try {
+        const currentStreamingState = museManager.getIsStreaming();
+        console.log(`🎬 RECORDING STATE CHANGE: isRecording=${state.isRecording}, SDK streaming=${currentStreamingState}`);
+        
+        if (state.isRecording) {
+          // Stop recording and streaming
+          console.log("🛑 Stopping recording and streaming...");
+          
+          // Stop SDK streaming
+          if (currentStreamingState) {
+            await museManager.stopStreaming();
+            console.log("✅ SDK streaming stopped");
+          }
+          
+          // Stop motion processing coordinator recording
+          if (motionProcessingCoordinator) {
+            await motionProcessingCoordinator.stopRecording();
+            console.log("✅ Motion processing recording stopped");
+          }
+          
+          // Stop recording in main process
+          if (window.electronAPI) {
+            const result = await window.electronAPI.motion.stopRecording();
+            console.log("✅ Stop recording result:", result);
+          }
+          
+          // Update UI state
+          dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
+          
+          // Update all devices to stop streaming state
+          state.allDevices.forEach((device, deviceId) => {
+            if (device.state === "streaming") {
+              dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "connected" } } });
+            }
+          });
+          
+          console.log("✅ Recording and streaming stopped successfully");
+          
+          // Resume scanning after recording stops
+          setTimeout(() => {
+            handleScan().catch(error => {
+              console.warn("⚠️ Failed to resume scanning after recording:", error);
+            });
+          }, 1000);
+          
+        } else {
+          // Start recording and streaming
+          console.log("🎬 Starting recording...");
+          
+          // Check connected devices
+          const connectedDevices = museManager.getConnectedDevices();
+          console.log("🔍 Connected devices for recording:", connectedDevices);
+          if (connectedDevices.size === 0) {
+            console.error("❌ No connected devices found for recording");
+            alert("Please connect at least one device before recording");
+            return;
+          }
+          
+          // Initialize motion processing coordinator if needed
+          if (!motionProcessingCoordinator) {
+            console.log("🧠 Initializing MotionProcessingCoordinator...");
+            motionProcessingCoordinator = MotionProcessingCoordinator.getInstance();
+            console.log("✅ MotionProcessingCoordinator initialized successfully");
+          }
+          
+          // Start motion processing recording session
+          const sessionData = {
+            sessionId: `session_${Date.now()}`,
+            exerciseId: `exercise_${Date.now()}`,
+            setNumber: 1,
+          };
+          
+          const motionRecordingStarted = motionProcessingCoordinator.startRecording(
+            sessionData.sessionId,
+            sessionData.exerciseId,
+            sessionData.setNumber,
+          );
+          
+          if (!motionRecordingStarted) {
+            console.error("❌ Failed to start motion processing recording");
+            return;
+          }
+          console.log("✅ Motion processing recording started");
+          
+          // Start real quaternion streaming via GATT service
+          const streamingSuccess = await museManager.startStreaming((deviceName: string, data: any) => {
+            // Send data to motion processing pipeline
+            if (motionProcessingCoordinator) {
+              try {
+                motionProcessingCoordinator.processNewData(deviceName, data);
+              } catch (error) {
+                console.error("❌ Error processing SDK motion data:", error);
+              }
+            }
+            
+            // Also send to main process via WebSocket for recording/storage
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              wsRef.current.send(
+                JSON.stringify({
+                  type: "motion_data",
+                  data: {
+                    deviceName: deviceName,
+                    timestamp: data.timestamp,
+                    quaternion: data.quaternion,
+                  },
+                  timestamp: Date.now(),
+                }),
+              );
+            }
+          });
+          
+          if (streamingSuccess) {
+            console.log("✅ SDK quaternion streaming started successfully");
+            
+            // Update recording state
+            dispatch({ type: "SET_RECORDING", payload: { isRecording: true, startTime: new Date() } });
+            
+            // Update devices to show streaming state
+            const streamingDeviceNames = museManager.getStreamingDeviceNames();
+            console.log("📡 Devices now streaming:", streamingDeviceNames);
+            
+            state.allDevices.forEach((device, deviceId) => {
+              if (streamingDeviceNames.includes(device.name) && device.state === "connected") {
+                dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "streaming" } } });
+              }
+            });
+            
+            // Start recording in main process
+            if (window.electronAPI) {
+              const result = await window.electronAPI.motion.startRecording(sessionData);
+              console.log("✅ Main process recording result:", result);
+            }
+            
+            console.log("✅ Recording with quaternion streaming started successfully");
+          } else {
+            console.error("❌ Failed to start SDK quaternion streaming");
+            
+            // Clean up motion processing recording if streaming failed
+            if (motionProcessingCoordinator) {
+              await motionProcessingCoordinator.stopRecording();
+            }
+            
+            // Ensure recording state remains false on failure
+            dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
+            alert("Failed to start quaternion streaming. Please check device connections.");
+          }
+        }
+      } catch (error) {
+        console.error("❌ Recording error:", error);
+        
+        // Ensure recording state is reset on error
+        dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
+        alert(`Recording failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   };
 
