@@ -1445,220 +1445,6 @@ const ElectronMotionApp: React.FC = () => {
     }, CONSTANTS.TIMEOUTS.SCAN_DURATION);
   };
 
-  // Legacy connection implementation (preserved exactly)
-  const handleConnectDeviceLegacy = async (deviceId: string, deviceName: string) => {
-    console.log("🔗 grosdode + SDK: Starting connection flow for:", deviceName, deviceId);
-    // Safety check: Prevent multiple simultaneous connection attempts
-    const currentDevice = state.allDevices.get(deviceId);
-    if (currentDevice?.state === "connecting") {
-      console.log("⚠️ Connection already in progress for device:", deviceName);
-      return;
-    }
-    // Set device to connecting state
-    dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "connecting" } } });
-    try {
-      console.log("🔗 Step 1: Acquire Web Bluetooth device via programmatic selection...");
-      if (!navigator.bluetooth) {
-        throw new Error("Web Bluetooth not available");
-      }
-      // Kick off requestDevice FIRST to trigger select-bluetooth-device event in main
-      const requestPromise = navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: [CONSTANTS.SERVICES.TROPX_SERVICE_UUID],
-      });
-      // Immediately instruct main process to select our target deviceId
-      try {
-        await window.electronAPI?.bluetooth?.selectDevice(deviceId);
-      } catch (selectionError) {
-        console.warn("🔗 Device selection warning (may be normal):", selectionError);
-      }
-      // Await the actual BluetoothDevice returned from requestDevice
-      let webBtDevice: any = null;
-      try {
-        webBtDevice = (await requestPromise) as any;
-        console.log("🔗 Web Bluetooth device acquired:", webBtDevice?.name, webBtDevice?.id);
-        
-        // 🚀 CACHE THE REAL BLUETOOTHDEVICE: This is the key to controlled success!
-        if (webBtDevice && webBtDevice.name) {
-          console.log(`🔗 Caching REAL BluetoothDevice for future connections: ${webBtDevice.name}`);
-          museManager.cacheRealBluetoothDevice(webBtDevice.name, webBtDevice);
-        }
-      } catch (reqErr: any) {
-        console.error("❌ requestDevice failed:", reqErr?.name || reqErr);
-        // Fallbacks will handle pairing status below
-      }
-      console.log("🔗 Step 2: Connecting via SDK...");
-      // If device already connected, clean up first
-      if (museManager.isDeviceConnected(deviceName)) {
-        console.log("🔗 Device already connected, cleaning up first...");
-        await museManager.disconnectDevice(deviceName);
-        await new Promise((resolve) => setTimeout(resolve, CONSTANTS.TIMEOUTS.CONNECTION_CLEANUP));
-      }
-      let connected = false;
-      // Preferred: If we obtained a Web Bluetooth device from requestDevice, connect with it directly
-      if (webBtDevice) {
-        try {
-          connected = await museManager.connectWebBluetoothDevice(
-              webBtDevice,
-              CONSTANTS.TIMEOUTS.FAST_CONNECTION_TIMEOUT,
-          );
-          console.log(
-              `${connected ? "✅" : "❌"} Direct SDK connection via Web Bluetooth ${connected ? "successful" : "failed"}`,
-          );
-        } catch (directErr) {
-          console.warn("⚠️ Direct SDK connection via Web Bluetooth failed, will try fallbacks:", directErr);
-        }
-      }
-      // Fallback 1: Fast reconnection using previously authorized devices
-      if (!connected) {
-        try {
-          const previousDevices = await museManager.reconnectToPreviousDevices();
-          const targetDevice = previousDevices.find((d) => d.name === deviceName || d.id === deviceId);
-          if (targetDevice) {
-            console.log(`🚀 Attempting fast reconnection to ${deviceName}...`);
-            connected = await museManager.connectWebBluetoothDevice(
-                targetDevice as any,
-                CONSTANTS.TIMEOUTS.FAST_CONNECTION_TIMEOUT,
-            );
-            console.log(`${connected ? "✅" : "❌"} Fast reconnection ${connected ? "successful" : "failed"}`);
-          }
-        } catch (reconnectError) {
-          console.log("⚠️ Fast reconnection failed:", reconnectError);
-        }
-      }
-      // Fallback 2: Standard SDK connection via registry + getDevices
-      if (!connected) {
-        console.log(`🔗 Trying standard SDK connection for ${deviceName}...`);
-        // Clear any stale device state that might interfere
-        if (museManager.isDeviceConnected(deviceName)) {
-          await museManager.disconnectDevice(deviceName);
-          await new Promise((resolve) => setTimeout(resolve, CONSTANTS.TIMEOUTS.CONNECTION_CLEANUP));
-        }
-        connected = await museManager.connectToScannedDevice(deviceId, deviceName);
-        console.log(`${connected ? "✅" : "❌"} Standard SDK connection ${connected ? "successful" : "failed"}`);
-      }
-      if (connected) {
-        console.log("✅ SDK connection established for:", deviceName);
-        // Trigger device discovery after successful connection
-        setTimeout(async () => {
-          try {
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-              wsRef.current.send(
-                  JSON.stringify({
-                    type: "trigger_device_discovery",
-                    data: {
-                      action: "post_connection_scan",
-                      message: "Device discovery after successful connection",
-                      deviceName: deviceName,
-                      deviceId: deviceId,
-                    },
-                    timestamp: Date.now(),
-                  }),
-              );
-              console.log("🔄 Triggered post-connection device discovery");
-            }
-          } catch (error: any) {
-            console.error("❌ Failed to trigger device discovery:", error);
-          }
-        }, CONSTANTS.TIMEOUTS.DEVICE_DISCOVERY_TRIGGER);
-        // Update battery levels
-        await museManager.updateBatteryLevel(deviceName);
-        const batteryLevel = museManager.getBatteryLevel(deviceName);
-        // Update unified device state with successful connection
-        dispatch({ type: "TRANSITION_FROM_CONNECTING", payload: { deviceId, newState: "connected" } });
-        dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { batteryLevel } } });
-        console.log("✅ SDK connection completed with battery info");
-        
-        // 🔄 SYNC REACT STATE: Update UI state to match successful SDK connection
-        dispatch({ type: "UPDATE_DEVICE", payload: { 
-          deviceId, 
-          updates: { 
-            state: "connected",
-            batteryLevel: museManager.getBatteryLevel(deviceName) || null
-          } 
-        }});
-        console.log(`🔄 Updated React state: ${deviceName} → connected`);
-        
-        // Update battery levels periodically
-        startBatteryUpdateTimer();
-      } else {
-        console.log(`💥 Attempting final connection with full reset for ${deviceName}...`);
-        try {
-          // Nuclear option: clear all device state
-          await museManager.forceResetAllDeviceState();
-          await new Promise((resolve) => setTimeout(resolve, CONSTANTS.TIMEOUTS.FINAL_RESET_WAIT));
-          // Re-add the device to scanned devices since we cleared everything
-          museManager.addScannedDevices([
-            {
-              deviceId: deviceId,
-              deviceName: deviceName,
-            },
-          ]);
-          const finalConnected = await museManager.connectToScannedDevice(deviceId, deviceName);
-          if (finalConnected) {
-            console.log(`✅ Final attempt successful for ${deviceName}`);
-          } else {
-            throw new Error(`All connection attempts failed for ${deviceName}`);
-          }
-        } catch (finalError) {
-          throw new Error(
-              `All connection attempts failed: ${finalError instanceof Error ? finalError.message : finalError}`,
-          );
-        }
-      }
-    } catch (error) {
-      console.error("❌ grosdode + SDK connection error:", error);
-      // Clean up any partial state
-      try {
-        await museManager.disconnectDevice(deviceName);
-      } catch (cleanupError) {
-        console.warn("⚠️ Cleanup error:", cleanupError);
-      }
-      // More specific error handling
-      if (error instanceof Error) {
-        if (error.message.includes("not found in paired devices")) {
-          // Special handling for unpaired devices
-          const shouldPair = confirm(
-              `${deviceName} needs to be paired first.\n\nClick OK to pair this device now, or Cancel to pair it manually through system Bluetooth settings.`,
-          );
-          if (shouldPair) {
-            try {
-              console.log("🔗 User chose to pair device, starting pairing process...");
-              const pairResult = await museManager.pairNewDevice();
-              if (pairResult.success) {
-                alert(`Success! ${pairResult.deviceName} is now paired. You can connect to it.`);
-                // Refresh the scanned devices list
-                window.location.reload();
-              } else {
-                alert(`Pairing failed: ${pairResult.message}`);
-              }
-            } catch (pairError) {
-              alert(`Pairing error: ${pairError instanceof Error ? pairError.message : "Unknown error"}`);
-            }
-          } else {
-            alert(`Please pair ${deviceName} through Windows Bluetooth settings, then scan again.`);
-          }
-        } else if (error.message.includes("No device selected") || error.name === "AbortError") {
-          alert(`Device selection cancelled for ${deviceName}. Please try again.`);
-        } else if (error.message.includes("GATT") || error.name === "NetworkError") {
-          alert(`Connection failed for ${deviceName}. Please ensure the device is powered on and in range.`);
-        } else if (error.name === "NotFoundError") {
-          alert(`Device ${deviceName} not found. Please ensure it's powered on and try scanning again.`);
-        } else {
-          alert(`Failed to connect to ${deviceName}: ${error.message}`);
-        }
-      } else {
-        alert(`Failed to connect to ${deviceName}. Please try again.`);
-      }
-    } finally {
-      // Always reset device from connecting state if not actually connected
-      const isConnectedNow = museManager.isDeviceConnected(deviceName);
-      if (!isConnectedNow) {
-        dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "discovered" } } });
-      }
-      console.log("🔗 Connection attempt completed for:", deviceName);
-    }
-  };
 
   // Battery update timer for connected devices
   const startBatteryUpdateTimer = () => {
@@ -1703,146 +1489,8 @@ const ElectronMotionApp: React.FC = () => {
     console.log("🚫 Scan canceled by user");
   };
 
-  // 🎬 LEGACY RECORDING SYSTEM (preserved for fallback)
-  const handleRecordingLegacy = async () => {
-    try {
-      const currentStreamingState = museManager.getIsStreaming();
-      console.log(`🎬 LEGACY RECORDING STATE CHANGE: isRecording=${state.isRecording}, SDK streaming=${currentStreamingState}`);
-      if (state.isRecording) {
-        // Stop recording and streaming
-        console.log("🛑 Stopping recording and real quaternion streaming...");
-        // 1. Stop real quaternion streaming via GATT service - check state first
-        if (currentStreamingState) {
-          console.log("🛑 SDK streaming is active, stopping...");
-          await museManager.stopStreaming();
-          console.log("✅ SDK streaming stopped");
-        } else {
-          console.log("⚠️ SDK streaming was already stopped");
-        }
-        // 2. Stop motion processing coordinator recording
-        if (motionProcessingCoordinator) {
-          await motionProcessingCoordinator.stopRecording();
-          console.log("✅ Motion processing recording stopped");
-        }
-        // 3. Stop recording in main process (if available)
-        if (window.electronAPI) {
-          const result = await window.electronAPI.motion.stopRecording();
-          console.log("✅ Stop recording result:", result);
-        }
-        // Update recording state immediately
-        dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
-        // Update all devices to stop streaming state
-        state.allDevices.forEach((device, deviceId) => {
-          if (device.state === "streaming") {
-            dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "connected" } } });
-          }
-        });
-        console.log("✅ Recording and streaming stopped successfully");
-        
-        // 🔄 RESUME SCANNING: Restart scan loop after recording stops to refresh device registry
-        console.log("🔄 Resuming scan loop after recording stopped...");
-        setTimeout(() => {
-          handleScan().catch(error => {
-            console.warn("⚠️ Failed to resume scanning after recording:", error);
-          });
-        }, 1000); // Wait 1 second then resume
-      } else {
-        // Start recording and streaming
-        console.log("🎬 Starting recording with real quaternion streaming...");
-        // Check connected devices
-        const connectedDevices = museManager.getConnectedDevices();
-        console.log("🔍 Connected devices for recording:", connectedDevices);
-        if (connectedDevices.size === 0) {
-          console.error("❌ No connected devices found for recording");
-          alert("Please connect at least one device before recording");
-          return;
-        }
-        // 1. Initialize motion processing coordinator if not already done
-        if (!motionProcessingCoordinator) {
-          console.log("🧠 Initializing MotionProcessingCoordinator...");
-          motionProcessingCoordinator = MotionProcessingCoordinator.getInstance();
-          console.log("✅ MotionProcessingCoordinator initialized successfully");
-        }
-        // 2. Start motion processing recording session
-        const sessionData = {
-          sessionId: `session_${Date.now()}`,
-          exerciseId: `exercise_${Date.now()}`,
-          setNumber: 1,
-        };
-        const motionRecordingStarted = motionProcessingCoordinator.startRecording(
-            sessionData.sessionId,
-            sessionData.exerciseId,
-            sessionData.setNumber,
-        );
-        if (!motionRecordingStarted) {
-          console.error("❌ Failed to start motion processing recording");
-          return;
-        }
-        console.log("✅ Motion processing recording started");
-        // 3. Start real quaternion streaming via GATT service
-        const streamingSuccess = await museManager.startStreaming((deviceName: string, data: any) => {
-          // Send data to motion processing pipeline
-          if (motionProcessingCoordinator) {
-            try {
-              motionProcessingCoordinator.processNewData(deviceName, data);
-            } catch (error) {
-              console.error("❌ Error processing SDK motion data:", error);
-            }
-          }
-          // Also send to main process via WebSocket for recording/storage
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(
-                JSON.stringify({
-                  type: "motion_data",
-                  data: {
-                    deviceName: deviceName,
-                    timestamp: data.timestamp,
-                    quaternion: data.quaternion,
-                  },
-                  timestamp: Date.now(),
-                }),
-            );
-          }
-        });
-        if (streamingSuccess) {
-          console.log("✅ SDK quaternion streaming started successfully");
-          // Update recording state immediately
-          dispatch({ type: "SET_RECORDING", payload: { isRecording: true, startTime: new Date() } });
-          // Update devices to show streaming state - only for devices that are actually streaming
-          const streamingDeviceNames = museManager.getStreamingDeviceNames();
-          console.log("📡 Devices now streaming:", streamingDeviceNames);
-          // Update unified device state for streaming devices
-          state.allDevices.forEach((device, deviceId) => {
-            if (streamingDeviceNames.includes(device.name) && device.state === "connected") {
-              dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "streaming" } } });
-            }
-          });
-          // 4. Start recording in main process (for storage/backup)
-          if (window.electronAPI) {
-            const result = await window.electronAPI.motion.startRecording(sessionData);
-            console.log("✅ Main process recording result:", result);
-          }
-          console.log("✅ SDK: Recording with quaternion streaming started successfully");
-        } else {
-          console.error("❌ Failed to start SDK quaternion streaming");
-          // Clean up motion processing recording if streaming failed
-          if (motionProcessingCoordinator) {
-            await motionProcessingCoordinator.stopRecording();
-          }
-          // Ensure recording state remains false on failure
-          dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
-          alert("Failed to start quaternion streaming. Please check device connections.");
-        }
-      }
-    } catch (error) {
-      console.error("❌ Legacy recording error:", error);
-      // Ensure recording state is reset on error
-      dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
-      alert(`Recording failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
 
-  // 🎬 FEATURE FLAG ENABLED RECORDING HANDLER
+  // 🎬 ELECTRONBLE RECORDING HANDLER
   const handleRecording = async () => {
     // Check if ElectronBLE recording is enabled
     if (featureFlags.USE_ELECTRON_BLE_RECORD) {
@@ -1921,13 +1569,13 @@ const ElectronMotionApp: React.FC = () => {
       } catch (error) {
         console.error("❌ ElectronBLE recording error:", error);
         
-        // Fallback to legacy system on ElectronBLE failure
-        console.log("🔄 Falling back to legacy recording system...");
-        await handleRecordingLegacy();
+        // No fallback - ElectronBLE is the only recording system
+        alert(`Recording failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     } else {
-      // Use legacy system when feature flag disabled
-      await handleRecordingLegacy();
+      // ElectronBLE recording feature disabled
+      console.warn("⚠️ ElectronBLE recording feature is disabled. Please enable USE_ELECTRON_BLE_RECORD in feature flags.");
+      alert("Recording feature is currently disabled. Please contact support.");
     }
   };
 
@@ -2026,16 +1674,13 @@ const ElectronMotionApp: React.FC = () => {
         
       } catch (error) {
         console.error("❌ ElectronBLE connection error:", error);
-        alert(`ElectronBLE connection error: ${error instanceof Error ? error.message : String(error)}`);
-        
-        // Fallback to legacy system if ElectronBLE fails
-        console.log("🔄 Falling back to legacy connection system...");
+        alert(`Connection failed: ${error instanceof Error ? error.message : String(error)}`);
       }
+    } else {
+      // ElectronBLE feature disabled
+      console.warn("⚠️ ElectronBLE connect feature is disabled. Please enable USE_ELECTRON_BLE_CONNECT in feature flags.");
+      alert("Connection feature is currently disabled. Please contact support.");
     }
-    
-    // 🔄 LEGACY CONNECTION SYSTEM (fallback or when feature flag disabled)
-    console.log("🔄 Using legacy connection system");
-    return handleConnectDeviceLegacy(deviceId, deviceName);
   };
 
   // Function to connect all discovered devices
