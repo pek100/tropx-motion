@@ -20,9 +20,6 @@ export interface ElectronAPI {
 
     bluetooth: {
         selectDevice: (deviceId: string) => Promise<ApiResponse>;
-        connectManual: (deviceName: string) => Promise<DeviceConnectionResponse>;
-        cancelSelection: () => Promise<ApiResponse>;
-        pairingResponse: (response: unknown) => Promise<ApiResponse>;
         getSystemInfo: () => Promise<unknown>;
     };
 
@@ -52,9 +49,6 @@ const electronAPI: ElectronAPI = {
 
     bluetooth: {
         selectDevice: (deviceId: string) => ipcRenderer.invoke('bluetooth:selectDevice', deviceId),
-        connectManual: (deviceName: string) => ipcRenderer.invoke('bluetooth:connectManual', deviceName),
-        cancelSelection: () => ipcRenderer.invoke('bluetooth:cancelSelection'),
-        pairingResponse: (response: unknown) => ipcRenderer.invoke('bluetooth:pairingResponse', response),
         getSystemInfo: () => ipcRenderer.invoke('bluetooth:getSystemInfo'),
     },
 

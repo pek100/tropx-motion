@@ -352,15 +352,6 @@ export class MainProcess {
     ipcMain.handle('bluetooth:selectDevice', (_, deviceId: string) => 
       this.bluetoothService.selectDevice(deviceId)
     );
-    ipcMain.handle('bluetooth:connectManual', (_, deviceName: string) => 
-      this.bluetoothService.connectManualDevice(deviceName)
-    );
-    ipcMain.handle('bluetooth:cancelSelection', () => 
-      this.bluetoothService.cancelOperation()
-    );
-    ipcMain.handle('bluetooth:pairingResponse', (_, response: unknown) => 
-      this.bluetoothService.respondToPairing(response)
-    );
     ipcMain.handle('bluetooth:getSystemInfo', () => ({
       platform: process.platform,
       electronVersion: process.versions.electron,

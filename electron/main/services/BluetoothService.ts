@@ -65,74 +65,9 @@ export class BluetoothService {
     }
   }
 
-  // Handle manual device connection
-  connectManualDevice(deviceName: string): ApiResponse {
-    if (!this.deviceCallback) {
-      return {
-        success: false,
-        message: 'No pending connection request'
-      };
-    }
 
-    try {
-      this.deviceCallback(deviceName);
-      this.deviceCallback = null;
-      return {
-        success: true,
-        message: `Manual connection initiated for ${deviceName}`
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: `Manual connection failed: ${error instanceof Error ? error.message : String(error)}`
-      };
-    }
-  }
 
-  // Handle pairing response from user
-  respondToPairing(response: unknown): ApiResponse {
-    if (!this.pairingCallback) {
-      return {
-        success: false,
-        message: 'No pending pairing request'
-      };
-    }
 
-    try {
-      this.pairingCallback(response);
-      this.pairingCallback = null;
-      return {
-        success: true,
-        message: 'Pairing response sent'
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: `Pairing response failed: ${error instanceof Error ? error.message : String(error)}`
-      };
-    }
-  }
-
-  // Cancel current selection/pairing
-  cancelOperation(): ApiResponse {
-    if (this.deviceCallback) {
-      this.deviceCallback('');
-      this.deviceCallback = null;
-      return { success: true, message: 'Selection cancelled' };
-    }
-
-    if (this.pairingCallback) {
-      this.pairingCallback({ cancelled: true });
-      this.pairingCallback = null;
-      return { success: true, message: 'Pairing cancelled' };
-    }
-
-    return { success: false, message: 'No pending operation to cancel' };
-  }
-
-  getDiscoveredDevices(): DeviceInfo[] {
-    return Array.from(this.discoveredDevices.values());
-  }
 
   cleanup(): void {
     this.deviceCallback = null;

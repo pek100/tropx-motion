@@ -343,7 +343,7 @@ const useWebSocket = (url: string) => {
     };
   }, [connect]);
 
-  return { isConnected, lastMessage };
+  return { isConnected, lastMessage, ws };
 };
 
 const DeviceManagementPane: React.FC<{
@@ -1147,24 +1147,13 @@ const ElectronMotionApp: React.FC = () => {
     }
   }, []);
 
-  const { isConnected, lastMessage } = useWebSocket(`ws://localhost:${state.wsPort}`);
+  const { isConnected, lastMessage, ws } = useWebSocket(`ws://localhost:${state.wsPort}`);
 
-  // Store WebSocket reference
+  // Store WebSocket reference from the hook
   React.useEffect(() => {
-    if (isConnected) {
-      // Create a new WebSocket reference for sending data
-      wsRef.current = new WebSocket(`ws://localhost:${state.wsPort}`);
-      dispatch({ type: "SET_WS_CONNECTED", payload: true });
-    } else {
-      dispatch({ type: "SET_WS_CONNECTED", payload: false });
-    }
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
-    };
-  }, [isConnected, state.wsPort]);
+    wsRef.current = ws;
+    dispatch({ type: "SET_WS_CONNECTED", payload: isConnected });
+  }, [ws, isConnected]);
 
   useEffect(() => {
     if (!lastMessage) return;

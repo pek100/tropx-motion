@@ -166,39 +166,6 @@ export class MuseManager {
     }
   }
 
-  // Device discovery and connection
-  async discoverAndConnect(): Promise<boolean> {
-    try {
-      // First, try to reconnect to previously paired devices (much faster)
-      const previousDevices = await this.reconnectToPreviousDevices();
-      
-      if (previousDevices.length > 0) {
-        console.log('🚀 Fast reconnection to previous devices...');
-        
-        for (const device of previousDevices) {
-          try {
-            const connected = await this.connectToDeviceWithTimeout(device, 5000);
-            if (connected) {
-              console.log(`✅ Fast reconnection successful: ${device.name}`);
-              return true;
-            }
-          } catch (error) {
-            console.warn(`⚠️ Fast reconnection failed for ${device.name}:`, error);
-          }
-        }
-      }
-      
-      // No native chooser fallback - system works only with paired devices
-      console.log('❌ No previously paired devices found or reconnection failed');
-      console.log('❌ Please pair devices through system Bluetooth settings first, then scan using the app');
-      console.log('💡 Use the "Scan" button to discover devices, then connect to paired devices');
-      return false;
-
-    } catch (error) {
-      console.error('Discovery error:', error);
-      return false;
-    }
-  }
 
   private async connectToDevice(device: BluetoothDevice): Promise<boolean> {
     try {
@@ -740,22 +707,11 @@ export class MuseManager {
     return this.batteryLevels.get(deviceName) ?? null;
   }
 
-  /**
-   * Register an already-connected device to prevent double connection
-   */
-  registerConnectedDevice(deviceName: string, webMuseDevice: WebMuseDevice): void {
-    console.log(`📝 Registering already-connected device: ${deviceName}`);
-    this.connectedDevices.set(deviceName, webMuseDevice);
-    console.log(`✅ Device ${deviceName} registered in connected devices map`);
-  }
 
   getConnectedDevices(): Map<string, WebMuseDevice> {
     return new Map(this.connectedDevices);
   }
 
-  getConnectedDeviceCount(): number {
-    return this.connectedDevices.size;
-  }
 
   getAllBatteryLevels(): Map<string, number> {
     return new Map(this.batteryLevels);

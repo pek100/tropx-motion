@@ -154,7 +154,6 @@
       "installerSidebar": "assets/icon.png",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "TropX Motion"
     },
     "linux": {
       "target": [
