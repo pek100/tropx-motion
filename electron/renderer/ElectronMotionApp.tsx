@@ -1703,10 +1703,11 @@ const ElectronMotionApp: React.FC = () => {
     console.log("🚫 Scan canceled by user");
   };
 
-  const handleRecording = async () => {
+  // 🎬 LEGACY RECORDING SYSTEM (preserved for fallback)
+  const handleRecordingLegacy = async () => {
     try {
       const currentStreamingState = museManager.getIsStreaming();
-      console.log(`🎬 RECORDING STATE CHANGE: isRecording=${state.isRecording}, SDK streaming=${currentStreamingState}`);
+      console.log(`🎬 LEGACY RECORDING STATE CHANGE: isRecording=${state.isRecording}, SDK streaming=${currentStreamingState}`);
       if (state.isRecording) {
         // Stop recording and streaming
         console.log("🛑 Stopping recording and real quaternion streaming...");
@@ -1834,16 +1835,99 @@ const ElectronMotionApp: React.FC = () => {
         }
       }
     } catch (error) {
-      console.error("❌ Recording error:", error);
-      // Ensure clean state on error
+      console.error("❌ Legacy recording error:", error);
+      // Ensure recording state is reset on error
       dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
-      // Stop any partial streaming that might have started
+      alert(`Recording failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  // 🎬 FEATURE FLAG ENABLED RECORDING HANDLER
+  const handleRecording = async () => {
+    // Check if ElectronBLE recording is enabled
+    if (featureFlags.USE_ELECTRON_BLE_RECORD) {
+      console.log("🆕 Using ElectronBLE recording system");
+      
       try {
-        await museManager.stopStreaming();
-      } catch (stopError) {
-        console.warn("⚠️ Error stopping streaming during cleanup:", stopError);
+        if (state.isRecording) {
+          // Stop recording via ElectronBLE
+          console.log("🛑 Stopping ElectronBLE recording...");
+          const result = await electronBLE.stopRecording();
+          
+          if (result.success) {
+            // Update UI state
+            dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
+            
+            // Update all devices to stop streaming state
+            state.allDevices.forEach((device, deviceId) => {
+              if (device.state === "streaming") {
+                dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "connected" } } });
+              }
+            });
+            
+            console.log("✅ ElectronBLE recording stopped successfully");
+            
+            // Resume scanning after recording stops
+            setTimeout(() => {
+              handleScan().catch(error => {
+                console.warn("⚠️ Failed to resume scanning after recording:", error);
+              });
+            }, 1000);
+          } else {
+            throw new Error(result.message);
+          }
+        } else {
+          // Start recording via ElectronBLE
+          console.log("🎬 Starting ElectronBLE recording...");
+          
+          // Check if we have connected devices
+          const connectedDevices = Array.from(state.allDevices.values()).filter(d => d.state === "connected");
+          if (connectedDevices.length === 0) {
+            console.error("❌ No connected devices found for recording");
+            alert("Please connect at least one device before recording");
+            return;
+          }
+          
+          // Create session data
+          const sessionData = {
+            sessionId: `session_${Date.now()}`,
+            exerciseId: `exercise_${Date.now()}`,
+            setNumber: 1,
+          };
+          
+          const result = await electronBLE.startRecording(sessionData);
+          
+          if (result.success) {
+            // Update UI state
+            dispatch({ type: "SET_RECORDING", payload: { isRecording: true, startTime: new Date() } });
+            
+            // Update streaming device states
+            if (result.streamingDevices) {
+              result.streamingDevices.forEach(deviceName => {
+                // Find device by name and update state
+                state.allDevices.forEach((device, deviceId) => {
+                  if (device.name === deviceName && device.state === "connected") {
+                    dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "streaming" } } });
+                  }
+                });
+              });
+            }
+            
+            console.log("✅ ElectronBLE recording started successfully");
+          } else {
+            throw new Error(result.message);
+          }
+        }
+      } catch (error) {
+        console.error("❌ ElectronBLE recording error:", error);
+        
+        // Fallback to legacy system on ElectronBLE failure
+        console.log("🔄 Falling back to legacy recording system...");
+        await handleRecordingLegacy();
       }
-      alert(`Recording error: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } else {
+      // Use legacy system when feature flag disabled
+      await handleRecordingLegacy();
     }
   };
 

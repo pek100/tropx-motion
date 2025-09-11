@@ -11,8 +11,8 @@ export const ELECTRON_BLE_FEATURE_FLAGS: ElectronBLEFeatureFlags = {
   // Phase 5.2: Connect operation migration
   USE_ELECTRON_BLE_CONNECT: false,  // 🔴 DISABLED - revert to working system
   
-  // Phase 5.3: Recording operation migration (disabled until connect is verified)  
-  USE_ELECTRON_BLE_RECORD: false,
+  // Phase 5.3: Recording operation migration
+  USE_ELECTRON_BLE_RECORD: false,  // 🔴 DISABLED by default - can be enabled for testing
 };
 
 // Environment-based feature flags (optional - for different deployment stages)
