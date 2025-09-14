@@ -127,14 +127,14 @@ export class GATTOperationQueue {
       deviceQueue.length = 0;
     }
 
-    // Cancel active operation
+    // Cancel active operation and clean up timeout
     const activeOp = this.activeOperations.get(deviceId);
     if (activeOp) {
       activeOp.reject(new Error(`Active operation cancelled: ${activeOp.id}`));
       this.activeOperations.delete(deviceId);
     }
 
-    // Clear timeout
+    // Clean up timeout for this device
     const timeout = this.operationTimeouts.get(deviceId);
     if (timeout) {
       clearTimeout(timeout);
@@ -167,6 +167,42 @@ export class GATTOperationQueue {
     }
     this.queues.clear();
     this.activeOperations.clear();
+
+    // Clear all timeouts
+    this.operationTimeouts.forEach(timeout => clearTimeout(timeout));
     this.operationTimeouts.clear();
+  }
+
+  // Periodic cleanup of stale operations and timeouts
+  performPeriodicCleanup(): void {
+    const now = Date.now();
+    const staleThreshold = 60000; // 1 minute
+
+    // Clean up queues for devices that haven't had operations recently
+    this.queues.forEach((queue, deviceId) => {
+      if (queue.length === 0 && !this.activeOperations.has(deviceId)) {
+        const lastOpTime = queue.length > 0 ?
+          parseInt(queue[queue.length - 1].id.split('_')[2]) : 0;
+
+        if (now - lastOpTime > staleThreshold) {
+          this.queues.delete(deviceId);
+        }
+      }
+    });
+
+    // Log queue status for monitoring
+    if (this.queues.size > 0) {
+      const queueSizes = Array.from(this.queues.entries()).map(([id, q]) => `${id}:${q.length}`);
+      console.log('🧹 GATT Queue cleanup - Active queues:', queueSizes.join(', '));
+    }
+  }
+
+  // Get current memory usage statistics
+  getMemoryStats(): { queueCount: number; activeOperations: number; pendingTimeouts: number } {
+    return {
+      queueCount: this.queues.size,
+      activeOperations: this.activeOperations.size,
+      pendingTimeouts: this.operationTimeouts.size
+    };
   }
 }

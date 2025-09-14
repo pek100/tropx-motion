@@ -82,6 +82,10 @@ export class MuseManager {
   private gattQueue = GATTOperationQueue.getInstance();
   private lastBatteryUpdate = new Map<string, number>();
   private readonly BATTERY_UPDATE_INTERVAL = 30000; // 30 seconds minimum between battery reads
+
+  // Event listener tracking for proper cleanup - store characteristics to stop notifications
+  private activeCharacteristics = new Map<string, BluetoothRemoteGATTCharacteristic>();
+  private lastProcessedTimestamp = new Map<string, number>();
   
   // Connection timeouts (1.2s recommended by Web Bluetooth spec)
   private readonly CONNECTION_TIMEOUT_MS = 10000; // 10s for initial connection
@@ -93,6 +97,9 @@ export class MuseManager {
     this.batteryLevels = new Map();
     this.dataCallback = null;
     this.batteryUpdateCallbacks = new Set();
+
+    // Start periodic cleanup and monitoring
+    this.startPeriodicCleanup();
   }
 
   // Battery update subscription management
@@ -520,32 +527,44 @@ export class MuseManager {
 
         const dataChar = device.characteristics.data;
         await dataChar.startNotifications();
-        
-        dataChar.addEventListener('characteristicvaluechanged', 
-          (event: Event) => {
-            if (!this.dataCallback) return;
 
-            const characteristic = event.target as unknown as BluetoothRemoteGATTCharacteristic;
-            const value = characteristic.value;
-            if (!value) return;
+        // Create event handler with proper cleanup tracking
+        const eventHandler = (event: Event) => {
+          if (!this.dataCallback) return;
 
-            try {
-              const rawData = new Uint8Array(value.buffer);
-              const data = MuseDataParser.decodePacket(
-                rawData,
-                Date.now(),
-                MuseHardware.DataMode.QUATERNION, // Use proper SDK mode
-                { FullScale: 2000, Sensitivity: 1.0 }, // Proper sensor configs
-                { FullScale: 16, Sensitivity: 1.0 },
-                { FullScale: 4912, Sensitivity: 1.0 }
-              );
+          const characteristic = event.target as unknown as BluetoothRemoteGATTCharacteristic;
+          const value = characteristic.value;
+          if (!value) return;
 
-              this.dataCallback(deviceName, data);
-            } catch (error) {
-              console.error('Data processing error:', error);
+          try {
+            const timestamp = Date.now();
+
+            // Deduplication: Skip if we've already processed this timestamp or older
+            const lastTimestamp = this.lastProcessedTimestamp.get(deviceName) || 0;
+            if (timestamp <= lastTimestamp) {
+              return; // Skip duplicate/old data
             }
+            this.lastProcessedTimestamp.set(deviceName, timestamp);
+
+            const rawData = new Uint8Array(value.buffer);
+            const data = MuseDataParser.decodePacket(
+              rawData,
+              timestamp,
+              MuseHardware.DataMode.QUATERNION, // Use proper SDK mode
+              { FullScale: 2000, Sensitivity: 1.0 }, // Proper sensor configs
+              { FullScale: 16, Sensitivity: 1.0 },
+              { FullScale: 4912, Sensitivity: 1.0 }
+            );
+
+            this.dataCallback(deviceName, data);
+          } catch (error) {
+            console.error('Data processing error:', error);
           }
-        );
+        };
+
+        // Store characteristic for cleanup and add event handler
+        this.activeCharacteristics.set(deviceName, dataChar);
+        dataChar.addEventListener('characteristicvaluechanged', eventHandler);
 
         // 🔧 FIX: Use proper SDK command instead of hardcoded array
         console.log(`🎯 Using SDK command for streaming on ${deviceName}...`);
@@ -579,18 +598,29 @@ export class MuseManager {
       for (const [deviceName, device] of this.connectedDevices.entries()) {
         if (!device.characteristics?.command || !device.characteristics?.data) continue;
 
+        // 🔧 FIX: Clean up notifications FIRST to prevent memory leaks
+        const characteristic = this.activeCharacteristics.get(deviceName);
+        if (characteristic) {
+          try {
+            // Stop notifications to clean up event handlers (stopNotifications exists but may not be in types)
+            await (characteristic as any).stopNotifications();
+            this.activeCharacteristics.delete(deviceName);
+            console.log(`🧹 Stopped notifications for ${deviceName}`);
+          } catch (error) {
+            // Silently handle if stopNotifications fails
+            this.activeCharacteristics.delete(deviceName);
+          }
+        }
+
+        // Clear deduplication timestamps
+        this.lastProcessedTimestamp.delete(deviceName);
+
         // 🔧 FIX: Use proper SDK command instead of hardcoded array
         console.log(`🎯 Using SDK command to stop streaming on ${deviceName}...`);
         const stopCommand = MuseCommands.Cmd_StopStream();
         await device.characteristics.command.writeValue(stopCommand.buffer as ArrayBuffer);
 
-        // Note: Some implementations don't have stopNotifications, handle gracefully
-        try {
-          // @ts-ignore - stopNotifications may not exist in all implementations
-          await device.characteristics.data.stopNotifications();
-        } catch (error) {
-          // Silently handle missing stopNotifications
-        }
+        // Notifications already stopped above in cleanup
         console.log(`✅ Stopped streaming for device ${deviceName} using SDK command`);
       }
 
@@ -962,9 +992,24 @@ export class MuseManager {
         device.server.disconnect();
       }
 
-      // Clean up device state
+      // Clean up device state and stop notifications
+      const characteristic = this.activeCharacteristics.get(deviceName);
+      if (characteristic) {
+        try {
+          await (characteristic as any).stopNotifications();
+          this.activeCharacteristics.delete(deviceName);
+          console.log(`🧹 Stopped notifications for ${deviceName}`);
+        } catch (error) {
+          // Silently handle if stopNotifications fails
+          this.activeCharacteristics.delete(deviceName);
+        }
+      }
+
+      // Clear device data
       this.connectedDevices.delete(deviceName);
       this.batteryLevels.delete(deviceName);
+      this.lastProcessedTimestamp.delete(deviceName);
+      this.lastBatteryUpdate.delete(deviceName);
       
       console.log(`✅ SDK: Successfully disconnected ${deviceName}`);
       return true;
@@ -972,8 +1017,11 @@ export class MuseManager {
     } catch (error) {
       console.error(`❌ SDK: Error disconnecting ${deviceName}:`, error);
       // Clean up anyway
+      this.activeCharacteristics.delete(deviceName);
       this.connectedDevices.delete(deviceName);
       this.batteryLevels.delete(deviceName);
+      this.lastProcessedTimestamp.delete(deviceName);
+      this.lastBatteryUpdate.delete(deviceName);
       return false;
     }
   }
@@ -1142,6 +1190,82 @@ export class MuseManager {
     // Attempt connection using the same robust timeout/retry flow
     const connected = await this.connectToDeviceWithTimeout(device, timeoutMs);
     return connected;
+  }
+
+  // Performance monitoring and cleanup methods
+  private startPeriodicCleanup(): void {
+    setInterval(() => {
+      this.performMemoryCleanup();
+      this.logPerformanceMetrics();
+    }, 60000); // Every 60 seconds
+  }
+
+  private performMemoryCleanup(): void {
+    // Clean up GATT queue
+    this.gattQueue.performPeriodicCleanup();
+
+    // Clean up stale timestamp entries
+    const now = Date.now();
+    const staleThreshold = 300000; // 5 minutes
+
+    this.lastProcessedTimestamp.forEach((timestamp, deviceId) => {
+      if (now - timestamp > staleThreshold) {
+        this.lastProcessedTimestamp.delete(deviceId);
+      }
+    });
+
+    this.lastBatteryUpdate.forEach((timestamp, deviceId) => {
+      if (now - timestamp > staleThreshold && !this.connectedDevices.has(deviceId)) {
+        this.lastBatteryUpdate.delete(deviceId);
+      }
+    });
+  }
+
+  private logPerformanceMetrics(): void {
+    const gattStats = this.gattQueue.getMemoryStats();
+    const metrics = {
+      connectedDevices: this.connectedDevices.size,
+      activeCharacteristics: this.activeCharacteristics.size,
+      timestampCache: this.lastProcessedTimestamp.size,
+      batteryCache: this.lastBatteryUpdate.size,
+      gattQueues: gattStats.queueCount,
+      activeGattOps: gattStats.activeOperations,
+      pendingTimeouts: gattStats.pendingTimeouts,
+      isStreaming: this.isStreaming,
+      batteryUpdateCallbacks: this.batteryUpdateCallbacks.size
+    };
+
+    // Only log if there are potential issues or during debugging
+    const totalMemoryItems = metrics.activeCharacteristics + metrics.timestampCache + metrics.batteryCache + metrics.gattQueues;
+    if (totalMemoryItems > 20 || metrics.pendingTimeouts > 5) {
+      console.log('🔍 MuseManager Performance Metrics:', metrics);
+    }
+  }
+
+  // Get current memory usage statistics
+  getPerformanceMetrics(): any {
+    const gattStats = this.gattQueue.getMemoryStats();
+    return {
+      connectedDevices: this.connectedDevices.size,
+      activeCharacteristics: this.activeCharacteristics.size,
+      timestampCache: this.lastProcessedTimestamp.size,
+      batteryCache: this.lastBatteryUpdate.size,
+      gattQueues: gattStats.queueCount,
+      activeGattOps: gattStats.activeOperations,
+      pendingTimeouts: gattStats.pendingTimeouts,
+      isStreaming: this.isStreaming,
+      batteryUpdateCallbacks: this.batteryUpdateCallbacks.size,
+      memoryHealth: this.assessMemoryHealth()
+    };
+  }
+
+  private assessMemoryHealth(): 'good' | 'warning' | 'critical' {
+    const gattStats = this.gattQueue.getMemoryStats();
+    const totalItems = this.activeCharacteristics.size + this.lastProcessedTimestamp.size + gattStats.queueCount;
+
+    if (totalItems > 50 || gattStats.pendingTimeouts > 10) return 'critical';
+    if (totalItems > 20 || gattStats.pendingTimeouts > 5) return 'warning';
+    return 'good';
   }
 }
 

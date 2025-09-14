@@ -12,8 +12,10 @@ export class WebSocketService {
   private messageHandlers = new Map<string, (data: unknown, clientId: string) => void>();
   private streamBatcher!: StreamBatcher;
   
-  // Performance optimization: pre-allocated buffers (deprecated cache removed in practice)
+  // Performance optimization: pre-allocated buffers with cleanup
   private messageBuffer = new Map<string, Buffer>();
+  private messageBufferCleanupInterval: NodeJS.Timeout | null = null;
+  private static readonly MAX_BUFFER_SIZE = 100;
 
   // Backpressure threshold (~256KB) - skip motion frame to slow clients if exceeded
   private static readonly BACKPRESSURE_BYTES = 256 * 1024;
@@ -23,6 +25,7 @@ export class WebSocketService {
     await this.createServer();
     this.initializeBatcher();
     this.startHeartbeat();
+    this.startBufferCleanup();
   }
 
   // Register message handler for specific message type
@@ -168,6 +171,15 @@ export class WebSocketService {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
+
+    if (this.messageBufferCleanupInterval) {
+      clearInterval(this.messageBufferCleanupInterval);
+      this.messageBufferCleanupInterval = null;
+    }
+
+    // Final buffer cleanup
+    this.messageBuffer.clear();
+    this.messageHandlers.clear();
 
     if (this.streamBatcher) {
       this.streamBatcher.cleanup();
@@ -344,6 +356,21 @@ export class WebSocketService {
         timestamp: Date.now()
       });
     }, CONFIG.WEBSOCKET.HEARTBEAT_INTERVAL);
+  }
+
+  // Start periodic buffer cleanup to prevent memory leaks
+  private startBufferCleanup(): void {
+    this.messageBufferCleanupInterval = setInterval(() => {
+      this.cleanupMessageBuffers();
+    }, 30000); // Clean every 30 seconds
+  }
+
+  // Clean up message buffers when they grow too large
+  private cleanupMessageBuffers(): void {
+    if (this.messageBuffer.size > WebSocketService.MAX_BUFFER_SIZE) {
+      console.log(`🧹 WebSocket buffer cleanup: ${this.messageBuffer.size} -> 0`);
+      this.messageBuffer.clear();
+    }
   }
 
   // Generate unique client ID

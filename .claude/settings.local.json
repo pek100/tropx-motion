@@ -43,7 +43,8 @@
       "Bash(git diff:*)",
       "Bash(git commit:*)",
       "Bash(rm:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(npm run build:*)"
     ],
     "deny": [],
     "ask": [],
