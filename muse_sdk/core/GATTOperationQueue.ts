@@ -49,10 +49,14 @@ export class GATTOperationQueue {
       }
 
       const deviceQueue = this.queues.get(deviceId)!;
-      deviceQueue.push(gattOp);
 
-      // Sort by priority (higher first)
-      deviceQueue.sort((a, b) => b.priority - a.priority);
+      // CRITICAL FIX: Insert in priority order instead of expensive full sort
+      const insertIndex = deviceQueue.findIndex(op => op.priority < gattOp.priority);
+      if (insertIndex === -1) {
+        deviceQueue.push(gattOp);
+      } else {
+        deviceQueue.splice(insertIndex, 0, gattOp);
+      }
 
       // Process queue
       this.processQueue(deviceId);
@@ -99,8 +103,8 @@ export class GATTOperationQueue {
       this.activeOperations.delete(deviceId);
       operation.resolve(result);
 
-      // Process next operation
-      setTimeout(() => this.processQueue(deviceId), 50); // Small delay between operations
+      // CRITICAL FIX: Process immediately for streaming performance
+      this.processQueue(deviceId);
     } catch (error) {
       // Clear timeout
       const timeout = this.operationTimeouts.get(deviceId);
@@ -112,8 +116,8 @@ export class GATTOperationQueue {
       this.activeOperations.delete(deviceId);
       operation.reject(error as Error);
 
-      // Process next operation
-      setTimeout(() => this.processQueue(deviceId), 100); // Longer delay on error
+      // CRITICAL FIX: Process immediately even on error, but add small delay
+      setTimeout(() => this.processQueue(deviceId), 10); // Minimal delay on error
     }
   }
 

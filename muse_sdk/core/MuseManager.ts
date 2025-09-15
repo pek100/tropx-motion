@@ -56,6 +56,7 @@ interface BluetoothRemoteGATTCharacteristic {
   writeValue(value: ArrayBuffer): Promise<void>;
   startNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
   addEventListener(type: string, listener: (event: Event) => void): void;
+  removeEventListener(type: string, listener: (event: Event) => void): void;
   value?: DataView;
 }
 
@@ -85,7 +86,12 @@ export class MuseManager {
 
   // Event listener tracking for proper cleanup - store characteristics to stop notifications
   private activeCharacteristics = new Map<string, BluetoothRemoteGATTCharacteristic>();
+  private eventHandlers = new Map<string, (event: Event) => void>();
   private lastProcessedTimestamp = new Map<string, number>();
+
+  // CRITICAL FIX: Timer cleanup tracking
+  private cleanupInterval: NodeJS.Timeout | null = null;
+  private serviceRestartInterval: NodeJS.Timeout | null = null;
   
   // Connection timeouts (1.2s recommended by Web Bluetooth spec)
   private readonly CONNECTION_TIMEOUT_MS = 10000; // 10s for initial connection
@@ -100,6 +106,7 @@ export class MuseManager {
 
     // Start periodic cleanup and monitoring
     this.startPeriodicCleanup();
+    this.startServiceRestartTimer();
   }
 
   // Battery update subscription management
@@ -528,6 +535,15 @@ export class MuseManager {
         const dataChar = device.characteristics.data;
         await dataChar.startNotifications();
 
+        // CRITICAL FIX: Remove any existing event handler to prevent accumulation
+        const existingHandler = this.eventHandlers.get(deviceName);
+        if (existingHandler) {
+          // MUST explicitly remove the event listener - stopNotifications() doesn't do this!
+          dataChar.removeEventListener('characteristicvaluechanged', existingHandler);
+          this.eventHandlers.delete(deviceName);
+          console.log(`🧹 ACTUALLY removed existing event handler for ${deviceName}`);
+        }
+
         // Create event handler with proper cleanup tracking
         const eventHandler = (event: Event) => {
           if (!this.dataCallback) return;
@@ -539,10 +555,11 @@ export class MuseManager {
           try {
             const timestamp = Date.now();
 
-            // Deduplication: Skip if we've already processed this timestamp or older
+            // CRITICAL FIX: Less aggressive deduplication - allow same timestamp, only block significantly old data
             const lastTimestamp = this.lastProcessedTimestamp.get(deviceName) || 0;
-            if (timestamp <= lastTimestamp) {
-              return; // Skip duplicate/old data
+            if (timestamp < lastTimestamp - 100) { // Only skip if > 100ms old
+              console.warn(`Skipping old packet: ${timestamp} vs ${lastTimestamp} for ${deviceName}`);
+              return; // Skip very old data only
             }
             this.lastProcessedTimestamp.set(deviceName, timestamp);
 
@@ -562,8 +579,9 @@ export class MuseManager {
           }
         };
 
-        // Store characteristic for cleanup and add event handler
+        // Store characteristic and event handler for cleanup and add event handler
         this.activeCharacteristics.set(deviceName, dataChar);
+        this.eventHandlers.set(deviceName, eventHandler);
         dataChar.addEventListener('characteristicvaluechanged', eventHandler);
 
         // 🔧 FIX: Use proper SDK command instead of hardcoded array
@@ -598,17 +616,28 @@ export class MuseManager {
       for (const [deviceName, device] of this.connectedDevices.entries()) {
         if (!device.characteristics?.command || !device.characteristics?.data) continue;
 
-        // 🔧 FIX: Clean up notifications FIRST to prevent memory leaks
+        // 🔧 FIX: Clean up notifications AND event handlers FIRST to prevent memory leaks
         const characteristic = this.activeCharacteristics.get(deviceName);
-        if (characteristic) {
+        const eventHandler = this.eventHandlers.get(deviceName);
+
+        if (characteristic && eventHandler) {
           try {
-            // Stop notifications to clean up event handlers (stopNotifications exists but may not be in types)
+            // CRITICAL: Remove event listener FIRST - stopNotifications() alone doesn't remove listeners!
+            characteristic.removeEventListener('characteristicvaluechanged', eventHandler);
+            this.eventHandlers.delete(deviceName);
+            console.log(`🧹 ACTUALLY removed event handler for ${deviceName}`);
+
+            // Then stop notifications
             await (characteristic as any).stopNotifications();
             this.activeCharacteristics.delete(deviceName);
             console.log(`🧹 Stopped notifications for ${deviceName}`);
           } catch (error) {
-            // Silently handle if stopNotifications fails
+            // Ensure cleanup even if operations fail
+            try {
+              characteristic.removeEventListener('characteristicvaluechanged', eventHandler);
+            } catch {}
             this.activeCharacteristics.delete(deviceName);
+            this.eventHandlers.delete(deviceName);
           }
         }
 
@@ -992,16 +1021,28 @@ export class MuseManager {
         device.server.disconnect();
       }
 
-      // Clean up device state and stop notifications
+      // Clean up device state, event handlers, and stop notifications
       const characteristic = this.activeCharacteristics.get(deviceName);
-      if (characteristic) {
+      const eventHandler = this.eventHandlers.get(deviceName);
+
+      if (characteristic && eventHandler) {
         try {
+          // CRITICAL: Remove event listener FIRST - stopNotifications() alone doesn't remove listeners!
+          characteristic.removeEventListener('characteristicvaluechanged', eventHandler);
+          this.eventHandlers.delete(deviceName);
+          console.log(`🧹 ACTUALLY removed event handler for ${deviceName}`);
+
+          // Then stop notifications
           await (characteristic as any).stopNotifications();
           this.activeCharacteristics.delete(deviceName);
           console.log(`🧹 Stopped notifications for ${deviceName}`);
         } catch (error) {
-          // Silently handle if stopNotifications fails
+          // Ensure cleanup even if operations fail
+          try {
+            characteristic.removeEventListener('characteristicvaluechanged', eventHandler);
+          } catch {}
           this.activeCharacteristics.delete(deviceName);
+          this.eventHandlers.delete(deviceName);
         }
       }
 
@@ -1018,6 +1059,7 @@ export class MuseManager {
       console.error(`❌ SDK: Error disconnecting ${deviceName}:`, error);
       // Clean up anyway
       this.activeCharacteristics.delete(deviceName);
+      this.eventHandlers.delete(deviceName);
       this.connectedDevices.delete(deviceName);
       this.batteryLevels.delete(deviceName);
       this.lastProcessedTimestamp.delete(deviceName);
@@ -1144,21 +1186,63 @@ export class MuseManager {
     console.log(`💥 =======================================\n`);
   }
 
-  // Reset SDK state (useful for troubleshooting)
-  resetSDKState(): void {
-    console.log(`🔄 SDK: Resetting SDK state...`);
-    
+  // CRITICAL FIX: Complete cleanup method to prevent memory leaks
+  cleanup(): void {
+    console.log(`🧹 SDK: Performing complete cleanup...`);
+
+    // Stop periodic cleanup timer
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+      console.log(`🧹 SDK: Cleanup timer stopped`);
+    }
+
+    // Stop service restart timer
+    if (this.serviceRestartInterval) {
+      clearInterval(this.serviceRestartInterval);
+      this.serviceRestartInterval = null;
+      console.log(`🧹 SDK: Service restart timer stopped`);
+    }
+
     // Stop streaming if active
     if (this.isStreaming) {
       this.isStreaming = false;
       this.dataCallback = null;
     }
-    
+
+    // Clean up all event handlers
+    this.eventHandlers.clear();
+    this.activeCharacteristics.clear();
+
+    // Clear all device connections and state
+    this.connectedDevices.clear();
+    this.batteryLevels.clear();
+    this.scannedDevices.clear();
+    this.lastProcessedTimestamp.clear();
+    this.lastBatteryUpdate.clear();
+    this.gattOperationQueue.clear();
+
+    // Clear all callbacks
+    this.batteryUpdateCallbacks.clear();
+
+    console.log(`✅ SDK: Complete cleanup finished`);
+  }
+
+  // Reset SDK state (useful for troubleshooting)
+  resetSDKState(): void {
+    console.log(`🔄 SDK: Resetting SDK state...`);
+
+    // Stop streaming if active
+    if (this.isStreaming) {
+      this.isStreaming = false;
+      this.dataCallback = null;
+    }
+
     // Clear all device connections
     this.connectedDevices.clear();
     this.batteryLevels.clear();
     this.scannedDevices.clear();
-    
+
     console.log(`✅ SDK: State reset complete`);
   }
 
@@ -1194,7 +1278,12 @@ export class MuseManager {
 
   // Performance monitoring and cleanup methods
   private startPeriodicCleanup(): void {
-    setInterval(() => {
+    // CRITICAL FIX: Clear existing timer to prevent accumulation
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+
+    this.cleanupInterval = setInterval(() => {
       this.performMemoryCleanup();
       this.logPerformanceMetrics();
     }, 60000); // Every 60 seconds
@@ -1266,6 +1355,48 @@ export class MuseManager {
     if (totalItems > 50 || gattStats.pendingTimeouts > 10) return 'critical';
     if (totalItems > 20 || gattStats.pendingTimeouts > 5) return 'warning';
     return 'good';
+  }
+
+  // CRITICAL FIX: Service restart mechanism to prevent long-term accumulation
+  private startServiceRestartTimer(): void {
+    if (this.serviceRestartInterval) {
+      clearInterval(this.serviceRestartInterval);
+    }
+
+    // Restart streaming service every 2 hours to prevent memory accumulation
+    this.serviceRestartInterval = setInterval(async () => {
+      const wasStreaming = this.isStreaming;
+      const connectedDeviceNames = Array.from(this.connectedDevices.keys());
+
+      console.log('🔄 Performing preventive service restart to clear accumulated state...');
+
+      try {
+        // Stop streaming if active
+        if (wasStreaming) {
+          await this.stopStreaming();
+        }
+
+        // Clear accumulated state but keep connections
+        this.eventHandlers.clear();
+        this.lastProcessedTimestamp.clear();
+        this.gattQueue.clearAllQueues();
+
+        // Restart streaming if it was active
+        if (wasStreaming && connectedDeviceNames.length > 0) {
+          // Small delay to ensure cleanup is complete
+          setTimeout(async () => {
+            if (this.dataCallback) {
+              await this.startStreaming(this.dataCallback);
+              console.log('✅ Service restart completed - streaming resumed');
+            }
+          }, 1000);
+        } else {
+          console.log('✅ Service restart completed - no streaming to resume');
+        }
+      } catch (error) {
+        console.error('❌ Error during service restart:', error);
+      }
+    }, 2 * 60 * 60 * 1000); // 2 hours
   }
 }
 

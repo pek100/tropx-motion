@@ -7,6 +7,7 @@ import { StreamBatcher } from './StreamBatcher';
 export class WebSocketService {
   private server: WebSocketServer | null = null;
   private clients = new Set<WebSocket>();
+  private clientHandlers = new Map<WebSocket, Set<() => void>>(); // Track handlers for cleanup
   private port: number = CONFIG.WEBSOCKET.DEFAULT_PORT;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private messageHandlers = new Map<string, (data: unknown, clientId: string) => void>();
@@ -177,6 +178,10 @@ export class WebSocketService {
       this.messageBufferCleanupInterval = null;
     }
 
+    // CRITICAL FIX: Clean up all client handlers first
+    this.clients.forEach(client => this.cleanupClient(client));
+    this.clientHandlers.clear();
+
     // Final buffer cleanup
     this.messageBuffer.clear();
     this.messageHandlers.clear();
@@ -185,16 +190,12 @@ export class WebSocketService {
       this.streamBatcher.cleanup();
     }
 
-    this.clients.forEach(client => client.close());
-    this.clients.clear();
-
     if (this.server) {
       this.server.close();
       this.server = null;
     }
 
-    this.messageHandlers.clear();
-    this.messageBuffer.clear();
+    console.log('🧹 WebSocket service cleanup completed');
   }
 
   // Find available port starting from default
@@ -281,19 +282,50 @@ export class WebSocketService {
     this.clients.add(ws);
     this.sendCurrentStatus(ws);
 
-    ws.on('message', (data) => {
+    // CRITICAL FIX: Track handlers for proper cleanup
+    const handlers = new Set<() => void>();
+    this.clientHandlers.set(ws, handlers);
+
+    const messageHandler = (data: any) => {
       this.handleClientMessage(ws, data.toString(), clientId);
-    });
+    };
 
-    ws.on('close', () => {
+    const closeHandler = () => {
       console.log(`Client disconnected: ${clientId}`);
-      this.clients.delete(ws);
-    });
+      this.cleanupClient(ws);
+    };
 
-    ws.on('error', (error) => {
+    const errorHandler = (error: Error) => {
       console.error(`WebSocket client error (${clientId}):`, error);
-      this.clients.delete(ws);
-    });
+      this.cleanupClient(ws);
+    };
+
+    ws.on('message', messageHandler);
+    ws.on('close', closeHandler);
+    ws.on('error', errorHandler);
+
+    // Store cleanup functions
+    handlers.add(() => ws.off('message', messageHandler));
+    handlers.add(() => ws.off('close', closeHandler));
+    handlers.add(() => ws.off('error', errorHandler));
+  }
+
+  // CRITICAL FIX: Proper client cleanup
+  private cleanupClient(ws: WebSocket): void {
+    // Remove all event handlers
+    const handlers = this.clientHandlers.get(ws);
+    if (handlers) {
+      handlers.forEach(cleanup => cleanup());
+      this.clientHandlers.delete(ws);
+    }
+
+    // Remove from clients set
+    this.clients.delete(ws);
+
+    // Ensure socket is closed
+    if (ws.readyState !== WebSocket.CLOSED) {
+      ws.close();
+    }
   }
 
   // Process incoming client messages
