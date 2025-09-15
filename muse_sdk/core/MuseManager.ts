@@ -523,6 +523,22 @@ export class MuseManager {
         throw new Error('Valid callback function required');
       }
 
+      // NUCLEAR FIX: Clear ALL existing handlers before starting
+      for (const [deviceName, handler] of this.eventHandlers.entries()) {
+        const characteristic = this.activeCharacteristics.get(deviceName);
+        if (characteristic) {
+          try {
+            characteristic.removeEventListener('characteristicvaluechanged', handler);
+          } catch (e) {
+            // Silent cleanup
+          }
+        }
+      }
+
+      // Clear all maps
+      this.eventHandlers.clear();
+      this.activeCharacteristics.clear();
+
       this.dataCallback = callback;
       console.log('Starting streaming for all connected devices...');
 
@@ -533,20 +549,41 @@ export class MuseManager {
         }
 
         const dataChar = device.characteristics.data;
+
+        // CRITICAL FIX: Stop notifications first to clear browser-level handlers
+        try {
+          await (dataChar as any).stopNotifications();
+        } catch (e) {
+          // Expected for new connections
+        }
+
         await dataChar.startNotifications();
 
         // CRITICAL FIX: Remove any existing event handler to prevent accumulation
         const existingHandler = this.eventHandlers.get(deviceName);
-        if (existingHandler) {
-          // MUST explicitly remove the event listener - stopNotifications() doesn't do this!
-          dataChar.removeEventListener('characteristicvaluechanged', existingHandler);
+        const existingCharacteristic = this.activeCharacteristics.get(deviceName);
+
+        if (existingHandler && existingCharacteristic) {
+          // Remove from the ORIGINAL characteristic it was attached to
+          existingCharacteristic.removeEventListener('characteristicvaluechanged', existingHandler);
           this.eventHandlers.delete(deviceName);
-          console.log(`🧹 ACTUALLY removed existing event handler for ${deviceName}`);
+        } else if (existingHandler) {
+          this.eventHandlers.delete(deviceName);
         }
 
-        // Create event handler with proper cleanup tracking
+        // Create event handler with immediate deduplication
+        let processingPacket = false;
         const eventHandler = (event: Event) => {
-          if (!this.dataCallback) return;
+          // IMMEDIATE DEDUPLICATION: Prevent multiple handlers processing same packet
+          if (processingPacket) {
+            return;
+          }
+          processingPacket = true;
+
+          if (!this.dataCallback) {
+            processingPacket = false;
+            return;
+          }
 
           const characteristic = event.target as unknown as BluetoothRemoteGATTCharacteristic;
           const value = characteristic.value;
@@ -573,9 +610,20 @@ export class MuseManager {
               { FullScale: 4912, Sensitivity: 1.0 }
             );
 
+            // PERFORMANCE CHECK: Log if data processing is slow
+            const callbackStart = performance.now();
             this.dataCallback(deviceName, data);
+            const callbackEnd = performance.now();
+            const duration = callbackEnd - callbackStart;
+            if (duration > 2) {
+              console.log(`🎯 Processing time: ${deviceName} = ${duration.toFixed(2)}ms`);
+            }
+
+            // Reset processing flag
+            processingPacket = false;
           } catch (error) {
             console.error('Data processing error:', error);
+            processingPacket = false; // Reset on error
           }
         };
 

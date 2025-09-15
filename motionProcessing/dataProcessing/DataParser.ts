@@ -142,7 +142,7 @@ export class DataParser {
     }
 
     /**
-     * Adds angle measurement to buffered data with timestamp conversion.
+     * Adds angle measurement to buffered data with timestamp conversion and size limit.
      */
     private updateMeasurementBuffer(jointId: string, timestamp: number, angle: number): void {
         let buffer = this.measurementBuffer.get(jointId);
@@ -151,7 +151,17 @@ export class DataParser {
             this.measurementBuffer.set(jointId, buffer);
         }
 
+        // For recording, we need to keep values but with reasonable limits
         buffer.values.push(angle);
+
+        // Prevent infinite growth - keep reasonable recording window
+        const MAX_BUFFER_SIZE = 5000; // ~50 seconds at 100Hz - reasonable for single recording
+        if (buffer.values.length > MAX_BUFFER_SIZE) {
+            // Remove oldest 20% to avoid frequent array operations
+            const removeCount = Math.floor(MAX_BUFFER_SIZE * 0.2);
+            buffer.values.splice(0, removeCount);
+        }
+
         buffer.lastUpdate = convertSensorTimeToUTC(timestamp, this.recordingStartTime);
     }
 

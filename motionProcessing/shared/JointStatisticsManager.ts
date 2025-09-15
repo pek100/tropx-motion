@@ -95,11 +95,14 @@ export class JointStatisticsManager {
      * Updates all statistical values with new angle measurement.
      */
     private updateStatsValues(stats: JointStats, angle: number): void {
-        stats.values.push(angle);
+        // Don't accumulate infinite arrays - just track statistics
         stats.min = Math.min(stats.min, angle);
         stats.max = Math.max(stats.max, angle);
         stats.count++;
         stats.sum += angle;
+
+        // Keep only current value for immediate access
+        stats.values = [angle];
     }
 
     /**

@@ -43,11 +43,18 @@ export class InterpolationService {
             return [];
         }
 
+        const start = performance.now();
+
         const rawTimestamp = externalTimestamp || imuData.timestamp || performance.now();
         const sample = this.createTimestampedSample(imuData.quaternion, rawTimestamp);
 
         this.addSampleToBuffer(deviceId, sample);
         this.processGridPoint(this.snapToGrid(rawTimestamp));
+
+        const duration = performance.now() - start;
+        if (duration > 1) {
+            console.log(`🔬 Interpolation: ${deviceId} = ${duration.toFixed(2)}ms`);
+        }
 
         return [];
     }
