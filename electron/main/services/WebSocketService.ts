@@ -20,6 +20,7 @@ export class WebSocketService {
 
   // Backpressure threshold (~256KB) - skip motion frame to slow clients if exceeded
   private static readonly BACKPRESSURE_BYTES = 256 * 1024;
+  private broadcastCounter = 0;
 
   async initialize(): Promise<void> {
     this.port = await this.findAvailablePort();
@@ -394,7 +395,7 @@ export class WebSocketService {
   private startBufferCleanup(): void {
     this.messageBufferCleanupInterval = setInterval(() => {
       this.cleanupMessageBuffers();
-    }, 30000); // Clean every 30 seconds
+    }, 15000); // More frequent cleanup every 15 seconds
   }
 
   // Clean up message buffers when they grow too large
@@ -402,6 +403,28 @@ export class WebSocketService {
     if (this.messageBuffer.size > WebSocketService.MAX_BUFFER_SIZE) {
       console.log(`🧹 WebSocket buffer cleanup: ${this.messageBuffer.size} -> 0`);
       this.messageBuffer.clear();
+    }
+
+    // Force garbage collection of disconnected clients
+    this.cleanupDisconnectedClients();
+  }
+
+  // CRITICAL FIX: Proactively clean up disconnected clients
+  private cleanupDisconnectedClients(): void {
+    const disconnectedClients: WebSocket[] = [];
+
+    this.clients.forEach(client => {
+      if (client.readyState === WebSocket.CLOSED || client.readyState === WebSocket.CLOSING) {
+        disconnectedClients.push(client);
+      }
+    });
+
+    disconnectedClients.forEach(client => {
+      this.cleanupClient(client);
+    });
+
+    if (disconnectedClients.length > 0) {
+      console.log(`🧹 Cleaned up ${disconnectedClients.length} disconnected clients`);
     }
   }
 

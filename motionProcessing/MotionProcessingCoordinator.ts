@@ -32,12 +32,14 @@ export class MotionProcessingCoordinator {
     private isRecording = false;
     private sessionContext: SessionContext | null = null;
     private isInitialized = false;
+    private processingCounter = 0;
 
     private constructor(private config: MotionConfig) {
         try {
             this.initializeServices();
             this.initializeJointProcessors();
             this.setupDataFlow();
+            this.startPerformanceMonitoring(); // Start automatic cleanup
             this.isInitialized = true;
             console.log('✅ MotionProcessingCoordinator initialized successfully');
         } catch (error) {
@@ -74,7 +76,27 @@ export class MotionProcessingCoordinator {
      */
     processNewData(deviceId: string, imuData: IMUData): void {
         if (!this.isInitialized) return;
+
+        // PERFORMANCE LOGGING: Track the data processing pipeline
+        const start = performance.now();
+
+        // Sample logging every 50th call to avoid spam
+        this.processingCounter = (this.processingCounter || 0) + 1;
+        const shouldLog = this.processingCounter % 50 === 0;
+
+        if (shouldLog) {
+            console.log(`🔄[COORD][Process start] Device: ${deviceId} | ${new Date().toISOString()}`);
+        }
+
+        // Measure device processor time
+        const deviceStart = performance.now();
         this.deviceProcessor.processData(deviceId, imuData);
+        const deviceDuration = performance.now() - deviceStart;
+
+        const totalDuration = performance.now() - start;
+        if (shouldLog || totalDuration > 1) {
+            console.log(`📊[COORD][Process complete] ${deviceId} | Total: ${totalDuration.toFixed(2)}ms | Device: ${deviceDuration.toFixed(2)}ms | ${new Date().toISOString()}`);
+        }
     }
 
     /**
@@ -283,17 +305,78 @@ export class MotionProcessingCoordinator {
 
     /**
      * Performs cleanup of all resources and resets state.
+     * Enhanced with performance monitoring and periodic cleanup.
      */
     cleanup(): void {
+        // Stop any performance monitoring intervals
+        if (this.performanceInterval) {
+            clearInterval(this.performanceInterval);
+            this.performanceInterval = null;
+        }
+
         this.deviceProcessor.cleanup();
         this.jointProcessors.forEach(processor => processor.cleanup());
         this.dataParser.cleanup();
         this.uiProcessor.cleanup();
         this.serverService.cleanup();
         this.chunkingService.cleanup();
-        // Cleanup completed
+
+        // Clear all maps and counters
+        this.jointProcessors.clear();
+        this.processingCounter = 0;
+
         this.isInitialized = false;
         console.log('🧹 MotionProcessingCoordinator cleanup completed');
+    }
+
+    private performanceInterval: NodeJS.Timeout | null = null;
+
+    /**
+     * Starts performance monitoring to detect and prevent memory leaks.
+     */
+    startPerformanceMonitoring(): void {
+        if (this.performanceInterval) {
+            clearInterval(this.performanceInterval);
+        }
+
+        this.performanceInterval = setInterval(() => {
+            this.performPeriodicCleanup();
+        }, 60000); // Run cleanup every minute
+
+        console.log('🔍 Performance monitoring started');
+    }
+
+    /**
+     * Stops performance monitoring.
+     */
+    stopPerformanceMonitoring(): void {
+        if (this.performanceInterval) {
+            clearInterval(this.performanceInterval);
+            this.performanceInterval = null;
+            console.log('🛑 Performance monitoring stopped');
+        }
+    }
+
+    /**
+     * Performs periodic cleanup to prevent memory accumulation.
+     */
+    private performPeriodicCleanup(): void {
+        const start = performance.now();
+
+        // Clean up device processor
+        if (this.deviceProcessor && typeof (this.deviceProcessor as any).performPeriodicCleanup === 'function') {
+            (this.deviceProcessor as any).performPeriodicCleanup();
+        }
+
+        // Clean up joint processors
+        this.jointProcessors.forEach(processor => {
+            if (typeof (processor as any).performPeriodicCleanup === 'function') {
+                (processor as any).performPeriodicCleanup();
+            }
+        });
+
+        const duration = performance.now() - start;
+        console.log(`🧹 Coordinator periodic cleanup completed in ${duration.toFixed(2)}ms`);
     }
 
     /**
@@ -369,6 +452,15 @@ export class MotionProcessingCoordinator {
      */
     private resetJointProcessors(): void {
         this.jointProcessors.forEach(processor => processor.resetStats());
+    }
+
+    /**
+     * Updates performance options of the processing pipeline at runtime.
+     */
+    setPerformanceOptions(opts: { bypassInterpolation?: boolean; asyncNotify?: boolean }): void {
+        if (this.deviceProcessor) {
+            this.deviceProcessor.updatePerformanceOptions(opts);
+        }
     }
 }
 

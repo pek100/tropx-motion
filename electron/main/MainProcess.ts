@@ -6,21 +6,22 @@ import { BluetoothService } from './services/BluetoothService';
 import { isDev } from './utils/environment';
 import { CONFIG, WINDOW_CONFIG, MESSAGE_TYPES } from '../shared/config';
 import { RecordingSession, ApiResponse } from '../shared/types';
+import { SystemMonitor } from './services/SystemMonitor';
 
 export class MainProcess {
   private mainWindow: BrowserWindow | null = null;
   private motionService: MotionService;
   private bluetoothService: BluetoothService;
+  private systemMonitor: SystemMonitor; // monitor for memory/CPU
 
   constructor() {
     this.motionService = new MotionService();
     this.bluetoothService = new BluetoothService();
+    this.systemMonitor = new SystemMonitor(() => this.mainWindow); // defer window resolution
 
-    // Optional safe mode: disable GPU if env var is set
-    if (process.env.TROPX_DISABLE_GPU === '1') {
-      console.log('TROPX_DISABLE_GPU=1 -> Disabling hardware acceleration');
-      app.disableHardwareAcceleration();
-    }
+    // Disable hardware acceleration to prevent GPU-related issues
+    console.log('Disabling hardware acceleration for stability');
+    app.disableHardwareAcceleration();
 
     this.enableWebBluetoothFeatures();
     this.setupAppEvents();
@@ -69,6 +70,21 @@ export class MainProcess {
       this.initializeServices();
       this.setupPermissionHandlers();
       console.log('Electron app fully initialized');
+
+      // Auto-start performance monitor if enabled
+      try {
+        const shouldStart = process.env.TROPX_MONITOR === '1';
+        const intervalEnv = Number(process.env.TROPX_MONITOR_INTERVAL || '');
+        if (Number.isFinite(intervalEnv) && intervalEnv > 0) {
+          this.systemMonitor.setIntervalMs(intervalEnv);
+        }
+        if (shouldStart) {
+          this.systemMonitor.start();
+          console.log('SystemMonitor auto-started');
+        }
+      } catch (e) {
+        console.warn('Failed to start SystemMonitor:', e);
+      }
 
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {
@@ -358,6 +374,48 @@ export class MainProcess {
       chromeVersion: process.versions.chrome,
       nodeVersion: process.versions.node
     }));
+
+    // Performance monitor handlers
+    ipcMain.handle('monitor:start', (_e, opts?: { intervalMs?: number }) => {
+      try {
+        if (opts?.intervalMs) this.systemMonitor.setIntervalMs(opts.intervalMs);
+        this.systemMonitor.start();
+        return { running: this.systemMonitor.isRunning() };
+      } catch (err) {
+        return { error: String(err) };
+      }
+    });
+    ipcMain.handle('monitor:stop', () => {
+      try {
+        this.systemMonitor.stop();
+        return { running: this.systemMonitor.isRunning() };
+      } catch (err) {
+        return { error: String(err) };
+      }
+    });
+    ipcMain.handle('monitor:status', () => ({ running: this.systemMonitor.isRunning() }));
+    ipcMain.handle('monitor:getSnapshot', async () => {
+      try {
+        return await this.systemMonitor.getSnapshot();
+      } catch (err) {
+        return { error: String(err) };
+      }
+    });
+    ipcMain.handle('monitor:getRecentSamples', (_e, limit?: number) => {
+      try {
+        return this.systemMonitor.getRecentSamples(typeof limit === 'number' ? limit : 50);
+      } catch (err) {
+        return { error: String(err) };
+      }
+    });
+    ipcMain.handle('monitor:setInterval', (_e, intervalMs: number) => {
+      try {
+        this.systemMonitor.setIntervalMs(intervalMs);
+        return { ok: true };
+      } catch (err) {
+        return { error: String(err) };
+      }
+    });
   }
 
   // Initialize core services
@@ -391,6 +449,8 @@ export class MainProcess {
     try {
       this.motionService.cleanup();
       this.bluetoothService.cleanup();
+      // stop monitor
+      this.systemMonitor.stop();
     } catch (error) {
       console.error('Error during cleanup:', error);
     }

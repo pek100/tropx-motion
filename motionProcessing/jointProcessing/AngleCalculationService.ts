@@ -22,6 +22,7 @@ export class AngleCalculationService {
     private readonly workingQuatRel = new Float32Array(4);
     private readonly workingMatrix = new Float32Array(9);
     private deviceSortOrderCache = new Map<string, number>();
+    private sampleCounter = 0;
 
     constructor(private jointConfig: JointConfig, motionConfig: MotionConfig) {
         this.jointPrefix = jointConfig.name;

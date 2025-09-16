@@ -13,6 +13,8 @@ export class UIProcessor {
     private static instance: UIProcessor | null = null;
     private jointDataMap = new Map<string, UIJointData>();
     private subscribers = new Set<(data: UIState) => void>();
+    private sampleCounter = 0;
+    private notifyCounter = 0;
 
     private constructor() {
         this.initializeJointData();

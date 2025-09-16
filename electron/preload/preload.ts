@@ -23,6 +23,16 @@ export interface ElectronAPI {
         getSystemInfo: () => Promise<unknown>;
     };
 
+    monitor: {
+        start: (opts?: { intervalMs?: number }) => Promise<{ running?: boolean; error?: string }>;
+
+        stop: () => Promise<{ running?: boolean; error?: string }>;
+        status: () => Promise<{ running: boolean }>;
+        getSnapshot: () => Promise<any>;
+        getRecentSamples: (limit?: number) => Promise<any[]>;
+        setInterval: (intervalMs: number) => Promise<{ ok?: boolean; error?: string }>;
+    };
+
     system: {
         platform: string;
         arch: string;
@@ -50,6 +60,15 @@ const electronAPI: ElectronAPI = {
     bluetooth: {
         selectDevice: (deviceId: string) => ipcRenderer.invoke('bluetooth:selectDevice', deviceId),
         getSystemInfo: () => ipcRenderer.invoke('bluetooth:getSystemInfo'),
+    },
+
+    monitor: {
+        start: (opts) => ipcRenderer.invoke('monitor:start', opts),
+        stop: () => ipcRenderer.invoke('monitor:stop'),
+        status: () => ipcRenderer.invoke('monitor:status'),
+        getSnapshot: () => ipcRenderer.invoke('monitor:getSnapshot'),
+        getRecentSamples: (limit?: number) => ipcRenderer.invoke('monitor:getRecentSamples', limit),
+        setInterval: (intervalMs: number) => ipcRenderer.invoke('monitor:setInterval', intervalMs),
     },
 
     system: {

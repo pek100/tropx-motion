@@ -1494,6 +1494,21 @@ const ElectronMotionApp: React.FC = () => {
           sessionData.setNumber,
         );
         
+        // Apply performance options from URL params and expose runtime toggle
+        try {
+          const url = new URL(window.location.href);
+          const bypassInterp = url.searchParams.get('bypassInterp') === '1';
+          const asyncNotify = url.searchParams.get('asyncNotify') === '1';
+          if (bypassInterp || asyncNotify) {
+            motionProcessingCoordinator.setPerformanceOptions({ bypassInterpolation: bypassInterp, asyncNotify });
+            console.log('⚙️ Performance options applied:', { bypassInterpolation: bypassInterp, asyncNotify });
+          }
+          (window as any).tropxSetPerfOptions = (opts: { bypassInterpolation?: boolean; asyncNotify?: boolean }) => {
+            motionProcessingCoordinator.setPerformanceOptions(opts);
+            console.log('⚙️ Performance options updated:', opts);
+          };
+        } catch {}
+
         if (!motionRecordingStarted) {
           console.error("❌ Failed to start motion processing recording");
           return;
@@ -1502,7 +1517,19 @@ const ElectronMotionApp: React.FC = () => {
         
         // Start real quaternion streaming via GATT service
         const streamingSuccess = await museManager.startStreaming((deviceName: string, data: any) => {
-          // Send data to motion processing pipeline
+          // PERFORMANCE LOGGING: Track the bottleneck in this callback
+          const callbackStart = performance.now();
+
+          // Sample logging every 25th call
+          const sampleCounter = (window as any).callbackSampleCounter = ((window as any).callbackSampleCounter || 0) + 1;
+          const shouldLog = sampleCounter % 25 === 0;
+
+          if (shouldLog) {
+            console.log(`🔄[CALLBACK][Start] Device: ${deviceName} | ${new Date().toISOString()}`);
+          }
+
+          // Step 1: Motion processing
+          const motionStart = performance.now();
           if (motionProcessingCoordinator) {
             try {
               motionProcessingCoordinator.processNewData(deviceName, data);
@@ -1510,8 +1537,10 @@ const ElectronMotionApp: React.FC = () => {
               console.error("❌ Error processing SDK motion data:", error);
             }
           }
-          
-          // Also send to main process via WebSocket for recording/storage
+          const motionDuration = performance.now() - motionStart;
+
+          // Step 2: WebSocket send to main process
+          const wsStart = performance.now();
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(
               JSON.stringify({
@@ -1524,6 +1553,12 @@ const ElectronMotionApp: React.FC = () => {
                 timestamp: Date.now(),
               }),
             );
+          }
+          const wsDuration = performance.now() - wsStart;
+
+          const totalDuration = performance.now() - callbackStart;
+          if (shouldLog || totalDuration > 1) {
+            console.log(`📊[CALLBACK][Complete] ${deviceName} | Total: ${totalDuration.toFixed(2)}ms | Motion: ${motionDuration.toFixed(2)}ms | WebSocket: ${wsDuration.toFixed(2)}ms | ${new Date().toISOString()}`);
           }
         });
         

@@ -56,6 +56,8 @@ export interface MotionConfig {
     joints: JointConfig[];
     performance: {
         cacheSize: number;
+        bypassInterpolation?: boolean;
+        asyncNotify?: boolean;
     };
 }
 

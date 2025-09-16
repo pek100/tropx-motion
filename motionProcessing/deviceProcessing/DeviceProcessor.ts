@@ -4,6 +4,7 @@ import { InterpolationService } from './InterpolationService';
 import { DataSyncService } from './DataSyncService';
 import { DEVICE, SYSTEM, BATTERY, CONNECTION_STATE } from '../shared/constants';
 import { testDeviceAgainstPatterns } from '../shared/utils';
+import { QuaternionService } from '../shared/QuaternionService';
 
 interface DeviceStatus {
     total: number;
@@ -27,6 +28,9 @@ export class DeviceProcessor {
     private latestDeviceData = new Map<string, DeviceData>();
     private deviceToJoints = new Map<string, string[]>();
     private interpolationSubscription: (() => void) | null = null;
+    private processingCounter = 0;
+    private interpHandleCounter = 0;
+    private notifyCounter = 0;
 
     private constructor(private config: MotionConfig) {
         this.interpolationService = new InterpolationService(config.targetHz);
@@ -60,11 +64,69 @@ export class DeviceProcessor {
     processData(deviceId: string, imuData: IMUData): void {
         if (!deviceId || !imuData) return;
 
-        const synchronizedIMU = this.dataSyncService.createSynchronizedIMUData(deviceId, imuData);
-        if (!synchronizedIMU) return;
+        // PERFORMANCE LOGGING: Track device processing pipeline
+        const start = performance.now();
 
+        // Sample logging every 30th call to avoid spam
+        this.processingCounter = (this.processingCounter || 0) + 1;
+        const shouldLog = this.processingCounter % 30 === 0;
+
+        if (shouldLog) {
+            console.log(`🔄[DEVICE][Process start] Device: ${deviceId} | ${new Date().toISOString()}`);
+        }
+
+        // Measure synchronization time
+        const syncStart = performance.now();
+        const synchronizedIMU = this.dataSyncService.createSynchronizedIMUData(deviceId, imuData);
+        const syncDuration = performance.now() - syncStart;
+
+        if (!synchronizedIMU) {
+            if (shouldLog) {
+                console.log(`⚠️[DEVICE][Sync failed] ${deviceId} | Sync: ${syncDuration.toFixed(2)}ms | ${new Date().toISOString()}`);
+            }
+            return;
+        }
+
+        // Measure joint mapping time
+        const mappingStart = performance.now();
         this.ensureDeviceJointMapping(deviceId);
+        const mappingDuration = performance.now() - mappingStart;
+
+        // Optional bypass: emit raw sample directly without interpolation
+        if (this.config.performance?.bypassInterpolation) {
+            const bypassStart = performance.now();
+            const rawTimestamp = synchronizedIMU.timestamp || performance.now();
+            const deviceSample: DeviceData = {
+                deviceId,
+                quaternion: QuaternionService.normalize(synchronizedIMU.quaternion ?? QuaternionService.createIdentity()),
+                timestamp: rawTimestamp,
+                interpolated: false,
+                connectionState: 'streaming' as any
+            };
+            const updateStart = performance.now();
+            this.updateLatestDeviceData(deviceSample);
+            const updateDuration = performance.now() - updateStart;
+
+            const notifyStart = performance.now();
+            this.notifySubscribers();
+            const notifyDuration = performance.now() - notifyStart;
+
+            const totalDuration = performance.now() - start;
+            if (shouldLog || totalDuration > 1) {
+                console.log(`📊[DEVICE][Bypass complete] ${deviceId} | Total: ${totalDuration.toFixed(2)}ms | Sync: ${syncDuration.toFixed(2)}ms | Mapping: ${mappingDuration.toFixed(2)}ms | Update: ${updateDuration.toFixed(2)}ms | Notify: ${notifyDuration.toFixed(2)}ms | ${new Date().toISOString()}`);
+            }
+            return;
+        }
+
+        // Measure interpolation time
+        const interpStart = performance.now();
         this.interpolationService.processSample(deviceId, synchronizedIMU);
+        const interpDuration = performance.now() - interpStart;
+
+        const totalDuration = performance.now() - start;
+        if (shouldLog || totalDuration > 1) {
+            console.log(`📊[DEVICE][Process complete] ${deviceId} | Total: ${totalDuration.toFixed(2)}ms | Sync: ${syncDuration.toFixed(2)}ms | Mapping: ${mappingDuration.toFixed(2)}ms | Interp: ${interpDuration.toFixed(2)}ms | ${new Date().toISOString()}`);
+        }
     }
 
     /**
@@ -154,16 +216,38 @@ export class DeviceProcessor {
 
     /**
      * Performs complete cleanup of all services and internal state.
+     * Enhanced to prevent event listener leaks.
      */
     cleanup(): void {
+        // CRITICAL FIX: Clean up subscriptions first to prevent callback accumulation
         if (this.interpolationSubscription) {
             this.interpolationSubscription();
             this.interpolationSubscription = null;
         }
 
+        // Clear subscribers explicitly before cleanup
+        this.subscribers.clear();
+
         this.interpolationService.cleanup();
         this.dataSyncService.reset();
         this.clearAllMaps();
+
+        console.log('🧹 DeviceProcessor cleanup completed');
+    }
+
+    /**
+     * Periodic cleanup method to prevent callback accumulation during long sessions.
+     */
+    performPeriodicCleanup(): void {
+        // Check for stale subscribers and remove them
+        const subscriberCount = this.subscribers.size;
+
+        // Force cleanup of interpolation service buffers
+        if (this.interpolationService && typeof (this.interpolationService as any).performPeriodicCleanup === 'function') {
+            (this.interpolationService as any).performPeriodicCleanup();
+        }
+
+        console.log(`🧹 DeviceProcessor periodic cleanup: ${subscriberCount} subscribers`);
     }
 
     /**
@@ -181,15 +265,35 @@ export class DeviceProcessor {
     private handleInterpolatedData(interpolatedData: DeviceData[]): void {
         if (interpolatedData.length === 0) return;
 
+        // PERFORMANCE LOGGING: Track interpolated data handling
+        const start = performance.now();
+
+        // Sample logging every 25th call to avoid spam
+        this.interpHandleCounter = (this.interpHandleCounter || 0) + 1;
+        const shouldLog = this.interpHandleCounter % 25 === 0;
+
+        if (shouldLog) {
+            console.log(`🔄[DEVICE][Interp data] Count: ${interpolatedData.length} | ${new Date().toISOString()}`);
+        }
+
         let hasNewData = false;
+        const updateStart = performance.now();
         for (const deviceData of interpolatedData) {
             if (this.updateLatestDeviceData(deviceData)) {
                 hasNewData = true;
             }
         }
+        const updateDuration = performance.now() - updateStart;
 
         if (hasNewData) {
+            const notifyStart = performance.now();
             this.notifySubscribers();
+            const notifyDuration = performance.now() - notifyStart;
+
+            const totalDuration = performance.now() - start;
+            if (shouldLog || totalDuration > 1) {
+                console.log(`📊[DEVICE][Interp complete] Total: ${totalDuration.toFixed(2)}ms | Update: ${updateDuration.toFixed(2)}ms | Notify: ${notifyDuration.toFixed(2)}ms | Subscribers: ${this.subscribers.size} | ${new Date().toISOString()}`);
+            }
         }
     }
 
@@ -304,7 +408,55 @@ export class DeviceProcessor {
      * Safely notifies all subscribers of data updates.
      */
     private notifySubscribers(): void {
-        this.subscribers.forEach(callback => callback());
+        // PERFORMANCE LOGGING: Track subscriber notifications
+        const start = performance.now();
+
+        // Sample logging every 20th call
+        this.notifyCounter = (this.notifyCounter || 0) + 1;
+        const shouldLog = this.notifyCounter % 20 === 0;
+
+        if (shouldLog) {
+            console.log(`🔄[DEVICE][Notify start] Subscribers: ${this.subscribers.size} | ${new Date().toISOString()}`);
+        }
+
+        const runCallbacks = () => {
+            let callbackIndex = 0;
+            this.subscribers.forEach(callback => {
+                callbackIndex++;
+                const callbackStart = performance.now();
+                try {
+                    callback();
+                } finally {
+                    const callbackDuration = performance.now() - callbackStart;
+                    // Log slow individual callbacks
+                    if (callbackDuration > 1) {
+                        console.log(`⚠️[DEVICE][Slow callback] Callback ${callbackIndex} took ${callbackDuration.toFixed(2)}ms | ${new Date().toISOString()}`);
+                    }
+                }
+            });
+
+            const totalDuration = performance.now() - start;
+            if (shouldLog || totalDuration > 1) {
+                console.log(`📊[DEVICE][Notify complete] Total: ${totalDuration.toFixed(2)}ms | Callbacks: ${this.subscribers.size} | ${new Date().toISOString()}`);
+            }
+        };
+
+        if (this.config.performance?.asyncNotify) {
+            // Defer execution to break out of critical path
+            setTimeout(runCallbacks, 0);
+        } else {
+            runCallbacks();
+        }
+    }
+
+    /**
+     * Allows runtime updates of performance options (bypass/async notify).
+     */
+    updatePerformanceOptions(opts: { bypassInterpolation?: boolean; asyncNotify?: boolean }): void {
+        this.config.performance = {
+            ...this.config.performance,
+            ...opts,
+        };
     }
 
     /**

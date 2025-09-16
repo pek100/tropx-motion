@@ -25,6 +25,7 @@ export class InterpolationService {
     private quaternionPool: Quaternion[] = [];
     private poolIndex = 0;
     private subscribers = new Set<(data: DeviceData[]) => void>();
+    private sampleCounter = 0;
 
     constructor(targetHz: number) {
         this.targetInterval = 1000 / targetHz;
@@ -69,11 +70,57 @@ export class InterpolationService {
 
     /**
      * Performs complete cleanup of buffers and subscriptions.
+     * Enhanced with thorough memory cleanup to prevent leaks.
      */
     cleanup(): void {
+        // Clear all device buffers explicitly
+        this.deviceBuffers.forEach(buffer => {
+            buffer.samples.length = 0; // Clear arrays explicitly
+        });
         this.deviceBuffers.clear();
+
         this.processedGridPoints.clear();
         this.subscribers.clear();
+
+        // Reset counters and pool
+        this.sampleCounter = 0;
+        this.poolIndex = 0;
+
+        console.log('🧹 InterpolationService cleanup completed');
+    }
+
+    /**
+     * Periodic cleanup method to prevent memory accumulation during long sessions.
+     * Should be called periodically from external performance monitoring.
+     */
+    performPeriodicCleanup(): void {
+        let totalBufferSize = 0;
+        let cleanedDevices = 0;
+
+        // Calculate current memory usage
+        this.deviceBuffers.forEach((buffer, deviceId) => {
+            totalBufferSize += buffer.samples.length;
+
+            // Aggressive cleanup for overly large buffers
+            if (buffer.samples.length > INTERPOLATION.BUFFER_SIZE * 0.8) {
+                const targetSize = Math.floor(INTERPOLATION.BUFFER_SIZE * 0.5); // Cut to half
+                const removeCount = buffer.samples.length - targetSize;
+                buffer.samples.splice(0, removeCount);
+                cleanedDevices++;
+            }
+        });
+
+        // Clean old processed grid points more frequently
+        if (this.processedGridPoints.size > 50) {
+            const sortedPoints = Array.from(this.processedGridPoints).sort((a, b) => a - b);
+            const keepCount = 25; // Keep only recent 25 points
+            const toRemove = sortedPoints.slice(0, sortedPoints.length - keepCount);
+            toRemove.forEach(point => this.processedGridPoints.delete(point));
+        }
+
+        if (cleanedDevices > 0) {
+            console.log(`🧹 Periodic cleanup: cleaned ${cleanedDevices} device buffers, total samples: ${totalBufferSize}`);
+        }
     }
 
     /**
@@ -185,10 +232,14 @@ export class InterpolationService {
 
     /**
      * Maintains buffer size within memory limits by removing oldest samples.
+     * Enhanced with aggressive cleanup to prevent memory accumulation.
      */
     private enforceBufferLimit(buffer: DeviceBuffer): void {
         if (buffer.samples.length > INTERPOLATION.BUFFER_SIZE) {
-            buffer.samples.shift();
+            // Remove multiple samples at once to prevent frequent memory operations
+            const excessCount = buffer.samples.length - INTERPOLATION.BUFFER_SIZE;
+            const removeCount = Math.max(1, Math.floor(excessCount * 1.2)); // Remove 20% extra for buffer
+            buffer.samples.splice(0, removeCount);
         }
     }
 

@@ -77,6 +77,7 @@ export class MuseManager {
   private batteryLevels: Map<string, number>;
   private dataCallback: ((deviceName: string, data: IMUData) => void) | null;
   private batteryUpdateCallbacks: Set<(levels: Map<string, number>) => void>;
+  private sampleCounter = 0;
   
   // GATT operation queuing (Web Bluetooth best practice)
   private gattOperationQueue = new Map<string, Promise<any>>();

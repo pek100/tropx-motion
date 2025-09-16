@@ -25,6 +25,7 @@ export class DataParser {
     private jointStats = new Map<string, JointStatisticsManager>();
     private recordingStartTime: number = 0;
     private targetHz: number;
+    private sampleCounter = 0;
 
     private constructor(targetHz: number) {
         this.recordingCache = new Cache<APIRecording>(CACHE.RECORDING_SIZE, CACHE.RECORDING_TTL_MS);
