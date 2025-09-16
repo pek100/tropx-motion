@@ -15,7 +15,7 @@ import {
   Bluetooth,
   Loader2,
 } from "lucide-react"
-import { MotionProcessingCoordinator } from "../../motionProcessing/MotionProcessingCoordinator";
+// MotionProcessingCoordinator removed from renderer - processing happens in main process
 import { EnhancedMotionDataDisplay } from "./components"
 import { museManager } from "../../muse_sdk/core/MuseManager"
 import { UnifiedBinaryProtocol } from "../shared/BinaryProtocol"
@@ -83,8 +83,10 @@ const CONSTANTS = {
   },
 };
 
-// Create a global instance of MotionProcessingCoordinator
-let motionProcessingCoordinator: MotionProcessingCoordinator | null = null;
+import { MotionProcessingConsumer } from "../../motionProcessing/MotionProcessingConsumer";
+
+// Create minimal consumer for renderer - no heavy processing
+const motionProcessingConsumer = new MotionProcessingConsumer();
 
 // Type definitions for Electron API
 declare global {
@@ -1280,6 +1282,10 @@ const ElectronMotionApp: React.FC = () => {
         }
         case "motion_data":
           dispatch({ type: "SET_MOTION_DATA", payload: lastMessage.data as any });
+          // Forward to consumer for minimal UI updates only
+          if (motionProcessingConsumer && typeof motionProcessingConsumer.updateUIFromWebSocket === 'function') {
+            motionProcessingConsumer.updateUIFromWebSocket(lastMessage.data);
+          }
           break;
         case "recording_state": {
           const recData: any = lastMessage.data as any;
@@ -1430,11 +1436,7 @@ const ElectronMotionApp: React.FC = () => {
           console.log("✅ SDK streaming stopped");
         }
         
-        // Stop motion processing coordinator recording
-        if (motionProcessingCoordinator) {
-          await motionProcessingCoordinator.stopRecording();
-          console.log("✅ Motion processing recording stopped");
-        }
+        // Motion processing recording stopped by main process
         
         // Stop recording in main process
         if (window.electronAPI) {
@@ -1474,91 +1476,32 @@ const ElectronMotionApp: React.FC = () => {
           return;
         }
         
-        // Initialize motion processing coordinator if needed
-        if (!motionProcessingCoordinator) {
-          console.log("🧠 Initializing MotionProcessingCoordinator...");
-          motionProcessingCoordinator = MotionProcessingCoordinator.getInstance();
-          console.log("✅ MotionProcessingCoordinator initialized successfully");
-        }
-        
-        // Start motion processing recording session
+        // No motion processing initialization in renderer - handled by main process
         const sessionData = {
           sessionId: `session_${Date.now()}`,
           exerciseId: `exercise_${Date.now()}`,
           setNumber: 1,
         };
         
-        const motionRecordingStarted = motionProcessingCoordinator.startRecording(
-          sessionData.sessionId,
-          sessionData.exerciseId,
-          sessionData.setNumber,
-        );
-        
-        // Apply performance options from URL params and expose runtime toggle
-        try {
-          const url = new URL(window.location.href);
-          const bypassInterp = url.searchParams.get('bypassInterp') === '1';
-          const asyncNotify = url.searchParams.get('asyncNotify') === '1';
-          if (bypassInterp || asyncNotify) {
-            motionProcessingCoordinator.setPerformanceOptions({ bypassInterpolation: bypassInterp, asyncNotify });
-            console.log('⚙️ Performance options applied:', { bypassInterpolation: bypassInterp, asyncNotify });
-          }
-          (window as any).tropxSetPerfOptions = (opts: { bypassInterpolation?: boolean; asyncNotify?: boolean }) => {
-            motionProcessingCoordinator.setPerformanceOptions(opts);
-            console.log('⚙️ Performance options updated:', opts);
-          };
-        } catch {}
-
-        if (!motionRecordingStarted) {
-          console.error("❌ Failed to start motion processing recording");
-          return;
-        }
-        console.log("✅ Motion processing recording started");
-        
-        // Start real quaternion streaming via GATT service
+        // Start real quaternion streaming via GATT service with minimal processing
         const streamingSuccess = await museManager.startStreaming((deviceName: string, data: any) => {
-          // PERFORMANCE LOGGING: Track the bottleneck in this callback
-          const callbackStart = performance.now();
-
-          // Sample logging every 25th call
-          const sampleCounter = (window as any).callbackSampleCounter = ((window as any).callbackSampleCounter || 0) + 1;
-          const shouldLog = sampleCounter % 25 === 0;
-
-          if (shouldLog) {
-            console.log(`🔄[CALLBACK][Start] Device: ${deviceName} | ${new Date().toISOString()}`);
-          }
-
-          // Step 1: Motion processing
-          const motionStart = performance.now();
-          if (motionProcessingCoordinator) {
-            try {
-              motionProcessingCoordinator.processNewData(deviceName, data);
-            } catch (error) {
-              console.error("❌ Error processing SDK motion data:", error);
-            }
-          }
-          const motionDuration = performance.now() - motionStart;
-
-          // Step 2: WebSocket send to main process
-          const wsStart = performance.now();
+          // MINIMAL RENDERER: Only forward raw data to main process, no processing
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(
-              JSON.stringify({
-                type: "motion_data",
-                data: {
-                  deviceName: deviceName,
-                  timestamp: data.timestamp,
-                  quaternion: data.quaternion,
-                },
-                timestamp: Date.now(),
-              }),
-            );
-          }
-          const wsDuration = performance.now() - wsStart;
-
-          const totalDuration = performance.now() - callbackStart;
-          if (shouldLog || totalDuration > 1) {
-            console.log(`📊[CALLBACK][Complete] ${deviceName} | Total: ${totalDuration.toFixed(2)}ms | Motion: ${motionDuration.toFixed(2)}ms | WebSocket: ${wsDuration.toFixed(2)}ms | ${new Date().toISOString()}`);
+            try {
+              wsRef.current.send(
+                JSON.stringify({
+                  type: "motion_data",
+                  data: {
+                    deviceName: deviceName,
+                    timestamp: data.timestamp,
+                    quaternion: data.quaternion,
+                  },
+                  timestamp: Date.now(),
+                }),
+              );
+            } catch (error) {
+              // Silent error - don't log in high-frequency callback
+            }
           }
         });
         
@@ -1587,12 +1530,7 @@ const ElectronMotionApp: React.FC = () => {
           console.log("✅ Recording with quaternion streaming started successfully");
         } else {
           console.error("❌ Failed to start SDK quaternion streaming");
-          
-          // Clean up motion processing recording if streaming failed
-          if (motionProcessingCoordinator) {
-            await motionProcessingCoordinator.stopRecording();
-          }
-          
+
           // Ensure recording state remains false on failure
           dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
           alert("Failed to start quaternion streaming. Please check device connections.");

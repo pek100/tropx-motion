@@ -76,23 +76,8 @@ export const useMotionProcessing = (): UseMotionProcessingReturn => {
      * Updates knee data state using functional setState to prevent race conditions.
      */
     const updateKneeData = useCallback((data: any) => {
-        // PERFORMANCE LOGGING: Track React UI state updates
-        const callbackStart = performance.now();
-
-        // Sample logging every 30th call to avoid spam
-        const sampleCounter = ((window as any).uiUpdateCounter = ((window as any).uiUpdateCounter || 0) + 1);
-        const shouldLog = sampleCounter % 30 === 0;
-
-        if (shouldLog) {
-            console.log(`🔄[UI_REACT][Update start] Mounted: ${mountedRef.current} | HasData: ${!!data} | ${new Date().toISOString()}`);
-        }
-
         if (mountedRef.current && data) {
-            // FIRST setState call
-            const setKneeStart = performance.now();
             setKneeData(prevKneeData => {
-                const mergeStart = performance.now();
-
                 // Extract sensor timestamps and merge with previous state
                 const updatedData = {
                     left: {
@@ -109,25 +94,10 @@ export const useMotionProcessing = (): UseMotionProcessingReturn => {
                     }
                 };
 
-                const mergeDuration = performance.now() - mergeStart;
-                if (shouldLog && mergeDuration > 0.5) {
-                    console.log(`⚠️[UI_REACT][Slow merge] Merge: ${mergeDuration.toFixed(2)}ms | ${new Date().toISOString()}`);
-                }
-
                 return updatedData;
             });
-            const setKneeDuration = performance.now() - setKneeStart;
 
-            // SECOND setState call
-            const setAnglesStart = performance.now();
             setCurrentAngles(new Map(coordinator.getCurrentJointAngles()));
-            const setAnglesDuration = performance.now() - setAnglesStart;
-
-            const totalDuration = performance.now() - callbackStart;
-
-            if (shouldLog || totalDuration > 1) {
-                console.log(`📊[UI_REACT][Update complete] Total: ${totalDuration.toFixed(2)}ms | SetKnee: ${setKneeDuration.toFixed(2)}ms | SetAngles: ${setAnglesDuration.toFixed(2)}ms | ${new Date().toISOString()}`);
-            }
         }
     }, [coordinator]);
 

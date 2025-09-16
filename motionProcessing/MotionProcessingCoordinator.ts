@@ -464,6 +464,26 @@ export class MotionProcessingCoordinator {
     }
 }
 
-export const motionProcessingCoordinator = MotionProcessingCoordinator.getInstance(
-    createMotionConfig(PerformanceProfile.HZ_100_SAMPLING, false)
-);
+import { MotionProcessingConsumer } from './MotionProcessingConsumer';
+
+/**
+ * Factory function to create the appropriate motion processing instance.
+ * Main process: Full MotionProcessingCoordinator with device processing
+ * Renderer process: Lightweight MotionProcessingConsumer (WebSocket-only)
+ */
+function createMotionProcessingInstance() {
+    // Detect if we're in the renderer process (has window object)
+    const isRenderer = typeof window !== 'undefined';
+
+    if (isRenderer) {
+        console.log('🔄 Creating MotionProcessingConsumer for renderer process');
+        return new MotionProcessingConsumer();
+    } else {
+        console.log('🔄 Creating MotionProcessingCoordinator for main process');
+        return MotionProcessingCoordinator.getInstance(
+            createMotionConfig(PerformanceProfile.HZ_100_SAMPLING, false)
+        );
+    }
+}
+
+export const motionProcessingCoordinator = createMotionProcessingInstance();

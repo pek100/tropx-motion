@@ -204,24 +204,31 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
     };
 
     setData(currentData => {
-      return [...currentData, newDataPoint].filter(
-        point => timestamp - point[DataKeys.TIME] < TIME_CONSTRAINTS.WINDOW_MS
-      );
+      // CRITICAL PERFORMANCE FIX: Implement proper circular buffer with max size
+      const MAX_DATA_POINTS = 50; // Limit to 50 points maximum
+      const newData = [...currentData, newDataPoint];
+
+      // Keep only recent points OR limit to MAX_DATA_POINTS (whichever is smaller)
+      const filteredData = newData
+        .filter(point => timestamp - point[DataKeys.TIME] < TIME_CONSTRAINTS.WINDOW_MS)
+        .slice(-MAX_DATA_POINTS); // Keep only last 50 points
+
+      return filteredData;
     });
   }, [leftKnee, rightKnee]);
 
-  /** Updates real-time data stream with throttled updates */
+  /** Updates real-time data stream with smooth 60fps updates */
   useEffect(() => {
     if (!leftKnee && !rightKnee) return;
-    
+
     // Cancel any pending animation frame
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
     }
-    
-    // Schedule update on next animation frame (60fps max)
+
+    // Schedule update on next animation frame (smooth 60fps)
     animationFrameRef.current = requestAnimationFrame(updateData);
-    
+
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
@@ -233,7 +240,6 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
     leftKnee?.sensorTimestamp,
     rightKnee?.sensorTimestamp,
     updateData
-    // Removed lastUpdate dependencies to prevent excessive re-renders
   ]);
 
   /** Formats Y-axis labels with degree symbol */

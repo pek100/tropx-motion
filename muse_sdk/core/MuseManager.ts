@@ -611,14 +611,8 @@ export class MuseManager {
               { FullScale: 4912, Sensitivity: 1.0 }
             );
 
-            // PERFORMANCE CHECK: Log if data processing is slow
-            const callbackStart = performance.now();
+            // Send data to callback without performance monitoring (renderer should be minimal)
             this.dataCallback(deviceName, data);
-            const callbackEnd = performance.now();
-            const duration = callbackEnd - callbackStart;
-            if (duration > 2) {
-              console.log(`🎯 Processing time: ${deviceName} = ${duration.toFixed(2)}ms`);
-            }
 
             // Reset processing flag
             processingPacket = false;

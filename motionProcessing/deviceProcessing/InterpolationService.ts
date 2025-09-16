@@ -2,6 +2,7 @@ import { IMUData, Quaternion } from '../../muse_sdk/core/MuseData';
 import { DeviceData } from '../shared/types';
 import {INTERPOLATION} from '../shared/constants';
 import {lerp, QuaternionService} from "../shared/QuaternionService";
+import { PerformanceLogger } from '../shared/PerformanceLogger';
 
 interface TimestampedSample {
     quaternion: Quaternion;
@@ -27,6 +28,12 @@ export class InterpolationService {
     private subscribers = new Set<(data: DeviceData[]) => void>();
     private sampleCounter = 0;
 
+    // Async notification throttling
+    private pendingNotifications = 0;
+    private readonly MAX_PENDING_NOTIFICATIONS = 3;
+    private lastNotifyTime = 0;
+    private readonly MIN_NOTIFY_INTERVAL = 16; // 60fps cap
+
     constructor(targetHz: number) {
         this.targetInterval = 1000 / targetHz;
         const now = performance.now();
@@ -44,18 +51,11 @@ export class InterpolationService {
             return [];
         }
 
-        const start = performance.now();
-
         const rawTimestamp = externalTimestamp || imuData.timestamp || performance.now();
         const sample = this.createTimestampedSample(imuData.quaternion, rawTimestamp);
 
         this.addSampleToBuffer(deviceId, sample);
         this.processGridPoint(this.snapToGrid(rawTimestamp));
-
-        const duration = performance.now() - start;
-        if (duration > 1) {
-            console.log(`🔬 Interpolation: ${deviceId} = ${duration.toFixed(2)}ms`);
-        }
 
         return [];
     }
@@ -344,7 +344,14 @@ export class InterpolationService {
      */
     private markGridPointProcessed(gridTimestamp: number): void {
         this.processedGridPoints.add(gridTimestamp);
-        this.cleanupProcessedPoints();
+
+        // More aggressive cleanup during high-throughput
+        this.sampleCounter++;
+        if (this.sampleCounter % 50 === 0) { // Clean every 50 samples instead of only when full
+            this.performAggressiveCleanup();
+        } else {
+            this.cleanupProcessedPoints();
+        }
     }
 
     /**
@@ -359,15 +366,61 @@ export class InterpolationService {
     }
 
     /**
-     * Safely notifies all subscribers of new interpolated data.
+     * Performs aggressive cleanup during high-throughput scenarios.
+     */
+    private performAggressiveCleanup(): void {
+        // Clean processed points more aggressively
+        if (this.processedGridPoints.size > 25) {
+            const sortedPoints = Array.from(this.processedGridPoints).sort((a, b) => a - b);
+            const toRemove = sortedPoints.slice(0, sortedPoints.length - 15); // Keep only 15 recent points
+            toRemove.forEach(point => this.processedGridPoints.delete(point));
+        }
+
+        // Clean device buffers that are too large
+        this.deviceBuffers.forEach((buffer, deviceId) => {
+            if (buffer.samples.length > INTERPOLATION.BUFFER_SIZE * 0.7) {
+                const targetSize = Math.floor(INTERPOLATION.BUFFER_SIZE * 0.4);
+                const removeCount = buffer.samples.length - targetSize;
+                buffer.samples.splice(0, removeCount); // Remove oldest samples
+            }
+        });
+
+        // Reset quaternion pool if it's too large
+        if (this.quaternionPool.length > 200) {
+            this.quaternionPool.length = 50;
+            this.poolIndex = 0;
+        }
+    }
+
+    /**
+     * Safely notifies all subscribers of new interpolated data with throttling.
      */
     private notifySubscribers(data: DeviceData[]): void {
-        this.subscribers.forEach(callback => {
-            try {
-                callback(data);
-            } catch {
-                // Continue with other subscribers if one fails
-            }
+        const now = performance.now();
+
+        // Throttle notifications to prevent overwhelming subscribers
+        if (now - this.lastNotifyTime < this.MIN_NOTIFY_INTERVAL) {
+            return;
+        }
+
+        // Apply backpressure if too many notifications are pending
+        if (this.pendingNotifications >= this.MAX_PENDING_NOTIFICATIONS) {
+            return;
+        }
+
+        this.lastNotifyTime = now;
+        this.pendingNotifications++;
+
+        // Use microtask to prevent blocking interpolation pipeline
+        queueMicrotask(() => {
+            this.pendingNotifications--;
+            this.subscribers.forEach(callback => {
+                try {
+                    callback(data);
+                } catch (error) {
+                    PerformanceLogger.warn('INTERP', 'Subscriber callback error', error);
+                }
+            });
         });
     }
 }
