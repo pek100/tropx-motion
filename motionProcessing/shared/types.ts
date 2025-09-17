@@ -25,6 +25,18 @@ export interface DeviceSample {
 export type DeviceData = DeviceSample;
 
 /**
+ * Interpolated data result from interpolation service.
+ */
+export interface InterpolatedData {
+    deviceId: string;
+    interpolatedQuaternion: Quaternion;
+    confidence: number;
+    interpolationMethod: 'none' | 'linear' | 'slerp';
+    originalTimestamp: number;
+    targetTimestamp: number;
+}
+
+/**
  * Calculated joint angle data with source device information.
  * Represents the final output of joint angle calculations.
  */

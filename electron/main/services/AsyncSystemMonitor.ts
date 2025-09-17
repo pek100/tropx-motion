@@ -1,8 +1,8 @@
 import { app, BrowserWindow } from 'electron';
-import * as os from 'os';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as v8 from 'v8';
+import os from 'os';
+import fs from 'fs';
+import path from 'path';
+import v8 from 'v8';
 
 export interface SystemSample {
   timestamp: string;
@@ -25,17 +25,21 @@ export interface SystemSample {
 }
 
 export type MonitorOptions = {
-  intervalMs?: number; // default 10000
-  logToConsole?: boolean; // default true
-  logToFile?: boolean; // default true
-  maxSamplesInMemory?: number; // default 300
+  intervalMs?: number;
+  logToConsole?: boolean;
+  logToFile?: boolean;
+  maxSamplesInMemory?: number;
 };
 
-export class SystemMonitor {
+/**
+ * High-performance async system monitor using circular buffer.
+ * Eliminates blocking array operations for real-time performance monitoring.
+ */
+export class AsyncSystemMonitor {
   private winProvider: () => BrowserWindow | null;
   private timer: NodeJS.Timeout | null = null;
   private options: Required<MonitorOptions>;
-  private samples: SystemSample[] = []; // Use pre-allocated circular array
+  private samples: SystemSample[] = []; // Optimized circular array
   private writeIndex: number = 0;
   private sampleCount: number = 0;
   private logStream: fs.WriteStream | null = null;
@@ -54,23 +58,20 @@ export class SystemMonitor {
   }
 
   start() {
-    if (this.timer) return; // already running
+    if (this.timer) return;
     if (this.options.logToFile && !this.logStream) {
       try {
         const logDir = app.getPath('userData');
         const logPath = path.join(logDir, 'perf.log');
         this.logStream = fs.createWriteStream(logPath, { flags: 'a' });
-        this.logStream.write(`\n# SystemMonitor started ${new Date().toISOString()}\n`);
+        this.logStream.write(`\n# AsyncSystemMonitor started ${new Date().toISOString()}\n`);
       } catch (e) {
-        // If file logging fails, disable file logging
         this.logStream = null;
-        this.options.logToFile = false as any; // keep running without file logging
-        // eslint-disable-next-line no-console
-        console.warn('SystemMonitor: failed to open log file:', e);
+        this.options.logToFile = false as any;
+        console.warn('AsyncSystemMonitor: failed to open log file:', e);
       }
     }
 
-    // Take an immediate sample, then at interval
     void this.sampleAndLog();
     this.timer = setInterval(() => {
       void this.sampleAndLog();
@@ -83,7 +84,7 @@ export class SystemMonitor {
       this.timer = null;
     }
     if (this.logStream) {
-      this.logStream.write(`# SystemMonitor stopped ${new Date().toISOString()}\n`);
+      this.logStream.write(`# AsyncSystemMonitor stopped ${new Date().toISOString()}\n`);
       this.logStream.end();
       this.logStream = null;
     }
@@ -101,6 +102,9 @@ export class SystemMonitor {
     return !!this.timer;
   }
 
+  /**
+   * NON-BLOCKING get recent samples - no array slicing on large arrays
+   */
   getRecentSamples(limit = 100): SystemSample[] {
     if (limit <= 0 || this.sampleCount === 0) return [];
 
@@ -124,6 +128,9 @@ export class SystemMonitor {
     return await this.collectSample();
   }
 
+  /**
+   * NON-BLOCKING sample collection and storage
+   */
   private async sampleAndLog() {
     try {
       const sample = await this.collectSample();
@@ -137,11 +144,9 @@ export class SystemMonitor {
         const rendererPid = sample.rendererPid ? `, rendererPid=${sample.rendererPid}` : '';
         const rssMB = (sample.mainProcess.memoryUsage.rss / (1024 * 1024)).toFixed(1);
         const heapMB = (sample.mainProcess.memoryUsage.heapUsed / (1024 * 1024)).toFixed(1);
-        // eslint-disable-next-line no-console
-        console.info(`Perf: rss=${rssMB}MB, heap=${heapMB}MB${rendererPid}`);
+        console.info(`AsyncPerf: rss=${rssMB}MB, heap=${heapMB}MB${rendererPid}`);
 
         if (sample.appMetrics) {
-          // Summarize per-process memory for relevant process types
           const typesToShow: Electron.ProcessMetric['type'][] = ['Browser', 'Tab', 'GPU'];
           const summary = sample.appMetrics
             .filter(m => typesToShow.includes(m.type))
@@ -152,8 +157,7 @@ export class SystemMonitor {
             })
             .join(' | ');
           if (summary) {
-            // eslint-disable-next-line no-console
-            console.info(`AppMetrics: ${summary}`);
+            console.info(`AsyncAppMetrics: ${summary}`);
           }
         }
       }
@@ -162,8 +166,7 @@ export class SystemMonitor {
         this.logStream.write(JSON.stringify(sample) + '\n');
       }
     } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn('SystemMonitor sample failed:', e);
+      console.warn('AsyncSystemMonitor sample failed:', e);
     }
   }
 
@@ -199,5 +202,37 @@ export class SystemMonitor {
       appMetrics: appMetrics.status === 'fulfilled' ? appMetrics.value : undefined,
     };
     return sample;
+  }
+
+  /**
+   * Get performance statistics
+   */
+  getStats(): {
+    sampleCount: number;
+    bufferUtilization: number;
+    oldestSampleAge: number | null;
+    newestSampleAge: number | null;
+  } {
+    if (this.sampleCount === 0) {
+      return {
+        sampleCount: 0,
+        bufferUtilization: 0,
+        oldestSampleAge: null,
+        newestSampleAge: null
+      };
+    }
+
+    const now = Date.now();
+    const newest = this.samples[(this.writeIndex - 1 + this.samples.length) % this.samples.length];
+    const oldest = this.sampleCount === this.samples.length
+      ? this.samples[this.writeIndex]
+      : this.samples[0];
+
+    return {
+      sampleCount: this.sampleCount,
+      bufferUtilization: (this.sampleCount / this.samples.length) * 100,
+      oldestSampleAge: oldest ? now - new Date(oldest.timestamp).getTime() : null,
+      newestSampleAge: newest ? now - new Date(newest.timestamp).getTime() : null
+    };
   }
 }

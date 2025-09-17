@@ -1,12 +1,14 @@
 import { DeviceProcessor } from './deviceProcessing/DeviceProcessor';
 import { JointProcessor, KneeJointProcessor } from './jointProcessing/JointProcessor';
 import { DataParser } from './dataProcessing/DataParser';
+import { AsyncDataParser } from './dataProcessing/AsyncDataParser';
 import { UIProcessor } from './uiProcessing/UIProcessor';
 import { ServerService } from './dataProcessing/ServerService';
 import { ChunkingService } from './dataProcessing/ChunkingService';
 import { MotionConfig, IMUData, SessionContext, JointAngleData } from './shared/types';
 import {createMotionConfig, PerformanceProfile} from './shared/config';
 import { CHUNKING, SAMPLE_RATES } from './shared/constants';
+import { PerformanceLogger } from './shared/PerformanceLogger';
 
 interface RecordingStatus {
     isRecording: boolean;
@@ -24,10 +26,11 @@ export class MotionProcessingCoordinator {
     private static instance: MotionProcessingCoordinator | null = null;
     private deviceProcessor!: DeviceProcessor;
     private jointProcessors = new Map<string, JointProcessor>();
-    private dataParser!: DataParser;
+    private dataParser!: DataParser | AsyncDataParser;
     private uiProcessor!: UIProcessor;
     private serverService!: ServerService;
     private chunkingService!: ChunkingService;
+    private useAsyncParser: boolean = true; // Feature flag for async parser
     private lastCompleteRecording: any = null;
     private isRecording = false;
     private sessionContext: SessionContext | null = null;
@@ -298,8 +301,32 @@ export class MotionProcessingCoordinator {
      * Returns the initialization status of the coordinator.
      */
     getInitializationStatus(): boolean {
-        return !!(this.deviceProcessor && this.dataParser && this.uiProcessor && 
+        return !!(this.deviceProcessor && this.dataParser && this.uiProcessor &&
                  this.serverService && this.chunkingService);
+    }
+
+    /**
+     * Returns async parser statistics for performance monitoring.
+     * Only available when using AsyncDataParser.
+     */
+    getAsyncParserStats(): any {
+        if (!this.useAsyncParser || !(this.dataParser instanceof AsyncDataParser)) {
+            return null;
+        }
+
+        return {
+            recordingStats: this.dataParser.getRecordingStats(),
+            bufferUtilization: Object.fromEntries(this.dataParser.getBufferUtilization()),
+            isAsync: true,
+            parserType: 'AsyncDataParser'
+        };
+    }
+
+    /**
+     * Returns whether async parser is enabled.
+     */
+    isUsingAsyncParser(): boolean {
+        return this.useAsyncParser;
     }
 
 
@@ -381,15 +408,25 @@ export class MotionProcessingCoordinator {
 
     /**
      * Initializes all core processing services with current configuration.
+     * Enhanced with async data parser for non-blocking joint processing.
      */
     private initializeServices(): void {
         this.deviceProcessor = DeviceProcessor.getInstance(this.config);
-        this.dataParser = DataParser.getInstance(this.config.targetHz);
+
+        // Initialize parser based on configuration
+        if (this.useAsyncParser) {
+            this.dataParser = AsyncDataParser.getInstance(this.config.targetHz);
+            PerformanceLogger.info('COORDINATOR', 'Using AsyncDataParser for non-blocking joint processing');
+        } else {
+            this.dataParser = DataParser.getInstance(this.config.targetHz);
+            PerformanceLogger.info('COORDINATOR', 'Using legacy DataParser (blocking mode)');
+        }
+
         this.uiProcessor = UIProcessor.getInstance();
         this.serverService = new ServerService();
         this.chunkingService = new ChunkingService(this.serverService, this.getOptimalChunkSize());
 
-        console.log('✅ Core services initialized');
+        console.log('✅ Core services initialized with async parser:', this.useAsyncParser);
     }
 
     /**
@@ -415,12 +452,24 @@ export class MotionProcessingCoordinator {
 
     /**
      * Establishes data flow subscriptions between joint processor and UI/recording systems.
+     * Enhanced with performance monitoring and async data processing.
      */
     private subscribeToJointProcessor(processor: JointProcessor): void {
         processor.subscribe((angleData: JointAngleData) => {
+            const start = performance.now();
+
+            // UI update - always synchronous and fast
             this.uiProcessor.updateJointAngle(angleData);
+
+            // Recording accumulation - now async and non-blocking!
             if (this.isRecording) {
                 this.dataParser.accumulateAngleData(angleData);
+            }
+
+            // Performance logging for async operations
+            const duration = performance.now() - start;
+            if (this.useAsyncParser && duration > 1) {
+                PerformanceLogger.log('COORDINATOR', 'joint_processing', duration, angleData.jointName);
             }
         });
     }

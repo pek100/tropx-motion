@@ -10,6 +10,7 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { Check } from 'lucide-react';
+import { UICircularBuffer, DataPoint } from '../utils/UICircularBuffer';
 
 const ANGLE_CONSTRAINTS = {
   MIN: -20,
@@ -108,6 +109,13 @@ interface KneeAreaChartProps {
   useSensorTimestamps?: boolean;
 }
 
+interface ChartDataPoint extends DataPoint {
+  time: number;
+  leftAngle: number;
+  rightAngle: number;
+  _updateId: number;
+}
+
 /** Configuration for rendering left and right knee data */
 const KNEE_CONFIGS = [
   {
@@ -155,7 +163,12 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
     left: true,
     right: true
   });
-  const [data, setData] = useState<any[]>([]);
+
+  // Replace blocking array state with UICircularBuffer
+  const dataBufferRef = useRef<UICircularBuffer<ChartDataPoint>>(
+    new UICircularBuffer<ChartDataPoint>(50, TIME_CONSTRAINTS.WINDOW_MS)
+  );
+  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const updateCounterRef = useRef(0);
 
   /** Toggles visibility of individual knee data series */
@@ -189,32 +202,38 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   // Use requestAnimationFrame for smooth updates and throttling
   const animationFrameRef = useRef<number>();
   
+  /**
+   * NON-BLOCKING data update using UICircularBuffer - O(1) operation
+   * Eliminates array spreading and slicing that blocks rendering
+   */
   const updateData = useCallback(() => {
     if (!leftKnee && !rightKnee) return;
-    
+
+    const start = performance.now();
     const timestamp = getTimestamp(leftKnee, rightKnee);
     updateCounterRef.current++;
 
     // Create new data point with 1 decimal rounding
-    const newDataPoint = {
-      [DataKeys.TIME]: timestamp,
-      [DataKeys.LEFT_ANGLE]: roundToOneDecimal(clampValue(leftKnee?.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG)),
-      [DataKeys.RIGHT_ANGLE]: roundToOneDecimal(clampValue(rightKnee?.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG)),
+    const newDataPoint: ChartDataPoint = {
+      time: timestamp,
+      leftAngle: roundToOneDecimal(clampValue(leftKnee?.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG)),
+      rightAngle: roundToOneDecimal(clampValue(rightKnee?.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG)),
       _updateId: updateCounterRef.current // Force uniqueness
     };
 
-    setData(currentData => {
-      // CRITICAL PERFORMANCE FIX: Implement proper circular buffer with max size
-      const MAX_DATA_POINTS = 50; // Limit to 50 points maximum
-      const newData = [...currentData, newDataPoint];
+    // PERFORMANCE CRITICAL: O(1) buffer operation - never blocks!
+    dataBufferRef.current.push(newDataPoint);
 
-      // Keep only recent points OR limit to MAX_DATA_POINTS (whichever is smaller)
-      const filteredData = newData
-        .filter(point => timestamp - point[DataKeys.TIME] < TIME_CONSTRAINTS.WINDOW_MS)
-        .slice(-MAX_DATA_POINTS); // Keep only last 50 points
+    // Update chart data from buffer - only when needed
+    const newChartData = dataBufferRef.current.getChartData(timestamp);
+    setChartData(newChartData);
 
-      return filteredData;
-    });
+    // Monitor for blocking operations in UI updates
+    const duration = performance.now() - start;
+    if (duration > 5) {
+      console.warn(`KneeAreaChart update took ${duration.toFixed(2)}ms - potentially blocking render`);
+    }
+
   }, [leftKnee, rightKnee]);
 
   /** Updates real-time data stream with smooth 60fps updates */
@@ -290,7 +309,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   /** Custom tooltip with 1 decimal precision display */
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length > 0) {
-      const time = new Date(payload[0].payload[DataKeys.TIME]);
+      const time = new Date(payload[0].payload.time);
 
       const uniquePayload = payload.reduce((acc: any, entry: any) => {
         acc[entry.dataKey] = entry;
@@ -334,7 +353,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
       <ResponsiveContainer width="100%" height="90%">
         <ComposedChart
-          data={data}
+          data={chartData}
           margin={CHART_LAYOUT.MARGINS}
         >
           <CartesianGrid
@@ -344,7 +363,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
           />
 
           <XAxis
-            dataKey={DataKeys.TIME}
+            dataKey="time"
             type="number"
             domain={['dataMin', 'dataMax']}
             tickFormatter={(time) => {

@@ -1,13 +1,15 @@
 import { APIJoint } from "./types";
 import { STATISTICS } from './constants';
 import { roundToPrecision, getCurrentTimestamp } from './utils';
+import { CircularBuffer } from './CircularBuffer';
+import { AsyncPerformanceMonitor } from './AsyncPerformanceMonitor';
 
 interface JointStats {
     min: number;
     max: number;
     count: number;
     sum: number;
-    values: number[];
+    valuesBuffer: CircularBuffer; // Replace blocking array with circular buffer
     startTime: number;
 }
 
@@ -83,7 +85,7 @@ export class JointStatisticsManager {
             max: angle,
             count: 0,
             sum: 0,
-            values: [],
+            valuesBuffer: new CircularBuffer(STATISTICS.MAX_VALUES_HISTORY),
             startTime: getCurrentTimestamp()
         };
 
@@ -101,17 +103,17 @@ export class JointStatisticsManager {
         stats.count++;
         stats.sum += angle;
 
-        // Keep only current value for immediate access
-        stats.values = [angle];
+        // Use circular buffer for O(1) value storage - no blocking array operations
+        stats.valuesBuffer.push(angle, getCurrentTimestamp());
     }
 
     /**
-     * Maintains value history within memory limits by removing oldest values.
+     * Circular buffer automatically maintains memory limits - no manual enforcement needed.
+     * This method is now a no-op since CircularBuffer handles size limits automatically.
      */
     private enforceValuesLimit(stats: JointStats): void {
-        if (stats.values.length > STATISTICS.MAX_VALUES_HISTORY) {
-            stats.values = stats.values.slice(-STATISTICS.MAX_VALUES_HISTORY);
-        }
+        // CircularBuffer automatically handles size limits - no blocking operations needed!
+        // Previous implementation used stats.values.slice() which was O(n) and blocking
     }
 
     /**
