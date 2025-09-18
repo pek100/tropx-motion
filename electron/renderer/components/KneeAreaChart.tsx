@@ -11,6 +11,9 @@ import {
 } from 'recharts';
 import { Check } from 'lucide-react';
 import { UICircularBuffer, DataPoint } from '../utils/UICircularBuffer';
+import { uiEventLoopMonitor } from '../utils/UIEventLoopMonitor';
+import { streamingLogger } from '../utils/StreamingPerformanceLogger';
+import { withPerformanceProfiler, useRenderTracking } from '../utils/ReactPerformanceProfiler';
 
 const ANGLE_CONSTRAINTS = {
   MIN: -20,
@@ -159,6 +162,9 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   recordingStartTime,
   useSensorTimestamps = true
 }) => {
+  // Track component render performance
+  useRenderTracking('KneeAreaChart');
+
   const [kneeVisibility, setKneeVisibility] = useState({
     left: true,
     right: true
@@ -207,11 +213,29 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
    * Eliminates array spreading and slicing that blocks rendering
    */
   const updateData = useCallback(() => {
-    if (!leftKnee && !rightKnee) return;
+    if (!leftKnee && !rightKnee) {
+      console.log('📊 [CHART_DEBUG] No knee data - skipping update', { leftKnee, rightKnee });
+      return;
+    }
+
+    console.log('📊 [CHART_DEBUG] Chart update triggered', {
+      leftKneeValue: leftKnee?.current,
+      rightKneeValue: rightKnee?.current,
+      updateCounter: updateCounterRef.current
+    });
+
+    const trackingId = streamingLogger.startOperation('data_update', 'KneeAreaChart', 'updateData', {
+      leftKneeValue: leftKnee?.current,
+      rightKneeValue: rightKnee?.current,
+      updateCounter: updateCounterRef.current
+    });
 
     const start = performance.now();
     const timestamp = getTimestamp(leftKnee, rightKnee);
     updateCounterRef.current++;
+
+    // Track data update frequency
+    uiEventLoopMonitor.recordDataUpdate('KneeAreaChart');
 
     // Create new data point with 1 decimal rounding
     const newDataPoint: ChartDataPoint = {
@@ -230,15 +254,41 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
     // Monitor for blocking operations in UI updates
     const duration = performance.now() - start;
+
+    // Track chart render - this triggers a React re-render of the chart
+    uiEventLoopMonitor.recordChartRender('KneeAreaChart', duration);
+
     if (duration > 5) {
-      console.warn(`KneeAreaChart update took ${duration.toFixed(2)}ms - potentially blocking render`);
+      uiEventLoopMonitor.recordBlockingEvent(
+        'CHART_DATA_UPDATE',
+        'KneeAreaChart',
+        duration,
+        {
+          dataPointsCount: newChartData.length,
+          updateCounter: updateCounterRef.current
+        }
+      );
     }
+
+    streamingLogger.endOperation(trackingId, JSON.stringify(newDataPoint).length);
 
   }, [leftKnee, rightKnee]);
 
   /** Updates real-time data stream with smooth 60fps updates */
   useEffect(() => {
-    if (!leftKnee && !rightKnee) return;
+    console.log('📊 [CHART_DEBUG] useEffect triggered', {
+      hasLeftKnee: !!leftKnee,
+      hasRightKnee: !!rightKnee,
+      leftKneeValue: leftKnee?.current,
+      rightKneeValue: rightKnee?.current,
+      leftTimestamp: leftKnee?.sensorTimestamp,
+      rightTimestamp: rightKnee?.sensorTimestamp
+    });
+
+    if (!leftKnee && !rightKnee) {
+      console.log('📊 [CHART_DEBUG] No knee data in useEffect - early return');
+      return;
+    }
 
     // Cancel any pending animation frame
     if (animationFrameRef.current) {
@@ -406,4 +456,5 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   );
 };
 
-export default KneeAreaChart;
+// Wrap component with performance profiler for React render tracking
+export default withPerformanceProfiler(KneeAreaChart, 'KneeAreaChart');

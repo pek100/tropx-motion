@@ -26,10 +26,16 @@ interface EnhancedMotionDataDisplayProps {
 
 /** Enhanced data parser that converts various motion data formats to standardized knee data */
 const parseMotionData = (rawData: any): MotionData | null => {
-  // Removed console.log for performance - only log errors in development
-  if (process.env.NODE_ENV === 'development' && Math.random() < 0.01) {
-    console.log('🔍 parseMotionData sample:', typeof rawData, Object.keys(rawData || {}).slice(0, 3));
-  }
+  // DEBUG: Always log to see actual data structure
+  console.log('📊 [CHART_DEBUG] parseMotionData received:', {
+    type: typeof rawData,
+    keys: Object.keys(rawData || {}),
+    sample: rawData,
+    hasLeft: rawData?.left,
+    hasRight: rawData?.right,
+    leftType: typeof rawData?.left,
+    rightType: typeof rawData?.right
+  });
   
   if (!rawData || typeof rawData !== 'object') {
     return null;

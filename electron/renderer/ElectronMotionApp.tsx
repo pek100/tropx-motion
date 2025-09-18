@@ -27,6 +27,12 @@ import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 
+// Import performance monitoring systems
+import { uiEventLoopMonitor } from './utils/UIEventLoopMonitor'
+import { streamingLogger } from './utils/StreamingPerformanceLogger'
+import { reactProfiler, withPerformanceProfiler } from './utils/ReactPerformanceProfiler'
+import { blockingAlerts } from './utils/BlockingOperationAlerts'
+
 // Company Logo SVG Component
 const CompanyLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" }) => (
     <svg className={className} viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1135,6 +1141,43 @@ const ElectronMotionApp: React.FC = () => {
   const SCAN_COOLDOWN = 3000;
 
 
+  // Initialize performance monitoring systems
+  useEffect(() => {
+    console.log("🔍 [PERFORMANCE] Initializing UI performance monitoring systems...");
+
+    // Start UI event loop monitoring
+    uiEventLoopMonitor.startMonitoring();
+
+    // Configure blocking alerts for streaming environment
+    blockingAlerts.configure({
+      enabled: true,
+      thresholds: {
+        moderateBlocking: 16,   // 16ms blocks 60fps
+        severeBlocking: 50,     // 50ms is very noticeable
+        criticalBlocking: 100   // 100ms+ is unacceptable during streaming
+      },
+      notifications: {
+        console: true,
+        visual: process.env.NODE_ENV === 'development',
+        sound: false
+      },
+      rateLimiting: {
+        maxAlertsPerMinute: 30,
+        cooldownMs: 2000  // 2 second cooldown for streaming components
+      }
+    });
+
+    console.log("✅ [PERFORMANCE] UI monitoring systems active");
+
+    // Cleanup on unmount
+    return () => {
+      uiEventLoopMonitor.stopMonitoring();
+      blockingAlerts.cleanup();
+      streamingLogger.reset();
+      reactProfiler.reset();
+    };
+  }, []);
+
   useEffect(() => {
     console.log("🔵 RENDERER LOADED: Testing Web Bluetooth availability...");
     console.log("🔵 navigator.bluetooth available:", !!navigator.bluetooth);
@@ -1160,6 +1203,11 @@ const ElectronMotionApp: React.FC = () => {
 
   useEffect(() => {
     if (!lastMessage) return;
+
+    // Track WebSocket message processing performance
+    const messageSize = JSON.stringify(lastMessage).length;
+    const start = performance.now();
+
     try {
       switch (lastMessage.type) {
         case "status_update": {
@@ -1281,10 +1329,24 @@ const ElectronMotionApp: React.FC = () => {
           break;
         }
         case "motion_data":
+          // Track motion data processing performance
+          const motionDataStart = performance.now();
+
           dispatch({ type: "SET_MOTION_DATA", payload: lastMessage.data as any });
+
           // Forward to consumer for minimal UI updates only
           if (motionProcessingConsumer && typeof motionProcessingConsumer.updateUIFromWebSocket === 'function') {
             motionProcessingConsumer.updateUIFromWebSocket(lastMessage.data);
+          }
+
+          const motionDataDuration = performance.now() - motionDataStart;
+          if (motionDataDuration > 10) {
+            uiEventLoopMonitor.recordBlockingEvent(
+              'MOTION_DATA_PROCESSING',
+              'ElectronMotionApp',
+              motionDataDuration,
+              { dataSize: messageSize }
+            );
           }
           break;
         case "recording_state": {
@@ -1300,6 +1362,15 @@ const ElectronMotionApp: React.FC = () => {
       }
     } catch (error) {
       console.error("📨 Error processing WebSocket message:", error, lastMessage);
+    } finally {
+      // Log WebSocket message processing performance
+      const totalDuration = performance.now() - start;
+      streamingLogger.logWebSocketMessage('ElectronMotionApp', messageSize, totalDuration);
+
+      // Track high-frequency message processing
+      if (lastMessage.type === 'motion_data') {
+        uiEventLoopMonitor.recordDataUpdate('WebSocketMessages');
+      }
     }
   }, [lastMessage, state.recordingStartTime]);
 
@@ -1847,4 +1918,5 @@ const ElectronMotionApp: React.FC = () => {
   );
 };
 
-export default ElectronMotionApp;
+// Wrap main component with performance profiler to track overall app render performance
+export default withPerformanceProfiler(ElectronMotionApp, 'ElectronMotionApp');
