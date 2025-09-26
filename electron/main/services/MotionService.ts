@@ -1,41 +1,57 @@
-import { WebSocketService } from './WebSocketService';
-import { DataBroadcastService } from './DataBroadcastService';
+import { createWebSocketBridge, WebSocketBridge } from '../../../websocket-bridge';
 import { motionProcessingCoordinator } from '../../../motionProcessing/MotionProcessingCoordinator';
 import { museManager } from '../../../muse_sdk/core/MuseManager';
 import { CONFIG, MESSAGE_TYPES } from '../../shared/config';
-import { 
-  ServiceStatus, 
-  DeviceInfo, 
-  RecordingSession, 
-  ApiResponse, 
+import {
+  ServiceStatus,
+  DeviceInfo,
+  RecordingSession,
+  ApiResponse,
   RecordingResponse,
-  MotionDataUpdate 
+  MotionDataUpdate
 } from '../../shared/types';
 
 export class MotionService {
-  private wsService: WebSocketService;
-  private broadcaster: DataBroadcastService;
+  private bridge: WebSocketBridge | null = null;
+  private bridgePort = 0;
   private isInitialized = false;
   private isRecording = false;
   private currentSessionId: string | null = null;
   private recordingStartTime: Date | null = null;
 
   constructor() {
-    this.wsService = new WebSocketService();
-    this.broadcaster = new DataBroadcastService();
+    // Bridge will be initialized in initialize()
   }
 
   async initialize(): Promise<void> {
     try {
-      console.log('Initializing Motion Service...');
+      console.log('Initializing Motion Service with WebSocket Bridge...');
 
-      await this.wsService.initialize();
-      this.setupWebSocketHandlers();
-      this.setupMotionProcessingCallbacks();
+      // Create WebSocket bridge with existing services
+      const existingServices = {
+        museManager,
+        motionCoordinator: motionProcessingCoordinator,
+      };
+
+      const bridgeConfig = {
+        port: 8080, // Default port for WebSocket Bridge
+        enableBinaryProtocol: true,
+        enableReliableTransport: true,
+        performanceMode: 'high_throughput' as const,
+        streamingConfig: {
+          motionDataReliable: false,
+          maxClientsPerMessage: 10,
+          messageBufferSize: 100,
+        },
+      };
+
+      const { bridge, port } = await createWebSocketBridge(existingServices, bridgeConfig);
+      this.bridge = bridge;
+      this.bridgePort = port;
+
       this.isInitialized = true;
+      console.log(`Motion Service initialized with WebSocket Bridge on port ${port}`);
 
-      console.log('Motion Service initialized successfully');
-      this.broadcastStatus();
     } catch (error) {
       console.error('Failed to initialize Motion Service:', error);
       throw error;
@@ -70,8 +86,6 @@ export class MotionService {
       this.isRecording = true;
       this.recordingStartTime = new Date();
       this.currentSessionId = sessionData.sessionId;
-
-      this.broadcaster.broadcastRecordingState(true, sessionData);
       
       return { 
         success: true, 
@@ -103,8 +117,6 @@ export class MotionService {
       this.recordingStartTime = null;
       this.currentSessionId = null;
 
-      this.broadcaster.broadcastRecordingState(false);
-
       return {
         success,
         message: success ? 'Recording stopped successfully' : 'Recording stopped with errors',
@@ -121,77 +133,48 @@ export class MotionService {
 
   async connectDevices(): Promise<ApiResponse> {
     try {
-      console.log('Triggering device connection...');
-      
-      this.broadcaster.subscribe((message) => {
-        this.wsService.broadcast(message);
-      });
-
-      this.wsService.broadcast({
-        type: MESSAGE_TYPES.SCAN_REQUEST,
-        data: { 
-          action: 'trigger_bluetooth_scan',
-          message: 'Triggering Web Bluetooth scan for device selection'
-        },
-        timestamp: Date.now()
-      });
-
-      return { 
-        success: true, 
-        message: 'Device connection initiated'
+      console.log('Device connection will be handled by WebSocket Bridge BLE handlers');
+      return {
+        success: true,
+        message: 'Device connection handled by WebSocket Bridge - use scan operation from client'
       };
     } catch (error) {
       console.error('Device connection trigger failed:', error);
-      return { 
-        success: false, 
-        message: `Connection trigger failed: ${error instanceof Error ? error.message : String(error)}` 
+      return {
+        success: false,
+        message: `Connection trigger failed: ${error instanceof Error ? error.message : String(error)}`
       };
     }
   }
 
   async scanForDevices(): Promise<ApiResponse> {
     try {
-      console.log('Triggering device scan...');
-      
-      this.wsService.broadcast({
-        type: MESSAGE_TYPES.SCAN_REQUEST,
-        data: { 
-          action: 'trigger_bluetooth_scan',
-          message: 'Trigger Web Bluetooth scan for device discovery'
-        },
-        timestamp: Date.now()
-      });
-
-      return { 
-        success: true, 
-        message: 'Device scan initiated'
+      console.log('Device scanning will be handled by WebSocket Bridge BLE handlers');
+      return {
+        success: true,
+        message: 'Device scanning handled by WebSocket Bridge - use BLE_SCAN_REQUEST from client'
       };
     } catch (error) {
       console.error('Scan trigger failed:', error);
-      return { 
-        success: false, 
-        message: `Scan trigger failed: ${error instanceof Error ? error.message : String(error)}` 
+      return {
+        success: false,
+        message: `Scan trigger failed: ${error instanceof Error ? error.message : String(error)}`
       };
     }
   }
 
   async connectToDevice(deviceName: string): Promise<ApiResponse> {
     try {
-      console.log(`Connecting to device: ${deviceName}`);
-
-      const success = await museManager.connectToScannedDevice('', deviceName);
-
-      if (success) {
-        this.broadcastDeviceStatus();
-        return { success: true, message: `Connected to ${deviceName}` };
-      } else {
-        return { success: false, message: `Failed to connect to ${deviceName}` };
-      }
+      console.log(`Device connection to ${deviceName} will be handled by WebSocket Bridge`);
+      return {
+        success: true,
+        message: `Device connection handled by WebSocket Bridge - use BLE_CONNECT_REQUEST from client`
+      };
     } catch (error) {
       console.error(`Connection error for ${deviceName}:`, error);
-      return { 
-        success: false, 
-        message: `Connection error: ${error instanceof Error ? error.message : String(error)}` 
+      return {
+        success: false,
+        message: `Connection error: ${error instanceof Error ? error.message : String(error)}`
       };
     }
   }
@@ -211,32 +194,33 @@ export class MotionService {
       })),
       batteryLevels,
       recordingStartTime: this.recordingStartTime?.toISOString(),
-      wsPort: this.wsService.getPort(),
-      clientCount: this.wsService.getClientCount(),
+      wsPort: this.bridgePort,
+      clientCount: this.bridge?.getStatus().connections || 0,
       motionProcessingReady: motionProcessingCoordinator.getInitializationStatus(),
       deviceManagerReady: true
     };
   }
 
   getWebSocketPort(): number {
-    return this.wsService.getPort();
+    if (this.bridgePort === 0) {
+      console.warn('WebSocket Bridge not initialized yet, port is 0');
+    }
+    return this.bridgePort;
   }
 
-  // Public method for broadcasting messages
+  // Public method for broadcasting messages - now handled by bridge
   broadcastMessage(type: string, data: unknown): void {
-    this.wsService.broadcast({
-      type: type as any,
-      data,
-      timestamp: Date.now()
-    });
+    console.log(`Broadcasting ${type} - handled by WebSocket Bridge`);
   }
 
   cleanup(): void {
     console.log('Cleaning up Motion Service...');
-    
-    this.broadcaster.cleanup();
-    this.wsService.cleanup();
-    
+
+    if (this.bridge) {
+      this.bridge.stop().catch(console.error);
+      this.bridge = null;
+    }
+
     if (this.isRecording) {
       motionProcessingCoordinator.stopRecording().catch(console.error);
     }
@@ -244,88 +228,4 @@ export class MotionService {
     console.log('Motion Service cleanup complete');
   }
 
-  // Setup WebSocket message handlers
-  private setupWebSocketHandlers(): void {
-    this.wsService.onMessage('motion_data', (data) => {
-      this.processMotionDataFromRenderer(data);
-    });
-
-    this.wsService.onMessage('request_status', (data, clientId) => {
-      // Status will be sent automatically on connection
-    });
-
-    this.wsService.onMessage('trigger_device_discovery', (data) => {
-      console.log('Device discovery trigger received:', data);
-    });
-  }
-
-  // Setup motion processing data callbacks
-  private setupMotionProcessingCallbacks(): void {
-    motionProcessingCoordinator.subscribeToUI((data: unknown) => {
-      const motionData: MotionDataUpdate = {
-        left: (data as any).left || { current: 0, max: 0, min: 0, rom: 0 },
-        right: (data as any).right || { current: 0, max: 0, min: 0, rom: 0 },
-        timestamp: Date.now()
-      };
-
-      this.broadcaster.broadcastMotionData(motionData);
-    });
-
-    // Subscribe broadcaster to WebSocket service
-    this.broadcaster.subscribe((message) => {
-      this.wsService.broadcast(message);
-    });
-  }
-
-  // Process motion data received from renderer
-  private processMotionDataFromRenderer(data: unknown): void {
-    try {
-      if (!data || typeof data !== 'object') {
-        console.error('Invalid motion data provided');
-        return;
-      }
-
-      const deviceData = data as any;
-      const deviceName = deviceData.deviceName || `device_${Date.now()}`;
-
-      const imuData = {
-        timestamp: deviceData.timestamp || Date.now(),
-        quaternion: deviceData.quaternion || { w: 1, x: 0, y: 0, z: 0 },
-        gyr: deviceData.gyroscope || { x: 0, y: 0, z: 0 },
-        axl: deviceData.accelerometer || { x: 0, y: 0, z: 0 },
-        mag: deviceData.magnetometer || { x: 0, y: 0, z: 0 }
-      };
-
-      if (motionProcessingCoordinator.getInitializationStatus()) {
-        motionProcessingCoordinator.processNewData(deviceName, imuData as any);
-      }
-    } catch (error) {
-      console.error('Error processing motion data from renderer:', error);
-    }
-  }
-
-  // Broadcast current status to all clients
-  private broadcastStatus(): void {
-    this.wsService.broadcast({
-      type: MESSAGE_TYPES.STATUS_UPDATE,
-      data: this.getStatus(),
-      timestamp: Date.now()
-    });
-  }
-
-  // Broadcast device status update
-  private broadcastDeviceStatus(): void {
-    const sdkDevices = museManager.getAllDevices();
-    const batteryLevels = Object.fromEntries(museManager.getAllBatteryLevels());
-
-    this.broadcaster.broadcastDeviceStatus(
-      sdkDevices.map(d => ({
-        id: d.id,
-        name: d.name,
-        connected: d.connected,
-        batteryLevel: d.batteryLevel
-      })),
-      batteryLevels
-    );
-  }
 }

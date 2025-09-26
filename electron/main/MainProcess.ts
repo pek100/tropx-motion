@@ -351,29 +351,16 @@ export class MainProcess {
     });
     ipcMain.handle('window:close', () => this.mainWindow?.close());
 
-    // Motion service handlers
-    ipcMain.handle('motion:getStatus', () => this.motionService.getStatus());
-    ipcMain.handle('motion:connectDevices', () => this.motionService.connectDevices());
-    ipcMain.handle('motion:scanDevices', () => this.motionService.scanForDevices());
-    ipcMain.handle('motion:connectToDevice', (_, deviceName: string) => 
-      this.motionService.connectToDevice(deviceName)
-    );
-    ipcMain.handle('motion:startRecording', (_, sessionData: RecordingSession) => 
-      this.motionService.startRecording(sessionData)
-    );
-    ipcMain.handle('motion:stopRecording', () => this.motionService.stopRecording());
-    ipcMain.handle('motion:getWebSocketPort', () => this.motionService.getWebSocketPort());
-
-    // Bluetooth handlers
-    ipcMain.handle('bluetooth:selectDevice', (_, deviceId: string) => 
-      this.bluetoothService.selectDevice(deviceId)
-    );
+    // System info handler (keep this for diagnostics)
     ipcMain.handle('bluetooth:getSystemInfo', () => ({
       platform: process.platform,
       electronVersion: process.versions.electron,
       chromeVersion: process.versions.chrome,
       nodeVersion: process.versions.node
     }));
+
+    // Keep WebSocket port getter for backward compatibility
+    ipcMain.handle('motion:getWebSocketPort', () => this.motionService.getWebSocketPort());
 
     // Performance monitor handlers
     ipcMain.handle('monitor:start', (_e, opts?: { intervalMs?: number }) => {

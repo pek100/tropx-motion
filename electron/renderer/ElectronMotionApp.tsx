@@ -32,6 +32,8 @@ import { uiEventLoopMonitor } from './utils/UIEventLoopMonitor'
 import { streamingLogger } from './utils/StreamingPerformanceLogger'
 import { reactProfiler, withPerformanceProfiler } from './utils/ReactPerformanceProfiler'
 import { blockingAlerts } from './utils/BlockingOperationAlerts'
+import { WebSocketBridgeClient } from './utils/WebSocketBridgeClient'
+import { MESSAGE_TYPES } from './utils/BinaryProtocol'
 
 // Company Logo SVG Component
 const CompanyLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" }) => (
@@ -1130,7 +1132,7 @@ const WindowControls: React.FC = () => {
 const ElectronMotionApp: React.FC = () => {
   const [state, dispatch] = useReducer(appStateReducer, initialState);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const wsRef = React.useRef<WebSocket | null>(null);
+  const bridgeClientRef = useRef<WebSocketBridgeClient | null>(null);
   const batteryTimerRef = useRef<NodeJS.Timeout | null>(null);
   const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastScanTimeRef = useRef<number>(0);
@@ -1179,222 +1181,159 @@ const ElectronMotionApp: React.FC = () => {
     console.log("🔵 navigator.bluetooth available:", !!navigator.bluetooth);
     console.log("🔵 window.isSecureContext:", window.isSecureContext);
     console.log("🔵 window.location.href:", window.location.href);
-    if (window.electronAPI) {
-      window.electronAPI.motion.getWebSocketPort().then((port) => {
+
+    // Initialize WebSocket Bridge Client with retry logic
+    const initializeBridgeClient = async () => {
+      if (!window.electronAPI) {
+        console.error("🌐 window.electronAPI not available");
+        return;
+      }
+
+      try {
+        const port = await window.electronAPI.motion.getWebSocketPort();
         console.log("🌐 Got WebSocket port from main process:", port);
+
+        if (port === 0) {
+          console.warn("⚠️ WebSocket Bridge not ready, retrying in 1 second...");
+          setTimeout(initializeBridgeClient, 1000);
+          return;
+        }
+
         dispatch({ type: "SET_WS_PORT", payload: port });
-      });
-    } else {
-      console.error("🌐 window.electronAPI not available");
-    }
+
+        // Create and connect bridge client
+        const bridgeClient = new WebSocketBridgeClient({
+          url: `ws://localhost:${port}`,
+          reconnectDelay: 2000,
+          maxReconnectAttempts: 5
+        });
+
+        await bridgeClient.connect();
+        bridgeClientRef.current = bridgeClient;
+        dispatch({ type: "SET_WS_CONNECTED", payload: true });
+
+        // Set up message handlers
+        setupBridgeMessageHandlers(bridgeClient);
+
+        console.log("✅ WebSocket Bridge Client connected");
+      } catch (error) {
+        console.error("❌ Failed to connect WebSocket Bridge Client:", error);
+        dispatch({ type: "SET_WS_CONNECTED", payload: false });
+
+        // Retry after delay
+        setTimeout(initializeBridgeClient, 2000);
+      }
+    };
+
+    // Start initialization with delay to allow main process to setup
+    setTimeout(initializeBridgeClient, 500);
   }, []);
 
-  const { isConnected, lastMessage, ws } = useWebSocket(`ws://localhost:${state.wsPort}`);
+  // Set up WebSocket Bridge message handlers
+  const setupBridgeMessageHandlers = useCallback((bridgeClient: WebSocketBridgeClient) => {
 
-  // Store WebSocket reference from the hook
-  React.useEffect(() => {
-    wsRef.current = ws;
-    dispatch({ type: "SET_WS_CONNECTED", payload: isConnected });
-  }, [ws, isConnected]);
+    // Handle motion data streaming
+    bridgeClient.onMessage(MESSAGE_TYPES.MOTION_DATA, (message: any) => {
+      const start = performance.now();
 
+      dispatch({ type: "SET_MOTION_DATA", payload: message.data });
+
+      // Forward to consumer for minimal UI updates only
+      if (motionProcessingConsumer && typeof motionProcessingConsumer.updateUIFromWebSocket === 'function') {
+        motionProcessingConsumer.updateUIFromWebSocket(message.data);
+      }
+
+      const duration = performance.now() - start;
+      if (duration > 10) {
+        uiEventLoopMonitor.recordBlockingEvent(
+          'MOTION_DATA_PROCESSING',
+          'ElectronMotionApp',
+          duration,
+          { dataSize: 24 } // Binary protocol size
+        );
+      }
+    });
+
+    // Handle device status updates
+    bridgeClient.onMessage(MESSAGE_TYPES.DEVICE_STATUS, (message: any) => {
+      console.log("📱 Device status update:", message);
+
+      // Update device states
+      if (message.deviceName && message.connected !== undefined) {
+        const device = Array.from(state.allDevices.entries()).find(([_, dev]) => dev.name === message.deviceName);
+        if (device) {
+          const [deviceId, deviceData] = device;
+          const newState = message.connected ? (message.streaming ? "streaming" : "connected") : "disconnected";
+          dispatch({
+            type: "UPDATE_DEVICE",
+            payload: { deviceId, updates: { state: newState } }
+          });
+        }
+      }
+    });
+
+    // Handle battery updates
+    bridgeClient.onMessage(MESSAGE_TYPES.BATTERY_UPDATE, (message: any) => {
+      console.log("🔋 Battery update:", message);
+
+      if (message.deviceName && message.level !== undefined) {
+        const device = Array.from(state.allDevices.entries()).find(([_, dev]) => dev.name === message.deviceName);
+        if (device) {
+          const [deviceId] = device;
+          dispatch({
+            type: "UPDATE_DEVICE",
+            payload: { deviceId, updates: { batteryLevel: message.level } }
+          });
+        }
+      }
+    });
+
+    // Handle BLE scan responses
+    bridgeClient.onMessage(MESSAGE_TYPES.BLE_SCAN_RESPONSE, (message: any) => {
+      console.log("📡 BLE scan response:", message);
+      dispatch({ type: "SET_SCANNING", payload: false });
+    });
+
+    // Handle errors
+    bridgeClient.onMessage(MESSAGE_TYPES.ERROR, (message: any) => {
+      console.error("❌ WebSocket Bridge error:", message);
+    });
+
+    // Handle heartbeats
+    bridgeClient.onMessage(MESSAGE_TYPES.HEARTBEAT, (message: any) => {
+      console.log("💓 Bridge heartbeat received");
+    });
+  }, [state.allDevices]);
+
+  // Cleanup on unmount
   useEffect(() => {
-    if (!lastMessage) return;
-
-    // Track WebSocket message processing performance
-    const messageSize = JSON.stringify(lastMessage).length;
-    const start = performance.now();
-
-    try {
-      switch (lastMessage.type) {
-        case "status_update": {
-          const statusData: any = lastMessage.data as any;
-          dispatch({ type: "SET_STATUS", payload: statusData });
-          const statusDevices = statusData.connectedDevices || [];
-          statusDevices.forEach((device: DeviceInfo) => {
-            const streaming = (device as any).streaming ? true : false;
-            const deviceState: DeviceStateMachine = {
-              id: device.id,
-              name: device.name,
-              state: device.connected ? (streaming ? "streaming" : "connected") : "disconnected",
-              batteryLevel: device.batteryLevel,
-              lastSeen: new Date(),
-            };
-            dispatch({ type: "SET_DEVICE_STATE", payload: { deviceId: device.id, device: deviceState } });
-          });
-          dispatch({ type: "SET_RECORDING", payload: { isRecording: !!statusData.isRecording } });
-          break;
-        }
-        case "device_status": {
-          const devStatusData: any = lastMessage.data as any;
-          const connectedDevices = devStatusData.connectedDevices || [];
-          connectedDevices.forEach((device: DeviceInfo) => {
-            const streaming = (device as any).streaming ? true : false;
-            const deviceState: DeviceStateMachine = {
-              id: device.id,
-              name: device.name,
-              state: device.connected ? (streaming ? "streaming" : "connected") : "disconnected",
-              batteryLevel: device.batteryLevel,
-              lastSeen: new Date(),
-            };
-            dispatch({ type: "SET_DEVICE_STATE", payload: { deviceId: device.id, device: deviceState } });
-            if (device.connected) {
-              dispatch({
-                type: "TRANSITION_FROM_CONNECTING",
-                payload: { deviceId: device.id, newState: streaming ? "streaming" : "connected" },
-              });
-            }
-          });
-          break;
-        }
-        case "scan_request": {
-          const scanReq: any = lastMessage.data as any;
-          console.log("📨 grosdode pattern: Received scan request");
-          if (scanReq.action === "trigger_bluetooth_scan") {
-            console.log("📨 grosdode: Triggering simple Web Bluetooth scan...");
-            (async () => {
-              try {
-                if (!navigator.bluetooth) {
-                  console.error("❌ Web Bluetooth not available");
-                  return;
-                }
-                await navigator.bluetooth.requestDevice({
-                  acceptAllDevices: true,
-                  optionalServices: [CONSTANTS.SERVICES.TROPX_SERVICE_UUID],
-                });
-              } catch (error: any) {
-                console.log("📨 grosdode: Web Bluetooth triggered, main process should handle device selection");
-                console.log(`📨 Error: ${error?.name} (expected for grosdode pattern)`);
-              }
-            })();
-          }
-          break;
-        }
-        case "device_scan_result": {
-          const data: any = lastMessage.data as any;
-          try {
-            const devices = data.devices || [];
-            console.log(`📡 Scan result: ${data.success ? "SUCCESS" : "FAILED"} - ${devices.length} device(s) found`);
-            if (devices.length > 0) {
-              const newDevices = devices.filter((device: DeviceInfo) => !state.allDevices.has(device.id));
-              if (newDevices.length > 0) {
-                const sdkDevices = newDevices.map((device: DeviceInfo) => ({
-                  deviceId: device.id,
-                  deviceName: device.name,
-                  batteryLevel: device.batteryLevel
-                }));
-                
-                // Sync to legacy MuseManager (always)
-                museManager.addScannedDevices(sdkDevices);
-                
-
-              }
-              devices.forEach((device: DeviceInfo) => {
-                const existingDevice = state.allDevices.get(device.id);
-                let deviceState: DeviceState = "discovered";
-                if (existingDevice) {
-                  if (existingDevice.state === "connected" || existingDevice.state === "streaming") {
-                    const isActuallyConnected = museManager.isDeviceConnected(device.name);
-                    const isActuallyStreaming = museManager.isDeviceStreaming(device.name);
-                    if (isActuallyStreaming) deviceState = "streaming";
-                    else if (isActuallyConnected) deviceState = "connected";
-                    else deviceState = "discovered";
-                  } else if (existingDevice.state === "connecting") {
-                    deviceState = "connecting";
-                  } else {
-                    deviceState = "discovered";
-                  }
-                }
-                const newDeviceState: DeviceStateMachine = {
-                  id: device.id,
-                  name: device.name,
-                  state: deviceState,
-                  batteryLevel: device.batteryLevel || existingDevice?.batteryLevel || null,
-                  lastSeen: new Date(),
-                };
-                dispatch({ type: "SET_DEVICE_STATE", payload: { deviceId: device.id, device: newDeviceState } });
-                console.log(`📱 ${existingDevice ? "Updated" : "Added"} device: ${device.name} (${deviceState})`);
-              });
-            } else {
-              console.log("⚠️ No devices discovered - check Bluetooth settings");
-            }
-            dispatch({ type: "SET_SCANNING", payload: false });
-          } catch (error) {
-            console.error("❌ Error processing scan result:", error);
-            dispatch({ type: "SET_SCANNING", payload: false });
-          }
-          break;
-        }
-        case "motion_data":
-          // Track motion data processing performance
-          const motionDataStart = performance.now();
-
-          dispatch({ type: "SET_MOTION_DATA", payload: lastMessage.data as any });
-
-          // Forward to consumer for minimal UI updates only
-          if (motionProcessingConsumer && typeof motionProcessingConsumer.updateUIFromWebSocket === 'function') {
-            motionProcessingConsumer.updateUIFromWebSocket(lastMessage.data);
-          }
-
-          const motionDataDuration = performance.now() - motionDataStart;
-          if (motionDataDuration > 10) {
-            uiEventLoopMonitor.recordBlockingEvent(
-              'MOTION_DATA_PROCESSING',
-              'ElectronMotionApp',
-              motionDataDuration,
-              { dataSize: messageSize }
-            );
-          }
-          break;
-        case "recording_state": {
-          const recData: any = lastMessage.data as any;
-          const newIsRecording = !!recData.isRecording;
-          const startTime =
-              newIsRecording && !state.recordingStartTime ? new Date() : !newIsRecording ? null : undefined;
-          dispatch({ type: "SET_RECORDING", payload: { isRecording: newIsRecording, startTime } });
-          break;
-        }
-        default:
-          console.log("📨 Unhandled message type:", lastMessage.type);
+    return () => {
+      if (bridgeClientRef.current) {
+        bridgeClientRef.current.disconnect();
+        bridgeClientRef.current = null;
       }
-    } catch (error) {
-      console.error("📨 Error processing WebSocket message:", error, lastMessage);
-    } finally {
-      // Log WebSocket message processing performance
-      const totalDuration = performance.now() - start;
-      streamingLogger.logWebSocketMessage('ElectronMotionApp', messageSize, totalDuration);
-
-      // Track high-frequency message processing
-      if (lastMessage.type === 'motion_data') {
-        uiEventLoopMonitor.recordDataUpdate('WebSocketMessages');
-      }
-    }
-  }, [lastMessage, state.recordingStartTime]);
+    };
+  }, []);
 
   const handleScan = async () => {
     lastScanTimeRef.current = Date.now();
     dispatch({ type: "SET_SCANNING", payload: true });
-    let timedOut = false;
+
     try {
-      await Promise.race([
-        navigator.bluetooth.requestDevice({
-          acceptAllDevices: true,
-          optionalServices: [CONSTANTS.SERVICES.TROPX_SERVICE_UUID],
-        }),
-        new Promise((_, reject) =>
-            setTimeout(() => {
-              timedOut = true;
-              reject(new Error("Scan timeout"));
-            }, 10000)
-        ),
-      ]);
-    } catch (error) {
-      if (timedOut) {
-        console.log("⏰ Scan timed out");
+      if (bridgeClientRef.current) {
+        console.log("📡 Starting device scan via WebSocket Bridge...");
+        const result = await bridgeClientRef.current.scanForDevices();
+        console.log("📡 Scan result:", result);
+      } else {
+        console.error("❌ WebSocket Bridge not connected");
         dispatch({ type: "SET_SCANNING", payload: false });
-        return;
       }
-      // handle other errors if needed
+    } catch (error) {
+      console.error("❌ Scan failed:", error);
+      dispatch({ type: "SET_SCANNING", payload: false });
     }
+
+    // Auto-stop scanning after timeout
     setTimeout(() => {
       dispatch({ type: "SET_SCANNING", payload: false });
     }, CONSTANTS.TIMEOUTS.SCAN_DURATION);
@@ -1463,9 +1402,9 @@ const ElectronMotionApp: React.FC = () => {
         
         // Motion processing recording stopped by main process
         
-        // Stop recording in main process
-        if (window.electronAPI) {
-          const result = await window.electronAPI.motion.stopRecording();
+        // Stop recording via WebSocket Bridge
+        if (bridgeClientRef.current) {
+          const result = await bridgeClientRef.current.stopRecording();
           console.log("✅ Stop recording result:", result);
         }
         
@@ -1546,9 +1485,13 @@ const ElectronMotionApp: React.FC = () => {
             }
           });
           
-          // Start recording in main process
-          if (window.electronAPI) {
-            const result = await window.electronAPI.motion.startRecording(sessionData);
+          // Start recording via WebSocket Bridge
+          if (bridgeClientRef.current) {
+            const result = await bridgeClientRef.current.startRecording(
+              sessionData.sessionId,
+              sessionData.exerciseId,
+              sessionData.setNumber
+            );
             console.log("✅ Main process recording result:", result);
           }
           
@@ -1652,7 +1595,8 @@ const ElectronMotionApp: React.FC = () => {
         });
 
         try {
-          await window.electronAPI?.bluetooth?.selectDevice(device.id);
+          // Device selection now handled by WebSocket Bridge BLE handlers
+          console.log(`Device selection for ${device.name} will be handled by BLE bridge`);
         } catch (selectionError) {
           console.warn(`Device selection warning for ${device.name}:`, selectionError);
         }

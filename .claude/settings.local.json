@@ -46,7 +46,9 @@
       "Bash(node:*)",
       "Bash(npm run build:*)",
       "Bash(find:*)",
-      "Read(//mnt/e/mywebapps/tropx/horus_client/tropx-pro/src/services/motionProcessing/**)"
+      "Read(//mnt/e/mywebapps/tropx/horus_client/tropx-pro/src/services/motionProcessing/**)",
+      "Bash(timeout:*)",
+      "Bash(npm run dev:*)"
     ],
     "deny": [],
     "ask": [],
