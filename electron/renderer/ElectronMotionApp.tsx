@@ -1235,20 +1235,17 @@ const ElectronMotionApp: React.FC = () => {
     bridgeClient.onMessage(MESSAGE_TYPES.MOTION_DATA, (message: any) => {
       const start = performance.now();
 
-      console.log(`🎨 [UI] Received motion data via WebSocket:`, message);
+      console.log(`🎨 [UI] Received processed joint angle data via WebSocket:`, message);
 
-      // Extract quaternion data for UI
-      const motionData = {
-        deviceId: message.deviceId,
-        quaternion: message.quaternion,
-        timestamp: message.timestamp
-      };
+      // Pass the WebSocket message directly to the chart - it has the correct structure
+      // BinaryProtocol deserializes to: {type, deviceName, data: {left: {...}, right: {...}}, timestamp}
+      const processedData = message;
 
-      dispatch({ type: "SET_MOTION_DATA", payload: motionData });
+      dispatch({ type: "SET_MOTION_DATA", payload: processedData });
 
-      // Forward to consumer for minimal UI updates only
+      // Forward processed joint angle data to consumer for UI updates
       if (motionProcessingConsumer && typeof motionProcessingConsumer.updateUIFromWebSocket === 'function') {
-        motionProcessingConsumer.updateUIFromWebSocket(motionData);
+        motionProcessingConsumer.updateUIFromWebSocket(processedData);
       }
 
       const duration = performance.now() - start;

@@ -67,7 +67,16 @@ export class DeviceProcessor {
      * Processes incoming IMU data through synchronization and interpolation pipeline.
      */
     processData(deviceId: string, imuData: IMUData): void {
-        if (!deviceId || !imuData) return;
+        console.log(`🔧 [DEVICE_PROCESSOR] processData called for ${deviceId}:`, {
+            deviceId: deviceId,
+            hasQuaternion: !!imuData.quaternion,
+            timestamp: imuData.timestamp
+        });
+
+        if (!deviceId || !imuData) {
+            console.error(`❌ [DEVICE_PROCESSOR] Invalid data: deviceId=${deviceId}, imuData=${!!imuData}`);
+            return;
+        }
 
         // Periodic cleanup during high-throughput
         this.processingCounter++;
@@ -82,6 +91,7 @@ export class DeviceProcessor {
 
         // Optional bypass: emit raw sample directly without interpolation
         if (this.config.performance?.bypassInterpolation) {
+            console.log(`🚀 [DEVICE_PROCESSOR] Bypassing interpolation for ${deviceId} - emitting raw sample`);
             const rawTimestamp = synchronizedIMU.timestamp || performance.now();
             const deviceSample: DeviceData = {
                 deviceId,
@@ -92,9 +102,11 @@ export class DeviceProcessor {
             };
             this.updateLatestDeviceData(deviceSample);
             this.notifySubscribers();
+            console.log(`✅ [DEVICE_PROCESSOR] Raw sample processed and subscribers notified for ${deviceId}`);
             return;
         }
 
+        console.log(`🔄 [DEVICE_PROCESSOR] Sending ${deviceId} to interpolation service`);
         this.interpolationService.processSample(deviceId, synchronizedIMU);
     }
 
@@ -103,15 +115,35 @@ export class DeviceProcessor {
      * Creates defensive copies to prevent external modification.
      */
     getDevicesForJoint(jointName: string): Map<string, DeviceData> {
+        console.log(`🔗 [DEVICE_PROCESSOR] getDevicesForJoint(${jointName}):`, {
+            jointName: jointName,
+            deviceToJointsSize: this.deviceToJoints.size,
+            deviceToJoints: Object.fromEntries(this.deviceToJoints),
+            availableDeviceData: Array.from(this.latestDeviceData.keys())
+        });
+
         const matchingDevices = new Map<string, DeviceData>();
 
         this.deviceToJoints.forEach((joints, deviceId) => {
+            console.log(`🔗 [DEVICE_PROCESSOR] Checking device ${deviceId}:`, {
+                deviceJoints: joints,
+                includesTargetJoint: joints.includes(jointName)
+            });
+
             if (joints.includes(jointName)) {
                 const deviceData = this.latestDeviceData.get(deviceId);
                 if (deviceData) {
                     matchingDevices.set(deviceId, this.cloneDeviceData(deviceData));
+                    console.log(`✅ [DEVICE_PROCESSOR] Added device ${deviceId} to joint ${jointName}`);
+                } else {
+                    console.warn(`⚠️ [DEVICE_PROCESSOR] Device ${deviceId} has no data for joint ${jointName}`);
                 }
             }
+        });
+
+        console.log(`🔗 [DEVICE_PROCESSOR] getDevicesForJoint(${jointName}) result:`, {
+            deviceCount: matchingDevices.size,
+            deviceIds: Array.from(matchingDevices.keys())
         });
 
         return matchingDevices;
@@ -258,13 +290,32 @@ export class DeviceProcessor {
      * Finds all joints that match device ID based on configuration patterns.
      */
     private findMatchingJoints(deviceId: string): string[] {
+        console.log(`🔍 [DEVICE_PROCESSOR] findMatchingJoints for ${deviceId}:`, {
+            deviceId: deviceId,
+            availableJoints: this.config.joints.map(j => j.name),
+            jointConfigs: this.config.joints
+        });
+
         const matchingJoints: string[] = [];
 
         for (const jointConfig of this.config.joints) {
-            if (this.deviceMatchesJoint(deviceId, jointConfig)) {
+            const matches = this.deviceMatchesJoint(deviceId, jointConfig);
+            console.log(`🔍 [DEVICE_PROCESSOR] Testing ${deviceId} against joint ${jointConfig.name}:`, {
+                jointName: jointConfig.name,
+                matches: matches,
+                topSensorPattern: jointConfig.topSensorPattern,
+                bottomSensorPattern: jointConfig.bottomSensorPattern
+            });
+
+            if (matches) {
                 matchingJoints.push(jointConfig.name);
+                console.log(`✅ [DEVICE_PROCESSOR] Device ${deviceId} matches joint ${jointConfig.name}`);
             }
         }
+
+        console.log(`🔍 [DEVICE_PROCESSOR] findMatchingJoints result for ${deviceId}:`, {
+            matchingJoints: matchingJoints
+        });
 
         return matchingJoints;
     }
@@ -343,24 +394,34 @@ export class DeviceProcessor {
      * Safely notifies all subscribers of data updates.
      */
     private notifySubscribers(): void {
+        console.log(`🔔 [DEVICE_PROCESSOR] notifySubscribers called:`, {
+            subscriberCount: this.subscribers.size,
+            latestDeviceDataCount: this.latestDeviceData.size,
+            deviceIds: Array.from(this.latestDeviceData.keys())
+        });
+
         const now = performance.now();
 
         // Throttling: Enforce minimum interval between notifications
         if (now - this.lastNotificationTime < this.MIN_NOTIFICATION_INTERVAL) {
+            console.log(`⏳ [DEVICE_PROCESSOR] Throttled - too soon since last notification`);
             return;
         }
 
         // Backpressure: Skip if too many notifications are pending
         if (this.pendingNotifications >= this.MAX_PENDING_NOTIFICATIONS) {
+            console.log(`⚠️ [DEVICE_PROCESSOR] Backpressure - too many pending notifications`);
             return;
         }
 
         const runCallbacks = () => {
             this.pendingNotifications--;
+            console.log(`📢 [DEVICE_PROCESSOR] Calling ${this.subscribers.size} subscribers`);
             this.subscribers.forEach(callback => {
                 try {
                     callback();
                 } catch (error) {
+                    console.error(`❌ [DEVICE_PROCESSOR] Subscriber callback error:`, error);
                     PerformanceLogger.warn('DEVICE', 'Callback error', error);
                 }
             });

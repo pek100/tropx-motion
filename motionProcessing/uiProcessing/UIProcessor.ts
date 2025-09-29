@@ -16,6 +16,9 @@ export class UIProcessor {
     private sampleCounter = 0;
     private notifyCounter = 0;
 
+    // WebSocket broadcast function for sending processed joint angles to UI
+    private webSocketBroadcast: ((message: any, clientIds: string[]) => Promise<void>) | null = null;
+
     private constructor() {
         this.initializeJointData();
     }
@@ -41,6 +44,14 @@ export class UIProcessor {
     }
 
     /**
+     * Set WebSocket broadcast function for sending processed joint angles to UI
+     */
+    setWebSocketBroadcast(broadcastFn: (message: any, clientIds: string[]) => Promise<void>): void {
+        this.webSocketBroadcast = broadcastFn;
+        console.log('📡 UIProcessor: WebSocket broadcast function configured');
+    }
+
+    /**
      * Rounds angle to 1 decimal place for consistent precision.
      */
     private roundToOneDecimal(value: number): number {
@@ -51,14 +62,29 @@ export class UIProcessor {
      * Updates joint angle data and notifies subscribers for EVERY sample.
      */
     updateJointAngle(angleData: JointAngleData): void {
+        console.log(`🦵 [UI_PROCESSOR] updateJointAngle called:`, {
+            angleData: angleData,
+            jointName: angleData.jointName,
+            angle: angleData.angle,
+            timestamp: angleData.timestamp,
+            hasWebSocketBroadcast: !!this.webSocketBroadcast,
+            jointExists: !!this.jointDataMap.get(angleData.jointName)
+        });
+
         const jointData = this.jointDataMap.get(angleData.jointName);
-        if (!jointData) return;
+        if (!jointData) {
+            console.error(`❌ [UI_PROCESSOR] Joint data not found for: ${angleData.jointName}`);
+            return;
+        }
 
         // Update data with 1 decimal precision
         this.updateJointData(jointData, angleData);
 
         // ALWAYS notify subscribers for smooth visualization
         this.notifySubscribers();
+
+        // Broadcast processed joint angle data via WebSocket to UI
+        this.broadcastJointAngleData(angleData);
     }
 
     /**
@@ -200,5 +226,58 @@ export class UIProcessor {
             } catch {
             }
         });
+    }
+
+    /**
+     * Broadcast processed joint angle data via WebSocket to UI
+     */
+    private async broadcastJointAngleData(angleData: JointAngleData): Promise<void> {
+        console.log(`📡 [UI_PROCESSOR] Broadcasting joint angle data:`, {
+            hasWebSocketBroadcast: !!this.webSocketBroadcast,
+            angleData: angleData,
+            uiState: this.getChartFormat()
+        });
+
+        if (!this.webSocketBroadcast) {
+            console.error('❌ [UI_PROCESSOR] No WebSocket broadcast function configured - cannot send joint angles to UI!');
+            return;
+        }
+
+        try {
+            const chartFormat = this.getChartFormat();
+            console.log('📡 [UI_PROCESSOR] Chart format data:', {
+                chartFormat: chartFormat,
+                angleData: angleData
+            });
+
+            // Create WebSocket message with processed joint angle data
+            // BinaryProtocol expects MOTION_DATA to have deviceName and data with left/right structure
+            const message = {
+                type: 0x30, // MESSAGE_TYPES.MOTION_DATA
+                requestId: 0, // Fire-and-forget streaming data
+                timestamp: angleData.timestamp,
+                deviceName: angleData.deviceIds.join(','), // Use device IDs as device name
+                data: chartFormat // This already has the correct left/right structure
+            };
+
+            console.log('📡 [UI_PROCESSOR] Sending WebSocket message:', {
+                type: message.type,
+                timestamp: message.timestamp,
+                deviceName: message.deviceName,
+                hasData: !!message.data,
+                dataStructure: {
+                    left: message.data.left,
+                    right: message.data.right
+                }
+            });
+
+            // Broadcast to all connected WebSocket clients
+            await this.webSocketBroadcast(message, []);
+
+            console.log('✅ [UI_PROCESSOR] Successfully broadcast joint angle data via WebSocket');
+
+        } catch (error) {
+            console.error('❌ [UI_PROCESSOR] Error broadcasting joint angle data via WebSocket:', error);
+        }
     }
 }

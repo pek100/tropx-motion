@@ -37,6 +37,9 @@ export class MotionProcessingCoordinator {
     private isInitialized = false;
     private processingCounter = 0;
 
+    // WebSocket broadcast function for sending processed joint angles to UI
+    private webSocketBroadcast: ((message: any, clientIds: string[]) => Promise<void>) | null = null;
+
     private constructor(private config: MotionConfig) {
         try {
             this.initializeServices();
@@ -56,12 +59,42 @@ export class MotionProcessingCoordinator {
      * Returns singleton instance, creating it if necessary with provided configuration.
      */
     static getInstance(config?: MotionConfig): MotionProcessingCoordinator {
+        console.log(`🏗️ [MOTION_COORDINATOR] getInstance called:`, {
+            hasExistingInstance: !!MotionProcessingCoordinator.instance,
+            existingInstanceId: MotionProcessingCoordinator.instance ? MotionProcessingCoordinator.instance.toString().slice(-8) : null,
+            hasConfig: !!config
+        });
+
         if (!MotionProcessingCoordinator.instance) {
+            console.log(`🏗️ [MOTION_COORDINATOR] Creating new instance...`);
             MotionProcessingCoordinator.instance = new MotionProcessingCoordinator(
                 config || createMotionConfig(PerformanceProfile.HZ_100_SAMPLING)
             );
+            console.log(`✅ [MOTION_COORDINATOR] New instance created with ID: ${MotionProcessingCoordinator.instance.toString().slice(-8)}`);
+        } else {
+            console.log(`♻️ [MOTION_COORDINATOR] Returning existing instance with ID: ${MotionProcessingCoordinator.instance.toString().slice(-8)}`);
         }
         return MotionProcessingCoordinator.instance;
+    }
+
+    /**
+     * Set WebSocket broadcast function for sending processed joint angles to UI
+     */
+    setWebSocketBroadcast(broadcastFn: (message: any, clientIds: string[]) => Promise<void>): void {
+        this.webSocketBroadcast = broadcastFn;
+        console.log('📡 [MOTION_COORDINATOR] WebSocket broadcast function configured:', {
+            hasBroadcastFunction: !!broadcastFn,
+            hasUIProcessor: !!this.uiProcessor,
+            isInitialized: this.isInitialized
+        });
+
+        // Also configure UIProcessor if it's already initialized
+        if (this.uiProcessor) {
+            this.uiProcessor.setWebSocketBroadcast(broadcastFn);
+            console.log('📡 [MOTION_COORDINATOR] UIProcessor WebSocket broadcast configured');
+        } else {
+            console.warn('⚠️ [MOTION_COORDINATOR] UIProcessor not yet initialized - WebSocket broadcast will be configured later');
+        }
     }
 
     /**
@@ -78,7 +111,17 @@ export class MotionProcessingCoordinator {
      * Processes new IMU data from a specific device.
      */
     processNewData(deviceId: string, imuData: IMUData): void {
-        if (!this.isInitialized) return;
+        console.log(`🔄 [MOTION_COORDINATOR] processNewData called for ${deviceId}:`, {
+            isInitialized: this.isInitialized,
+            hasWebSocketBroadcast: !!this.webSocketBroadcast,
+            imuData: imuData,
+            timestamp: imuData.timestamp
+        });
+
+        if (!this.isInitialized) {
+            console.error(`❌ [MOTION_COORDINATOR] Not initialized - cannot process data from ${deviceId}`);
+            return;
+        }
 
         // PERFORMANCE LOGGING: Track the data processing pipeline
         const start = performance.now();
@@ -478,20 +521,40 @@ export class MotionProcessingCoordinator {
      * Establishes data flow pipeline from device processor to joint calculations.
      */
     private setupDataFlow(): void {
+        console.log('🔗 [MOTION_COORDINATOR] Setting up data flow subscription...');
         this.deviceProcessor.subscribe(() => {
-            this.processJoints();
+            console.log('📡 [MOTION_COORDINATOR] DeviceProcessor subscriber callback triggered');
+            try {
+                this.processJoints();
+            } catch (error) {
+                console.error('❌ [MOTION_COORDINATOR] Error in processJoints callback:', error);
+            }
         });
-        console.log('✅ Data flow pipeline established');
+        console.log('✅ [MOTION_COORDINATOR] Data flow pipeline established');
     }
 
     /**
      * Processes joint calculations for all joints that have sufficient device data.
      */
     private processJoints(): void {
+        console.log(`🦴 [MOTION_COORDINATOR] processJoints called:`, {
+            jointProcessorCount: this.jointProcessors.size,
+            jointNames: Array.from(this.jointProcessors.keys())
+        });
+
         this.jointProcessors.forEach((jointProcessor, jointName) => {
             const jointDevices = this.deviceProcessor.getDevicesForJoint(jointName);
+            console.log(`🦴 [MOTION_COORDINATOR] Processing joint ${jointName}:`, {
+                availableDevices: jointDevices.size,
+                deviceIds: Array.from(jointDevices.keys()),
+                requiredDevices: 2
+            });
+
             if (jointDevices.size >= 2) {
+                console.log(`✅ [MOTION_COORDINATOR] Sufficient devices for ${jointName} - processing joint angles`);
                 jointProcessor.processDevices(jointDevices);
+            } else {
+                console.warn(`⚠️ [MOTION_COORDINATOR] Insufficient devices for ${jointName}: ${jointDevices.size}/2 available`);
             }
         });
     }

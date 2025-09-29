@@ -278,6 +278,7 @@ export class WebSocketBridge {
       });
     });
 
+
     // Connect streaming handler to broadcast functions
     this.streamingHandler.setBroadcastFunction(async (message, clientIds) => {
       await this.streamingTransport.broadcast(message, clientIds);
@@ -336,6 +337,7 @@ export class WebSocketBridge {
     this.streamingTransport.setMessageTypeMode(MESSAGE_TYPES.STATUS, DELIVERY_MODES.RELIABLE);
   }
 
+
   // Periodic cleanup of all components
   private performPeriodicCleanup(): void {
     this.streamingTransport.performCleanup();
@@ -357,6 +359,7 @@ class MotionServiceAdapter implements MotionService {
 
   connect(motionCoordinator: any): void {
     this.motionCoordinator = motionCoordinator;
+    console.log('🔗 [MotionServiceAdapter] Connected to Motion Processing Coordinator');
   }
 
   getCurrentMotionData(): Map<string, Float32Array> {

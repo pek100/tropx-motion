@@ -66,25 +66,27 @@ export class NobleBLEServiceAdapter implements BLEService {
   // Set broadcast function for WebSocket communication
   setBroadcastFunction(broadcastFn: (message: any, clientIds: string[]) => Promise<void>): void {
     this.broadcastFunction = broadcastFn;
+    console.log('📡 [NobleBLEServiceAdapter] WebSocket broadcast function configured');
 
     // If motion coordinator is already connected, configure it now
     if (this.motionCoordinator && this.motionCoordinator.setWebSocketBroadcast) {
       this.motionCoordinator.setWebSocketBroadcast(broadcastFn);
-      console.log('📡 Configured motion processing to broadcast joint angles via WebSocket (from setBroadcastFunction)');
+      console.log('📡 [NobleBLEServiceAdapter] Configured motion coordinator to broadcast processed joint angles via WebSocket (from setBroadcastFunction)');
     }
   }
 
-  // Connect motion coordinator for recording operations
+  // Connect motion coordinator for processing operations
   connect(motionCoordinator: any): void {
     this.motionCoordinator = motionCoordinator;
-    console.log('🔗 Connected to Motion Processing Coordinator');
+    console.log('🔗 [NobleBLEServiceAdapter] Connected to Motion Processing Coordinator');
 
     // Configure motion coordinator to send processed joint angles via WebSocket
     if (this.broadcastFunction && this.motionCoordinator.setWebSocketBroadcast) {
       this.motionCoordinator.setWebSocketBroadcast(this.broadcastFunction);
-      console.log('📡 Configured motion processing to broadcast joint angles via WebSocket');
+      console.log('📡 [NobleBLEServiceAdapter] Configured motion coordinator to broadcast processed joint angles via WebSocket (from connect)');
     }
   }
+
 
   // Scan for TropX devices using Noble
   async scanForDevices(): Promise<{ success: boolean; devices: any[]; message?: string }> {
@@ -192,13 +194,7 @@ export class NobleBLEServiceAdapter implements BLEService {
     try {
       console.log(`🎬 Noble: Starting recording session ${sessionId}`);
 
-      // Start motion processing coordinator if available
-      if (this.motionCoordinator) {
-        const coordinatorSuccess = this.motionCoordinator.startRecording(sessionId, exerciseId, setNumber);
-        if (!coordinatorSuccess) {
-          return { success: false, message: 'Failed to start motion processing' };
-        }
-      }
+      // Motion processing will be handled in WebSocket bridge (main process)
 
       // Start streaming on all connected devices
       const streamingResult = await this.nobleService.startStreamingAll();
@@ -242,10 +238,7 @@ export class NobleBLEServiceAdapter implements BLEService {
       // Stop streaming on all devices
       await this.nobleService.stopStreamingAll();
 
-      // Stop motion processing coordinator if available
-      if (this.motionCoordinator) {
-        await this.motionCoordinator.stopRecording();
-      }
+      // Motion processing stop will be handled in WebSocket bridge (main process)
 
       this.isCurrentlyRecording = false;
 
@@ -282,9 +275,9 @@ export class NobleBLEServiceAdapter implements BLEService {
     console.log(`🎯 [NobleBLEServiceAdapter] Received motion data from ${deviceId}: q(${motionData.quaternion.w.toFixed(3)}, ${motionData.quaternion.x.toFixed(3)}, ${motionData.quaternion.y.toFixed(3)}, ${motionData.quaternion.z.toFixed(3)})`);
 
     try {
-      // Always process through motion coordinator when available (not just when recording)
+      // Process quaternions through motion coordinator FIRST, then coordinator sends processed data via WebSocket
       if (this.motionCoordinator) {
-        console.log(`🏭 [NobleBLEServiceAdapter] Sending quaternion data to motion processing pipeline for ${deviceId}`);
+        console.log(`🏭 [NobleBLEServiceAdapter] Processing quaternions through motion coordinator: ${deviceId}`);
 
         // Convert to legacy IMU format for motion coordinator
         const legacyData = {
@@ -295,36 +288,31 @@ export class NobleBLEServiceAdapter implements BLEService {
           quaternion: motionData.quaternion
         };
 
-        this.motionCoordinator.processNewData(deviceId, legacyData);
+        try {
+          console.log(`🚀 [NobleBLEServiceAdapter] Sending to motion coordinator for processing: ${deviceId}`);
+
+          // Use device name for motion processing instead of device ID for pattern matching
+          const deviceName = this.getDeviceNameById(deviceId);
+          console.log(`🏷️ [NobleBLEServiceAdapter] Using device name for motion processing: ${deviceId} → ${deviceName}`);
+
+          this.motionCoordinator.processNewData(deviceName, legacyData);
+          console.log(`✅ [NobleBLEServiceAdapter] Motion coordinator processing initiated for ${deviceName} (${deviceId})`);
+        } catch (error) {
+          console.error(`❌ [NobleBLEServiceAdapter] Error in motion coordinator processing for ${deviceId}:`, error);
+        }
       } else {
-        console.warn(`⚠️ [NobleBLEServiceAdapter] No motion coordinator available - quaternion data for ${deviceId} will not be processed!`);
-      }
-
-      // Note: Raw quaternion data is NOT broadcast directly to UI
-      // The motion processing pipeline will process this data and send processed results
-      // Only broadcast raw quaternions if motion coordinator is not available (fallback)
-      if (!this.motionCoordinator && this.broadcastFunction) {
-        console.log(`📡 [${deviceId}] No motion coordinator - broadcasting raw quaternion as fallback`);
-
-        const message = {
-          type: 0x30, // MESSAGE_TYPES.MOTION_DATA
-          requestId: 0, // Fire-and-forget streaming data
-          timestamp: motionData.timestamp,
-          deviceId: deviceId,
-          quaternion: motionData.quaternion,
-          data: {
-            deviceId: deviceId,
-            quaternion: motionData.quaternion,
-            timestamp: motionData.timestamp
-          }
-        };
-
-        await this.broadcastFunction(message, []);
+        console.error(`❌ [NobleBLEServiceAdapter] No motion coordinator available - quaternions cannot be processed for ${deviceId}!`);
       }
 
     } catch (error) {
       console.error(`Error handling motion data from ${deviceId}:`, error);
     }
+  }
+
+  // Get device name by ID for motion processing
+  private getDeviceNameById(deviceId: string): string {
+    const device = deviceStateManager.getDevice(deviceId);
+    return device?.name || deviceId;
   }
 
   // Handle device events

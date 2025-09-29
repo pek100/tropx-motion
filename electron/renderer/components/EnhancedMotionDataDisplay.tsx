@@ -43,6 +43,7 @@ const parseMotionData = (rawData: any): MotionData | null => {
 
   // Check if it's already in the expected format (from motion processing pipeline)
   if (rawData.left && rawData.right && typeof rawData.left.current === 'number' && typeof rawData.right.current === 'number') {
+    console.log('✅ [CHART_DEBUG] Found direct left/right format from motion processing pipeline');
     return {
       left: {
         current: rawData.left.current,
@@ -61,6 +62,33 @@ const parseMotionData = (rawData: any): MotionData | null => {
         devices: rawData.right.devices || [],
         sensorTimestamp: rawData.right.sensorTimestamp,
         lastUpdate: rawData.right.lastUpdate
+      },
+      timestamp: rawData.timestamp || Date.now()
+    };
+  }
+
+  // Handle WebSocket MOTION_DATA message format (after BinaryProtocol deserialization)
+  if (rawData.data && rawData.data.left && rawData.data.right && typeof rawData.data.left.current === 'number' && typeof rawData.data.right.current === 'number') {
+    console.log('✅ [CHART_DEBUG] Found WebSocket MOTION_DATA format from BinaryProtocol');
+    const motionData = rawData.data;
+    return {
+      left: {
+        current: motionData.left.current,
+        max: motionData.left.max || motionData.left.current,
+        min: motionData.left.min || motionData.left.current,
+        rom: motionData.left.rom || Math.abs((motionData.left.max || motionData.left.current) - (motionData.left.min || motionData.left.current)),
+        devices: motionData.left.devices || [],
+        sensorTimestamp: motionData.left.sensorTimestamp,
+        lastUpdate: motionData.left.lastUpdate
+      },
+      right: {
+        current: motionData.right.current,
+        max: motionData.right.max || motionData.right.current,
+        min: motionData.right.min || motionData.right.current,
+        rom: motionData.right.rom || Math.abs((motionData.right.max || motionData.right.current) - (motionData.right.min || motionData.right.current)),
+        devices: motionData.right.devices || [],
+        sensorTimestamp: motionData.right.sensorTimestamp,
+        lastUpdate: motionData.right.lastUpdate
       },
       timestamp: rawData.timestamp || Date.now()
     };
@@ -142,21 +170,50 @@ const KneeDisplay: React.FC<{ side: 'Left' | 'Right'; data: KneeData }> = ({ sid
   );
 };
 
-const EnhancedMotionDataDisplay: React.FC<EnhancedMotionDataDisplayProps> = ({ 
-  data, 
-  isRecording, 
-  recordingStartTime 
+const EnhancedMotionDataDisplay: React.FC<EnhancedMotionDataDisplayProps> = ({
+  data,
+  isRecording,
+  recordingStartTime
 }) => {
   const [showRawData, setShowRawData] = useState(false);
   const [showChart, setShowChart] = useState(true);
-  
+
+  // 🚨 DEBUG: Log everything the chart component receives
+  console.log('🎨 [CHART_COMPONENT] EnhancedMotionDataDisplay received props:', {
+    data: data,
+    dataType: typeof data,
+    dataKeys: data ? Object.keys(data) : null,
+    dataStructure: JSON.stringify(data, null, 2),
+    isRecording: isRecording,
+    recordingStartTime: recordingStartTime,
+    hasData: !!data,
+    dataLength: data ? Object.keys(data).length : 0
+  });
+
   // Parse and memoize the motion data
-  const motionData = useMemo(() => parseMotionData(data), [data]);
+  const motionData = useMemo(() => {
+    const parsedData = parseMotionData(data);
+    console.log('🎨 [CHART_COMPONENT] Parsed motion data result:', {
+      originalData: data,
+      parsedData: parsedData,
+      parseSuccess: !!parsedData,
+      parsedStructure: parsedData ? JSON.stringify(parsedData, null, 2) : null
+    });
+    return parsedData;
+  }, [data]);
   
   // Show test data if no motion data available and we're recording
   const shouldShowTestData = (!data || Object.keys(data).length === 0) && isRecording;
   
   if (!data || Object.keys(data).length === 0) {
+    console.log('🚨 [CHART_COMPONENT] No data available - showing empty state:', {
+      data: data,
+      hasData: !!data,
+      dataLength: data ? Object.keys(data).length : 0,
+      isRecording: isRecording,
+      shouldShowTestData: shouldShowTestData
+    });
+
     return (
       <div className="bg-white rounded-xl shadow-lg border border-gray-200">
         <div className="p-6">
@@ -187,6 +244,13 @@ const EnhancedMotionDataDisplay: React.FC<EnhancedMotionDataDisplayProps> = ({
       </div>
     );
   }
+
+  console.log('✅ [CHART_COMPONENT] Rendering chart with data:', {
+    motionData: motionData,
+    hasMotionData: !!motionData,
+    showChart: showChart,
+    showRawData: showRawData
+  });
 
   return (
     <div className="bg-white rounded-xl shadow-lg border border-gray-200">
