@@ -28,9 +28,10 @@ export class MotionService {
       console.log('Initializing Motion Service with WebSocket Bridge...');
 
       // Create WebSocket bridge with existing services
+      // Note: museManager no longer used - Noble BLE service is embedded in WebSocket Bridge
       const existingServices = {
-        museManager,
         motionCoordinator: motionProcessingCoordinator,
+        systemMonitor: null, // Optional service
       };
 
       const bridgeConfig = {

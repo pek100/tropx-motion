@@ -250,10 +250,10 @@ export class WebSocketBridgeClient {
         } else {
           pendingRequest.resolve(message);
         }
-        return;
+        // DON'T return here - let it also trigger message handlers
       }
 
-      // Handle broadcast/streaming messages
+      // Handle broadcast/streaming messages AND request-response messages
       const handler = this.messageHandlers.get(message.type);
       if (handler) {
         handler(message);

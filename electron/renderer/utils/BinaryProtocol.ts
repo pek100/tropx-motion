@@ -292,9 +292,14 @@ export class BinaryProtocol {
   private static deserializeJSON(payload: ArrayBuffer, baseMessage: BaseMessage): BaseMessage | null {
     try {
       const json = new TextDecoder().decode(payload);
+      console.log(`🔍 JSON payload string:`, json);
       const parsed = JSON.parse(json);
-      return { ...baseMessage, ...parsed };
-    } catch {
+      console.log(`🔍 Parsed JSON:`, parsed);
+      const result = { ...baseMessage, ...parsed };
+      console.log(`🔍 Final merged message:`, result);
+      return result;
+    } catch (error) {
+      console.error(`❌ JSON deserialization failed:`, error);
       return null;
     }
   }

@@ -63,11 +63,11 @@ export class MainProcess {
 
   // Setup application lifecycle events
   private setupAppEvents(): void {
-    app.whenReady().then(() => {
+    app.whenReady().then(async () => {
       console.log('Electron app ready, initializing...');
       this.registerAppProtocol();
       this.createMainWindow();
-      this.initializeServices();
+      await this.initializeServices(); // CRITICAL: Await service initialization
       this.setupPermissionHandlers();
       console.log('Electron app fully initialized');
 
@@ -408,10 +408,20 @@ export class MainProcess {
   // Initialize core services
   private async initializeServices(): Promise<void> {
     try {
+      console.log('🚀 Starting MotionService initialization...');
       await this.motionService.initialize();
-      console.log('Motion service initialized');
+      console.log('✅ Motion service initialized successfully');
+
+      // Verify WebSocket Bridge port
+      const port = this.motionService.getWebSocketPort();
+      console.log(`📡 WebSocket Bridge running on port: ${port}`);
+
+      if (port === 0) {
+        console.error('❌ CRITICAL: WebSocket Bridge port is 0 - BLE operations will fail');
+      }
     } catch (error) {
-      console.error('Failed to initialize motion service:', error);
+      console.error('❌ Failed to initialize motion service:', error);
+      console.error('❌ Stack trace:', error instanceof Error ? error.stack : error);
     }
   }
 

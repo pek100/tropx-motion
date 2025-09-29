@@ -48,7 +48,12 @@
       "Bash(find:*)",
       "Read(//mnt/e/mywebapps/tropx/horus_client/tropx-pro/src/services/motionProcessing/**)",
       "Bash(timeout:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(pkill:*)",
+      "Bash(tree:*)",
+      "Read(//mnt/c/Users/Michael/Downloads/**)",
+      "Bash(npm run:*)"
     ],
     "deny": [],
     "ask": [],

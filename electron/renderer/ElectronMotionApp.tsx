@@ -16,8 +16,8 @@ import {
   Loader2,
 } from "lucide-react"
 // MotionProcessingCoordinator removed from renderer - processing happens in main process
+// MuseManager removed from renderer - Noble BLE operations happen in main process via WebSocket Bridge
 import { EnhancedMotionDataDisplay } from "./components"
-import { museManager } from "../../muse_sdk/core/MuseManager"
 import { UnifiedBinaryProtocol } from "../shared/BinaryProtocol"
 import type { WSMessage, DeviceInfo } from "../shared/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -1177,8 +1177,7 @@ const ElectronMotionApp: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    console.log("🔵 RENDERER LOADED: Testing Web Bluetooth availability...");
-    console.log("🔵 navigator.bluetooth available:", !!navigator.bluetooth);
+    console.log("🔵 RENDERER LOADED: Using Noble BLE via WebSocket Bridge");
     console.log("🔵 window.isSecureContext:", window.isSecureContext);
     console.log("🔵 window.location.href:", window.location.href);
 
@@ -1236,11 +1235,20 @@ const ElectronMotionApp: React.FC = () => {
     bridgeClient.onMessage(MESSAGE_TYPES.MOTION_DATA, (message: any) => {
       const start = performance.now();
 
-      dispatch({ type: "SET_MOTION_DATA", payload: message.data });
+      console.log(`🎨 [UI] Received motion data via WebSocket:`, message);
+
+      // Extract quaternion data for UI
+      const motionData = {
+        deviceId: message.deviceId,
+        quaternion: message.quaternion,
+        timestamp: message.timestamp
+      };
+
+      dispatch({ type: "SET_MOTION_DATA", payload: motionData });
 
       // Forward to consumer for minimal UI updates only
       if (motionProcessingConsumer && typeof motionProcessingConsumer.updateUIFromWebSocket === 'function') {
-        motionProcessingConsumer.updateUIFromWebSocket(message.data);
+        motionProcessingConsumer.updateUIFromWebSocket(motionData);
       }
 
       const duration = performance.now() - start;
@@ -1288,10 +1296,62 @@ const ElectronMotionApp: React.FC = () => {
       }
     });
 
+    // Handle device status updates (includes battery levels)
+    bridgeClient.onMessage(MESSAGE_TYPES.DEVICE_STATUS, (message: any) => {
+      console.log("📊 Device status update:", message);
+
+      if (message.batteryLevels) {
+        // Update battery levels for all devices
+        Object.entries(message.batteryLevels).forEach(([deviceId, batteryLevel]) => {
+          console.log(`🔋 Updating battery for ${deviceId}: ${batteryLevel}%`);
+          dispatch({
+            type: "UPDATE_DEVICE",
+            payload: { deviceId, updates: { batteryLevel: batteryLevel as number } }
+          });
+        });
+      }
+    });
+
     // Handle BLE scan responses
     bridgeClient.onMessage(MESSAGE_TYPES.BLE_SCAN_RESPONSE, (message: any) => {
-      console.log("📡 BLE scan response:", message);
+      console.log("📡 BLE scan response received - RAW:", message);
+      console.log("🔍 Message type:", typeof message.type, message.type);
+      console.log("🔍 Message success:", typeof message.success, message.success);
+      console.log("🔍 Message devices:", typeof message.devices, message.devices);
+      console.log("🔍 Message keys:", Object.keys(message));
+      console.log("🔍 Full message JSON:", JSON.stringify(message, null, 2));
+      console.log("📡 Message type 17 handler triggered");
       dispatch({ type: "SET_SCANNING", payload: false });
+
+      // Add discovered devices to state
+      if (message.success && message.devices && Array.isArray(message.devices)) {
+        console.log(`✅ Adding ${message.devices.length} discovered devices to state`);
+
+        message.devices.forEach((device: any) => {
+          const deviceData = {
+            id: device.id,
+            name: device.name,
+            state: "discovered" as const,
+            batteryLevel: device.batteryLevel || null,
+            lastSeen: new Date()
+          };
+
+          console.log(`📱 Adding device to state:`, deviceData);
+
+          dispatch({
+            type: "SET_DEVICE_STATE",
+            payload: {
+              deviceId: device.id,
+              device: deviceData
+            }
+          });
+        });
+      } else {
+        console.warn("⚠️ No devices in scan response or invalid format");
+        console.warn("⚠️ Message success check:", message.success, typeof message.success);
+        console.warn("⚠️ Message devices check:", message.devices, typeof message.devices, Array.isArray(message.devices));
+        console.warn("⚠️ Full message structure:", JSON.stringify(message, null, 2));
+      }
     });
 
     // Handle errors
@@ -1322,8 +1382,16 @@ const ElectronMotionApp: React.FC = () => {
     try {
       if (bridgeClientRef.current) {
         console.log("📡 Starting device scan via WebSocket Bridge...");
+        console.log("🔍 Current devices before scan:", Array.from(state.allDevices.entries()));
+
         const result = await bridgeClientRef.current.scanForDevices();
         console.log("📡 Scan result:", result);
+
+        // Add a delay to check devices after response handling
+        setTimeout(() => {
+          console.log("🔍 Devices after scan response:", Array.from(state.allDevices.entries()));
+        }, 1000);
+
       } else {
         console.error("❌ WebSocket Bridge not connected");
         dispatch({ type: "SET_SCANNING", payload: false });
@@ -1340,32 +1408,8 @@ const ElectronMotionApp: React.FC = () => {
   };
 
   // Battery update timer for connected devices
-  const startBatteryUpdateTimer = () => {
-    // Clear existing timer
-    if (batteryTimerRef.current) {
-      clearInterval(batteryTimerRef.current);
-    }
-    // Update battery levels periodically for connected devices
-    batteryTimerRef.current = setInterval(async () => {
-      try {
-        await museManager.updateAllBatteryLevels();
-        const allBatteryLevels = museManager.getAllBatteryLevels();
-        // Update unified device state with new battery levels
-        allBatteryLevels.forEach((batteryLevel, deviceName) => {
-          // Find device by name and update its battery level
-          const deviceEntry = Array.from(state.allDevices.entries()).find(([_, device]) => device.name === deviceName);
-          if (deviceEntry) {
-            const [deviceId] = deviceEntry;
-            dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { batteryLevel } } });
-          }
-        });
-        console.log(`🔋 Updated battery levels for ${allBatteryLevels.size} devices`);
-      } catch (error) {
-        console.error("❌ Battery update timer error:", error);
-      }
-    }, CONSTANTS.BATTERY.UPDATE_INTERVAL);
-    console.log("✅ Battery update timer started");
-  };
+  // Battery updates are now handled automatically by Noble BLE service
+  // via WebSocket Bridge device status and battery update messages
 
   // Cancel current scan
   const cancelScan = () => {
@@ -1384,124 +1428,90 @@ const ElectronMotionApp: React.FC = () => {
 
 
   const handleRecording = async () => {
-    console.log("🔄 Using legacy recording system");
-    
+    console.log("🔄 Using Noble-based recording system");
+
+    if (!bridgeClientRef.current) {
+      console.error("❌ WebSocket Bridge not connected");
+      alert("Recording service not available");
+      return;
+    }
+
     try {
-      const currentStreamingState = museManager.getIsStreaming();
-      console.log(`🎬 RECORDING STATE CHANGE: isRecording=${state.isRecording}, SDK streaming=${currentStreamingState}`);
-      
       if (state.isRecording) {
         // Stop recording and streaming
         console.log("🛑 Stopping recording and streaming...");
-        
-        // Stop SDK streaming
-        if (currentStreamingState) {
-          await museManager.stopStreaming();
-          console.log("✅ SDK streaming stopped");
-        }
-        
-        // Motion processing recording stopped by main process
-        
+
         // Stop recording via WebSocket Bridge
-        if (bridgeClientRef.current) {
-          const result = await bridgeClientRef.current.stopRecording();
-          console.log("✅ Stop recording result:", result);
-        }
-        
+        const result = await bridgeClientRef.current.stopRecording();
+        console.log("✅ Stop recording result:", result);
+
         // Update UI state
         dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
-        
+
         // Update all devices to stop streaming state
         state.allDevices.forEach((device, deviceId) => {
           if (device.state === "streaming") {
             dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "connected" } } });
           }
         });
-        
+
         console.log("✅ Recording and streaming stopped successfully");
-        
+
         // Resume scanning after recording stops
         setTimeout(() => {
           handleScan().catch(error => {
             console.warn("⚠️ Failed to resume scanning after recording:", error);
           });
         }, 1000);
-        
+
       } else {
         // Start recording and streaming
         console.log("🎬 Starting recording...");
-        
+
         // Check connected devices
-        const connectedDevices = museManager.getConnectedDevices();
-        console.log("🔍 Connected devices for recording:", connectedDevices);
-        if (connectedDevices.size === 0) {
+        const connectedDevices = Array.from(state.allDevices.values())
+          .filter(device => device.state === "connected" || device.state === "streaming");
+
+        console.log("🔍 Connected devices for recording:", connectedDevices.length);
+        if (connectedDevices.length === 0) {
           console.error("❌ No connected devices found for recording");
           alert("Please connect at least one device before recording");
           return;
         }
-        
-        // No motion processing initialization in renderer - handled by main process
+
         const sessionData = {
           sessionId: `session_${Date.now()}`,
           exerciseId: `exercise_${Date.now()}`,
           setNumber: 1,
         };
-        
-        // Start real quaternion streaming via GATT service with minimal processing
-        const streamingSuccess = await museManager.startStreaming((deviceName: string, data: any) => {
-          // MINIMAL RENDERER: Only forward raw data to main process, no processing
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            try {
-              wsRef.current.send(
-                JSON.stringify({
-                  type: "motion_data",
-                  data: {
-                    deviceName: deviceName,
-                    timestamp: data.timestamp,
-                    quaternion: data.quaternion,
-                  },
-                  timestamp: Date.now(),
-                }),
-              );
-            } catch (error) {
-              // Silent error - don't log in high-frequency callback
-            }
-          }
-        });
-        
-        if (streamingSuccess) {
-          console.log("✅ SDK quaternion streaming started successfully");
-          
+
+        // Start recording via WebSocket Bridge (which handles Noble BLE streaming)
+        const result = await bridgeClientRef.current.startRecording(
+          sessionData.sessionId,
+          sessionData.exerciseId,
+          sessionData.setNumber
+        );
+
+        if (result.success) {
+          console.log("✅ Recording started successfully via Noble BLE:", result.message);
+
           // Update recording state
           dispatch({ type: "SET_RECORDING", payload: { isRecording: true, startTime: new Date() } });
-          
-          // Update devices to show streaming state
-          const streamingDeviceNames = museManager.getStreamingDeviceNames();
-          console.log("📡 Devices now streaming:", streamingDeviceNames);
-          
+
+          // Update connected devices to show streaming state
           state.allDevices.forEach((device, deviceId) => {
-            if (streamingDeviceNames.includes(device.name) && device.state === "connected") {
+            if (device.state === "connected") {
               dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "streaming" } } });
             }
           });
-          
-          // Start recording via WebSocket Bridge
-          if (bridgeClientRef.current) {
-            const result = await bridgeClientRef.current.startRecording(
-              sessionData.sessionId,
-              sessionData.exerciseId,
-              sessionData.setNumber
-            );
-            console.log("✅ Main process recording result:", result);
-          }
-          
-          console.log("✅ Recording with quaternion streaming started successfully");
+
+          console.log("✅ Recording and Noble BLE streaming started");
         } else {
-          console.error("❌ Failed to start SDK quaternion streaming");
+          console.error("❌ Failed to start Noble BLE recording:", result.message);
 
           // Ensure recording state remains false on failure
           dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
-          alert("Failed to start quaternion streaming. Please check device connections.");
+          alert(`Failed to start recording: ${result.message}`);
         }
       }
     } catch (error) {
@@ -1568,103 +1578,70 @@ const ElectronMotionApp: React.FC = () => {
       return;
     }
 
-    const log = (message: string) => console.log(`🔗 ${message}`);
+    if (!bridgeClientRef.current) {
+      console.error("❌ WebSocket Bridge not connected");
+      alert("Connection service not available");
+      return;
+    }
 
-    const updateDeviceState = (deviceId: string, state: string, batteryLevel: number | null = null) => {
+    const log = (message: string) => console.log(`🔗 Noble: ${message}`);
+    log(`Connecting to ${devices.length} device(s) via Noble BLE...`);
+
+    // Update all devices to connecting state immediately
+    devices.forEach(device => {
       dispatch({
         type: "UPDATE_DEVICE",
         payload: {
-          deviceId,
-          updates: {
-            state,
-            ...(batteryLevel !== null ? { batteryLevel } : {})
-          }
+          deviceId: device.id,
+          updates: { state: "connecting" }
         }
       });
-    };
+    });
 
-    const acquireFreshDevice = async (device: DeviceStateMachine, index: number) => {
-      log(`[${index + 1}/${devices.length}] Acquiring fresh BluetoothDevice for ${device.name}...`);
+    log(`Starting parallel connections to ${devices.length} device(s)...`);
 
+    // Create parallel connection tasks (like Python asyncio.gather)
+    const connectionTasks = devices.map(async (device) => {
       try {
-        updateDeviceState(device.id, "connecting");
+        log(`Connecting to ${device.name} (${device.id})...`);
 
-        const requestPromise = navigator.bluetooth.requestDevice({
-          acceptAllDevices: true,
-          optionalServices: [CONSTANTS.SERVICES.TROPX_SERVICE_UUID],
-        });
+        // Connect via WebSocket Bridge (which uses Noble)
+        const result = await bridgeClientRef.current.connectToDevice(device.id, device.name);
 
-        try {
-          // Device selection now handled by WebSocket Bridge BLE handlers
-          console.log(`Device selection for ${device.name} will be handled by BLE bridge`);
-        } catch (selectionError) {
-          console.warn(`Device selection warning for ${device.name}:`, selectionError);
-        }
-
-        const freshDevice = await requestPromise;
-
-        if (freshDevice && freshDevice.name) {
-          log(`✅ [${index + 1}/${devices.length}] Fresh BluetoothDevice acquired: ${freshDevice.name}`);
-          await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay
-          return freshDevice;
-        } else {
-          console.warn(`⚠️ [${index + 1}/${devices.length}] No valid device returned for ${device.name}`);
-          return null;
-        }
+        return { device, result, error: null };
       } catch (error) {
-        console.error(`❌ [${index + 1}/${devices.length}] Failed to acquire fresh device for ${device.name}:`, error);
-        return null;
+        return { device, result: null, error };
       }
-    };
+    });
 
-    log(`Connecting to ${devices.length} device(s)...`);
-    log(`Step 1: Acquiring fresh BluetoothDevices for ${devices.length} device(s)...`);
+    // Execute all connections in parallel
+    const connectionResults = await Promise.all(connectionTasks);
 
-    const freshDeviceMap = new Map<string, any>();
-    for (let i = 0; i < devices.length; i++) {
-      const freshDevice = await acquireFreshDevice(devices[i], i);
-      if (freshDevice) {
-        freshDeviceMap.set(devices[i].name, freshDevice);
-      }
-    }
-
-    log(`Step 2: Connecting to ${freshDeviceMap.size} fresh device(s) immediately...`);
-
+    // Process results and update UI states
     let successCount = 0;
-    for (const device of devices) {
-      const freshDevice = freshDeviceMap.get(device.name);
-      if (!freshDevice) {
-        console.error(`❌ No fresh device available for ${device.name}, skipping...`);
-        continue;
+    connectionResults.forEach(({ device, result, error }) => {
+      if (result?.success) {
+        dispatch({
+          type: "UPDATE_DEVICE",
+          payload: {
+            deviceId: device.id,
+            updates: { state: "connected" }
+          }
+        });
+        successCount++;
+        log(`✅ Successfully connected to ${device.name}`);
+      } else {
+        const errorMessage = error ? error.message : result?.message || "Unknown error";
+        console.error(`❌ Connection failed for ${device.name}: ${errorMessage}`);
+        dispatch({
+          type: "UPDATE_DEVICE",
+          payload: {
+            deviceId: device.id,
+            updates: { state: "discovered" }
+          }
+        });
       }
-
-      log(`Connecting to ${device.name} with fresh GATT interface...`);
-      try {
-        const connected = await museManager.connectWebBluetoothDevice(
-            freshDevice,
-            CONSTANTS.TIMEOUTS.FAST_CONNECTION_TIMEOUT
-        );
-
-        if (connected) {
-          await museManager.updateBatteryLevel(device.name);
-          const batteryLevel = museManager.getBatteryLevel(device.name);
-
-          updateDeviceState(device.id, "connected", batteryLevel ?? null);
-          successCount++;
-          log(`✅ Successfully connected to ${device.name} using fresh device`);
-        } else {
-          console.error(`❌ Connection failed for ${device.name}: SDK returned false`);
-          updateDeviceState(device.id, "discovered");
-        }
-      } catch (error) {
-        console.error(`❌ Connection error for ${device.name}:`, error);
-        updateDeviceState(device.id, "discovered");
-      }
-    }
-
-    if (successCount > 0) {
-      startBatteryUpdateTimer();
-    }
+    });
 
     log(`✅ Connection completed: ${successCount}/${devices.length} device(s) connected`);
   };

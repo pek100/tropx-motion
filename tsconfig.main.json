@@ -19,7 +19,9 @@
     "electron/preload/**/*",
     "src/services/**/*",
     "sdk/**/*",
-    "motionProcessing/**/*"
+    "motionProcessing/**/*",
+    "ble-bridge/**/*",
+    "websocket-bridge/**/*"
   ],
   "exclude": [
     "node_modules",

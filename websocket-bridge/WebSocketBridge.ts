@@ -6,10 +6,11 @@ import { StreamingHandler, MotionService } from './handlers/StreamingHandler';
 import { SystemHandler, SystemService } from './handlers/SystemHandler';
 import { MESSAGE_TYPES, DELIVERY_MODES } from './types/MessageTypes';
 import { BaseMessage } from './types/Interfaces';
+import { NobleBLEServiceAdapter } from '../ble-bridge/NobleBLEServiceAdapter';
 
 // Integration interfaces for existing services
 export interface ExistingServices {
-  museManager: any; // MuseManager instance
+  museManager?: any; // MuseManager instance (optional - replaced by Noble BLE)
   motionCoordinator: any; // MotionProcessingCoordinator instance
   systemMonitor?: any; // SystemMonitor instance
 }
@@ -48,7 +49,7 @@ export class WebSocketBridge {
   private systemHandler: SystemHandler;
 
   // Service adapters
-  private bleServiceAdapter: BLEServiceAdapter;
+  private bleServiceAdapter: NobleBLEServiceAdapter;
   private motionServiceAdapter: MotionServiceAdapter;
   private systemServiceAdapter: SystemServiceAdapter;
 
@@ -72,7 +73,7 @@ export class WebSocketBridge {
     this.systemHandler = new SystemHandler();
 
     // Initialize service adapters
-    this.bleServiceAdapter = new BLEServiceAdapter();
+    this.bleServiceAdapter = new NobleBLEServiceAdapter();
     this.motionServiceAdapter = new MotionServiceAdapter();
     this.systemServiceAdapter = new SystemServiceAdapter();
 
@@ -83,23 +84,41 @@ export class WebSocketBridge {
   async initialize(services: ExistingServices): Promise<number> {
     console.log('🚀 Initializing WebSocket Bridge...');
 
-    // Connect service adapters to existing services
-    this.bleServiceAdapter.connect(services.museManager);
-    this.motionServiceAdapter.connect(services.motionCoordinator);
-    if (services.systemMonitor) {
-      this.systemServiceAdapter.connect(services.systemMonitor);
+    try {
+      // Initialize Noble BLE service adapter
+      console.log('🔍 Initializing Noble BLE service adapter...');
+      const nobleInitialized = await this.bleServiceAdapter.initialize();
+      console.log(`🔍 Noble BLE service initialized: ${nobleInitialized}`);
+
+      if (!nobleInitialized) {
+        console.warn('⚠️ Noble BLE service failed to initialize - BLE operations may not work');
+      }
+
+      // Connect service adapters to existing services
+      console.log('🔗 Connecting service adapters...');
+      this.bleServiceAdapter.connect(services.motionCoordinator);
+      this.motionServiceAdapter.connect(services.motionCoordinator);
+      if (services.systemMonitor) {
+        this.systemServiceAdapter.connect(services.systemMonitor);
+      }
+
+      // Inject services into handlers
+      console.log('🔗 Injecting services into handlers...');
+      this.bleHandler.setBLEService(this.bleServiceAdapter);
+      this.streamingHandler.setMotionService(this.motionServiceAdapter);
+      this.systemHandler.setSystemService(this.systemServiceAdapter);
+
+      // Start the bridge
+      console.log('🚀 Starting WebSocket Bridge server...');
+      this.currentPort = await this.start(this.config.port);
+      console.log(`✅ WebSocket Bridge initialized on port ${this.currentPort}`);
+
+      return this.currentPort;
+    } catch (error) {
+      console.error('❌ WebSocket Bridge initialization failed:', error);
+      console.error('❌ Stack trace:', error instanceof Error ? error.stack : error);
+      throw error;
     }
-
-    // Inject services into handlers
-    this.bleHandler.setBLEService(this.bleServiceAdapter);
-    this.streamingHandler.setMotionService(this.motionServiceAdapter);
-    this.systemHandler.setSystemService(this.systemServiceAdapter);
-
-    // Start the bridge
-    this.currentPort = await this.start(this.config.port);
-    console.log(`✅ WebSocket Bridge initialized on port ${this.currentPort}`);
-
-    return this.currentPort;
   }
 
   // Start the WebSocket bridge
@@ -331,110 +350,7 @@ export class WebSocketBridge {
 }
 
 // Service adapter classes
-class BLEServiceAdapter implements BLEService {
-  private museManager: any = null;
-  private broadcastFunction: ((message: any, clientIds: string[]) => Promise<void>) | null = null;
-
-  connect(museManager: any): void {
-    this.museManager = museManager;
-  }
-
-  setBroadcastFunction(broadcastFn: (message: any, clientIds: string[]) => Promise<void>): void {
-    this.broadcastFunction = broadcastFn;
-  }
-
-  async scanForDevices(): Promise<{ success: boolean; devices: any[]; message?: string }> {
-    if (!this.museManager) return { success: false, devices: [], message: 'MuseManager not connected' };
-
-    try {
-      console.log('Triggering device scan...');
-
-      // Broadcast scan request to all connected clients (replicating original flow)
-      const scanMessage = {
-        type: MESSAGE_TYPES.SCAN_REQUEST, // Using the original message type
-        data: {
-          action: 'trigger_bluetooth_scan',
-          message: 'Trigger Web Bluetooth scan for device discovery'
-        },
-        timestamp: Date.now()
-      };
-
-      // We need access to the broadcast function - this will be injected by the WebSocketBridge
-      if (this.broadcastFunction) {
-        await this.broadcastFunction(scanMessage, []);
-      }
-
-      return {
-        success: true,
-        devices: [],
-        message: 'Device scan initiated via broadcast'
-      };
-    } catch (error) {
-      console.error('Scan trigger failed:', error);
-      return {
-        success: false,
-        devices: [],
-        message: `Scan trigger failed: ${error instanceof Error ? error.message : String(error)}`
-      };
-    }
-  }
-
-  async connectToDevice(deviceId: string, deviceName: string): Promise<{ success: boolean; message?: string }> {
-    if (!this.museManager) return { success: false, message: 'MuseManager not connected' };
-
-    try {
-      const success = await this.museManager.connectToScannedDevice(deviceId, deviceName);
-      return {
-        success,
-        message: success ? 'Connected successfully' : 'Connection failed',
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
-      };
-    }
-  }
-
-  async disconnectDevice(deviceId: string): Promise<{ success: boolean; message?: string }> {
-    if (!this.museManager) return { success: false, message: 'MuseManager not connected' };
-
-    try {
-      const success = await this.museManager.disconnectDevice(deviceId);
-      return {
-        success,
-        message: success ? 'Disconnected successfully' : 'Disconnection failed',
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : 'Disconnection failed',
-      };
-    }
-  }
-
-  async startRecording(sessionId: string, exerciseId: string, setNumber: number): Promise<{ success: boolean; message?: string }> {
-    // Implementation would integrate with motion coordinator
-    return { success: true, message: 'Recording started' };
-  }
-
-  async stopRecording(): Promise<{ success: boolean; message?: string }> {
-    // Implementation would integrate with motion coordinator
-    return { success: true, message: 'Recording stopped' };
-  }
-
-  getConnectedDevices(): any[] {
-    if (!this.museManager) return [];
-
-    const devices = this.museManager.getAllDevices();
-    return devices.filter((device: any) => device.connected);
-  }
-
-  isRecording(): boolean {
-    // Implementation would check motion coordinator
-    return false;
-  }
-}
+// BLEServiceAdapter replaced with NobleBLEServiceAdapter (imported from ble-bridge module)
 
 class MotionServiceAdapter implements MotionService {
   private motionCoordinator: any = null;

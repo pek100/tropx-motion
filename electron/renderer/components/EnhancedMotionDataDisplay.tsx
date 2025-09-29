@@ -66,41 +66,44 @@ const parseMotionData = (rawData: any): MotionData | null => {
     };
   }
 
-  // For testing: Create fake data if we have any data at all
-  if (rawData && Object.keys(rawData).length > 0) {
-    
-    // Extract timestamp from any source
+  // Handle joint angle data from motion processing pipeline
+  if (rawData && rawData.jointAngles) {
+    console.log('📊 [CHART_DEBUG] Received processed joint angles from motion processing pipeline:', rawData.jointAngles);
+
     const timestamp = rawData.timestamp || Date.now();
-    
-    // Generate test angles that change over time for demonstration
-    const timeOffset = (timestamp / 1000) % 60; // 60-second cycle
-    const leftAngle = 30 + 50 * Math.sin(timeOffset * 0.1);  // 30-80 degree range
-    const rightAngle = 25 + 45 * Math.cos(timeOffset * 0.1); // 25-70 degree range
-    
+
     return {
       left: {
-        current: Math.round(leftAngle * 10) / 10, // 1 decimal precision
-        max: 80,
-        min: 30,
-        rom: 50,
-        devices: ['test_left'],
-        sensorTimestamp: timestamp,
-        lastUpdate: Date.now()
+        current: rawData.jointAngles.left.current,
+        max: rawData.jointAngles.left.max,
+        min: rawData.jointAngles.left.min,
+        rom: rawData.jointAngles.left.rom,
+        devices: rawData.jointAngles.left.devices || [],
+        sensorTimestamp: rawData.jointAngles.left.sensorTimestamp || timestamp,
+        lastUpdate: rawData.jointAngles.left.lastUpdate || Date.now()
       },
       right: {
-        current: Math.round(rightAngle * 10) / 10,
-        max: 70,
-        min: 25, 
-        rom: 45,
-        devices: ['test_right'],
-        sensorTimestamp: timestamp,
-        lastUpdate: Date.now()
+        current: rawData.jointAngles.right.current,
+        max: rawData.jointAngles.right.max,
+        min: rawData.jointAngles.right.min,
+        rom: rawData.jointAngles.right.rom,
+        devices: rawData.jointAngles.right.devices || [],
+        sensorTimestamp: rawData.jointAngles.right.sensorTimestamp || timestamp,
+        lastUpdate: rawData.jointAngles.right.lastUpdate || Date.now()
       },
       timestamp: timestamp
     };
   }
 
+  // Handle quaternion data - should be processed by motion processing pipeline first
+  if (rawData && rawData.quaternion) {
+    console.log('⚠️ [CHART_DEBUG] Raw quaternion data received in UI - this should be processed by motion processing pipeline first:', rawData);
+    console.log('📊 [CHART_DEBUG] Waiting for processed motion data from motion processing pipeline...');
+    return null; // Don't process raw quaternions in UI
+  }
+
   // No valid data format found
+  console.log('📊 [CHART_DEBUG] No valid motion data format found:', rawData);
   return null;
 };
 
