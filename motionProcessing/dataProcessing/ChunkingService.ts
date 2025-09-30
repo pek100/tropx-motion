@@ -2,7 +2,7 @@ import { APIRecording } from '../shared/types';
 import { ServerService } from './ServerService';
 import { CHUNKING } from '../shared/constants';
 import { safeArrayLength, safeJSONStringify } from '../shared/utils';
-import {Logger} from "../../src/utils/logger";
+import { Logger } from '../shared/Logger';
 
 interface ChunkMetadata {
     chunkId: string;

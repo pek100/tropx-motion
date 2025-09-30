@@ -1,5 +1,4 @@
-import { Quaternion } from '../../muse_sdk/core/MuseData';
-import { DeviceData, JointConfig, MotionConfig } from '../shared/types';
+import { Quaternion, DeviceData, JointConfig, MotionConfig } from '../shared/types';
 import {CACHE, DEVICE, SYSTEM} from '../shared/constants';
 import {testDevicePattern} from '../shared/utils';
 import {QuaternionService} from "../shared/QuaternionService";

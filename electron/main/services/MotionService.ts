@@ -1,6 +1,5 @@
 import { createUnifiedWebSocketBridge, UnifiedWebSocketBridge } from '../../../websocket-bridge';
 import { motionProcessingCoordinator } from '../../../motionProcessing/MotionProcessingCoordinator';
-import { museManager } from '../../../muse_sdk/core/MuseManager';
 import { CONFIG, MESSAGE_TYPES } from '../../shared/config';
 import {
   ServiceStatus,
@@ -28,7 +27,7 @@ export class MotionService {
       console.log('Initializing Motion Service with Unified WebSocket Bridge...');
 
       // Create Unified WebSocket bridge with existing services
-      // Note: museManager no longer used - Noble BLE service is embedded in WebSocket Bridge
+      // Noble BLE service is embedded in WebSocket Bridge
       const unifiedServices = {
         motionCoordinator: motionProcessingCoordinator,
         systemMonitor: undefined, // Optional service
@@ -71,27 +70,23 @@ export class MotionService {
         return { success: false, message: 'Failed to start motion processing' };
       }
 
-      const recordingStarted = await museManager.startRecordingOnDevices();
-      
-      if (!recordingStarted) {
-        await motionProcessingCoordinator.stopRecording();
-        return { success: false, message: 'Failed to start recording on devices' };
-      }
+      // Recording on devices is now managed by BLE bridge via WebSocket Bridge
+      // No direct device control needed here - data flows automatically
 
       this.isRecording = true;
       this.recordingStartTime = new Date();
       this.currentSessionId = sessionData.sessionId;
-      
-      return { 
-        success: true, 
+
+      return {
+        success: true,
         message: 'Recording started successfully',
         recordingId: sessionData.sessionId
       };
     } catch (error) {
       console.error('Recording start error:', error);
-      return { 
-        success: false, 
-        message: `Failed to start recording: ${error instanceof Error ? error.message : String(error)}` 
+      return {
+        success: false,
+        message: `Failed to start recording: ${error instanceof Error ? error.message : String(error)}`
       };
     }
   }
@@ -104,7 +99,7 @@ export class MotionService {
     try {
       console.log('Stopping recording session...');
 
-      await museManager.stopRecordingOnDevices();
+      // Stop recording in motion processing coordinator
       const success = await motionProcessingCoordinator.stopRecording();
 
       const sessionId = this.currentSessionId;
@@ -119,9 +114,9 @@ export class MotionService {
       };
     } catch (error) {
       console.error('Recording stop error:', error);
-      return { 
-        success: false, 
-        message: `Failed to stop recording: ${error instanceof Error ? error.message : String(error)}` 
+      return {
+        success: false,
+        message: `Failed to stop recording: ${error instanceof Error ? error.message : String(error)}`
       };
     }
   }
@@ -175,19 +170,13 @@ export class MotionService {
   }
 
   getStatus(): ServiceStatus {
-    const sdkDevices = museManager.getAllDevices();
-    const batteryLevels = Object.fromEntries(museManager.getAllBatteryLevels());
-
+    // Device information is now managed by BLE bridge via WebSocket Bridge
+    // Return minimal status - device info should be queried via WebSocket
     return {
       isInitialized: this.isInitialized,
       isRecording: this.isRecording,
-      connectedDevices: sdkDevices.map(d => ({
-        id: d.id,
-        name: d.name,
-        connected: d.connected,
-        batteryLevel: d.batteryLevel
-      })),
-      batteryLevels,
+      connectedDevices: [], // Device list available via WebSocket Bridge
+      batteryLevels: {},    // Battery levels available via WebSocket Bridge
       recordingStartTime: this.recordingStartTime?.toISOString(),
       wsPort: this.bridgePort,
       clientCount: this.bridge?.getStatus().connections || 0,

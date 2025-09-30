@@ -1,5 +1,5 @@
-import { Quaternion } from '../../muse_sdk/core/MuseData';
-import {ANGLE} from '../shared/constants';
+import { Quaternion } from './types';
+import {ANGLE} from './constants';
 
 /**
  * Centralized service for all quaternion mathematical operations.

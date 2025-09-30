@@ -1,6 +1,5 @@
 import { DeviceProcessor } from './deviceProcessing/DeviceProcessor';
 import { JointProcessor, KneeJointProcessor } from './jointProcessing/JointProcessor';
-import { DataParser } from './dataProcessing/DataParser';
 import { AsyncDataParser } from './dataProcessing/AsyncDataParser';
 import { UIProcessor } from './uiProcessing/UIProcessor';
 import { ServerService } from './dataProcessing/ServerService';
@@ -26,11 +25,10 @@ export class MotionProcessingCoordinator {
     private static instance: MotionProcessingCoordinator | null = null;
     private deviceProcessor!: DeviceProcessor;
     private jointProcessors = new Map<string, JointProcessor>();
-    private dataParser!: DataParser | AsyncDataParser;
+    private dataParser!: AsyncDataParser;
     private uiProcessor!: UIProcessor;
     private serverService!: ServerService;
     private chunkingService!: ChunkingService;
-    private useAsyncParser: boolean = true; // Feature flag for async parser
     private lastCompleteRecording: any = null;
     private isRecording = false;
     private sessionContext: SessionContext | null = null;
@@ -350,13 +348,8 @@ export class MotionProcessingCoordinator {
 
     /**
      * Returns async parser statistics for performance monitoring.
-     * Only available when using AsyncDataParser.
      */
     getAsyncParserStats(): any {
-        if (!this.useAsyncParser || !(this.dataParser instanceof AsyncDataParser)) {
-            return null;
-        }
-
         return {
             recordingStats: this.dataParser.getRecordingStats(),
             bufferUtilization: Object.fromEntries(this.dataParser.getBufferUtilization()),
@@ -367,9 +360,10 @@ export class MotionProcessingCoordinator {
 
     /**
      * Returns whether async parser is enabled.
+     * Always returns true as only AsyncDataParser is supported.
      */
     isUsingAsyncParser(): boolean {
-        return this.useAsyncParser;
+        return true;
     }
 
 
@@ -456,20 +450,15 @@ export class MotionProcessingCoordinator {
     private initializeServices(): void {
         this.deviceProcessor = DeviceProcessor.getInstance(this.config);
 
-        // Initialize parser based on configuration
-        if (this.useAsyncParser) {
-            this.dataParser = AsyncDataParser.getInstance(this.config.targetHz);
-            PerformanceLogger.info('COORDINATOR', 'Using AsyncDataParser for non-blocking joint processing');
-        } else {
-            this.dataParser = DataParser.getInstance(this.config.targetHz);
-            PerformanceLogger.info('COORDINATOR', 'Using legacy DataParser (blocking mode)');
-        }
+        // Initialize parser (always using AsyncDataParser for non-blocking processing)
+        this.dataParser = AsyncDataParser.getInstance(this.config.targetHz);
+        PerformanceLogger.info('COORDINATOR', 'Using AsyncDataParser for non-blocking joint processing');
 
         this.uiProcessor = UIProcessor.getInstance();
         this.serverService = new ServerService();
         this.chunkingService = new ChunkingService(this.serverService, this.getOptimalChunkSize());
 
-        console.log('✅ Core services initialized with async parser:', this.useAsyncParser);
+        console.log('✅ Core services initialized with AsyncDataParser');
     }
 
     /**
@@ -511,7 +500,7 @@ export class MotionProcessingCoordinator {
 
             // Performance logging for async operations
             const duration = performance.now() - start;
-            if (this.useAsyncParser && duration > 1) {
+            if (duration > 1) {
                 PerformanceLogger.log('COORDINATOR', 'joint_processing', duration, angleData.jointName);
             }
         });

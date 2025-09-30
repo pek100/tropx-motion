@@ -20,12 +20,12 @@ import {
 import { EnhancedMotionDataDisplay } from "./components"
 import { UnifiedBinaryProtocol } from "../shared/BinaryProtocol"
 import type { WSMessage, DeviceInfo } from "../shared/types"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Progress } from "@/components/ui/progress"
-import { Separator } from "@/components/ui/separator"
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card"
+import { Button } from "./components/ui/button"
+import { Badge } from "./components/ui/badge"
+import { Progress } from "./components/ui/progress"
+import { Separator } from "./components/ui/separator"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./components/ui/sheet"
 
 // Import performance monitoring systems
 import { uiEventLoopMonitor } from './utils/UIEventLoopMonitor'

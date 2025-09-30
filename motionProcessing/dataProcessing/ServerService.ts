@@ -1,5 +1,5 @@
 import { APIRecording } from '../shared/types';
-import { apiClient } from "../../src/services/api";
+import { apiClient } from '../shared/ApiClient';
 import { SERVER } from '../shared/constants';
 import { safeJSONStringify, safeJSONParse } from '../shared/utils';
 

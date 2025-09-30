@@ -53,7 +53,14 @@
       "Bash(pkill:*)",
       "Bash(tree:*)",
       "Read(//mnt/c/Users/Michael/Downloads/**)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(test:*)",
+      "Bash(for:*)",
+      "Bash(do test:*)",
+      "Bash(echo:*)",
+      "Bash(done)",
+      "Bash(for file in \"electron/main/services/WebSocketService.ts\" \"websocket-bridge/WebSocketBridge.ts\" \"websocket-bridge/core/MessageRouter.ts\" \"motionProcessing/dataProcessing/DataParser.ts\" \"docs/BLE.ts\")",
+      "Bash(echo \"  ✅ $file removed\")"
     ],
     "deny": [],
     "ask": [],

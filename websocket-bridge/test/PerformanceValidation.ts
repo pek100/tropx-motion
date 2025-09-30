@@ -1,4 +1,4 @@
-import { WebSocketBridge } from '../WebSocketBridge';
+import { UnifiedWebSocketBridge } from '../UnifiedWebSocketBridge';
 import { BinaryProtocol } from '../protocol/BinaryProtocol';
 import { MESSAGE_TYPES } from '../types/MessageTypes';
 import { MotionDataMessage } from '../types/Interfaces';
@@ -29,7 +29,7 @@ interface PerformanceResults {
 }
 
 export class PerformanceValidator {
-  private bridge: WebSocketBridge | null = null;
+  private bridge: UnifiedWebSocketBridge | null = null;
   private testPort = 0;
 
   // Test binary protocol performance
@@ -84,25 +84,21 @@ export class PerformanceValidator {
     console.log('🧪 Testing WebSocket throughput...');
 
     // Start test bridge
-    this.bridge = new WebSocketBridge({
+    this.bridge = new UnifiedWebSocketBridge({
+      port: 0, // Use random available port
       performanceMode: 'high_throughput',
       enableBinaryProtocol: true,
     });
 
     // Mock services for testing
     const mockServices = {
-      museManager: {
-        reconnectToPreviousDevices: async () => [],
-        connectToScannedDevice: async () => true,
-        disconnectDevice: async () => true,
-        getAllDevices: () => [],
-      },
       motionCoordinator: {
         getUIData: () => ({ left: {}, right: {} }),
         getConnectionStates: () => new Map(),
         getBatteryLevels: () => new Map(),
         subscribeToUI: () => () => {},
       },
+      systemMonitor: undefined,
     };
 
     this.testPort = await this.bridge.initialize(mockServices);

@@ -1,13 +1,31 @@
-// Import types from SDK
-import {
-    IMUData,
-    Quaternion,
-    Vector3D
-} from '../../muse_sdk/core/MuseData';
-import { SDKConnectionState } from '../../muse_sdk/types/types';
+// Core data types (previously imported from muse_sdk, now defined locally)
 
-// Re-export SDK types for convenience
-export type { IMUData, Vector3D, Quaternion, SDKConnectionState };
+// 3D vector for sensor readings
+export interface Vector3D {
+  x: number;
+  y: number;
+  z: number;
+}
+
+// Quaternion for orientation data
+export interface Quaternion {
+  w: number;  // Scalar component
+  x: number;  // i component
+  y: number;  // j component
+  z: number;  // k component
+}
+
+// Combined IMU sensor data
+export interface IMUData {
+  timestamp: number;
+  gyr: Vector3D;      // Gyroscope (degrees/sec)
+  axl: Vector3D;      // Accelerometer (m/s²)
+  mag: Vector3D;      // Magnetometer (μT)
+  quaternion?: Quaternion;
+}
+
+// Device connection states
+export type SDKConnectionState = 'disconnected' | 'connecting' | 'connected' | 'authenticating' | 'streaming' | 'error';
 
 /**
  * Device sample with timestamped measurement data.
