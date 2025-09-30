@@ -77,7 +77,8 @@ export class WebSocketBridge {
     this.motionServiceAdapter = new MotionServiceAdapter();
     this.systemServiceAdapter = new SystemServiceAdapter();
 
-    this.setupIntegration();
+    // Only setup basic integration (no handlers yet - they need services injected first)
+    this.setupBasicIntegration();
   }
 
   // Initialize with existing services
@@ -129,6 +130,9 @@ export class WebSocketBridge {
 
     // Configure streaming transport message types
     this.configureMessageTypes();
+
+    // Ensure handlers are properly integrated after services are injected
+    this.setupHandlerIntegration();
 
     // Start connection manager
     this.currentPort = await this.connectionManager.start(port);
@@ -214,9 +218,11 @@ export class WebSocketBridge {
   }
 
   // Setup integration between components
-  private setupIntegration(): void {
+  // Basic integration setup (called in constructor)
+  private setupBasicIntegration(): void {
     // Connect connection manager to message router
     this.connectionManager.onMessage(async (message, clientId) => {
+      console.log(`🔗 WebSocketBridge onMessage: type ${message.type} (0x${message.type.toString(16)}) from ${clientId}`);
       await this.messageRouter.route(message, clientId);
     });
 
@@ -227,7 +233,9 @@ export class WebSocketBridge {
 
     // Set up fallback handler for unknown message types
     this.messageRouter.setFallbackHandler(async (message, clientId) => {
-      console.log(`⚠️ Unknown message type ${message.type} from client ${clientId}`);
+      console.log(`⚠️ Unknown message type ${message.type} (0x${message.type.toString(16)}) from client ${clientId}`);
+      console.log(`🔍 Message details:`, JSON.stringify(message, null, 2));
+      console.log(`🔍 Available handlers:`, Array.from(this.messageRouter.getRegisteredTypes()));
       return {
         type: MESSAGE_TYPES.ERROR,
         requestId: message.requestId,
@@ -249,9 +257,6 @@ export class WebSocketBridge {
       { deliveryMode: DELIVERY_MODES.FIRE_AND_FORGET, timeout: 1000, maxRetries: 0 }
     );
 
-    // Connect handlers to streaming and connection systems
-    this.setupHandlerIntegration();
-
     // Set up periodic cleanup
     setInterval(() => {
       this.performPeriodicCleanup();
@@ -261,11 +266,20 @@ export class WebSocketBridge {
   // Setup handler integration
   private setupHandlerIntegration(): void {
     // Register BLE handler messages
-    this.bleHandler.getHandlers().forEach(({ type, handler }) => {
+    const bleHandlers = this.bleHandler.getHandlers();
+    console.log(`🔗 Registering ${bleHandlers.length} BLE handlers:`, bleHandlers.map(h => `${h.type} (0x${h.type.toString(16)})`));
+
+    bleHandlers.forEach(({ type, handler }) => {
+      // Different timeouts for different operations
+      const timeout = (type === MESSAGE_TYPES.RECORD_START_REQUEST || type === MESSAGE_TYPES.RECORD_STOP_REQUEST)
+        ? 30000  // 30s for recording operations (BLE characteristic discovery can be slow)
+        : 15000; // 15s for other BLE operations
+
+      console.log(`🔗 Registering handler for message type ${type} (0x${type.toString(16)}) with timeout ${timeout}ms`);
       this.messageRouter.register(type, handler, {
         deliveryMode: DELIVERY_MODES.RELIABLE,
-        timeout: 10000, // 10s timeout for BLE operations
-        maxRetries: 2,
+        timeout: timeout,
+        maxRetries: 1, // Reduce retries to avoid duplicate operations
       });
     });
 

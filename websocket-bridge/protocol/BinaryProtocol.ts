@@ -46,9 +46,10 @@ export class BinaryProtocol {
     const message = this.deserializePayload(header.messageType as MessageType, payloadBuffer, header);
 
     if (message) {
-      console.log(`✅ Successfully deserialized message type: ${message.type}`);
+      console.log(`✅ Successfully deserialized message type: ${message.type} (0x${message.type.toString(16)})`);
+      console.log(`🔍 Deserialized message:`, JSON.stringify(message, null, 2));
     } else {
-      console.log(`❌ Payload deserialization failed for message type: ${header.messageType}`);
+      console.log(`❌ Payload deserialization failed for message type: ${header.messageType} (0x${header.messageType.toString(16)})`);
     }
 
     return message;

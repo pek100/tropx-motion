@@ -1008,7 +1008,8 @@ const MotionAnalysisCard: React.FC<{
   onStartStop: () => void;
   connectedDevices: number;
   isConnected: boolean;
-}> = ({ motionData, isRecording, recordingStartTime, onStartStop, connectedDevices, isConnected }) => {
+  allDevices: Map<string, DeviceStateMachine>;
+}> = ({ motionData, isRecording, recordingStartTime, onStartStop, connectedDevices, isConnected, allDevices }) => {
   const [duration, setDuration] = useState(0);
 
   useEffect(() => {
@@ -1033,6 +1034,8 @@ const MotionAnalysisCard: React.FC<{
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
+  // Check if any devices are currently streaming (global stream state)
+  const isGloballyStreaming = Array.from(allDevices.values()).some(device => device.state === "streaming");
   const canRecord = connectedDevices > 0 && isConnected;
 
   return (
@@ -1045,7 +1048,7 @@ const MotionAnalysisCard: React.FC<{
             </div>
             {/* Recording Controls */}
             <div className="flex items-center gap-4">
-              {isRecording && (
+              {isGloballyStreaming && (
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1">
                       <div
@@ -1057,7 +1060,7 @@ const MotionAnalysisCard: React.FC<{
                   </span>
                     </div>
                     <Badge variant="destructive" className="text-xs">
-                      RECORDING
+                      STREAMING
                     </Badge>
                   </div>
               )}
@@ -1065,13 +1068,13 @@ const MotionAnalysisCard: React.FC<{
                   onClick={onStartStop}
                   disabled={!canRecord}
                   size="sm"
-                  className={`${isRecording ? "bg-red-500 hover:bg-red-600" : ""}`}
+                  className={`${isGloballyStreaming ? "bg-red-500 hover:bg-red-600" : ""}`}
                   style={{
-                    backgroundColor: !isRecording ? CONSTANTS.UI.COLORS.PRIMARY : undefined,
+                    backgroundColor: !isGloballyStreaming ? CONSTANTS.UI.COLORS.PRIMARY : undefined,
                     color: "white",
                   }}
               >
-                {isRecording ? (
+                {isGloballyStreaming ? (
                     <>
                       <Pause className="w-4 h-4 mr-2" />
                       Stop Recording
@@ -1137,6 +1140,7 @@ const ElectronMotionApp: React.FC = () => {
   const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastScanTimeRef = useRef<number>(0);
   const SCAN_COOLDOWN = 3000;
+  const recordingInProgress = useRef(false);
 
 
   // Initialize performance monitoring systems
@@ -1427,14 +1431,25 @@ const ElectronMotionApp: React.FC = () => {
   const handleRecording = async () => {
     console.log("🔄 Using Noble-based recording system");
 
+    // Prevent multiple concurrent recording operations
+    if (recordingInProgress.current) {
+      console.log("⏳ Recording operation already in progress, ignoring duplicate request");
+      return;
+    }
+
     if (!bridgeClientRef.current) {
       console.error("❌ WebSocket Bridge not connected");
       alert("Recording service not available");
       return;
     }
 
+    recordingInProgress.current = true;
+
     try {
-      if (state.isRecording) {
+      // Check if any devices are currently streaming (this should match the button state)
+      const isGloballyStreaming = Array.from(state.allDevices.values()).some(device => device.state === "streaming");
+
+      if (isGloballyStreaming) {
         // Stop recording and streaming
         console.log("🛑 Stopping recording and streaming...");
 
@@ -1513,10 +1528,13 @@ const ElectronMotionApp: React.FC = () => {
       }
     } catch (error) {
       console.error("❌ Recording error:", error);
-      
+
       // Ensure recording state is reset on error
       dispatch({ type: "SET_RECORDING", payload: { isRecording: false, startTime: null } });
       alert(`Recording failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      // Always reset the recording operation flag
+      recordingInProgress.current = false;
     }
   };
 
@@ -1693,6 +1711,7 @@ const ElectronMotionApp: React.FC = () => {
                   onStartStop={handleRecording}
                   connectedDevices={connectedCount}
                   isConnected={state.isConnected}
+                  allDevices={state.allDevices}
               />
               {/* Status Bar */}
               <Card className="mt-6">

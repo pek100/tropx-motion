@@ -211,6 +211,12 @@ export class WebSocketBridgeClient {
     const message: RecordStopRequestMessage = {
       type: MESSAGE_TYPES.RECORD_STOP_REQUEST,
     };
+    console.log(`🛑 [WebSocketBridgeClient] Sending stop recording request:`, {
+      messageType: message.type,
+      messageTypeHex: `0x${message.type.toString(16)}`,
+      MESSAGE_TYPES_RECORD_STOP_REQUEST: MESSAGE_TYPES.RECORD_STOP_REQUEST,
+      fullMessage: message
+    });
     return this.sendReliable(message);
   }
 

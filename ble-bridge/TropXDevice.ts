@@ -184,6 +184,11 @@ export class TropXDevice {
     if (!this.wrapper.commandCharacteristic || !this.wrapper.dataCharacteristic) {
       console.log(`🔍 [${this.wrapper.deviceInfo.name}] Discovering characteristics for streaming...`);
       try {
+        // Fix EventEmitter memory leak warning
+        if (this.wrapper.service.setMaxListeners) {
+          this.wrapper.service.setMaxListeners(20);
+        }
+
         const discoveryStartTime = Date.now();
         const characteristics = await this.wrapper.service.discoverCharacteristicsAsync([
           BLE_CONFIG.COMMAND_CHARACTERISTIC_UUID,

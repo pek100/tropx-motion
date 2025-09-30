@@ -1,4 +1,4 @@
-import { createWebSocketBridge, WebSocketBridge } from '../../../websocket-bridge';
+import { createUnifiedWebSocketBridge, UnifiedWebSocketBridge } from '../../../websocket-bridge';
 import { motionProcessingCoordinator } from '../../../motionProcessing/MotionProcessingCoordinator';
 import { museManager } from '../../../muse_sdk/core/MuseManager';
 import { CONFIG, MESSAGE_TYPES } from '../../shared/config';
@@ -12,7 +12,7 @@ import {
 } from '../../shared/types';
 
 export class MotionService {
-  private bridge: WebSocketBridge | null = null;
+  private bridge: UnifiedWebSocketBridge | null = null;
   private bridgePort = 0;
   private isInitialized = false;
   private isRecording = false;
@@ -25,28 +25,22 @@ export class MotionService {
 
   async initialize(): Promise<void> {
     try {
-      console.log('Initializing Motion Service with WebSocket Bridge...');
+      console.log('Initializing Motion Service with Unified WebSocket Bridge...');
 
-      // Create WebSocket bridge with existing services
+      // Create Unified WebSocket bridge with existing services
       // Note: museManager no longer used - Noble BLE service is embedded in WebSocket Bridge
-      const existingServices = {
+      const unifiedServices = {
         motionCoordinator: motionProcessingCoordinator,
-        systemMonitor: null, // Optional service
+        systemMonitor: undefined, // Optional service
       };
 
-      const bridgeConfig = {
-        port: 8080, // Default port for WebSocket Bridge
+      const unifiedConfig = {
+        port: 8080, // Default port for Unified WebSocket Bridge
         enableBinaryProtocol: true,
-        enableReliableTransport: true,
         performanceMode: 'high_throughput' as const,
-        streamingConfig: {
-          motionDataReliable: false,
-          maxClientsPerMessage: 10,
-          messageBufferSize: 100,
-        },
       };
 
-      const { bridge, port } = await createWebSocketBridge(existingServices, bridgeConfig);
+      const { bridge, port } = await createUnifiedWebSocketBridge(unifiedServices, unifiedConfig);
       this.bridge = bridge;
       this.bridgePort = port;
 

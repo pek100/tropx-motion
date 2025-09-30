@@ -62,6 +62,9 @@ export class MessageValidator {
       case MESSAGE_TYPES.RECORD_START_REQUEST:
         return this.validateRecordStartRequest(message as RecordStartRequest);
 
+      case MESSAGE_TYPES.RECORD_STOP_REQUEST:
+        return { valid: true }; // No additional validation needed
+
       case MESSAGE_TYPES.MOTION_DATA:
         return this.validateMotionData(message as MotionDataMessage);
 

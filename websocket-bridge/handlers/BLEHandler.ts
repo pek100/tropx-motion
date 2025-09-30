@@ -46,18 +46,22 @@ export class BLEHandler {
 
   // Inject BLE service dependency
   setBLEService(service: BLEService): void {
+    console.log(`🔗 BLEHandler setBLEService called, service available: ${!!service}`);
     this.bleService = service;
   }
 
   // Get message handlers for registration
   getHandlers(): Array<{ type: MessageType; handler: MessageHandler }> {
-    return [
+    const handlers = [
       { type: MESSAGE_TYPES.BLE_SCAN_REQUEST, handler: this.handleScanRequest.bind(this) },
       { type: MESSAGE_TYPES.BLE_CONNECT_REQUEST, handler: this.handleConnectRequest.bind(this) },
       { type: MESSAGE_TYPES.BLE_DISCONNECT_REQUEST, handler: this.handleDisconnectRequest.bind(this) },
       { type: MESSAGE_TYPES.RECORD_START_REQUEST, handler: this.handleRecordStartRequest.bind(this) },
       { type: MESSAGE_TYPES.RECORD_STOP_REQUEST, handler: this.handleRecordStopRequest.bind(this) },
     ];
+
+    console.log(`📋 BLEHandler getHandlers() called - returning ${handlers.length} handlers, bleService available: ${!!this.bleService}`);
+    return handlers;
   }
 
   // Handle BLE scan request
@@ -273,6 +277,7 @@ export class BLEHandler {
 
   // Handle record stop request
   private async handleRecordStopRequest(message: BaseMessage, clientId: string): Promise<BaseMessage> {
+    console.log(`🛑 BLEHandler.handleRecordStopRequest called:`, { messageType: message.type, clientId, bleService: !!this.bleService });
     const request = message as any; // Extend interface if needed
     this.stats.recordingRequests++;
 
