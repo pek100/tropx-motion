@@ -90,9 +90,44 @@ export class TropXCommands {
    */
   static Cmd_GetSystemState(): Uint8Array {
     const state_read_cmd = TROPX_COMMANDS.STATE | TROPX_COMMANDS.READ_MASK;
-    const buffer = new Uint8Array([state_read_cmd]);
+    const buffer = new Uint8Array([state_read_cmd, 0x00]);
 
     console.log(`🔧 TropX State command: [${Array.from(buffer).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+
+    return buffer;
+  }
+
+  /**
+   * Creates a command to set device RTC (Real-Time Clock) to current time
+   * This initializes the device's hardware clock to Unix epoch time
+   * MUST be called before TimeSync for proper hardware synchronization
+   *
+   * Command format (per Muse v3 PDF):
+   * - Byte 0: Command type (0x0b - TIME)
+   * - Byte 1: Length (0x04 - 4 bytes payload)
+   * - Bytes 2-5: Unix epoch timestamp (32-bit unsigned, little-endian, in seconds)
+   *
+   * @param unixEpochSeconds - Current time in Unix epoch seconds (Date.now() / 1000)
+   */
+  static Cmd_SetDateTime(unixEpochSeconds: number): Uint8Array {
+    const buffer = new Uint8Array(6);
+
+    buffer[0] = TROPX_COMMANDS.TIME;  // CMD_TIME (0x0b)
+    buffer[1] = 0x04;                 // Length (4 bytes payload)
+
+    // Convert Unix epoch seconds to 32-bit little-endian
+    const timestampBuffer = new ArrayBuffer(4);
+    const timestampView = new DataView(timestampBuffer);
+    timestampView.setUint32(0, unixEpochSeconds, true); // true = little-endian
+
+    // Copy 4 bytes of timestamp
+    buffer[2] = timestampView.getUint8(0);
+    buffer[3] = timestampView.getUint8(1);
+    buffer[4] = timestampView.getUint8(2);
+    buffer[5] = timestampView.getUint8(3);
+
+    const date = new Date(unixEpochSeconds * 1000);
+    console.log(`🕐 TropX Set DateTime command: [${Array.from(buffer).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}] = ${date.toISOString()}`);
 
     return buffer;
   }

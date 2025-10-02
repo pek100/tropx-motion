@@ -633,6 +633,11 @@ export class NobleBluetoothService {
     return connectedDevices;
   }
 
+  // Get TropXDevice instance by ID (for time sync and other operations)
+  getDeviceInstance(deviceId: string): TropXDevice | null {
+    return this.devices.get(deviceId) || null;
+  }
+
   // Get device battery levels
   async getAllBatteryLevels(): Promise<Map<string, number>> {
     const batteryLevels = new Map<string, number>();

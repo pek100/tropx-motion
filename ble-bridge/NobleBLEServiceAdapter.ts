@@ -154,13 +154,48 @@ export class NobleBLEServiceAdapter implements BLEService {
 
         console.log(`📋 Device registered: ${deviceName} → ID 0x${registeredDevice.deviceID.toString(16)} (${registeredDevice.joint}, ${registeredDevice.position})`);
 
-        // Broadcast device status update
+        // Broadcast device status update (connection complete)
         try {
           await this.broadcastDeviceStatus();
         } catch (broadcastError) {
           console.warn(`⚠️ Failed to broadcast device status:`, broadcastError);
           // Don't fail the connection due to broadcast issues
         }
+
+        // Hardware Time Synchronization (Muse v3 Protocol)
+        // Run in background to avoid blocking connection
+        setImmediate(async () => {
+          try {
+            console.log(`⏱️ Starting hardware time sync for ${deviceName}...`);
+            const tropxDevice = this.nobleService.getDeviceInstance(deviceId);
+
+            if (!tropxDevice) {
+              console.warn(`⚠️ Could not get device instance for time sync: ${deviceName}`);
+              return;
+            }
+
+            // Step 1: Initialize device RTC with current Unix epoch time
+            const rtcInitialized = await tropxDevice.initializeDeviceRTC();
+            if (!rtcInitialized) {
+              console.warn(`⚠️ RTC initialization failed for ${deviceName}, skipping time sync`);
+              deviceRegistry.setClockOffset(deviceId, 0);
+              return;
+            }
+
+            // Step 2: Fine-tune clock offset via TimeSync protocol
+            const clockOffset = await tropxDevice.syncTime();
+            deviceRegistry.setClockOffset(deviceId, clockOffset);
+
+            console.log(`✅ Hardware time sync complete for ${deviceName}: offset=${clockOffset.toFixed(2)}ms`);
+
+            // Broadcast updated device status
+            await this.broadcastDeviceStatus();
+
+          } catch (timeSyncError) {
+            console.warn(`⚠️ Time sync failed for ${deviceName}, using default offset (0ms):`, timeSyncError);
+            deviceRegistry.setClockOffset(deviceId, 0);
+          }
+        });
       } else {
         console.error(`❌ Noble: Connection failed for ${deviceName}: ${result.message}`);
       }

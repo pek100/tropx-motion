@@ -84,8 +84,14 @@ export class DeviceProcessor {
             this.performPeriodicCleanup();
         }
 
-        const synchronizedIMU = this.dataSyncService.createSynchronizedIMUData(deviceId, imuData);
-        if (!synchronizedIMU) return;
+        // HARDWARE SYNC: Devices now use hardware clock offset (SET_CLOCK_OFFSET command)
+        // Timestamps are already synchronized via BLE hardware sync, no software correction needed
+        // Software sync is DISABLED to avoid double-syncing and interference
+        const synchronizedIMU = imuData; // Use hardware-synced timestamp directly
+
+        // Legacy software sync (DISABLED - kept for reference):
+        // const synchronizedIMU = this.dataSyncService.createSynchronizedIMUData(deviceId, imuData);
+        // if (!synchronizedIMU) return;
 
         // Update last seen timestamp in registry (fast O(1) lookup)
         deviceRegistry.updateLastSeen(deviceId);

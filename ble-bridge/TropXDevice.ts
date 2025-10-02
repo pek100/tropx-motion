@@ -22,6 +22,8 @@ import {
   TIMING
 } from './BleBridgeConstants';
 import { TropXCommands } from './TropXCommands';
+import { TimeSyncEstimator } from './TimeSyncEstimator';
+import { deviceRegistry } from '../registry-management/DeviceRegistry';
 
 export class TropXDevice {
   private wrapper: NoblePeripheralWrapper;
@@ -29,6 +31,7 @@ export class TropXDevice {
   private eventCallback: DeviceEventCallback | null = null;
   private streamingTimer: NodeJS.Timeout | null = null;
   private batteryTimer: NodeJS.Timeout | null = null;
+  private hasLoggedFirstPacket: boolean = false;
 
   constructor(
     peripheral: any,
@@ -324,6 +327,282 @@ export class TropXDevice {
     }
   }
 
+  // Initialize device RTC (Real-Time Clock) with current system time
+  // MUST be called before syncTime() for proper hardware synchronization
+  //
+  // NOTE: TropX devices appear to always return "ms since boot" timestamps,
+  // not Unix epoch timestamps like Muse devices. The RTC set command configures
+  // internal timekeeping but doesn't change the timestamp format.
+  async initializeDeviceRTC(): Promise<boolean> {
+    if (!this.wrapper.commandCharacteristic) {
+      throw new Error('Command characteristic not available for RTC initialization');
+    }
+
+    console.log(`🕐 [${this.wrapper.deviceInfo.name}] Initializing device RTC...`);
+
+    try {
+      // Step 1: Check device is in IDLE state (per PDF requirement)
+      console.log(`🕐 [${this.wrapper.deviceInfo.name}] Checking device status...`);
+      const stateCmd = Buffer.from(TropXCommands.Cmd_GetSystemState());
+      await this.wrapper.commandCharacteristic.writeAsync(stateCmd, false);
+      await this.delay(50);
+
+      const stateResponse = await this.wrapper.commandCharacteristic.readAsync();
+      // Response format: [TYPE=0x00, LENGTH=0x03, CMD=0x82, ERROR_CODE, SYSTEM_STATE]
+      if (stateResponse && stateResponse.length >= 5) {
+        const systemState = stateResponse[4];
+        console.log(`🕐 [${this.wrapper.deviceInfo.name}] System state: 0x${systemState.toString(16).padStart(2, '0')}`);
+
+        // IDLE state is 0x02 per PDF
+        if (systemState !== TROPX_STATES.IDLE) {
+          console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Device not in IDLE state (expected 0x02, got 0x${systemState.toString(16)})`);
+          // Continue anyway - device might still accept time set
+        }
+      }
+
+      // Step 2: Set device RTC FIRST (per Muse PDF - this should reset timestamps to Unix epoch)
+      const currentUnixSeconds = Math.floor(Date.now() / 1000);
+      const setTimeCmd = Buffer.from(TropXCommands.Cmd_SetDateTime(currentUnixSeconds));
+
+      console.log(`🕐 [${this.wrapper.deviceInfo.name}] Setting RTC to ${new Date(currentUnixSeconds * 1000).toISOString()}...`);
+      await this.wrapper.commandCharacteristic.writeAsync(setTimeCmd, false);
+      await this.delay(200); // Longer delay for RTC to stabilize and reset counters
+
+      const setTimeResponse = await this.wrapper.commandCharacteristic.readAsync();
+      if (setTimeResponse && setTimeResponse.length >= 4) {
+        const errorCode = setTimeResponse[3];
+        if (errorCode !== 0x00) {
+          console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] RTC set returned error 0x${errorCode.toString(16)}`);
+        }
+      }
+
+      // Step 3: Check if device timestamps are now in Unix epoch (Muse behavior)
+      // or still in ms-since-boot (TropX behavior)
+      console.log(`🕐 [${this.wrapper.deviceInfo.name}] Checking timestamp format after RTC set...`);
+
+      const getTimestampCmd = Buffer.from([TROPX_COMMANDS.GET_TIMESTAMP, 0x00]);
+
+      // Multi-sample boot offset for better accuracy (matches time sync approach)
+      const BOOT_SAMPLES = 5;
+      const bootSamples: Array<{ masterTime: number; deviceTime: number; rtt: number }> = [];
+
+      for (let i = 0; i < BOOT_SAMPLES; i++) {
+        const t1 = Date.now();
+        await this.wrapper.commandCharacteristic.writeAsync(getTimestampCmd, false);
+        const response = await this.wrapper.commandCharacteristic.readAsync();
+        const t3 = Date.now();
+
+        if (response && response.length >= 12) {
+          const deviceTimestamp = Number(response.readBigUInt64LE(4));
+          const masterMidpoint = (t1 + t3) / 2;
+          const rtt = t3 - t1;
+
+          bootSamples.push({
+            masterTime: masterMidpoint,
+            deviceTime: deviceTimestamp,
+            rtt
+          });
+
+          if (i === 0) {
+            console.log(`🔍 [${this.wrapper.deviceInfo.name}] Timestamp format check:`);
+            console.log(`   Master time: ${masterMidpoint} (${new Date(masterMidpoint).toISOString()})`);
+            console.log(`   Device timestamp: ${deviceTimestamp} (${new Date(deviceTimestamp).toISOString()})`);
+            console.log(`   Response bytes: [${[...response].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+          }
+        }
+
+        if (i < BOOT_SAMPLES - 1) await this.delay(5);
+      }
+
+      let deviceBootOffset = 0;
+
+      if (bootSamples.length > 0) {
+        const firstSample = bootSamples[0];
+        const timeDiff = Math.abs(firstSample.deviceTime - firstSample.masterTime);
+
+        if (timeDiff < 60000) {
+          // Muse-style: Device returns Unix epoch after RTC set
+          console.log(`✅ [${this.wrapper.deviceInfo.name}] Device using Unix epoch timestamps (Muse-style)`);
+          console.log(`   Time difference: ${timeDiff.toFixed(2)}ms - within expected range`);
+          deviceBootOffset = 0; // No offset needed
+        } else {
+          // TropX-style: Device still returns ms-since-boot
+          console.log(`⚠️ [${this.wrapper.deviceInfo.name}] Device still using ms-since-boot (TropX-style)`);
+          console.log(`   Device uptime: ${(firstSample.deviceTime / 1000 / 60 / 60).toFixed(2)} hours`);
+
+          // Use best sample (lowest RTT) for boot offset
+          bootSamples.sort((a, b) => a.rtt - b.rtt);
+          const bestSample = bootSamples[0];
+
+          deviceBootOffset = bestSample.masterTime - bestSample.deviceTime;
+          console.log(`   Multi-sample boot offset: ${deviceBootOffset.toFixed(2)}ms (from ${BOOT_SAMPLES} samples)`);
+          console.log(`   Best RTT: ${bestSample.rtt.toFixed(2)}ms`);
+          console.log(`   Device boot time: ${new Date(deviceBootOffset).toISOString()}`);
+        }
+      }
+
+      console.log(`✅ [${this.wrapper.deviceInfo.name}] Device RTC initialized successfully`);
+      console.log(`✅ [${this.wrapper.deviceInfo.name}] Boot offset for time sync: ${deviceBootOffset.toFixed(2)}ms`);
+
+      // Store boot offset for use in syncTime()
+      (this.wrapper as any).deviceBootOffset = deviceBootOffset;
+
+      return true;
+
+    } catch (error) {
+      console.error(`❌ [${this.wrapper.deviceInfo.name}] RTC initialization failed:`, error);
+      return false;
+    }
+  }
+
+  // Perform time synchronization (Muse v3 TimeSync Protocol)
+  // NOTE: Must call initializeDeviceRTC() first!
+  //
+  // TropX devices return "ms since boot" timestamps, not Unix epoch.
+  // We use the boot offset calculated during RTC init to convert them.
+  async syncTime(): Promise<number> {
+    if (!this.wrapper.commandCharacteristic) {
+      throw new Error('Command characteristic not available for time sync');
+    }
+
+    console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Starting time synchronization (fine-tuning)...`);
+
+    // Get boot offset from RTC initialization
+    const deviceBootOffset = (this.wrapper as any).deviceBootOffset || 0;
+    if (deviceBootOffset === 0) {
+      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] No boot offset found - was initializeDeviceRTC() called?`);
+    } else {
+      console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Using boot offset: ${deviceBootOffset.toFixed(2)}ms`);
+    }
+
+    try {
+      // Step 1: Enter time sync mode
+      console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Entering time sync mode...`);
+      const enterCmd = Buffer.from([TROPX_COMMANDS.ENTER_TIMESYNC, 0x00]);
+      await this.wrapper.commandCharacteristic.writeAsync(enterCmd, false);
+      await this.delay(50); // Wait for mode transition
+
+      // Step 2: Collect timestamp samples for offset calculation
+      // Device returns "ms since boot" - we convert to Unix epoch using boot offset
+      const estimator = new TimeSyncEstimator();
+      const SAMPLE_COUNT = 50; // Per PDF recommendation
+
+      console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Collecting ${SAMPLE_COUNT} timestamp samples...`);
+
+      for (let i = 0; i < SAMPLE_COUNT; i++) {
+        // Record master time before send
+        const t1 = Date.now();
+
+        // Send get timestamp command
+        const getTimestampCmd = Buffer.from([TROPX_COMMANDS.GET_TIMESTAMP, 0x00]);
+        await this.wrapper.commandCharacteristic.writeAsync(getTimestampCmd, false);
+
+        // Wait for response with device's timestamp
+        // Response format: [TYPE=0x00, LENGTH=0x02, CMD=0xb2, ERROR_CODE, TIMESTAMP (8 bytes)]
+        const response = await this.wrapper.commandCharacteristic.readAsync();
+
+        // Record master time after receive
+        const t3 = Date.now();
+
+        // Parse device timestamp (bytes 4-11, little-endian 64-bit unsigned)
+        if (response && response.length >= 12) {
+          // Device returns "ms since boot" - convert to Unix epoch
+          const deviceTimeSinceBoot = Number(response.readBigUInt64LE(4));
+          const deviceTimestamp = deviceTimeSinceBoot + deviceBootOffset;
+
+          // DEBUG: Log first few samples to diagnose timestamp format issue
+          if (i < 3) {
+            console.log(`🔍 [${this.wrapper.deviceInfo.name}] Sample ${i + 1}:`);
+            console.log(`   Master time (t1): ${t1} (${new Date(t1).toISOString()})`);
+            console.log(`   Device time (raw): ${deviceTimeSinceBoot}ms since boot`);
+            console.log(`   Device time (adjusted): ${deviceTimestamp} (${new Date(deviceTimestamp).toISOString()})`);
+            console.log(`   Master time (t3): ${t3} (${new Date(t3).toISOString()})`);
+            console.log(`   Response bytes: [${[...response.subarray(0, 12)].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+          }
+
+          // Add sample for offset calculation
+          // offset = device_time - master_time_at_midpoint
+          estimator.addSample(t1, deviceTimestamp, t3);
+
+          // Small delay between samples to avoid overwhelming device
+          if (i < SAMPLE_COUNT - 1) {
+            await this.delay(10);
+          }
+        } else {
+          console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Invalid timestamp response at sample ${i + 1}`);
+        }
+      }
+
+      // Step 3: Compute clock offset using median filtering
+      const clockOffset = estimator.computeOffset();
+      console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Computed fine-tuned clock offset: ${clockOffset.toFixed(2)}ms`);
+
+      // Sanity check: After boot offset correction, offset should be small (< 1000ms)
+      if (Math.abs(clockOffset) > 1000) {
+        console.error(`❌ [${this.wrapper.deviceInfo.name}] Clock offset too large (${clockOffset.toFixed(2)}ms)!`);
+        console.error(`❌ This indicates boot offset calculation failed.`);
+        throw new Error(`Clock offset out of range: ${clockOffset.toFixed(2)}ms (expected < 1000ms)`);
+      }
+
+      // Step 4: Exit time sync mode
+      console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Exiting time sync mode...`);
+      const exitCmd = Buffer.from([TROPX_COMMANDS.EXIT_TIMESYNC, 0x00]);
+      await this.wrapper.commandCharacteristic.writeAsync(exitCmd, false);
+      await this.delay(50);
+
+      // Step 5: Set hardware clock offset on device (per Muse PDF)
+      // For TropX devices that return "ms since boot", we need to:
+      // 1. Send boot offset so device converts its timestamps to Unix epoch
+      // 2. Apply the fine-tuned clock offset for final precision
+      const totalOffset = deviceBootOffset + clockOffset;
+
+      console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Calculating total hardware offset:`);
+      console.log(`   Boot offset: ${deviceBootOffset.toFixed(2)}ms`);
+      console.log(`   Clock offset: ${clockOffset.toFixed(2)}ms`);
+      console.log(`   Total offset: ${totalOffset.toFixed(2)}ms`);
+
+      const MAX_VALID_OFFSET = 2n ** 63n - 1n; // Max signed 64-bit integer
+      const MIN_VALID_OFFSET = -(2n ** 63n);
+      const offsetBigInt = BigInt(Math.round(totalOffset));
+
+      if (offsetBigInt >= MIN_VALID_OFFSET && offsetBigInt <= MAX_VALID_OFFSET) {
+        console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Writing hardware offset to device...`);
+        const setOffsetCmd = Buffer.allocUnsafe(10);
+        setOffsetCmd[0] = TROPX_COMMANDS.SET_CLOCK_OFFSET; // TYPE (0x31)
+        setOffsetCmd[1] = 0x08; // LENGTH (8 bytes for 64-bit offset)
+        setOffsetCmd.writeBigInt64LE(offsetBigInt, 2); // VALUE (offset in ms)
+
+        console.log(`⏱️ [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET command: [${[...setOffsetCmd].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+        await this.wrapper.commandCharacteristic.writeAsync(setOffsetCmd, false);
+        await this.delay(50);
+
+        // Read response to confirm
+        const response = await this.wrapper.commandCharacteristic.readAsync();
+        if (response && response.length >= 4) {
+          const errorCode = response[3];
+          if (errorCode === 0x00) {
+            console.log(`✅ [${this.wrapper.deviceInfo.name}] Hardware offset successfully written to device`);
+            console.log(`✅ Device will now add ${totalOffset.toFixed(2)}ms to all timestamps`);
+          } else {
+            console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET returned error 0x${errorCode.toString(16)}`);
+          }
+        }
+      } else {
+        console.error(`❌ [${this.wrapper.deviceInfo.name}] Total offset out of range for int64: ${totalOffset.toFixed(2)}ms`);
+        throw new Error(`Hardware offset out of range: ${totalOffset.toFixed(2)}ms`);
+      }
+
+      console.log(`✅ [${this.wrapper.deviceInfo.name}] Hardware time synchronization complete!`);
+      console.log(`✅ Device timestamps will be automatically synchronized to Unix epoch`);
+
+      return clockOffset;
+
+    } catch (error) {
+      console.error(`❌ [${this.wrapper.deviceInfo.name}] Time sync failed:`, error);
+      throw error;
+    }
+  }
+
   // Get battery level
   async getBatteryLevel(): Promise<number | null> {
     if (!this.wrapper.commandCharacteristic) return null;
@@ -384,8 +663,8 @@ export class TropXDevice {
 
   // Handle incoming data notifications
   private handleDataNotification(data: Buffer): void {
-    // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
-    // console.log(`📥 [${this.wrapper.deviceInfo.name}] Received ${data.length} bytes: [${Array.from(data.subarray(0, Math.min(16, data.length))).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}${data.length > 16 ? '...' : ''}]`);
+    // PERFORMANCE: Capture reception time immediately (fallback if no device timestamp)
+    const receptionTimestamp = Date.now();
 
     try {
       // Validate packet size
@@ -394,12 +673,39 @@ export class TropXDevice {
         return;
       }
 
+      // Parse 8-byte header to extract device timestamp
+      const header = data.subarray(0, PACKET_SIZES.HEADER);
+
+      // Try to parse device timestamp from header (64-bit LE at start of header)
+      let deviceTimestamp = 0;
+      try {
+        // Assuming header structure: [TIMESTAMP (8 bytes)]
+        deviceTimestamp = Number(header.readBigUInt64LE(0));
+
+        // DEBUG: Log first packet to understand header structure
+        if (!this.hasLoggedFirstPacket) {
+          console.log(`📦 [${this.wrapper.deviceInfo.name}] First packet header analysis:`);
+          console.log(`   Header bytes: [${[...header].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+          console.log(`   Parsed timestamp (LE): ${deviceTimestamp}ms`);
+          console.log(`   Reception timestamp: ${receptionTimestamp}ms`);
+          console.log(`   Difference: ${(receptionTimestamp - deviceTimestamp).toFixed(2)}ms`);
+          this.hasLoggedFirstPacket = true;
+        }
+      } catch (parseError) {
+        console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Could not parse device timestamp from header, using reception time`);
+        deviceTimestamp = receptionTimestamp;
+      }
+
       // Parse quaternion data (skip 8-byte header)
       const quaternionData = data.subarray(PACKET_SIZES.HEADER);
       const quaternion = this.parseQuaternionData(quaternionData);
 
+      // HARDWARE TIME SYNC: Use device-embedded timestamp
+      // - Device adds hardware offset (SET_CLOCK_OFFSET) to its internal counter
+      // - Result: timestamps synchronized across devices with <1ms jitter
+      // - BLE latency variance eliminated (timestamp generated at source)
       const motionData: MotionData = {
-        timestamp: Date.now(),
+        timestamp: deviceTimestamp, // Device timestamp with hardware offset applied
         quaternion
       };
 

@@ -28,6 +28,7 @@ export interface RegisteredDevice {
   registeredAt: Date;       // When device was first registered
   lastSeen: Date;           // Last time device sent data
   isManualOverride: boolean; // Whether mapping was manually set
+  clockOffset?: number;     // Clock offset in milliseconds (from time sync)
 }
 
 type RegistryChangeHandler = (devices: RegisteredDevice[]) => void;
@@ -304,6 +305,29 @@ export class DeviceRegistry {
     } else {
       this.deviceIDToDevices.delete(deviceID);
     }
+  }
+
+  /**
+   * Set clock offset for a device (from time synchronization)
+   */
+  setClockOffset(bleAddress: string, offsetMs: number): void {
+    const device = this.devices.get(bleAddress);
+    if (device) {
+      device.clockOffset = offsetMs;
+      console.log(`⏱️ [DEVICE_REGISTRY] Clock offset set for "${device.deviceName}": ${offsetMs.toFixed(2)}ms`);
+      this.saveToFileSystem();
+      this.notifyChanges();
+    } else {
+      console.warn(`⚠️ [DEVICE_REGISTRY] Cannot set clock offset: device "${bleAddress}" not found`);
+    }
+  }
+
+  /**
+   * Get clock offset for a device (returns 0 if not set)
+   */
+  getClockOffset(bleAddress: string): number {
+    const device = this.devices.get(bleAddress);
+    return device?.clockOffset ?? 0;
   }
 
   /**

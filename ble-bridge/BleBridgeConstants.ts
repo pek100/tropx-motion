@@ -35,6 +35,13 @@ export const TROPX_COMMANDS = {
   BATTERY: 0x07,
   TIME: 0x0b,
   READ_MASK: 0x80,
+
+  // Time Synchronization Commands (Muse v3 TimeSync Protocol)
+  // Based on: AN_221e_Muse_v3_Timesync_v1.0.pdf
+  ENTER_TIMESYNC: 0x32,      // Enter time sync mode
+  GET_TIMESTAMP: 0xb2,       // Request device timestamp (64-bit epoch ms)
+  EXIT_TIMESYNC: 0x33,       // Exit time sync mode
+  SET_CLOCK_OFFSET: 0x31,    // Set computed clock offset (8-byte signed int64)
 } as const;
 
 export const TROPX_STATES = {
