@@ -97,12 +97,15 @@ export const DEVICE_STATES = {
 } as const;
 
 // Bluetooth service identifiers
+// Single source of truth for device identification patterns
+export const DEVICE_PATTERNS = ['tropx', 'muse'] as const;
+
 export const BLUETOOTH_CONFIG = {
   SERVICE_UUID: 'c8c0a708-e361-4b5e-a365-98fa6b0a836f',
   CMD_UUID: 'd5913036-2d8a-41ee-85b9-4e361aa5c8a7',
   DATA_UUID: '09bf2c52-d1d9-c0b7-4145-475964544307',
   DEVICE_PREFIX: 'tropx',
-  DEVICE_PATTERNS: ['tropx', 'muse'] as const,
+  DEVICE_PATTERNS, // Reference single source
 } as const;
 
 // Window configuration

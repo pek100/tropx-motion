@@ -231,15 +231,9 @@ export class UIProcessor {
 
     /**
      * Broadcast processed joint angle data via WebSocket to UI
+     * REVERTED: Send immediately - throttling caused stutters
      */
     private async broadcastJointAngleData(angleData: JointAngleData): Promise<void> {
-        // DISABLED for performance (called at 100Hz)
-        // console.log(`📡 [UI_PROCESSOR] Broadcasting joint angle data:`, {
-        //     hasWebSocketBroadcast: !!this.webSocketBroadcast,
-        //     angleData: angleData,
-        //     uiState: this.getChartFormat()
-        // });
-
         if (!this.webSocketBroadcast) {
             console.error('❌ [UI_PROCESSOR] No WebSocket broadcast function configured - cannot send joint angles to UI!');
             return;
@@ -247,42 +241,23 @@ export class UIProcessor {
 
         try {
             const chartFormat = this.getChartFormat();
-            // DISABLED for performance (called at 100Hz)
-            // console.log('📡 [UI_PROCESSOR] Chart format data:', {
-            //     chartFormat: chartFormat,
-            //     angleData: angleData
-            // });
 
             // Create WebSocket message with processed joint angle data
-            // BinaryProtocol expects MOTION_DATA to have deviceName and data with left/right structure
             const message = {
                 type: 0x30, // MESSAGE_TYPES.MOTION_DATA
                 requestId: 0, // Fire-and-forget streaming data
-                timestamp: angleData.timestamp,
-                deviceName: angleData.deviceIds.join(','), // Use device IDs as device name
-                data: chartFormat // This already has the correct left/right structure
+                timestamp: angleData.timestamp, // Use sensor timestamp from angle data
+                deviceName: angleData.deviceIds.join(','),
+                data: chartFormat
             };
 
-            // DISABLED for performance (called at 100Hz)
-            // console.log('📡 [UI_PROCESSOR] Sending WebSocket message:', {
-            //     type: message.type,
-            //     timestamp: message.timestamp,
-            //     deviceName: message.deviceName,
-            //     hasData: !!message.data,
-            //     dataStructure: {
-            //         left: message.data.left,
-            //         right: message.data.right
-            //     }
-            // });
-
-            // Broadcast to all connected WebSocket clients
-            await this.webSocketBroadcast(message, []);
-
-            // DISABLED for performance (called at 100Hz)
-            // console.log('✅ [UI_PROCESSOR] Successfully broadcast joint angle data via WebSocket');
+            // Send immediately without await - fire and forget for performance
+            this.webSocketBroadcast(message, []).catch(error => {
+                console.error('❌ [UI_PROCESSOR] Error broadcasting joint angle data:', error);
+            });
 
         } catch (error) {
-            console.error('❌ [UI_PROCESSOR] Error broadcasting joint angle data via WebSocket:', error);
+            console.error('❌ [UI_PROCESSOR] Error creating WebSocket message:', error);
         }
     }
 }

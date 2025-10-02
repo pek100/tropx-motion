@@ -206,14 +206,15 @@ export class NobleBluetoothService {
     }
 
     try {
-      console.log('📡 Starting BLE scan for TropX devices...');
+      console.log(`📡 Starting BLE scan for devices (${BLE_CONFIG.DEVICE_PATTERNS.join(', ')})...`);
 
       // Don't clear existing devices - keep them available for connection
       console.log(`🔍 Keeping ${this.discoveredPeripherals.size} previously discovered devices`);
       this.isScanning = true;
 
-      // Start scanning for ALL devices (filter by name in discovery handler)
-      console.log('🔍 Scanning for all BLE devices (will filter by name)...');
+      // Start scanning for all devices (TropX doesn't advertise service UUID, must filter by name)
+      // Note: Many BLE devices don't include service UUID in advertisement to save space
+      console.log('🔍 Scanning for BLE devices (filtering by device name)...');
       await noble.startScanningAsync([], false);
 
       // Auto-stop scanning after timeout
@@ -254,7 +255,7 @@ export class NobleBluetoothService {
       const discoveredDevices = Array.from(this.discoveredPeripherals.values())
         .map(peripheral => this.createDeviceInfo(peripheral));
 
-      console.log(`✅ Scan completed. Found ${discoveredDevices.length} TropX devices`);
+      console.log(`✅ Scan completed. Found ${discoveredDevices.length} devices`);
 
     } catch (error) {
       console.error('Error stopping scan:', error);
@@ -703,26 +704,25 @@ export class NobleBluetoothService {
 
   // Handle discovered device
   private handleDeviceDiscovered(peripheral: any): void {
-    const deviceName = peripheral.advertisement?.localName || 'Unknown';
+    const deviceName = peripheral.advertisement?.localName || '';
 
-    // DEBUG: Log ALL discovered devices
-    console.log(`🔍 BLE device discovered: "${deviceName}" (${peripheral.id}, RSSI: ${peripheral.rssi})`);
-    console.log(`🔍 Advertisement data:`, peripheral.advertisement);
+    // Quick filter: Check for TropX or Muse devices (case-insensitive)
+    const nameLower = deviceName.toLowerCase();
+    const isTargetDevice = BLE_CONFIG.DEVICE_PATTERNS.some(pattern =>
+      nameLower.includes(pattern.toLowerCase())
+    );
 
-    // Filter TropX devices
-    if (!deviceName.toLowerCase().includes(BLE_CONFIG.DEVICE_PREFIX)) {
-      console.log(`❌ Device "${deviceName}" filtered out (doesn't contain "${BLE_CONFIG.DEVICE_PREFIX}")`);
-      return;
+    if (!isTargetDevice) {
+      return; // Silent reject - don't log non-target devices
     }
 
     // Check RSSI threshold
     if (peripheral.rssi < BLE_CONFIG.MIN_RSSI) {
-      console.log(`❌ Device "${deviceName}" filtered out (RSSI ${peripheral.rssi} < ${BLE_CONFIG.MIN_RSSI})`);
+      console.log(`❌ Weak signal: ${deviceName} (RSSI ${peripheral.rssi} < ${BLE_CONFIG.MIN_RSSI})`);
       return;
     }
 
-    console.log(`✅ Discovered TropX device: ${deviceName} (${peripheral.id}, RSSI: ${peripheral.rssi})`);
-
+    console.log(`✅ Discovered device: ${deviceName} (${peripheral.id}, RSSI: ${peripheral.rssi})`);
     this.discoveredPeripherals.set(peripheral.id, peripheral);
 
     // Create device info and update state manager with state preservation

@@ -54,6 +54,11 @@ export class DeviceRegistry {
   private readonly REGISTRY_FILE: string;
   private readonly OVERRIDES_FILE: string;
 
+  // PERFORMANCE FIX: Debounce file writes to prevent event loop blocking
+  private saveTimeout: NodeJS.Timeout | null = null;
+  private readonly SAVE_DEBOUNCE_MS = 500; // Wait 500ms before writing
+  private pendingSave = false;
+
   private constructor() {
     // Use Electron's userData directory for persistence
     const userDataPath = app.getPath('userData');
@@ -237,12 +242,10 @@ export class DeviceRegistry {
       description: `Manually assigned: ${deviceName}`,
       matchedBy: 'manual' as const
     };
-    try {
-      fs.writeFileSync(this.OVERRIDES_FILE, JSON.stringify(overrides, null, 2));
-      console.log(`📌 [DEVICE_REGISTRY] Manual override set: "${deviceName}" → ID 0x${deviceID.toString(16)}`);
-    } catch (error) {
-      console.error('Failed to save manual override:', error);
-    }
+    // ASYNC write - doesn't block event loop
+    fs.promises.writeFile(this.OVERRIDES_FILE, JSON.stringify(overrides, null, 2))
+      .then(() => console.log(`📌 [DEVICE_REGISTRY] Manual override set: "${deviceName}" → ID 0x${deviceID.toString(16)}`))
+      .catch(error => console.error('Failed to save manual override:', error));
   }
 
   /**
@@ -251,12 +254,10 @@ export class DeviceRegistry {
   removeManualOverride(deviceName: string): void {
     const overrides = this.loadManualOverrides();
     delete overrides[deviceName];
-    try {
-      fs.writeFileSync(this.OVERRIDES_FILE, JSON.stringify(overrides, null, 2));
-      console.log(`🗑️ [DEVICE_REGISTRY] Manual override removed for "${deviceName}"`);
-    } catch (error) {
-      console.error('Failed to remove manual override:', error);
-    }
+    // ASYNC write - doesn't block event loop
+    fs.promises.writeFile(this.OVERRIDES_FILE, JSON.stringify(overrides, null, 2))
+      .then(() => console.log(`🗑️ [DEVICE_REGISTRY] Manual override removed for "${deviceName}"`))
+      .catch(error => console.error('Failed to remove manual override:', error));
   }
 
   /**
@@ -320,17 +321,47 @@ export class DeviceRegistry {
   }
 
   /**
-   * Save registry to file system
+   * Save registry to file system (debounced to prevent event loop blocking)
+   * PERFORMANCE FIX: Uses async I/O with debouncing
    */
   private saveToFileSystem(): void {
+    // Mark that we have pending changes
+    this.pendingSave = true;
+
+    // Clear existing timeout
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+    }
+
+    // Debounce: Wait before writing to batch multiple updates
+    this.saveTimeout = setTimeout(() => {
+      this.flushToFileSystem();
+    }, this.SAVE_DEBOUNCE_MS);
+  }
+
+  /**
+   * Actually write to file system (async)
+   */
+  private async flushToFileSystem(): Promise<void> {
+    if (!this.pendingSave) return;
+
+    this.pendingSave = false;
+    this.saveTimeout = null;
+
     try {
       const data = Array.from(this.devices.values()).map(device => ({
         ...device,
         registeredAt: device.registeredAt.toISOString(),
         lastSeen: device.lastSeen.toISOString()
       }));
-      fs.writeFileSync(this.REGISTRY_FILE, JSON.stringify(data, null, 2));
-      console.log(`💾 [DEVICE_REGISTRY] Saved ${data.length} devices to file system`);
+
+      // ASYNC write - doesn't block event loop
+      await fs.promises.writeFile(
+        this.REGISTRY_FILE,
+        JSON.stringify(data, null, 2)
+      );
+
+      console.log(`💾 [DEVICE_REGISTRY] Saved ${data.length} devices to file system (async)`);
     } catch (error) {
       console.error('Failed to save registry to file system:', error);
     }

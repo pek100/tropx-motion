@@ -1264,11 +1264,50 @@ const ElectronMotionApp: React.FC = () => {
       }
     });
 
-    // Handle device status updates
+    // Handle device status updates (includes newly discovered devices during scan)
     bridgeClient.onMessage(MESSAGE_TYPES.DEVICE_STATUS, (message: any) => {
       console.log("📱 Device status update:", message);
 
-      // Update device states
+      // Add/update devices from device list (sent during scanning)
+      if (message.devices && Array.isArray(message.devices)) {
+        message.devices.forEach((device: any) => {
+          const existingDevice = state.allDevices.get(device.id);
+
+          if (!existingDevice) {
+            // New device discovered - add immediately
+            console.log(`✨ New device discovered: ${device.name} (${device.id})`);
+            dispatch({
+              type: "SET_DEVICE_STATE",
+              payload: {
+                deviceId: device.id,
+                device: {
+                  id: device.id,
+                  name: device.name,
+                  state: device.connected ? (device.streaming ? "streaming" : "connected") : "discovered",
+                  batteryLevel: device.batteryLevel || null,
+                  lastSeen: new Date()
+                }
+              }
+            });
+          } else {
+            // Update existing device
+            const newState = device.connected ? (device.streaming ? "streaming" : "connected") : "discovered";
+            dispatch({
+              type: "UPDATE_DEVICE",
+              payload: {
+                deviceId: device.id,
+                updates: {
+                  state: newState,
+                  batteryLevel: device.batteryLevel !== null ? device.batteryLevel : existingDevice.batteryLevel,
+                  lastSeen: new Date()
+                }
+              }
+            });
+          }
+        });
+      }
+
+      // Legacy: Update device states by name (backward compatibility)
       if (message.deviceName && message.connected !== undefined) {
         const device = Array.from(state.allDevices.entries()).find(([_, dev]) => dev.name === message.deviceName);
         if (device) {

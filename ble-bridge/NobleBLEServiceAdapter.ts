@@ -361,34 +361,70 @@ export class NobleBLEServiceAdapter implements BLEService {
   }
 
   // Broadcast device status update
+  // PERFORMANCE FIX: Throttle broadcasts to prevent event loop blocking
+  private lastBroadcastTime = 0;
+  private readonly BROADCAST_THROTTLE_MS = 100; // Max 10 broadcasts/sec
+  private pendingBroadcast = false;
+
   private async broadcastDeviceStatus(): Promise<void> {
     if (!this.broadcastFunction) return;
 
+    // Throttle: Schedule broadcast if too soon since last one
+    const now = Date.now();
+    if (now - this.lastBroadcastTime < this.BROADCAST_THROTTLE_MS) {
+      if (!this.pendingBroadcast) {
+        this.pendingBroadcast = true;
+        setTimeout(() => {
+          this.pendingBroadcast = false;
+          this.flushDeviceStatusBroadcast();
+        }, this.BROADCAST_THROTTLE_MS);
+      }
+      return;
+    }
+
+    this.flushDeviceStatusBroadcast();
+  }
+
+  private async flushDeviceStatusBroadcast(): Promise<void> {
+    if (!this.broadcastFunction) return;
+
+    this.lastBroadcastTime = Date.now();
+
     try {
-      const connectedDevices = this.getConnectedDevices();
+      // Include ALL devices (discovered, connected, streaming) for real-time UI updates
+      const allDevices = deviceStateManager.getAllDevices();
       const batteryRecord: Record<string, number> = {};
 
-      // Build battery record from state manager data
-      connectedDevices.forEach(device => {
+      // PERFORMANCE: Use for...of instead of forEach (faster)
+      for (const device of allDevices) {
         if (device.batteryLevel !== null) {
           batteryRecord[device.id] = device.batteryLevel;
         }
-      });
+      }
 
-      const statusData = QuaternionBinaryProtocol.serializeDeviceStatus(connectedDevices, batteryRecord);
+      // PERFORMANCE: Avoid double map() call - convert once
+      const deviceInfoList = allDevices.map(this.convertToDeviceInfo);
+
+      const statusData = QuaternionBinaryProtocol.serializeDeviceStatus(
+        deviceInfoList,
+        batteryRecord
+      );
 
       const message = {
         type: 0x31, // MESSAGE_TYPES.DEVICE_STATUS
         requestId: 0,
         timestamp: Date.now(),
-        devices: connectedDevices,
+        devices: deviceInfoList,
         batteryLevels: batteryRecord,
         data: statusData
       };
 
-      console.log(`🔋 Broadcasting device status for ${connectedDevices.length} devices:`, batteryRecord);
+      console.log(`📡 Broadcasting device status for ${allDevices.length} devices (all states)`);
 
-      await this.broadcastFunction(message, []);
+      // Use setImmediate to yield event loop
+      setImmediate(() => {
+        this.broadcastFunction!(message, []);
+      });
 
     } catch (error) {
       console.error('Error broadcasting device status:', error);

@@ -126,41 +126,25 @@ export class DeviceProcessor {
      * Creates defensive copies to prevent external modification.
      */
     getDevicesForJoint(jointName: string): Map<string, DeviceData> {
-        // DISABLED for performance (called at 100Hz)
-        // console.log(`🔗 [DEVICE_PROCESSOR] getDevicesForJoint(${jointName}):`, {
-        //     jointName: jointName,
-        //     deviceToJointsSize: this.deviceToJoints.size,
-        //     deviceToJoints: Object.fromEntries(this.deviceToJoints),
-        //     availableDeviceData: Array.from(this.latestDeviceData.keys())
-        // });
+        // PERFORMANCE FIX: Return direct references instead of clones
+        // Cloning 800 objects/sec (4 devices × 2 joints × 100Hz) causes GC pressure
+        // Joint processors should treat data as read-only
 
         const matchingDevices = new Map<string, DeviceData>();
 
-        this.deviceToJoints.forEach((joints, deviceId) => {
-            // DISABLED for performance (called at 100Hz)
-            // console.log(`🔗 [DEVICE_PROCESSOR] Checking device ${deviceId}:`, {
-            //     deviceJoints: joints,
-            //     includesTargetJoint: joints.includes(jointName)
-            // });
-
+        // PERFORMANCE: Use for...of instead of forEach (faster in hot path)
+        for (const [deviceId, joints] of this.deviceToJoints) {
             if (joints.includes(jointName)) {
                 const deviceData = this.latestDeviceData.get(deviceId);
                 if (deviceData) {
-                    matchingDevices.set(deviceId, this.cloneDeviceData(deviceData));
-                    // DISABLED for performance (called at 100Hz)
-                    // console.log(`✅ [DEVICE_PROCESSOR] Added device ${deviceId} to joint ${jointName}`);
+                    // Return direct reference - processors MUST NOT mutate!
+                    matchingDevices.set(deviceId, deviceData);
                 } else {
                     // Keep error logs for debugging
                     console.warn(`⚠️ [DEVICE_PROCESSOR] Device ${deviceId} has no data for joint ${jointName}`);
                 }
             }
-        });
-
-        // DISABLED for performance (called at 100Hz)
-        // console.log(`🔗 [DEVICE_PROCESSOR] getDevicesForJoint(${jointName}) result:`, {
-        //     deviceCount: matchingDevices.size,
-        //     deviceIds: Array.from(matchingDevices.keys())
-        // });
+        }
 
         return matchingDevices;
     }

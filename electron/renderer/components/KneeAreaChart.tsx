@@ -23,7 +23,7 @@ const ANGLE_CONSTRAINTS = {
 };
 
 const TIME_CONSTRAINTS = {
-  WINDOW_MS: 20 * 1000, // 20 seconds
+  WINDOW_MS: 160 * 1000, // 160 seconds (20 * 8)
   MS_TO_SECONDS: 1000
 };
 
@@ -171,8 +171,9 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   });
 
   // Replace blocking array state with UICircularBuffer
+  // Buffer size: 400 points (50 * 8) for 160 second window at ~2.5 Hz display rate
   const dataBufferRef = useRef<UICircularBuffer<ChartDataPoint>>(
-    new UICircularBuffer<ChartDataPoint>(50, TIME_CONSTRAINTS.WINDOW_MS)
+    new UICircularBuffer<ChartDataPoint>(400, TIME_CONSTRAINTS.WINDOW_MS)
   );
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const updateCounterRef = useRef(0);

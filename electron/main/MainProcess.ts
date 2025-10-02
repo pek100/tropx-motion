@@ -4,7 +4,7 @@ import { pathToFileURL } from 'url';
 import { MotionService } from './services/MotionService';
 import { BluetoothService } from './services/BluetoothService';
 import { isDev } from './utils/environment';
-import { CONFIG, WINDOW_CONFIG, MESSAGE_TYPES } from '../shared/config';
+import { CONFIG, WINDOW_CONFIG, MESSAGE_TYPES, BLUETOOTH_CONFIG } from '../shared/config';
 import { RecordingSession, ApiResponse } from '../shared/types';
 import { SystemMonitor } from './services/SystemMonitor';
 
@@ -224,13 +224,35 @@ export class MainProcess {
     this.mainWindow.once('ready-to-show', () => this.mainWindow?.show());
 
     // Robust renderer diagnostics
+    // PERFORMANCE FIX: Use async file writes with buffering to prevent event loop blocking
+    const logBuffer: string[] = [];
+    const LOG_FLUSH_INTERVAL = 1000; // Flush every 1 second
+    const LOG_MAX_BUFFER = 100; // Or when buffer reaches 100 messages
+
     const logToFile = (msg: string) => {
-      try {
-        const fs = require('fs');
-        const logDir = app.getPath('userData');
-        fs.appendFileSync(path.join(logDir, 'renderer.log'), `[${new Date().toISOString()}] ${msg}\n`);
-      } catch {}
+      // Add to buffer instead of immediate sync write
+      logBuffer.push(`[${new Date().toISOString()}] ${msg}\n`);
+
+      // Flush if buffer is full
+      if (logBuffer.length >= LOG_MAX_BUFFER) {
+        flushLogBuffer();
+      }
     };
+
+    const flushLogBuffer = () => {
+      if (logBuffer.length === 0) return;
+
+      const fs = require('fs').promises;
+      const logDir = app.getPath('userData');
+      const messages = logBuffer.splice(0).join('');
+
+      // Async write - doesn't block event loop
+      fs.appendFile(path.join(logDir, 'renderer.log'), messages)
+        .catch((err: any) => console.error('Log write error:', err));
+    };
+
+    // Periodic flush
+    setInterval(flushLogBuffer, LOG_FLUSH_INTERVAL);
 
     this.mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
       const lvl = ['LOG', 'WARN', 'ERROR'][level] || String(level);
@@ -309,7 +331,8 @@ export class MainProcess {
 
       const validDevices = deviceList.filter(device => {
         const name = (device.deviceName || '').toLowerCase();
-        return name.includes('tropx') || name.includes('muse');
+        // Use single source of truth for device patterns
+        return BLUETOOTH_CONFIG.DEVICE_PATTERNS.some(pattern => name.includes(pattern.toLowerCase()));
       });
 
       if (validDevices.length === 0) {

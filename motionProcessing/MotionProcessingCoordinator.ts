@@ -535,25 +535,18 @@ export class MotionProcessingCoordinator {
         //     jointNames: Array.from(this.jointProcessors.keys())
         // });
 
-        this.jointProcessors.forEach((jointProcessor, jointName) => {
+        // PERFORMANCE: Use for...of instead of forEach (faster in hot path at 100Hz)
+        for (const [jointName, jointProcessor] of this.jointProcessors) {
             const jointDevices = this.deviceProcessor.getDevicesForJoint(jointName);
-            // DISABLED for performance (called at 100Hz)
-            // console.log(`🦴 [MOTION_COORDINATOR] Processing joint ${jointName}:`, {
-            //     availableDevices: jointDevices.size,
-            //     deviceIds: Array.from(jointDevices.keys()),
-            //     requiredDevices: 2
-            // });
 
             if (jointDevices.size >= 2) {
-                // DISABLED for performance (called at 100Hz)
-                // console.log(`✅ [MOTION_COORDINATOR] Sufficient devices for ${jointName} - processing joint angles`);
                 jointProcessor.processDevices(jointDevices);
             }
             // DISABLED: No need to warn about missing devices at 100Hz - wasteful
             // else {
             //     console.warn(`⚠️ [MOTION_COORDINATOR] Insufficient devices for ${jointName}: ${jointDevices.size}/2 available`);
             // }
-        });
+        }
     }
 
     /**

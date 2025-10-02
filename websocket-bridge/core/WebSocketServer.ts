@@ -111,7 +111,8 @@ export class WebSocketServer {
   }
 
   // Send message to specific client
-  async sendToClient(clientId: string, message: BaseMessage): Promise<boolean> {
+  // PERFORMANCE FIX: Removed async - socket.send is synchronous, no need for Promise overhead
+  sendToClient(clientId: string, message: BaseMessage): boolean {
     const client = this.clients.get(clientId);
     if (!client || client.socket.readyState !== WSWebSocket.OPEN) return false;
 
@@ -129,7 +130,8 @@ export class WebSocketServer {
   }
 
   // Broadcast message to all connected clients
-  async broadcast(message: BaseMessage): Promise<number> {
+  // PERFORMANCE FIX: Removed async - no await statements, unnecessary Promise creation overhead
+  broadcast(message: BaseMessage): number {
     if (this.clients.size === 0) return 0;
 
     const buffer = BinaryProtocol.serialize(message);
