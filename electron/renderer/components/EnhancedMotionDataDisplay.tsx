@@ -26,24 +26,25 @@ interface EnhancedMotionDataDisplayProps {
 
 /** Enhanced data parser that converts various motion data formats to standardized knee data */
 const parseMotionData = (rawData: any): MotionData | null => {
-  // DEBUG: Always log to see actual data structure
-  console.log('📊 [CHART_DEBUG] parseMotionData received:', {
-    type: typeof rawData,
-    keys: Object.keys(rawData || {}),
-    sample: rawData,
-    hasLeft: rawData?.left,
-    hasRight: rawData?.right,
-    leftType: typeof rawData?.left,
-    rightType: typeof rawData?.right
-  });
-  
+  // DISABLED for performance (called at 100Hz)
+  // console.log('📊 [CHART_DEBUG] parseMotionData received:', {
+  //   type: typeof rawData,
+  //   keys: Object.keys(rawData || {}),
+  //   sample: rawData,
+  //   hasLeft: rawData?.left,
+  //   hasRight: rawData?.right,
+  //   leftType: typeof rawData?.left,
+  //   rightType: typeof rawData?.right
+  // });
+
   if (!rawData || typeof rawData !== 'object') {
     return null;
   }
 
   // Check if it's already in the expected format (from motion processing pipeline)
   if (rawData.left && rawData.right && typeof rawData.left.current === 'number' && typeof rawData.right.current === 'number') {
-    console.log('✅ [CHART_DEBUG] Found direct left/right format from motion processing pipeline');
+    // DISABLED for performance (called at 100Hz)
+    // console.log('✅ [CHART_DEBUG] Found direct left/right format from motion processing pipeline');
     return {
       left: {
         current: rawData.left.current,
@@ -69,7 +70,8 @@ const parseMotionData = (rawData: any): MotionData | null => {
 
   // Handle WebSocket MOTION_DATA message format (after BinaryProtocol deserialization)
   if (rawData.data && rawData.data.left && rawData.data.right && typeof rawData.data.left.current === 'number' && typeof rawData.data.right.current === 'number') {
-    console.log('✅ [CHART_DEBUG] Found WebSocket MOTION_DATA format from BinaryProtocol');
+    // DISABLED for performance (called at 100Hz)
+    // console.log('✅ [CHART_DEBUG] Found WebSocket MOTION_DATA format from BinaryProtocol');
     const motionData = rawData.data;
     return {
       left: {
@@ -96,7 +98,8 @@ const parseMotionData = (rawData: any): MotionData | null => {
 
   // Handle joint angle data from motion processing pipeline
   if (rawData && rawData.jointAngles) {
-    console.log('📊 [CHART_DEBUG] Received processed joint angles from motion processing pipeline:', rawData.jointAngles);
+    // DISABLED for performance (called at 100Hz)
+    // console.log('📊 [CHART_DEBUG] Received processed joint angles from motion processing pipeline:', rawData.jointAngles);
 
     const timestamp = rawData.timestamp || Date.now();
 
@@ -125,13 +128,15 @@ const parseMotionData = (rawData: any): MotionData | null => {
 
   // Handle quaternion data - should be processed by motion processing pipeline first
   if (rawData && rawData.quaternion) {
-    console.log('⚠️ [CHART_DEBUG] Raw quaternion data received in UI - this should be processed by motion processing pipeline first:', rawData);
-    console.log('📊 [CHART_DEBUG] Waiting for processed motion data from motion processing pipeline...');
+    // DISABLED for performance
+    // console.log('⚠️ [CHART_DEBUG] Raw quaternion data received in UI - this should be processed by motion processing pipeline first:', rawData);
+    // console.log('📊 [CHART_DEBUG] Waiting for processed motion data from motion processing pipeline...');
     return null; // Don't process raw quaternions in UI
   }
 
   // No valid data format found
-  console.log('📊 [CHART_DEBUG] No valid motion data format found:', rawData);
+  // DISABLED for performance
+  // console.log('📊 [CHART_DEBUG] No valid motion data format found:', rawData);
   return null;
 };
 
@@ -178,41 +183,43 @@ const EnhancedMotionDataDisplay: React.FC<EnhancedMotionDataDisplayProps> = ({
   const [showRawData, setShowRawData] = useState(false);
   const [showChart, setShowChart] = useState(true);
 
-  // 🚨 DEBUG: Log everything the chart component receives
-  console.log('🎨 [CHART_COMPONENT] EnhancedMotionDataDisplay received props:', {
-    data: data,
-    dataType: typeof data,
-    dataKeys: data ? Object.keys(data) : null,
-    dataStructure: JSON.stringify(data, null, 2),
-    isRecording: isRecording,
-    recordingStartTime: recordingStartTime,
-    hasData: !!data,
-    dataLength: data ? Object.keys(data).length : 0
-  });
+  // DISABLED for performance (called at 100Hz)
+  // console.log('🎨 [CHART_COMPONENT] EnhancedMotionDataDisplay received props:', {
+  //   data: data,
+  //   dataType: typeof data,
+  //   dataKeys: data ? Object.keys(data) : null,
+  //   dataStructure: JSON.stringify(data, null, 2),
+  //   isRecording: isRecording,
+  //   recordingStartTime: recordingStartTime,
+  //   hasData: !!data,
+  //   dataLength: data ? Object.keys(data).length : 0
+  // });
 
   // Parse and memoize the motion data
   const motionData = useMemo(() => {
     const parsedData = parseMotionData(data);
-    console.log('🎨 [CHART_COMPONENT] Parsed motion data result:', {
-      originalData: data,
-      parsedData: parsedData,
-      parseSuccess: !!parsedData,
-      parsedStructure: parsedData ? JSON.stringify(parsedData, null, 2) : null
-    });
+    // DISABLED for performance (called at 100Hz)
+    // console.log('🎨 [CHART_COMPONENT] Parsed motion data result:', {
+    //   originalData: data,
+    //   parsedData: parsedData,
+    //   parseSuccess: !!parsedData,
+    //   parsedStructure: parsedData ? JSON.stringify(parsedData, null, 2) : null
+    // });
     return parsedData;
   }, [data]);
   
   // Show test data if no motion data available and we're recording
   const shouldShowTestData = (!data || Object.keys(data).length === 0) && isRecording;
-  
+
   if (!data || Object.keys(data).length === 0) {
-    console.log('🚨 [CHART_COMPONENT] No data available - showing empty state:', {
-      data: data,
-      hasData: !!data,
-      dataLength: data ? Object.keys(data).length : 0,
-      isRecording: isRecording,
-      shouldShowTestData: shouldShowTestData
-    });
+    // DISABLED for performance
+    // console.log('🚨 [CHART_COMPONENT] No data available - showing empty state:', {
+    //   data: data,
+    //   hasData: !!data,
+    //   dataLength: data ? Object.keys(data).length : 0,
+    //   isRecording: isRecording,
+    //   shouldShowTestData: shouldShowTestData
+    // });
 
     return (
       <div className="bg-white rounded-xl shadow-lg border border-gray-200">
@@ -245,12 +252,13 @@ const EnhancedMotionDataDisplay: React.FC<EnhancedMotionDataDisplayProps> = ({
     );
   }
 
-  console.log('✅ [CHART_COMPONENT] Rendering chart with data:', {
-    motionData: motionData,
-    hasMotionData: !!motionData,
-    showChart: showChart,
-    showRawData: showRawData
-  });
+  // DISABLED for performance (called at 100Hz)
+  // console.log('✅ [CHART_COMPONENT] Rendering chart with data:', {
+  //   motionData: motionData,
+  //   hasMotionData: !!motionData,
+  //   showChart: showChart,
+  //   showRawData: showRawData
+  // });
 
   return (
     <div className="bg-white rounded-xl shadow-lg border border-gray-200">

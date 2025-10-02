@@ -595,12 +595,12 @@ export class NobleBluetoothService {
       }
     });
 
-    let started = 0;
-    for (const device of connectedDevices) {
-      if (await device.startStreaming()) {
-        started++;
-      }
-    }
+    // Start streaming in parallel for all devices (much faster than sequential)
+    const results = await Promise.all(
+      connectedDevices.map(device => device.startStreaming())
+    );
+
+    const started = results.filter(result => result).length;
 
     return {
       success: started > 0,

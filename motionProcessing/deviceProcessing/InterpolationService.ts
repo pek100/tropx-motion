@@ -117,9 +117,10 @@ export class InterpolationService {
             toRemove.forEach(point => this.processedGridPoints.delete(point));
         }
 
-        if (cleanedDevices > 0) {
-            console.log(`🧹 Periodic cleanup: cleaned ${cleanedDevices} device buffers, total samples: ${totalBufferSize}`);
-        }
+        // DISABLED: Cleanup logging is noisy and unnecessary
+        // if (cleanedDevices > 0) {
+        //     console.log(`🧹 Periodic cleanup: cleaned ${cleanedDevices} device buffers, total samples: ${totalBufferSize}`);
+        // }
     }
 
     /**

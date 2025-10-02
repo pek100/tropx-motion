@@ -7,6 +7,7 @@
 import { NobleBluetoothService, MotionData, TropXDeviceInfo } from './index';
 import { QuaternionBinaryProtocol } from './QuaternionBinaryProtocol';
 import { deviceStateManager } from './DeviceStateManager';
+import { deviceRegistry } from '../registry-management';
 
 // BLE Service interface from WebSocket Bridge
 interface BLEService {
@@ -140,6 +141,19 @@ export class NobleBLEServiceAdapter implements BLEService {
 
       if (result.success) {
         console.log(`✅ Noble: Successfully connected to ${deviceName}`);
+
+        // Register device in registry (assigns deviceID based on name pattern)
+        const registeredDevice = deviceRegistry.registerDevice(deviceId, deviceName);
+        if (!registeredDevice) {
+          console.error(`❌ Failed to register device "${deviceName}" - unknown device pattern`);
+          return {
+            success: false,
+            message: `Device "${deviceName}" doesn't match any known patterns. Please check device naming or add manual override.`
+          };
+        }
+
+        console.log(`📋 Device registered: ${deviceName} → ID 0x${registeredDevice.deviceID.toString(16)} (${registeredDevice.joint}, ${registeredDevice.position})`);
+
         // Broadcast device status update
         try {
           await this.broadcastDeviceStatus();
@@ -169,9 +183,18 @@ export class NobleBLEServiceAdapter implements BLEService {
 
       const result = await this.nobleService.disconnectDevice(deviceId);
 
+      console.log(`🔌 Disconnect result for ${deviceId}:`, result);
+
       if (result.success) {
+        // DO NOT unregister device from registry on disconnect!
+        // Registry should persist device mappings so they can reconnect with same ID.
+        // Physical disconnects (battery, interference) should not lose device identity.
+        console.log(`📋 Device ${deviceId} disconnected but registry mapping preserved for reconnection`);
+
         // Broadcast device status update
         await this.broadcastDeviceStatus();
+      } else {
+        console.warn(`⚠️ Disconnect failed for ${deviceId}: ${result.message}`);
       }
 
       return result;
@@ -261,7 +284,9 @@ export class NobleBLEServiceAdapter implements BLEService {
 
   // Get connected devices
   getConnectedDevices(): any[] {
-    const devices = deviceStateManager.getConnectedDevices();
+    // Get devices from NobleBluetoothService which has actual TropXDevice instances with battery info
+    // deviceStateManager only tracks connection states, not battery levels
+    const devices = this.nobleService.getConnectedDevices();
     return devices.map(this.convertToDeviceInfo);
   }
 
@@ -272,31 +297,34 @@ export class NobleBLEServiceAdapter implements BLEService {
 
   // Handle motion data from Noble devices
   private async handleMotionData(deviceId: string, motionData: MotionData): Promise<void> {
-    console.log(`🎯 [NobleBLEServiceAdapter] Received motion data from ${deviceId}: q(${motionData.quaternion.w.toFixed(3)}, ${motionData.quaternion.x.toFixed(3)}, ${motionData.quaternion.y.toFixed(3)}, ${motionData.quaternion.z.toFixed(3)})`);
+    // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
+    // console.log(`🎯 [NobleBLEServiceAdapter] Received motion data from ${deviceId}: q(${motionData.quaternion.w.toFixed(3)}, ${motionData.quaternion.x.toFixed(3)}, ${motionData.quaternion.y.toFixed(3)}, ${motionData.quaternion.z.toFixed(3)})`);
 
     try {
       // Process quaternions through motion coordinator FIRST, then coordinator sends processed data via WebSocket
       if (this.motionCoordinator) {
-        console.log(`🏭 [NobleBLEServiceAdapter] Processing quaternions through motion coordinator: ${deviceId}`);
+        // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
+        // console.log(`🏭 [NobleBLEServiceAdapter] Processing quaternions through motion coordinator: ${deviceId}`);
 
         // Convert to legacy IMU format for motion coordinator
+        // OPTIMIZED: Removed gyr/axl/mag object creation (was creating 200 objects/sec)
         const legacyData = {
           timestamp: motionData.timestamp,
-          gyr: { x: 0, y: 0, z: 0 },       // Not needed for quaternion-only
-          axl: { x: 0, y: 0, z: 0 },       // Not needed for quaternion-only
-          mag: { x: 0, y: 0, z: 0 },       // Not needed for quaternion-only
           quaternion: motionData.quaternion
         };
 
         try {
-          console.log(`🚀 [NobleBLEServiceAdapter] Sending to motion coordinator for processing: ${deviceId}`);
+          // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
+          // console.log(`🚀 [NobleBLEServiceAdapter] Sending to motion coordinator for processing: ${deviceId}`);
 
           // Use device name for motion processing instead of device ID for pattern matching
           const deviceName = this.getDeviceNameById(deviceId);
-          console.log(`🏷️ [NobleBLEServiceAdapter] Using device name for motion processing: ${deviceId} → ${deviceName}`);
+          // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
+          // console.log(`🏷️ [NobleBLEServiceAdapter] Using device name for motion processing: ${deviceId} → ${deviceName}`);
 
           this.motionCoordinator.processNewData(deviceName, legacyData);
-          console.log(`✅ [NobleBLEServiceAdapter] Motion coordinator processing initiated for ${deviceName} (${deviceId})`);
+          // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
+          // console.log(`✅ [NobleBLEServiceAdapter] Motion coordinator processing initiated for ${deviceName} (${deviceId})`);
         } catch (error) {
           console.error(`❌ [NobleBLEServiceAdapter] Error in motion coordinator processing for ${deviceId}:`, error);
         }
@@ -325,8 +353,10 @@ export class NobleBLEServiceAdapter implements BLEService {
     }
 
     // Handle battery updates
-    if (event === 'battery_updated' && data) {
+    if (event === 'battery_update' && data) {
       await this.broadcastBatteryUpdate(deviceId, data.batteryLevel);
+      // Also broadcast device status to ensure UI gets battery update
+      await this.broadcastDeviceStatus();
     }
   }
 
@@ -367,9 +397,13 @@ export class NobleBLEServiceAdapter implements BLEService {
 
   // Broadcast battery update
   private async broadcastBatteryUpdate(deviceId: string, batteryLevel: number): Promise<void> {
-    if (!this.broadcastFunction) return;
+    if (!this.broadcastFunction) {
+      console.warn(`⚠️ Cannot broadcast battery - no broadcast function configured`);
+      return;
+    }
 
     try {
+      console.log(`🔋 Broadcasting battery update: ${batteryLevel}% for device ${deviceId}`);
       const batteryData = QuaternionBinaryProtocol.serializeBatteryUpdate(deviceId, batteryLevel);
 
       const message = {
@@ -380,9 +414,10 @@ export class NobleBLEServiceAdapter implements BLEService {
       };
 
       await this.broadcastFunction(message, []);
+      console.log(`✅ Battery broadcast complete`);
 
     } catch (error) {
-      console.error('Error broadcasting battery update:', error);
+      console.error('❌ Error broadcasting battery update:', error);
     }
   }
 
@@ -486,6 +521,12 @@ export class NobleBLEServiceAdapter implements BLEService {
   // Utility delay function
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // Clear device registry (manual cleanup, e.g., before new session)
+  clearDeviceRegistry(): void {
+    console.log('🗑️ Manually clearing device registry...');
+    deviceRegistry.clearAll();
   }
 
   // Cleanup resources

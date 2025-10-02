@@ -214,15 +214,17 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
    */
   const updateData = useCallback(() => {
     if (!leftKnee && !rightKnee) {
-      console.log('📊 [CHART_DEBUG] No knee data - skipping update', { leftKnee, rightKnee });
+      // DISABLED for performance (called at 100Hz)
+      // console.log('📊 [CHART_DEBUG] No knee data - skipping update', { leftKnee, rightKnee });
       return;
     }
 
-    console.log('📊 [CHART_DEBUG] Chart update triggered', {
-      leftKneeValue: leftKnee?.current,
-      rightKneeValue: rightKnee?.current,
-      updateCounter: updateCounterRef.current
-    });
+    // DISABLED for performance (called at 100Hz)
+    // console.log('📊 [CHART_DEBUG] Chart update triggered', {
+    //   leftKneeValue: leftKnee?.current,
+    //   rightKneeValue: rightKnee?.current,
+    //   updateCounter: updateCounterRef.current
+    // });
 
     const trackingId = streamingLogger.startOperation('data_update', 'KneeAreaChart', 'updateData', {
       leftKneeValue: leftKnee?.current,
@@ -276,17 +278,19 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   /** Updates real-time data stream with smooth 60fps updates */
   useEffect(() => {
-    console.log('📊 [CHART_DEBUG] useEffect triggered', {
-      hasLeftKnee: !!leftKnee,
-      hasRightKnee: !!rightKnee,
-      leftKneeValue: leftKnee?.current,
-      rightKneeValue: rightKnee?.current,
-      leftTimestamp: leftKnee?.sensorTimestamp,
-      rightTimestamp: rightKnee?.sensorTimestamp
-    });
+    // DISABLED for performance (called at 100Hz)
+    // console.log('📊 [CHART_DEBUG] useEffect triggered', {
+    //   hasLeftKnee: !!leftKnee,
+    //   hasRightKnee: !!rightKnee,
+    //   leftKneeValue: leftKnee?.current,
+    //   rightKneeValue: rightKnee?.current,
+    //   leftTimestamp: leftKnee?.sensorTimestamp,
+    //   rightTimestamp: rightKnee?.sensorTimestamp
+    // });
 
     if (!leftKnee && !rightKnee) {
-      console.log('📊 [CHART_DEBUG] No knee data in useEffect - early return');
+      // DISABLED for performance (called at 100Hz)
+      // console.log('📊 [CHART_DEBUG] No knee data in useEffect - early return');
       return;
     }
 

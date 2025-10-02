@@ -109,12 +109,13 @@ export class MotionProcessingCoordinator {
      * Processes new IMU data from a specific device.
      */
     processNewData(deviceId: string, imuData: IMUData): void {
-        console.log(`🔄 [MOTION_COORDINATOR] processNewData called for ${deviceId}:`, {
-            isInitialized: this.isInitialized,
-            hasWebSocketBroadcast: !!this.webSocketBroadcast,
-            imuData: imuData,
-            timestamp: imuData.timestamp
-        });
+        // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
+        // console.log(`🔄 [MOTION_COORDINATOR] processNewData called for ${deviceId}:`, {
+        //     isInitialized: this.isInitialized,
+        //     hasWebSocketBroadcast: !!this.webSocketBroadcast,
+        //     imuData: imuData,
+        //     timestamp: imuData.timestamp
+        // });
 
         if (!this.isInitialized) {
             console.error(`❌ [MOTION_COORDINATOR] Not initialized - cannot process data from ${deviceId}`);
@@ -124,22 +125,23 @@ export class MotionProcessingCoordinator {
         // PERFORMANCE LOGGING: Track the data processing pipeline
         const start = performance.now();
 
-        // Sample logging every 50th call to avoid spam
-        this.processingCounter = (this.processingCounter || 0) + 1;
-        const shouldLog = this.processingCounter % 50 === 0;
+        // DISABLED: Sample logging disabled for performance
+        // this.processingCounter = (this.processingCounter || 0) + 1;
+        // const shouldLog = this.processingCounter % 50 === 0;
 
-        if (shouldLog) {
-            console.log(`🔄[COORD][Process start] Device: ${deviceId} | ${new Date().toISOString()}`);
-        }
+        // if (shouldLog) {
+        //     console.log(`🔄[COORD][Process start] Device: ${deviceId} | ${new Date().toISOString()}`);
+        // }
 
-        // Measure device processor time
+        // Measure device processor time (keep timing for slow operation detection)
         const deviceStart = performance.now();
         this.deviceProcessor.processData(deviceId, imuData);
         const deviceDuration = performance.now() - deviceStart;
 
         const totalDuration = performance.now() - start;
-        if (shouldLog || totalDuration > 1) {
-            console.log(`📊[COORD][Process complete] ${deviceId} | Total: ${totalDuration.toFixed(2)}ms | Device: ${deviceDuration.toFixed(2)}ms | ${new Date().toISOString()}`);
+        // Keep only slow operation logs (>1ms is concerning at 100Hz)
+        if (totalDuration > 1) {
+            console.warn(`⚠️ [COORD] Slow processing for ${deviceId}: ${totalDuration.toFixed(2)}ms (device: ${deviceDuration.toFixed(2)}ms)`);
         }
     }
 
@@ -512,7 +514,8 @@ export class MotionProcessingCoordinator {
     private setupDataFlow(): void {
         console.log('🔗 [MOTION_COORDINATOR] Setting up data flow subscription...');
         this.deviceProcessor.subscribe(() => {
-            console.log('📡 [MOTION_COORDINATOR] DeviceProcessor subscriber callback triggered');
+            // DISABLED for performance (called at 100Hz)
+            // console.log('📡 [MOTION_COORDINATOR] DeviceProcessor subscriber callback triggered');
             try {
                 this.processJoints();
             } catch (error) {
@@ -526,25 +529,30 @@ export class MotionProcessingCoordinator {
      * Processes joint calculations for all joints that have sufficient device data.
      */
     private processJoints(): void {
-        console.log(`🦴 [MOTION_COORDINATOR] processJoints called:`, {
-            jointProcessorCount: this.jointProcessors.size,
-            jointNames: Array.from(this.jointProcessors.keys())
-        });
+        // DISABLED for performance (called at 100Hz)
+        // console.log(`🦴 [MOTION_COORDINATOR] processJoints called:`, {
+        //     jointProcessorCount: this.jointProcessors.size,
+        //     jointNames: Array.from(this.jointProcessors.keys())
+        // });
 
         this.jointProcessors.forEach((jointProcessor, jointName) => {
             const jointDevices = this.deviceProcessor.getDevicesForJoint(jointName);
-            console.log(`🦴 [MOTION_COORDINATOR] Processing joint ${jointName}:`, {
-                availableDevices: jointDevices.size,
-                deviceIds: Array.from(jointDevices.keys()),
-                requiredDevices: 2
-            });
+            // DISABLED for performance (called at 100Hz)
+            // console.log(`🦴 [MOTION_COORDINATOR] Processing joint ${jointName}:`, {
+            //     availableDevices: jointDevices.size,
+            //     deviceIds: Array.from(jointDevices.keys()),
+            //     requiredDevices: 2
+            // });
 
             if (jointDevices.size >= 2) {
-                console.log(`✅ [MOTION_COORDINATOR] Sufficient devices for ${jointName} - processing joint angles`);
+                // DISABLED for performance (called at 100Hz)
+                // console.log(`✅ [MOTION_COORDINATOR] Sufficient devices for ${jointName} - processing joint angles`);
                 jointProcessor.processDevices(jointDevices);
-            } else {
-                console.warn(`⚠️ [MOTION_COORDINATOR] Insufficient devices for ${jointName}: ${jointDevices.size}/2 available`);
             }
+            // DISABLED: No need to warn about missing devices at 100Hz - wasteful
+            // else {
+            //     console.warn(`⚠️ [MOTION_COORDINATOR] Insufficient devices for ${jointName}: ${jointDevices.size}/2 available`);
+            // }
         });
     }
 

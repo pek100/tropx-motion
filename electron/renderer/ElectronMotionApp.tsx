@@ -1239,7 +1239,8 @@ const ElectronMotionApp: React.FC = () => {
     bridgeClient.onMessage(MESSAGE_TYPES.MOTION_DATA, (message: any) => {
       const start = performance.now();
 
-      console.log(`🎨 [UI] Received processed joint angle data via WebSocket:`, message);
+      // DISABLED for performance (called at 100Hz)
+      // console.log(`🎨 [UI] Received processed joint angle data via WebSocket:`, message);
 
       // Pass the WebSocket message directly to the chart - it has the correct structure
       // BinaryProtocol deserializes to: {type, deviceName, data: {left: {...}, right: {...}}, timestamp}
@@ -1553,11 +1554,8 @@ const ElectronMotionApp: React.FC = () => {
       if (scanTimeoutRef.current) {
         clearTimeout(scanTimeoutRef.current);
       }
-      // Stop streaming if active on component unmount
-      if (museManager.getIsStreaming()) {
-        console.log("🧹 Component unmounting, stopping active streaming...");
-        museManager.stopStreaming().catch((error) => console.warn("⚠️ Error stopping streaming during unmount:", error));
-      }
+      // Cleanup handled by WebSocket bridge on disconnect
+      console.log("🧹 Component unmounting, WebSocket bridge will handle cleanup...");
     };
   }, []);
 
@@ -1576,11 +1574,22 @@ const ElectronMotionApp: React.FC = () => {
         console.warn("⚠️ Device not found:", deviceId);
         return;
       }
-      // Disconnect via SDK
-      await museManager.disconnectDevice(device.name);
-      // Update device state
-      dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "discovered" } } });
-      console.log("✅ Device disconnected successfully:", device.name);
+      // Disconnect via WebSocket Bridge (Noble BLE)
+      if (!bridgeClientRef.current) {
+        console.error("❌ Bridge client not initialized");
+        return;
+      }
+      const result = await bridgeClientRef.current.disconnectFromDevice(deviceId);
+      console.log("🔌 Disconnect result:", result);
+
+      if (result.success) {
+        // Update device state
+        dispatch({ type: "UPDATE_DEVICE", payload: { deviceId, updates: { state: "discovered" } } });
+        console.log("✅ Device disconnected successfully:", device.name);
+      } else {
+        console.warn("⚠️ Disconnect failed:", result.message);
+        alert(`Failed to disconnect device: ${result.message || "Unknown error"}`);
+      }
     } catch (error) {
       console.error("❌ Failed to disconnect device:", error);
       alert(`Failed to disconnect device: ${error instanceof Error ? error.message : "Unknown error"}`);

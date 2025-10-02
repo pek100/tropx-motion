@@ -282,15 +282,21 @@ class BlockingOperationAlerts {
      * Send console notification
      */
     private sendConsoleNotification(alert: BlockingAlert): void {
-        const emoji = alert.severity === 'critical' ? '🚨' : alert.severity === 'severe' ? '⚠️' : '🐌';
-        const severityColor = alert.severity === 'critical' ? '\x1b[31m' : alert.severity === 'severe' ? '\x1b[33m' : '\x1b[36m';
-        const resetColor = '\x1b[0m';
+        // DISABLED for performance - these alerts can be frequent during streaming
+        // const emoji = alert.severity === 'critical' ? '🚨' : alert.severity === 'severe' ? '⚠️' : '🐌';
+        // const severityColor = alert.severity === 'critical' ? '\x1b[31m' : alert.severity === 'severe' ? '\x1b[33m' : '\x1b[36m';
+        // const resetColor = '\x1b[0m';
 
-        console.log(`${emoji} ${severityColor}[UI_BLOCKING_ALERT]${resetColor} ${alert.severity.toUpperCase()}: ${alert.component}.${alert.operation} blocked for ${alert.duration.toFixed(2)}ms`);
-        console.log(`   💡 Action: ${alert.actionable}`);
+        // console.log(`${emoji} ${severityColor}[UI_BLOCKING_ALERT]${resetColor} ${alert.severity.toUpperCase()}: ${alert.component}.${alert.operation} blocked for ${alert.duration.toFixed(2)}ms`);
+        // console.log(`   💡 Action: ${alert.actionable}`);
 
-        if (alert.context) {
-            console.log(`   📋 Context:`, alert.context);
+        // if (alert.context) {
+        //     console.log(`   📋 Context:`, alert.context);
+        // }
+
+        // Keep only critical alerts (100ms+)
+        if (alert.severity === 'critical') {
+            console.error(`🚨 [CRITICAL_BLOCKING] ${alert.component}.${alert.operation} blocked for ${alert.duration.toFixed(2)}ms`);
         }
     }
 
@@ -490,10 +496,10 @@ class BlockingOperationAlerts {
             this.insights.shift();
         }
 
-        // Log insight
-        const emoji = insight.severity === 'error' ? '🔥' : insight.severity === 'warning' ? '💡' : 'ℹ️';
-        console.log(`${emoji} [PERFORMANCE_INSIGHT] ${insight.component}: ${insight.description}`);
-        console.log(`   🎯 Recommendation: ${insight.recommendation}`);
+        // DISABLED: Performance insights are noisy
+        // const emoji = insight.severity === 'error' ? '🔥' : insight.severity === 'warning' ? '💡' : 'ℹ️';
+        // console.log(`${emoji} [PERFORMANCE_INSIGHT] ${insight.component}: ${insight.description}`);
+        // console.log(`   🎯 Recommendation: ${insight.recommendation}`);
     }
 
     /**
@@ -535,11 +541,11 @@ class BlockingOperationAlerts {
             }
         }
 
-        // Report insights
-        const recentInsights = this.insights.filter(insight => Date.now() - (insight as any).timestamp < 60000);
-        if (recentInsights.length > 0) {
-            console.log('💡 [PERFORMANCE_INSIGHTS] Active recommendations:', recentInsights.length);
-        }
+        // DISABLED: Performance insights summary is noisy
+        // const recentInsights = this.insights.filter(insight => Date.now() - (insight as any).timestamp < 60000);
+        // if (recentInsights.length > 0) {
+        //     console.log('💡 [PERFORMANCE_INSIGHTS] Active recommendations:', recentInsights.length);
+        // }
     }
 
     /**

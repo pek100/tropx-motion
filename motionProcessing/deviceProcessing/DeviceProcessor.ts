@@ -2,9 +2,9 @@ import { IMUData, DeviceData, MotionConfig } from '../shared/types';
 import { InterpolationService } from './InterpolationService';
 import { DataSyncService } from './DataSyncService';
 import { DEVICE, SYSTEM, BATTERY, CONNECTION_STATE } from '../shared/constants';
-import { testDeviceAgainstPatterns } from '../shared/utils';
 import { QuaternionService } from '../shared/QuaternionService';
 import { PerformanceLogger } from '../shared/PerformanceLogger';
+import { deviceRegistry } from '../../registry-management';
 
 interface DeviceStatus {
     total: number;
@@ -66,11 +66,12 @@ export class DeviceProcessor {
      * Processes incoming IMU data through synchronization and interpolation pipeline.
      */
     processData(deviceId: string, imuData: IMUData): void {
-        console.log(`🔧 [DEVICE_PROCESSOR] processData called for ${deviceId}:`, {
-            deviceId: deviceId,
-            hasQuaternion: !!imuData.quaternion,
-            timestamp: imuData.timestamp
-        });
+        // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
+        // console.log(`🔧 [DEVICE_PROCESSOR] processData called for ${deviceId}:`, {
+        //     deviceId: deviceId,
+        //     hasQuaternion: !!imuData.quaternion,
+        //     timestamp: imuData.timestamp
+        // });
 
         if (!deviceId || !imuData) {
             console.error(`❌ [DEVICE_PROCESSOR] Invalid data: deviceId=${deviceId}, imuData=${!!imuData}`);
@@ -86,7 +87,17 @@ export class DeviceProcessor {
         const synchronizedIMU = this.dataSyncService.createSynchronizedIMUData(deviceId, imuData);
         if (!synchronizedIMU) return;
 
-        this.ensureDeviceJointMapping(deviceId);
+        // Update last seen timestamp in registry (fast O(1) lookup)
+        deviceRegistry.updateLastSeen(deviceId);
+
+        // Get device-to-joint mapping from registry (no pattern matching needed)
+        const device = deviceRegistry.getDeviceByName(deviceId);
+        if (device) {
+            // Ensure mapping exists (will be used by getDevicesForJoint)
+            if (!this.deviceToJoints.has(deviceId)) {
+                this.deviceToJoints.set(deviceId, [device.joint]);
+            }
+        }
 
         // Optional bypass: emit raw sample directly without interpolation
         if (this.config.performance?.bypassInterpolation) {
@@ -105,7 +116,8 @@ export class DeviceProcessor {
             return;
         }
 
-        console.log(`🔄 [DEVICE_PROCESSOR] Sending ${deviceId} to interpolation service`);
+        // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
+        // console.log(`🔄 [DEVICE_PROCESSOR] Sending ${deviceId} to interpolation service`);
         this.interpolationService.processSample(deviceId, synchronizedIMU);
     }
 
@@ -114,36 +126,41 @@ export class DeviceProcessor {
      * Creates defensive copies to prevent external modification.
      */
     getDevicesForJoint(jointName: string): Map<string, DeviceData> {
-        console.log(`🔗 [DEVICE_PROCESSOR] getDevicesForJoint(${jointName}):`, {
-            jointName: jointName,
-            deviceToJointsSize: this.deviceToJoints.size,
-            deviceToJoints: Object.fromEntries(this.deviceToJoints),
-            availableDeviceData: Array.from(this.latestDeviceData.keys())
-        });
+        // DISABLED for performance (called at 100Hz)
+        // console.log(`🔗 [DEVICE_PROCESSOR] getDevicesForJoint(${jointName}):`, {
+        //     jointName: jointName,
+        //     deviceToJointsSize: this.deviceToJoints.size,
+        //     deviceToJoints: Object.fromEntries(this.deviceToJoints),
+        //     availableDeviceData: Array.from(this.latestDeviceData.keys())
+        // });
 
         const matchingDevices = new Map<string, DeviceData>();
 
         this.deviceToJoints.forEach((joints, deviceId) => {
-            console.log(`🔗 [DEVICE_PROCESSOR] Checking device ${deviceId}:`, {
-                deviceJoints: joints,
-                includesTargetJoint: joints.includes(jointName)
-            });
+            // DISABLED for performance (called at 100Hz)
+            // console.log(`🔗 [DEVICE_PROCESSOR] Checking device ${deviceId}:`, {
+            //     deviceJoints: joints,
+            //     includesTargetJoint: joints.includes(jointName)
+            // });
 
             if (joints.includes(jointName)) {
                 const deviceData = this.latestDeviceData.get(deviceId);
                 if (deviceData) {
                     matchingDevices.set(deviceId, this.cloneDeviceData(deviceData));
-                    console.log(`✅ [DEVICE_PROCESSOR] Added device ${deviceId} to joint ${jointName}`);
+                    // DISABLED for performance (called at 100Hz)
+                    // console.log(`✅ [DEVICE_PROCESSOR] Added device ${deviceId} to joint ${jointName}`);
                 } else {
+                    // Keep error logs for debugging
                     console.warn(`⚠️ [DEVICE_PROCESSOR] Device ${deviceId} has no data for joint ${jointName}`);
                 }
             }
         });
 
-        console.log(`🔗 [DEVICE_PROCESSOR] getDevicesForJoint(${jointName}) result:`, {
-            deviceCount: matchingDevices.size,
-            deviceIds: Array.from(matchingDevices.keys())
-        });
+        // DISABLED for performance (called at 100Hz)
+        // console.log(`🔗 [DEVICE_PROCESSOR] getDevicesForJoint(${jointName}) result:`, {
+        //     deviceCount: matchingDevices.size,
+        //     deviceIds: Array.from(matchingDevices.keys())
+        // });
 
         return matchingDevices;
     }
@@ -276,56 +293,15 @@ export class DeviceProcessor {
     }
 
     /**
-     * Ensures device has joint mapping by performing pattern matching if needed.
+     * DEPRECATED: Replaced by DeviceRegistry
+     * Device-to-joint mapping now happens at connection time via deviceRegistry.registerDevice()
+     * This eliminates on-demand pattern matching during data processing (was called at 100Hz!)
+     *
+     * The mapping is now:
+     * 1. Set once when device connects (NobleBLEServiceAdapter.connectToDevice)
+     * 2. Stored in deviceToJoints map (populated in processData from registry lookup)
+     * 3. Never needs pattern matching during runtime
      */
-    private ensureDeviceJointMapping(deviceId: string): void {
-        if (!this.deviceToJoints.has(deviceId)) {
-            const joints = this.findMatchingJoints(deviceId);
-            this.deviceToJoints.set(deviceId, joints);
-        }
-    }
-
-    /**
-     * Finds all joints that match device ID based on configuration patterns.
-     */
-    private findMatchingJoints(deviceId: string): string[] {
-        console.log(`🔍 [DEVICE_PROCESSOR] findMatchingJoints for ${deviceId}:`, {
-            deviceId: deviceId,
-            availableJoints: this.config.joints.map(j => j.name),
-            jointConfigs: this.config.joints
-        });
-
-        const matchingJoints: string[] = [];
-
-        for (const jointConfig of this.config.joints) {
-            const matches = this.deviceMatchesJoint(deviceId, jointConfig);
-            console.log(`🔍 [DEVICE_PROCESSOR] Testing ${deviceId} against joint ${jointConfig.name}:`, {
-                jointName: jointConfig.name,
-                matches: matches,
-                topSensorPattern: jointConfig.topSensorPattern,
-                bottomSensorPattern: jointConfig.bottomSensorPattern
-            });
-
-            if (matches) {
-                matchingJoints.push(jointConfig.name);
-                console.log(`✅ [DEVICE_PROCESSOR] Device ${deviceId} matches joint ${jointConfig.name}`);
-            }
-        }
-
-        console.log(`🔍 [DEVICE_PROCESSOR] findMatchingJoints result for ${deviceId}:`, {
-            matchingJoints: matchingJoints
-        });
-
-        return matchingJoints;
-    }
-
-    /**
-     * Tests if device ID matches any pattern defined for a joint configuration.
-     */
-    private deviceMatchesJoint(deviceId: string, jointConfig: any): boolean {
-        return testDeviceAgainstPatterns(deviceId, jointConfig.topSensorPattern) ||
-            testDeviceAgainstPatterns(deviceId, jointConfig.bottomSensorPattern);
-    }
 
     /**
      * Creates deep copy of device data to prevent external mutations.
@@ -393,29 +369,33 @@ export class DeviceProcessor {
      * Safely notifies all subscribers of data updates.
      */
     private notifySubscribers(): void {
-        console.log(`🔔 [DEVICE_PROCESSOR] notifySubscribers called:`, {
-            subscriberCount: this.subscribers.size,
-            latestDeviceDataCount: this.latestDeviceData.size,
-            deviceIds: Array.from(this.latestDeviceData.keys())
-        });
+        // DISABLED for performance (called at 100Hz)
+        // console.log(`🔔 [DEVICE_PROCESSOR] notifySubscribers called:`, {
+        //     subscriberCount: this.subscribers.size,
+        //     latestDeviceDataCount: this.latestDeviceData.size,
+        //     deviceIds: Array.from(this.latestDeviceData.keys())
+        // });
 
         const now = performance.now();
 
         // Throttling: Enforce minimum interval between notifications
         if (now - this.lastNotificationTime < this.MIN_NOTIFICATION_INTERVAL) {
-            console.log(`⏳ [DEVICE_PROCESSOR] Throttled - too soon since last notification`);
+            // DISABLED for performance (called at 100Hz)
+            // console.log(`⏳ [DEVICE_PROCESSOR] Throttled - too soon since last notification`);
             return;
         }
 
         // Backpressure: Skip if too many notifications are pending
         if (this.pendingNotifications >= this.MAX_PENDING_NOTIFICATIONS) {
-            console.log(`⚠️ [DEVICE_PROCESSOR] Backpressure - too many pending notifications`);
+            // DISABLED for performance (called at 100Hz)
+            // console.log(`⚠️ [DEVICE_PROCESSOR] Backpressure - too many pending notifications`);
             return;
         }
 
         const runCallbacks = () => {
             this.pendingNotifications--;
-            console.log(`📢 [DEVICE_PROCESSOR] Calling ${this.subscribers.size} subscribers`);
+            // DISABLED for performance (called at 100Hz)
+            // console.log(`📢 [DEVICE_PROCESSOR] Calling ${this.subscribers.size} subscribers`);
             this.subscribers.forEach(callback => {
                 try {
                     callback();
@@ -463,7 +443,8 @@ export class DeviceProcessor {
             this.interpolationService.performPeriodicCleanup();
         }
 
-        PerformanceLogger.info('DEVICE', `Periodic cleanup: ${this.subscribers.size} subscribers, ${this.latestDeviceData.size} device entries`);
+        // DISABLED: Cleanup logging is noisy and unnecessary
+        // PerformanceLogger.info('DEVICE', `Periodic cleanup: ${this.subscribers.size} subscribers, ${this.latestDeviceData.size} device entries`);
     }
 
     /**

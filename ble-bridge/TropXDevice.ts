@@ -63,7 +63,8 @@ export class TropXDevice {
       }
 
       this.wrapper.deviceInfo.state = 'connected';
-      this.notifyEvent('connected');
+      // NOTE: Don't fire 'connected' event yet - wait until battery is read
+      // so UI gets complete device info including battery
 
       // Simple delay like Python approach
       console.log('⏳ Brief delay for device stability...');
@@ -139,8 +140,24 @@ export class TropXDevice {
         this.handleDisconnect();
       });
 
-      // Start battery monitoring
+      // Discover command characteristic for battery reading
+      await this.ensureCharacteristics();
+
+      // Get initial battery level synchronously BEFORE firing connected event
+      // This ensures battery is available when device status is broadcast
+      console.log(`🔋 [${this.wrapper.deviceInfo.name}] Reading initial battery level...`);
+      try {
+        await this.getBatteryLevel();
+      } catch (error) {
+        console.warn(`⚠️ Failed to read initial battery, will retry later:`, error);
+        // Don't block connection on battery read failure
+      }
+
+      // Start periodic battery monitoring
       this.startBatteryMonitoring();
+
+      // Now fire 'connected' event with complete device info (including battery)
+      this.notifyEvent('connected');
 
       console.log(`✅ Connected to TropX device: ${this.wrapper.deviceInfo.name}`);
       return true;
@@ -173,51 +190,63 @@ export class TropXDevice {
     }
   }
 
-  // Start quaternion data streaming (with lazy characteristic discovery like Python)
-  async startStreaming(): Promise<boolean> {
+  // Ensure characteristics are discovered (used for both battery and streaming)
+  private async ensureCharacteristics(): Promise<boolean> {
+    if (this.wrapper.commandCharacteristic && this.wrapper.dataCharacteristic) {
+      return true; // Already discovered
+    }
+
     if (!this.wrapper.service) {
       console.error('Device not properly connected - no service available');
       return false;
     }
 
-    // Optimized characteristic discovery with caching
-    if (!this.wrapper.commandCharacteristic || !this.wrapper.dataCharacteristic) {
-      console.log(`🔍 [${this.wrapper.deviceInfo.name}] Discovering characteristics for streaming...`);
-      try {
-        // Fix EventEmitter memory leak warning
-        if (this.wrapper.service.setMaxListeners) {
-          this.wrapper.service.setMaxListeners(20);
-        }
+    console.log(`🔍 [${this.wrapper.deviceInfo.name}] Discovering characteristics...`);
+    try {
+      // Fix EventEmitter memory leak warning
+      if (this.wrapper.service.setMaxListeners) {
+        this.wrapper.service.setMaxListeners(20);
+      }
 
-        const discoveryStartTime = Date.now();
-        const characteristics = await this.wrapper.service.discoverCharacteristicsAsync([
-          BLE_CONFIG.COMMAND_CHARACTERISTIC_UUID,
-          BLE_CONFIG.DATA_CHARACTERISTIC_UUID
-        ]);
-        console.log(`🔍 [${this.wrapper.deviceInfo.name}] Characteristic discovery took ${Date.now() - discoveryStartTime}ms`);
+      const discoveryStartTime = Date.now();
+      const characteristics = await this.wrapper.service.discoverCharacteristicsAsync([
+        BLE_CONFIG.COMMAND_CHARACTERISTIC_UUID,
+        BLE_CONFIG.DATA_CHARACTERISTIC_UUID
+      ]);
+      console.log(`🔍 [${this.wrapper.deviceInfo.name}] Characteristic discovery took ${Date.now() - discoveryStartTime}ms`);
 
-        // Map characteristics
-        for (const char of characteristics) {
-          if (char.uuid === BLE_CONFIG.COMMAND_CHARACTERISTIC_UUID.replace(/-/g, '')) {
-            this.wrapper.commandCharacteristic = char;
-            console.log(`✅ [${this.wrapper.deviceInfo.name}] Found command characteristic: ${char.uuid}`);
-          } else if (char.uuid === BLE_CONFIG.DATA_CHARACTERISTIC_UUID.replace(/-/g, '')) {
-            this.wrapper.dataCharacteristic = char;
-            console.log(`✅ [${this.wrapper.deviceInfo.name}] Found data characteristic: ${char.uuid}`);
-          }
+      // Map characteristics
+      for (const char of characteristics) {
+        if (char.uuid === BLE_CONFIG.COMMAND_CHARACTERISTIC_UUID.replace(/-/g, '')) {
+          this.wrapper.commandCharacteristic = char;
+          console.log(`✅ [${this.wrapper.deviceInfo.name}] Found command characteristic: ${char.uuid}`);
+          console.log(`   Properties: ${JSON.stringify(char.properties)}`);
+        } else if (char.uuid === BLE_CONFIG.DATA_CHARACTERISTIC_UUID.replace(/-/g, '')) {
+          this.wrapper.dataCharacteristic = char;
+          console.log(`✅ [${this.wrapper.deviceInfo.name}] Found data characteristic: ${char.uuid}`);
+          console.log(`   Properties: ${JSON.stringify(char.properties)}`);
         }
+      }
 
-        if (!this.wrapper.commandCharacteristic || !this.wrapper.dataCharacteristic) {
-          console.error(`❌ [${this.wrapper.deviceInfo.name}] Required TropX characteristics not found`);
-          console.log(`Available characteristics: ${characteristics.map((c: any) => c.uuid).join(', ')}`);
-          return false;
-        }
-      } catch (error) {
-        console.error(`❌ [${this.wrapper.deviceInfo.name}] Failed to discover characteristics:`, error);
+      if (!this.wrapper.commandCharacteristic || !this.wrapper.dataCharacteristic) {
+        console.error(`❌ [${this.wrapper.deviceInfo.name}] Required TropX characteristics not found`);
+        console.log(`Available characteristics: ${characteristics.map((c: any) => c.uuid).join(', ')}`);
         return false;
       }
-    } else {
-      console.log(`✅ [${this.wrapper.deviceInfo.name}] Using cached characteristics (faster streaming start)`);
+
+      return true;
+    } catch (error) {
+      console.error(`❌ [${this.wrapper.deviceInfo.name}] Failed to discover characteristics:`, error);
+      return false;
+    }
+  }
+
+  // Start quaternion data streaming (with lazy characteristic discovery like Python)
+  async startStreaming(): Promise<boolean> {
+    // Ensure characteristics are discovered (uses cached if already done)
+    const hasCharacteristics = await this.ensureCharacteristics();
+    if (!hasCharacteristics) {
+      return false;
     }
 
     try {
@@ -243,12 +272,16 @@ export class TropXDevice {
       // Start streaming with proper command format (like muse_sdk)
       const streamCommandStartTime = Date.now();
       const streamCommand = TropXCommands.Cmd_StartStream(DATA_MODES.QUATERNION, DATA_FREQUENCIES.HZ_100);
-      await this.wrapper.commandCharacteristic.writeAsync(Buffer.from(streamCommand), false);
-      console.log(`🎬 [${this.wrapper.deviceInfo.name}] Proper streaming command sent (${Date.now() - streamCommandStartTime}ms)`);
+      // Use smart write - checks if writeWithoutResponse is supported for faster writes
+      await this.writeCommand(Buffer.from(streamCommand));
+      console.log(`🎬 [${this.wrapper.deviceInfo.name}] Streaming command sent (${Date.now() - streamCommandStartTime}ms)`);
 
       this.wrapper.isStreaming = true;
       this.wrapper.deviceInfo.state = 'streaming';
       this.notifyEvent('streaming_started');
+
+      // Stop battery monitoring during streaming to eliminate BLE traffic interference
+      this.stopBatteryMonitoring();
 
       const totalTime = Date.now() - streamingStartTime;
       console.log(`✅ [${this.wrapper.deviceInfo.name}] Streaming started successfully (total: ${totalTime}ms)`);
@@ -270,7 +303,8 @@ export class TropXDevice {
 
       // Stop streaming with proper command format
       const stopCommand = TropXCommands.Cmd_StopStream();
-      await this.wrapper.commandCharacteristic.writeAsync(Buffer.from(stopCommand), false);
+      // Use smart write - checks if writeWithoutResponse is supported for faster writes
+      await this.writeCommand(Buffer.from(stopCommand));
 
       // Unsubscribe from notifications
       if (this.wrapper.dataCharacteristic) {
@@ -281,6 +315,9 @@ export class TropXDevice {
       this.wrapper.isStreaming = false;
       this.wrapper.deviceInfo.state = 'connected';
       this.notifyEvent('streaming_stopped');
+
+      // Resume battery monitoring after streaming stops
+      this.resumeBatteryMonitoring();
 
     } catch (error) {
       console.error(`Error stopping streaming: ${this.wrapper.deviceInfo.name}:`, error);
@@ -293,15 +330,25 @@ export class TropXDevice {
 
     try {
       const batteryCommand = TropXCommands.Cmd_GetBatteryCharge();
+      // Battery command needs response (false) because we read the value back
       await this.wrapper.commandCharacteristic.writeAsync(Buffer.from(batteryCommand), false);
 
-      // Read response - TropX devices typically respond immediately
+      // Wait for device to process command (TropX devices need ~100ms to prepare response)
+      await this.delay(100);
+
+      // Read response - battery level is at byte index 4 (not 0!)
       const response = await this.wrapper.commandCharacteristic.readAsync();
-      if (response && response.length > 0) {
-        const batteryLevel = response[0];
+      if (response && response.length > 4) {
+        const batteryLevel = response[4]; // Battery at byte 4, not 0!
         this.wrapper.deviceInfo.batteryLevel = batteryLevel;
         console.log(`🔋 [${this.wrapper.deviceInfo.name}] Battery level: ${batteryLevel}%`);
+
+        // Notify battery update event so UI can update
+        this.notifyEvent('battery_update', { batteryLevel });
+
         return batteryLevel;
+      } else {
+        console.warn(`🔋 [${this.wrapper.deviceInfo.name}] Battery response too short: ${response?.length} bytes`);
       }
     } catch (error) {
       console.error(`Error reading battery level: ${this.wrapper.deviceInfo.name}:`, error);
@@ -322,6 +369,7 @@ export class TropXDevice {
       buffer[1] = value;
     }
 
+    // TEMP: Use false (write with response) until we verify characteristic supports writeWithoutResponse
     await this.wrapper.commandCharacteristic.writeAsync(buffer, false);
   }
 
@@ -336,7 +384,8 @@ export class TropXDevice {
 
   // Handle incoming data notifications
   private handleDataNotification(data: Buffer): void {
-    console.log(`📥 [${this.wrapper.deviceInfo.name}] Received ${data.length} bytes: [${Array.from(data.subarray(0, Math.min(16, data.length))).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}${data.length > 16 ? '...' : ''}]`);
+    // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
+    // console.log(`📥 [${this.wrapper.deviceInfo.name}] Received ${data.length} bytes: [${Array.from(data.subarray(0, Math.min(16, data.length))).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}${data.length > 16 ? '...' : ''}]`);
 
     try {
       // Validate packet size
@@ -356,7 +405,8 @@ export class TropXDevice {
 
       // Forward to callback
       if (this.motionCallback) {
-        console.log(`📊 [${this.wrapper.deviceInfo.name}] Parsed motion data: q(${motionData.quaternion.w.toFixed(3)}, ${motionData.quaternion.x.toFixed(3)}, ${motionData.quaternion.y.toFixed(3)}, ${motionData.quaternion.z.toFixed(3)}) at ${motionData.timestamp}`);
+        // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
+        // console.log(`📊 [${this.wrapper.deviceInfo.name}] Parsed motion data: q(${motionData.quaternion.w.toFixed(3)}, ${motionData.quaternion.x.toFixed(3)}, ${motionData.quaternion.y.toFixed(3)}, ${motionData.quaternion.z.toFixed(3)}) at ${motionData.timestamp}`);
         this.motionCallback(this.wrapper.deviceInfo.id, motionData);
       } else {
         console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] No motion callback set - data will be lost!`);
@@ -389,22 +439,35 @@ export class TropXDevice {
     this.notifyEvent('disconnected');
   }
 
-  // Start battery monitoring
+  // Start battery monitoring (periodic updates only, initial read done during connect)
   private startBatteryMonitoring(): void {
-    // Get initial battery level immediately
-    console.log(`🔋 [${this.wrapper.deviceInfo.name}] Starting battery monitoring...`);
-    this.getBatteryLevel().then(level => {
-      if (level !== null) {
-        console.log(`🔋 [${this.wrapper.deviceInfo.name}] Initial battery level: ${level}%`);
-      }
-    }).catch(error => {
-      console.error(`❌ [${this.wrapper.deviceInfo.name}] Failed to get initial battery level:`, error);
-    });
+    console.log(`🔋 [${this.wrapper.deviceInfo.name}] Starting periodic battery monitoring...`);
 
-    // Set up periodic monitoring
-    this.batteryTimer = setInterval(async () => {
-      await this.getBatteryLevel();
-    }, TIMING.BATTERY_UPDATE_INTERVAL);
+    // Set up periodic monitoring ONLY if not streaming
+    // During 100Hz streaming (4 devices = 400 packets/sec), battery checks add unnecessary BLE traffic
+    if (!this.wrapper.isStreaming) {
+      this.batteryTimer = setInterval(async () => {
+        await this.getBatteryLevel();
+      }, TIMING.BATTERY_UPDATE_INTERVAL);
+      console.log(`🔋 [${this.wrapper.deviceInfo.name}] Periodic battery monitoring active (${TIMING.BATTERY_UPDATE_INTERVAL/1000}s interval)`);
+    } else {
+      console.log(`🔋 [${this.wrapper.deviceInfo.name}] Battery monitoring paused during streaming`);
+    }
+  }
+
+  // Stop battery monitoring (when streaming starts)
+  private stopBatteryMonitoring(): void {
+    if (this.batteryTimer) {
+      clearInterval(this.batteryTimer);
+      this.batteryTimer = null;
+      console.log(`🔋 [${this.wrapper.deviceInfo.name}] Battery monitoring stopped`);
+    }
+  }
+
+  // Resume battery monitoring (when streaming stops)
+  private resumeBatteryMonitoring(): void {
+    this.stopBatteryMonitoring();
+    this.startBatteryMonitoring();
   }
 
   // Cleanup resources
@@ -428,6 +491,25 @@ export class TropXDevice {
   private notifyEvent(event: string, data?: any): void {
     if (this.eventCallback) {
       this.eventCallback(this.wrapper.deviceInfo.id, event, data);
+    }
+  }
+
+  // Smart command write - uses writeWithoutResponse if supported, otherwise write with response
+  private async writeCommand(buffer: Buffer): Promise<void> {
+    if (!this.wrapper.commandCharacteristic) {
+      throw new Error('Command characteristic not available');
+    }
+
+    // Check if characteristic supports writeWithoutResponse for faster writes
+    const props = this.wrapper.commandCharacteristic.properties;
+    const supportsWriteWithoutResponse = props && (props.includes('writeWithoutResponse') || props.writeWithoutResponse === true);
+
+    if (supportsWriteWithoutResponse) {
+      // Fast write - no ACK needed
+      await this.wrapper.commandCharacteristic.writeAsync(buffer, true);
+    } else {
+      // Fallback to write with response (slower but more reliable)
+      await this.wrapper.commandCharacteristic.writeAsync(buffer, false);
     }
   }
 

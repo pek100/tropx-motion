@@ -59,6 +59,9 @@ export class MessageValidator {
       case MESSAGE_TYPES.BLE_CONNECT_REQUEST:
         return this.validateBLEConnectRequest(message as BLEConnectRequest);
 
+      case MESSAGE_TYPES.BLE_DISCONNECT_REQUEST:
+        return { valid: true }; // deviceId validated in base message
+
       case MESSAGE_TYPES.RECORD_START_REQUEST:
         return this.validateRecordStartRequest(message as RecordStartRequest);
 

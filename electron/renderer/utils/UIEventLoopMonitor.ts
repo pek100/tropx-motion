@@ -132,11 +132,15 @@ class UIEventLoopMonitor {
 
         // Log immediately for severe blocking (always) or moderate blocking (throttled)
         const shouldLog = context?.logEvent !== false;
-        if (duration > this.SEVERE_BLOCKING_MS) {
-            console.error(`🚨 [UI_BLOCKING] SEVERE: ${component}.${operation} blocked for ${duration.toFixed(2)}ms`, context);
-        } else if (duration > this.BLOCKING_THRESHOLD_MS && shouldLog) {
-            console.warn(`⚠️ [UI_BLOCKING] ${component}.${operation} blocked for ${duration.toFixed(2)}ms`, context);
+        // DISABLED: UI blocking alerts are noisy during optimization
+        // Keep only critical blocking (>100ms)
+        if (duration > 100) {
+            console.error(`🚨 [CRITICAL_UI_BLOCKING] ${component}.${operation} blocked for ${duration.toFixed(2)}ms`);
         }
+        // Disabled moderate warnings
+        // else if (duration > this.BLOCKING_THRESHOLD_MS && shouldLog) {
+        //     console.warn(`⚠️ [UI_BLOCKING] ${component}.${operation} blocked for ${duration.toFixed(2)}ms`, context);
+        // }
     }
 
     /**
@@ -243,17 +247,18 @@ class UIEventLoopMonitor {
                 const moderateEvents = recentEvents.filter(e => e.duration > this.BLOCKING_THRESHOLD_MS && e.duration <= this.SEVERE_BLOCKING_MS);
 
                 if (severeEvents.length > 0 || moderateEvents.length > 5) {
-                    console.log('📈 [UI_BLOCKING_SUMMARY] Recent blocking events:', {
-                        severe: severeEvents.length,
-                        moderate: moderateEvents.length,
-                        topBlocking: recentEvents
-                            .sort((a, b) => b.duration - a.duration)
-                            .slice(0, 3)
-                            .map(e => ({
-                                operation: `${e.component}.${e.operation}`,
-                                duration: `${e.duration.toFixed(2)}ms`
-                            }))
-                    });
+                    // DISABLED: Summary logging is noisy
+                    // console.log('📈 [UI_BLOCKING_SUMMARY] Recent blocking events:', {
+                    //     severe: severeEvents.length,
+                    //     moderate: moderateEvents.length,
+                    //     topBlocking: recentEvents
+                    //         .sort((a, b) => b.duration - a.duration)
+                    //         .slice(0, 3)
+                    //         .map(e => ({
+                    //             operation: `${e.component}.${e.operation}`,
+                    //             duration: `${e.duration.toFixed(2)}ms`
+                    //         }))
+                    // });
                 }
             }
         }, 10000); // Report every 10 seconds

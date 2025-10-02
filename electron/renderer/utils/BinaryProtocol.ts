@@ -79,30 +79,36 @@ export class BinaryProtocol {
 
   // Deserialize binary data to message
   static deserialize(buffer: ArrayBuffer): BaseMessage | null {
-    console.log(`🔍 BinaryProtocol.deserialize: buffer length=${buffer.byteLength}, expected min=${PROTOCOL.HEADER_SIZE}`);
+    // DISABLED for performance - called at 100Hz × 2 devices = 200 times/sec
+    // console.log(`🔍 BinaryProtocol.deserialize: buffer length=${buffer.byteLength}, expected min=${PROTOCOL.HEADER_SIZE}`);
 
     if (buffer.byteLength < PROTOCOL.HEADER_SIZE) {
+      // Keep error logs for debugging
       console.log(`❌ Buffer too small: ${buffer.byteLength} < ${PROTOCOL.HEADER_SIZE}`);
       return null;
     }
 
     const header = this.readHeader(buffer);
-    console.log(`🔍 Read header:`, header);
+    // DISABLED for performance
+    // console.log(`🔍 Read header:`, header);
 
     if (!this.validateHeader(header)) {
+      // Keep error logs for debugging
       console.log(`❌ Header validation failed`);
       return null;
     }
 
     const payloadBuffer = buffer.slice(PROTOCOL.HEADER_SIZE);
-    console.log(`🔍 Payload buffer length: ${payloadBuffer.byteLength}`);
+    // DISABLED for performance
+    // console.log(`🔍 Payload buffer length: ${payloadBuffer.byteLength}`);
 
     const message = this.deserializePayload(header.messageType, payloadBuffer, header);
-    if (message) {
-      console.log(`✅ Successfully deserialized message type: ${message.type}`);
-    } else {
-      console.log(`❌ Payload deserialization failed for message type: ${header.messageType}`);
-    }
+    // DISABLED for performance
+    // if (message) {
+    //   console.log(`✅ Successfully deserialized message type: ${message.type}`);
+    // } else {
+    //   console.log(`❌ Payload deserialization failed for message type: ${header.messageType}`);
+    // }
 
     return message;
   }
@@ -292,11 +298,14 @@ export class BinaryProtocol {
   private static deserializeJSON(payload: ArrayBuffer, baseMessage: BaseMessage): BaseMessage | null {
     try {
       const json = new TextDecoder().decode(payload);
-      console.log(`🔍 JSON payload string:`, json);
+      // DISABLED for performance
+      // console.log(`🔍 JSON payload string:`, json);
       const parsed = JSON.parse(json);
-      console.log(`🔍 Parsed JSON:`, parsed);
+      // DISABLED for performance
+      // console.log(`🔍 Parsed JSON:`, parsed);
       const result = { ...baseMessage, ...parsed };
-      console.log(`🔍 Final merged message:`, result);
+      // DISABLED for performance
+      // console.log(`🔍 Final merged message:`, result);
       return result;
     } catch (error) {
       console.error(`❌ JSON deserialization failed:`, error);

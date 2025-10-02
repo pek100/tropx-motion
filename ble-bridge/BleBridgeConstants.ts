@@ -61,4 +61,5 @@ export const TIMING = {
   STREAM_START_DELAY: 0,        // No delay needed - Noble handles BLE timing
   RECONNECTION_DELAY: 4000,     // 4 seconds between reconnection attempts
   BATTERY_UPDATE_INTERVAL: 30000, // 30 seconds between battery reads
+  BATTERY_UPDATE_INTERVAL_STREAMING: 60000, // 60 seconds during streaming (reduce BLE traffic)
 } as const;
