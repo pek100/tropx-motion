@@ -8,6 +8,8 @@ import { NobleBluetoothService, MotionData, TropXDeviceInfo } from './index';
 import { QuaternionBinaryProtocol } from './QuaternionBinaryProtocol';
 import { deviceStateManager } from './DeviceStateManager';
 import { deviceRegistry } from '../registry-management';
+import { TimeSyncManager } from '../time-sync';
+import { TropXTimeSyncAdapter } from '../time-sync/adapters/TropXTimeSyncAdapter';
 
 // BLE Service interface from WebSocket Bridge
 interface BLEService {
@@ -33,6 +35,7 @@ export class NobleBLEServiceAdapter implements BLEService {
   private broadcastFunction: ((message: any, clientIds: string[]) => Promise<void>) | null = null;
   private motionCoordinator: any = null;
   private isCurrentlyRecording = false;
+  private timeSyncManager = new TimeSyncManager();
 
   constructor() {
     // Initialize Noble service with callbacks
@@ -154,6 +157,21 @@ export class NobleBLEServiceAdapter implements BLEService {
 
         console.log(`📋 Device registered: ${deviceName} → ID 0x${registeredDevice.deviceID.toString(16)} (${registeredDevice.joint}, ${registeredDevice.position})`);
 
+        // CRITICAL: Clear registry sync state FIRST before any device instance access
+        // This prevents stale registry state from being copied to device instance
+        deviceRegistry.setClockOffset(deviceId, 0, 'not_synced');
+        console.log(`🔄 [${deviceName}] Cleared registry sync state - forcing fresh time sync`);
+
+        // CRITICAL: Clear device instance sync state
+        // Must be done AFTER registry clear
+        const tropxDeviceInstance = this.nobleService.getDeviceInstance(deviceId);
+        if (tropxDeviceInstance) {
+          // Reset sync state to ensure fresh time sync
+          (tropxDeviceInstance as any).wrapper.deviceInfo.syncState = 'not_synced';
+          (tropxDeviceInstance as any).wrapper.deviceInfo.clockOffset = undefined;
+          console.log(`🔄 [${deviceName}] Cleared device instance sync state`);
+        }
+
         // Broadcast device status update (connection complete)
         try {
           await this.broadcastDeviceStatus();
@@ -162,40 +180,7 @@ export class NobleBLEServiceAdapter implements BLEService {
           // Don't fail the connection due to broadcast issues
         }
 
-        // Hardware Time Synchronization (Muse v3 Protocol)
-        // Run in background to avoid blocking connection
-        setImmediate(async () => {
-          try {
-            console.log(`⏱️ Starting hardware time sync for ${deviceName}...`);
-            const tropxDevice = this.nobleService.getDeviceInstance(deviceId);
-
-            if (!tropxDevice) {
-              console.warn(`⚠️ Could not get device instance for time sync: ${deviceName}`);
-              return;
-            }
-
-            // Step 1: Initialize device RTC with current Unix epoch time
-            const rtcInitialized = await tropxDevice.initializeDeviceRTC();
-            if (!rtcInitialized) {
-              console.warn(`⚠️ RTC initialization failed for ${deviceName}, skipping time sync`);
-              deviceRegistry.setClockOffset(deviceId, 0);
-              return;
-            }
-
-            // Step 2: Fine-tune clock offset via TimeSync protocol
-            const clockOffset = await tropxDevice.syncTime();
-            deviceRegistry.setClockOffset(deviceId, clockOffset);
-
-            console.log(`✅ Hardware time sync complete for ${deviceName}: offset=${clockOffset.toFixed(2)}ms`);
-
-            // Broadcast updated device status
-            await this.broadcastDeviceStatus();
-
-          } catch (timeSyncError) {
-            console.warn(`⚠️ Time sync failed for ${deviceName}, using default offset (0ms):`, timeSyncError);
-            deviceRegistry.setClockOffset(deviceId, 0);
-          }
-        });
+        // Auto-sync disabled - will be handled in batch after all connections complete
       } else {
         console.error(`❌ Noble: Connection failed for ${deviceName}: ${result.message}`);
       }
@@ -208,6 +193,67 @@ export class NobleBLEServiceAdapter implements BLEService {
         success: false,
         message: `Connection failed: ${error instanceof Error ? error.message : String(error)}`
       };
+    }
+  }
+
+  /**
+   * Sync single device using new time-sync module
+   */
+  private async syncSingleDevice(deviceId: string): Promise<void> {
+    const tropxDevice = this.nobleService.getDeviceInstance(deviceId);
+    if (!tropxDevice) {
+      console.warn(`⚠️ Could not get device instance for sync: ${deviceId}`);
+      return;
+    }
+
+    const adapter = new TropXTimeSyncAdapter(tropxDevice);
+    const result = await this.timeSyncManager.syncDevice(adapter);
+
+    if (result.success) {
+      console.log(`✅ Sync complete: ${result.deviceName}, offset=${result.finalOffset.toFixed(2)}ms`);
+      await this.broadcastDeviceStatus();
+    } else {
+      console.error(`❌ Sync failed: ${result.deviceName}, error=${result.error}`);
+    }
+  }
+
+  /**
+   * Manually sync all connected devices (called by sync button)
+   */
+  async syncAllDevices(): Promise<{ success: boolean; results: any[] }> {
+    try {
+      console.log('⏱️ Manual sync: Synchronizing all connected devices...');
+
+      // Reset manager for new sync session
+      this.timeSyncManager.reset();
+
+      // Get all connected devices
+      const connectedDevices = this.nobleService.getConnectedDevices();
+      if (connectedDevices.length === 0) {
+        return { success: false, results: [] };
+      }
+
+      // Create adapters
+      const adapters = connectedDevices
+        .map(info => {
+          const device = this.nobleService.getDeviceInstance(info.id);
+          return device ? new TropXTimeSyncAdapter(device) : null;
+        })
+        .filter((adapter): adapter is TropXTimeSyncAdapter => adapter !== null);
+
+      // Sync all devices (SET_CLOCK_OFFSET applied inside syncDevices)
+      const results = await this.timeSyncManager.syncDevices(adapters);
+
+      // Broadcast status update
+      await this.broadcastDeviceStatus();
+
+      const successCount = results.filter(r => r.success).length;
+      console.log(`✅ Manual sync complete: ${successCount}/${results.length} devices synced`);
+
+      return { success: true, results };
+    } catch (error) {
+      console.error('❌ Manual sync failed:', error);
+      return { success: false, results: [] };
     }
   }
 
@@ -251,6 +297,10 @@ export class NobleBLEServiceAdapter implements BLEService {
 
     try {
       console.log(`🎬 Noble: Starting recording session ${sessionId}`);
+
+      // Reset first packet tracking for delta calculations
+      const { TropXDevice } = await import('./TropXDevice');
+      TropXDevice.resetFirstPacketTracking();
 
       // Motion processing will be handled in WebSocket bridge (main process)
 

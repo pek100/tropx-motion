@@ -14,6 +14,7 @@
 
 import { DeviceID } from './DeviceMappingConfig';
 import { identifyDevice, DeviceIdentification, getFullIdentifier } from './DeviceIdentifier';
+import { DeviceSyncState } from '../ble-bridge/BleBridgeTypes';
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
@@ -29,6 +30,8 @@ export interface RegisteredDevice {
   lastSeen: Date;           // Last time device sent data
   isManualOverride: boolean; // Whether mapping was manually set
   clockOffset?: number;     // Clock offset in milliseconds (from time sync)
+  syncState?: DeviceSyncState; // Time sync state (prevents double-application of offset)
+  timestampUnit?: 'microseconds' | 'milliseconds'; // Timestamp unit used by this device's firmware
 }
 
 type RegistryChangeHandler = (devices: RegisteredDevice[]) => void;
@@ -310,11 +313,16 @@ export class DeviceRegistry {
   /**
    * Set clock offset for a device (from time synchronization)
    */
-  setClockOffset(bleAddress: string, offsetMs: number): void {
+  setClockOffset(bleAddress: string, offsetMs: number, syncState?: DeviceSyncState): void {
     const device = this.devices.get(bleAddress);
     if (device) {
       device.clockOffset = offsetMs;
-      console.log(`⏱️ [DEVICE_REGISTRY] Clock offset set for "${device.deviceName}": ${offsetMs.toFixed(2)}ms`);
+      if (syncState) {
+        device.syncState = syncState;
+        console.log(`⏱️ [DEVICE_REGISTRY] Clock offset set for "${device.deviceName}": ${offsetMs.toFixed(2)}ms (sync state: ${syncState})`);
+      } else {
+        console.log(`⏱️ [DEVICE_REGISTRY] Clock offset set for "${device.deviceName}": ${offsetMs.toFixed(2)}ms`);
+      }
       this.saveToFileSystem();
       this.notifyChanges();
     } else {

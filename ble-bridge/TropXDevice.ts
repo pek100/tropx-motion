@@ -8,7 +8,8 @@ import {
   TropXDeviceInfo,
   MotionDataCallback,
   DeviceEventCallback,
-  NoblePeripheralWrapper
+  NoblePeripheralWrapper,
+  DeviceSyncState
 } from './BleBridgeTypes';
 
 import {
@@ -19,7 +20,8 @@ import {
   DATA_FREQUENCIES,
   PACKET_SIZES,
   QUATERNION_SCALE,
-  TIMING
+  TIMING,
+  REFERENCE_EPOCH_MS
 } from './BleBridgeConstants';
 import { TropXCommands } from './TropXCommands';
 import { TimeSyncEstimator } from './TimeSyncEstimator';
@@ -32,6 +34,16 @@ export class TropXDevice {
   private streamingTimer: NodeJS.Timeout | null = null;
   private batteryTimer: NodeJS.Timeout | null = null;
   private hasLoggedFirstPacket: boolean = false;
+
+  // Static tracking for first packet timestamps across all devices
+  private static firstPacketTimestamps = new Map<string, number>();
+  private static firstDeviceName: string | null = null;
+
+  // Reset first packet tracking (call when starting new recording session)
+  static resetFirstPacketTracking(): void {
+    TropXDevice.firstPacketTimestamps.clear();
+    TropXDevice.firstDeviceName = null;
+  }
 
   constructor(
     peripheral: any,
@@ -256,6 +268,9 @@ export class TropXDevice {
       const streamingStartTime = Date.now();
       console.log(`🎬 [${this.wrapper.deviceInfo.name}] Starting quaternion streaming using proper command format...`);
 
+      // Reset first packet flag to log fresh timestamps for this session
+      this.hasLoggedFirstPacket = false;
+
       // Subscribe to data notifications first
       const subscriptionStartTime = Date.now();
       await this.wrapper.dataCharacteristic.subscribeAsync();
@@ -272,9 +287,11 @@ export class TropXDevice {
 
       console.log(`🎬 [${this.wrapper.deviceInfo.name}] Data subscription completed, listening for notifications (${Date.now() - subscriptionStartTime}ms)`);
 
-      // Start streaming with proper command format (like muse_sdk)
+      // Start streaming with hardware timestamps (QUATERNION_TIMESTAMP mode)
+      // Mode 0x30 = QUATERNION (0x10) | TIMESTAMP (0x20)
+      // This embeds device timestamps in packets for accurate synchronization
       const streamCommandStartTime = Date.now();
-      const streamCommand = TropXCommands.Cmd_StartStream(DATA_MODES.QUATERNION, DATA_FREQUENCIES.HZ_100);
+      const streamCommand = TropXCommands.Cmd_StartStream(DATA_MODES.QUATERNION_TIMESTAMP, DATA_FREQUENCIES.HZ_100);
       // Use smart write - checks if writeWithoutResponse is supported for faster writes
       await this.writeCommand(Buffer.from(streamCommand));
       console.log(`🎬 [${this.wrapper.deviceInfo.name}] Streaming command sent (${Date.now() - streamCommandStartTime}ms)`);
@@ -329,11 +346,8 @@ export class TropXDevice {
 
   // Initialize device RTC (Real-Time Clock) with current system time
   // MUST be called before syncTime() for proper hardware synchronization
-  //
-  // NOTE: TropX devices appear to always return "ms since boot" timestamps,
-  // not Unix epoch timestamps like Muse devices. The RTC set command configures
-  // internal timekeeping but doesn't change the timestamp format.
-  async initializeDeviceRTC(): Promise<boolean> {
+  // @param referenceTimestamp - Optional Unix timestamp (seconds) to use for all devices (for parallel sync)
+  async initializeDeviceRTC(referenceTimestamp?: number): Promise<boolean> {
     if (!this.wrapper.commandCharacteristic) {
       throw new Error('Command characteristic not available for RTC initialization');
     }
@@ -360,92 +374,30 @@ export class TropXDevice {
         }
       }
 
-      // Step 2: Set device RTC FIRST (per Muse PDF - this should reset timestamps to Unix epoch)
-      const currentUnixSeconds = Math.floor(Date.now() / 1000);
+      // Step 2: Set device RTC (per Muse PDF)
+      // This sets the device's internal 32-bit Unix timestamp counter
+      // Use provided reference timestamp for parallel sync, or current time if not provided
+      const currentUnixSeconds = referenceTimestamp || Math.floor(Date.now() / 1000);
       const setTimeCmd = Buffer.from(TropXCommands.Cmd_SetDateTime(currentUnixSeconds));
 
-      console.log(`🕐 [${this.wrapper.deviceInfo.name}] Setting RTC to ${new Date(currentUnixSeconds * 1000).toISOString()}...`);
+      console.log(`🕐 [${this.wrapper.deviceInfo.name}] Setting RTC to ${new Date(currentUnixSeconds * 1000).toISOString()}${referenceTimestamp ? ' (common reference)' : ''}...`);
       await this.wrapper.commandCharacteristic.writeAsync(setTimeCmd, false);
-      await this.delay(200); // Longer delay for RTC to stabilize and reset counters
+      await this.delay(200); // Allow RTC to stabilize
 
       const setTimeResponse = await this.wrapper.commandCharacteristic.readAsync();
       if (setTimeResponse && setTimeResponse.length >= 4) {
         const errorCode = setTimeResponse[3];
         if (errorCode !== 0x00) {
           console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] RTC set returned error 0x${errorCode.toString(16)}`);
-        }
-      }
-
-      // Step 3: Check if device timestamps are now in Unix epoch (Muse behavior)
-      // or still in ms-since-boot (TropX behavior)
-      console.log(`🕐 [${this.wrapper.deviceInfo.name}] Checking timestamp format after RTC set...`);
-
-      const getTimestampCmd = Buffer.from([TROPX_COMMANDS.GET_TIMESTAMP, 0x00]);
-
-      // Multi-sample boot offset for better accuracy (matches time sync approach)
-      const BOOT_SAMPLES = 5;
-      const bootSamples: Array<{ masterTime: number; deviceTime: number; rtt: number }> = [];
-
-      for (let i = 0; i < BOOT_SAMPLES; i++) {
-        const t1 = Date.now();
-        await this.wrapper.commandCharacteristic.writeAsync(getTimestampCmd, false);
-        const response = await this.wrapper.commandCharacteristic.readAsync();
-        const t3 = Date.now();
-
-        if (response && response.length >= 12) {
-          const deviceTimestamp = Number(response.readBigUInt64LE(4));
-          const masterMidpoint = (t1 + t3) / 2;
-          const rtt = t3 - t1;
-
-          bootSamples.push({
-            masterTime: masterMidpoint,
-            deviceTime: deviceTimestamp,
-            rtt
-          });
-
-          if (i === 0) {
-            console.log(`🔍 [${this.wrapper.deviceInfo.name}] Timestamp format check:`);
-            console.log(`   Master time: ${masterMidpoint} (${new Date(masterMidpoint).toISOString()})`);
-            console.log(`   Device timestamp: ${deviceTimestamp} (${new Date(deviceTimestamp).toISOString()})`);
-            console.log(`   Response bytes: [${[...response].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
-          }
-        }
-
-        if (i < BOOT_SAMPLES - 1) await this.delay(5);
-      }
-
-      let deviceBootOffset = 0;
-
-      if (bootSamples.length > 0) {
-        const firstSample = bootSamples[0];
-        const timeDiff = Math.abs(firstSample.deviceTime - firstSample.masterTime);
-
-        if (timeDiff < 60000) {
-          // Muse-style: Device returns Unix epoch after RTC set
-          console.log(`✅ [${this.wrapper.deviceInfo.name}] Device using Unix epoch timestamps (Muse-style)`);
-          console.log(`   Time difference: ${timeDiff.toFixed(2)}ms - within expected range`);
-          deviceBootOffset = 0; // No offset needed
         } else {
-          // TropX-style: Device still returns ms-since-boot
-          console.log(`⚠️ [${this.wrapper.deviceInfo.name}] Device still using ms-since-boot (TropX-style)`);
-          console.log(`   Device uptime: ${(firstSample.deviceTime / 1000 / 60 / 60).toFixed(2)} hours`);
-
-          // Use best sample (lowest RTT) for boot offset
-          bootSamples.sort((a, b) => a.rtt - b.rtt);
-          const bestSample = bootSamples[0];
-
-          deviceBootOffset = bestSample.masterTime - bestSample.deviceTime;
-          console.log(`   Multi-sample boot offset: ${deviceBootOffset.toFixed(2)}ms (from ${BOOT_SAMPLES} samples)`);
-          console.log(`   Best RTT: ${bestSample.rtt.toFixed(2)}ms`);
-          console.log(`   Device boot time: ${new Date(deviceBootOffset).toISOString()}`);
+          console.log(`✅ [${this.wrapper.deviceInfo.name}] RTC set successfully`);
         }
       }
 
-      console.log(`✅ [${this.wrapper.deviceInfo.name}] Device RTC initialized successfully`);
-      console.log(`✅ [${this.wrapper.deviceInfo.name}] Boot offset for time sync: ${deviceBootOffset.toFixed(2)}ms`);
+      console.log(`✅ [${this.wrapper.deviceInfo.name}] Device RTC initialized, ready for time sync`);
 
-      // Store boot offset for use in syncTime()
-      (this.wrapper as any).deviceBootOffset = deviceBootOffset;
+      // Mark RTC as initialized (ALWAYS overwrite - fresh sync on every connection!)
+      this.wrapper.deviceInfo.syncState = 'rtc_initialized';
 
       return true;
 
@@ -458,34 +410,29 @@ export class TropXDevice {
   // Perform time synchronization (Muse v3 TimeSync Protocol)
   // NOTE: Must call initializeDeviceRTC() first!
   //
-  // TropX devices return "ms since boot" timestamps, not Unix epoch.
-  // We use the boot offset calculated during RTC init to convert them.
-  async syncTime(): Promise<number> {
+  // Per official PDF: All timestamp operations must happen INSIDE timesync mode.
+  // GET_TIMESTAMP (0xb2) only works between ENTER_TIMESYNC and EXIT_TIMESYNC.
+  //
+  // @param applyOffset - If false, computes offset but doesn't send SET_CLOCK_OFFSET (for normalization)
+  // @returns Object with offset (ms) and avgRoundTrip (ms) for BLE delay normalization
+  async syncTime(applyOffset: boolean = true): Promise<{ offset: number; avgRoundTrip: number }> {
     if (!this.wrapper.commandCharacteristic) {
       throw new Error('Command characteristic not available for time sync');
     }
 
-    console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Starting time synchronization (fine-tuning)...`);
-
-    // Get boot offset from RTC initialization
-    const deviceBootOffset = (this.wrapper as any).deviceBootOffset || 0;
-    if (deviceBootOffset === 0) {
-      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] No boot offset found - was initializeDeviceRTC() called?`);
-    } else {
-      console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Using boot offset: ${deviceBootOffset.toFixed(2)}ms`);
-    }
+    console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Starting hardware time synchronization...`);
 
     try {
-      // Step 1: Enter time sync mode
+      // Step 1: Enter time sync mode (REQUIRED before GET_TIMESTAMP works)
       console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Entering time sync mode...`);
       const enterCmd = Buffer.from([TROPX_COMMANDS.ENTER_TIMESYNC, 0x00]);
       await this.wrapper.commandCharacteristic.writeAsync(enterCmd, false);
       await this.delay(50); // Wait for mode transition
 
       // Step 2: Collect timestamp samples for offset calculation
-      // Device returns "ms since boot" - we convert to Unix epoch using boot offset
+      // Per PDF: GET_TIMESTAMP returns 64-bit timestamp in epoch format with ms resolution
       const estimator = new TimeSyncEstimator();
-      const SAMPLE_COUNT = 50; // Per PDF recommendation
+      const SAMPLE_COUNT = 20; // Reduced from 50 for faster sync (4-5 seconds instead of 10)
 
       console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Collecting ${SAMPLE_COUNT} timestamp samples...`);
 
@@ -493,12 +440,12 @@ export class TropXDevice {
         // Record master time before send
         const t1 = Date.now();
 
-        // Send get timestamp command
+        // Send get timestamp command (only works inside timesync mode!)
         const getTimestampCmd = Buffer.from([TROPX_COMMANDS.GET_TIMESTAMP, 0x00]);
         await this.wrapper.commandCharacteristic.writeAsync(getTimestampCmd, false);
 
         // Wait for response with device's timestamp
-        // Response format: [TYPE=0x00, LENGTH=0x02, CMD=0xb2, ERROR_CODE, TIMESTAMP (8 bytes)]
+        // Response format: [TYPE=0x00, LENGTH=0x0a, CMD=0xb2, ERROR_CODE, TIMESTAMP (8 bytes)]
         const response = await this.wrapper.commandCharacteristic.readAsync();
 
         // Record master time after receive
@@ -506,23 +453,64 @@ export class TropXDevice {
 
         // Parse device timestamp (bytes 4-11, little-endian 64-bit unsigned)
         if (response && response.length >= 12) {
-          // Device returns "ms since boot" - convert to Unix epoch
-          const deviceTimeSinceBoot = Number(response.readBigUInt64LE(4));
-          const deviceTimestamp = deviceTimeSinceBoot + deviceBootOffset;
+          const errorCode = response[3];
 
-          // DEBUG: Log first few samples to diagnose timestamp format issue
+          if (errorCode !== 0x00) {
+            console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] GET_TIMESTAMP returned error 0x${errorCode.toString(16)} at sample ${i + 1}`);
+            continue;
+          }
+
+          // Device returns timestamp in MICROSECONDS since device power-on
+          // The device's internal counter is INDEPENDENT from RTC (SET_DATETIME)!
+          // GET_TIMESTAMP returns the raw counter value, which starts from 0 at power-on.
+          // We need to compute an offset to map this to our REFERENCE_EPOCH.
+          // Timestamp is 48-bit (6 bytes), not 64-bit - same format as streaming
+          // Read first 6 bytes and convert from microseconds to milliseconds
+          const tmp = Buffer.alloc(8);
+          response.copy(tmp, 0, 4, 10); // Copy bytes 4-9 (6 bytes)
+          const deviceTimestampMicroseconds = Number(tmp.readBigUInt64LE(0) & 0x0000FFFFFFFFFFFFn);
+          const deviceTimestamp = deviceTimestampMicroseconds / 1000; // Convert µs to ms (device counter ms)
+
+          // FIRMWARE DETECTION: Detect if device has ms-based internal counter
+          // GET_TIMESTAMP always returns µs, but we need to check if the value is suspiciously small,
+          // indicating the internal counter is actually in milliseconds.
+          // If first sample < 1 billion µs (~16.7 min), device counter is in ms
+          if (i === 0 && deviceTimestampMicroseconds < 1000000000) {
+            // Device counter is in MILLISECONDS (firmware bug/variant)
+            // When we send SET_CLOCK_OFFSET in µs, this firmware will add it directly to the ms counter
+            // To compensate, we need to send the offset in ms (divide by 1000)
+            (this.wrapper.deviceInfo as any).firmwareUsesMilliseconds = true; // Send offset in ms!
+            console.log(`🔍 [${this.wrapper.deviceInfo.name}] Firmware detection: MS-based counter (timestamp = ${deviceTimestamp.toFixed(2)}ms) - will send offset in MS`);
+          } else if (i === 0) {
+            // Standard firmware: counter in µs, offset should be in µs
+            (this.wrapper.deviceInfo as any).firmwareUsesMilliseconds = false; // Send offset in µs
+            console.log(`🔍 [${this.wrapper.deviceInfo.name}] Firmware detection: Standard µs-based counter (timestamp = ${deviceTimestamp.toFixed(2)}ms) - will send offset in µs`);
+          }
+
+          // DEBUG: Log first few samples
           if (i < 3) {
+            const masterMidpoint = (t1 + t3) / 2;
+            const masterSinceRefEpoch = masterMidpoint - REFERENCE_EPOCH_MS;
+            const offset = masterSinceRefEpoch - deviceTimestamp;
             console.log(`🔍 [${this.wrapper.deviceInfo.name}] Sample ${i + 1}:`);
-            console.log(`   Master time (t1): ${t1} (${new Date(t1).toISOString()})`);
-            console.log(`   Device time (raw): ${deviceTimeSinceBoot}ms since boot`);
-            console.log(`   Device time (adjusted): ${deviceTimestamp} (${new Date(deviceTimestamp).toISOString()})`);
-            console.log(`   Master time (t3): ${t3} (${new Date(t3).toISOString()})`);
-            console.log(`   Response bytes: [${[...response.subarray(0, 12)].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+            console.log(`   Master time (t1): ${t1}ms (${new Date(t1).toISOString()})`);
+            console.log(`   Master time (t3): ${t3}ms (${new Date(t3).toISOString()})`);
+            console.log(`   Master midpoint: ${masterMidpoint.toFixed(3)}ms`);
+            console.log(`   Master since REFERENCE_EPOCH: ${masterSinceRefEpoch.toFixed(3)}ms`);
+            console.log(`   Device counter: ${deviceTimestampMicroseconds}µs = ${deviceTimestamp.toFixed(3)}ms (since power-on)`);
+            console.log(`   Clock offset: ${offset.toFixed(3)}ms (maps device counter to REFERENCE_EPOCH)`);
+            console.log(`   Round trip: ${(t3 - t1).toFixed(2)}ms`);
           }
 
           // Add sample for offset calculation
-          // offset = device_time - master_time_at_midpoint
-          estimator.addSample(t1, deviceTimestamp, t3);
+          // CRITICAL: Device counter starts from 0 at power-on (NOT Unix epoch!)
+          // Master time must be relative to REFERENCE_EPOCH to match streaming expectations
+          // Offset = (Master_time - REFERENCE_EPOCH) - Device_counter
+          // The firmware adds this offset to the device counter, so:
+          // Device_counter + offset = time since REFERENCE_EPOCH
+          const masterT1 = t1 - REFERENCE_EPOCH_MS;
+          const masterT3 = t3 - REFERENCE_EPOCH_MS;
+          estimator.addSample(masterT1, deviceTimestamp, masterT3);
 
           // Small delay between samples to avoid overwhelming device
           if (i < SAMPLE_COUNT - 1) {
@@ -534,74 +522,261 @@ export class TropXDevice {
       }
 
       // Step 3: Compute clock offset using median filtering
-      const clockOffset = estimator.computeOffset();
-      console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Computed fine-tuned clock offset: ${clockOffset.toFixed(2)}ms`);
+      // The offset is: master_time - device_unix_time
+      // This can be added to device timestamps to sync with master clock
+      const { offset: clockOffset, avgRoundTrip } = estimator.computeOffset();
+      console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Computed clock offset: ${clockOffset.toFixed(2)}ms (avg RTT: ${avgRoundTrip.toFixed(2)}ms)`);
 
-      // Sanity check: After boot offset correction, offset should be small (< 1000ms)
-      if (Math.abs(clockOffset) > 1000) {
-        console.error(`❌ [${this.wrapper.deviceInfo.name}] Clock offset too large (${clockOffset.toFixed(2)}ms)!`);
-        console.error(`❌ This indicates boot offset calculation failed.`);
-        throw new Error(`Clock offset out of range: ${clockOffset.toFixed(2)}ms (expected < 1000ms)`);
-      }
+      // Step 4: Write clock offset to device hardware (per Muse PDF spec)
+      // CRITICAL: Must be done BEFORE exiting time sync mode!
+      // CRITICAL: Only send if not already synced (prevents double-application!)
+      const currentSyncState = this.wrapper.deviceInfo.syncState || 'not_synced';
+      const hasValidOffset = this.wrapper.deviceInfo.clockOffset !== undefined && this.wrapper.deviceInfo.clockOffset !== null;
 
-      // Step 4: Exit time sync mode
-      console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Exiting time sync mode...`);
-      const exitCmd = Buffer.from([TROPX_COMMANDS.EXIT_TIMESYNC, 0x00]);
-      await this.wrapper.commandCharacteristic.writeAsync(exitCmd, false);
-      await this.delay(50);
+      if (applyOffset && (currentSyncState !== 'fully_synced' || !hasValidOffset)) {
+        console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Current sync state: ${currentSyncState} - proceeding with SET_CLOCK_OFFSET`);
 
-      // Step 5: Set hardware clock offset on device (per Muse PDF)
-      // For TropX devices that return "ms since boot", we need to:
-      // 1. Send boot offset so device converts its timestamps to Unix epoch
-      // 2. Apply the fine-tuned clock offset for final precision
-      const totalOffset = deviceBootOffset + clockOffset;
+        // Mark offset as computed
+        this.wrapper.deviceInfo.syncState = 'offset_computed';
+        // Device will add this offset to its internal RTC counter
+        // All subsequent timestamps (streaming + commands) will be synchronized
+        const MAX_VALID_OFFSET = 2n ** 63n - 1n;
+        const MIN_VALID_OFFSET = -(2n ** 63n);
+        const offsetBigInt = BigInt(Math.round(clockOffset));
 
-      console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Calculating total hardware offset:`);
-      console.log(`   Boot offset: ${deviceBootOffset.toFixed(2)}ms`);
-      console.log(`   Clock offset: ${clockOffset.toFixed(2)}ms`);
-      console.log(`   Total offset: ${totalOffset.toFixed(2)}ms`);
+        if (offsetBigInt >= MIN_VALID_OFFSET && offsetBigInt <= MAX_VALID_OFFSET) {
+          console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Writing clock offset to device hardware (WHILE IN TIMESYNC MODE)...`);
 
-      const MAX_VALID_OFFSET = 2n ** 63n - 1n; // Max signed 64-bit integer
-      const MIN_VALID_OFFSET = -(2n ** 63n);
-      const offsetBigInt = BigInt(Math.round(totalOffset));
+          const setOffsetCmd = Buffer.allocUnsafe(10);
+          setOffsetCmd[0] = TROPX_COMMANDS.SET_CLOCK_OFFSET; // 0x31
+          setOffsetCmd[1] = 0x08; // LENGTH (8 bytes for int64)
+          setOffsetCmd.writeBigInt64LE(offsetBigInt, 2); // OFFSET (signed int64)
 
-      if (offsetBigInt >= MIN_VALID_OFFSET && offsetBigInt <= MAX_VALID_OFFSET) {
-        console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Writing hardware offset to device...`);
-        const setOffsetCmd = Buffer.allocUnsafe(10);
-        setOffsetCmd[0] = TROPX_COMMANDS.SET_CLOCK_OFFSET; // TYPE (0x31)
-        setOffsetCmd[1] = 0x08; // LENGTH (8 bytes for 64-bit offset)
-        setOffsetCmd.writeBigInt64LE(offsetBigInt, 2); // VALUE (offset in ms)
+          console.log(`⏱️ [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET command: [${[...setOffsetCmd].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+          await this.wrapper.commandCharacteristic.writeAsync(setOffsetCmd, false);
+          await this.delay(100); // Allow device to process offset
 
-        console.log(`⏱️ [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET command: [${[...setOffsetCmd].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
-        await this.wrapper.commandCharacteristic.writeAsync(setOffsetCmd, false);
-        await this.delay(50);
+          // Read response to confirm
+          const response = await this.wrapper.commandCharacteristic.readAsync();
+          if (response && response.length >= 4) {
+            const errorCode = response[3];
+            if (errorCode === 0x00) {
+              console.log(`✅ [${this.wrapper.deviceInfo.name}] Hardware offset written successfully`);
+              console.log(`✅ Device RTC corrected by ${clockOffset.toFixed(2)}ms`);
+              console.log(`✅ All streaming timestamps now synchronized to master clock`);
 
-        // Read response to confirm
-        const response = await this.wrapper.commandCharacteristic.readAsync();
-        if (response && response.length >= 4) {
-          const errorCode = response[3];
-          if (errorCode === 0x00) {
-            console.log(`✅ [${this.wrapper.deviceInfo.name}] Hardware offset successfully written to device`);
-            console.log(`✅ Device will now add ${totalOffset.toFixed(2)}ms to all timestamps`);
-          } else {
-            console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET returned error 0x${errorCode.toString(16)}`);
+              // Mark as fully synced (prevents re-application on reconnect)
+              this.wrapper.deviceInfo.syncState = 'fully_synced';
+            } else {
+              console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET returned error 0x${errorCode.toString(16)}`);
+            }
           }
+        } else {
+          console.error(`❌ [${this.wrapper.deviceInfo.name}] Clock offset out of range: ${clockOffset.toFixed(2)}ms`);
+          throw new Error(`Hardware offset out of range: ${clockOffset.toFixed(2)}ms`);
         }
       } else {
-        console.error(`❌ [${this.wrapper.deviceInfo.name}] Total offset out of range for int64: ${totalOffset.toFixed(2)}ms`);
-        throw new Error(`Hardware offset out of range: ${totalOffset.toFixed(2)}ms`);
+        // applyOffset=false means caller will handle exit and apply separately
+        console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Offset computed: ${clockOffset.toFixed(2)}ms (avg RTT: ${avgRoundTrip.toFixed(2)}ms)`);
+        console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Offset computed, caller will exit timesync and apply offset...`);
       }
 
       console.log(`✅ [${this.wrapper.deviceInfo.name}] Hardware time synchronization complete!`);
-      console.log(`✅ Device timestamps will be automatically synchronized to Unix epoch`);
-
-      return clockOffset;
+      return { offset: clockOffset, avgRoundTrip };
 
     } catch (error) {
       console.error(`❌ [${this.wrapper.deviceInfo.name}] Time sync failed:`, error);
       throw error;
     }
   }
+
+  // Clear clock offset (set to 0)
+  // CRITICAL: Must be called BEFORE entering timesync mode (when device is in IDLE state)
+  async clearClockOffset(): Promise<void> {
+    if (!this.wrapper.commandCharacteristic) {
+      throw new Error('Command characteristic not available');
+    }
+
+    const clearOffsetCmd = Buffer.allocUnsafe(10);
+    clearOffsetCmd[0] = TROPX_COMMANDS.SET_CLOCK_OFFSET; // 0x31
+    clearOffsetCmd[1] = 0x08; // LENGTH (8 bytes for int64)
+    clearOffsetCmd.writeBigInt64LE(0n, 2); // Set offset to 0
+
+    await this.wrapper.commandCharacteristic.writeAsync(clearOffsetCmd, false);
+    await this.delay(100);
+  }
+
+  // Exit timesync mode
+  // CRITICAL: Per Muse PDF, must be called BEFORE sending SET_CLOCK_OFFSET
+  async exitTimeSyncMode(): Promise<void> {
+    if (!this.wrapper.commandCharacteristic) {
+      throw new Error('Command characteristic not available');
+    }
+
+    console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Exiting time sync mode...`);
+    const exitCmd = Buffer.from([TROPX_COMMANDS.EXIT_TIMESYNC, 0x00]);
+    await this.wrapper.commandCharacteristic.writeAsync(exitCmd, false);
+    await this.delay(50);
+    console.log(`✅ [${this.wrapper.deviceInfo.name}] Exited timesync mode`);
+  }
+
+  // Apply clock offset (set the computed offset)
+  // CRITICAL: Per Muse PDF page 6, must be called AFTER exiting timesync mode
+  async applyClockOffset(normalizedOffset: number): Promise<void> {
+    if (!this.wrapper.commandCharacteristic) {
+      throw new Error('Command characteristic not available');
+    }
+
+    console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Applying clock offset: ${normalizedOffset.toFixed(2)}ms`);
+
+    // Mark offset as computed
+    this.wrapper.deviceInfo.syncState = 'offset_computed';
+
+    // Detect firmware type and send offset in appropriate units
+    const usesMilliseconds = (this.wrapper.deviceInfo as any).firmwareUsesMilliseconds || false;
+
+    let offsetBigInt: bigint;
+    let offsetUnits: string;
+
+    if (usesMilliseconds) {
+      // Send offset in milliseconds (for firmware with ms-based counters)
+      offsetBigInt = BigInt(Math.round(normalizedOffset));
+      offsetUnits = 'ms';
+    } else {
+      // Send offset in microseconds (per Muse spec, for standard firmware)
+      offsetBigInt = BigInt(Math.round(normalizedOffset * 1000));
+      offsetUnits = 'µs';
+    }
+
+    console.log(`🔍 [${this.wrapper.deviceInfo.name}] Offset conversion:`);
+    console.log(`   Input (ms): ${normalizedOffset.toFixed(2)}`);
+    console.log(`   Firmware expects: ${usesMilliseconds ? 'milliseconds' : 'microseconds'}`);
+    console.log(`   Sending (${offsetUnits}): ${offsetBigInt.toString()}`);
+
+    const setOffsetCmd = Buffer.allocUnsafe(10);
+    setOffsetCmd[0] = TROPX_COMMANDS.SET_CLOCK_OFFSET; // 0x31
+    setOffsetCmd[1] = 0x08; // LENGTH (8 bytes for int64)
+
+    // CRITICAL: Per Muse API Python code (Muse_Utils.py:772-780), despite the confusing
+    // indexing, the offset is written as little-endian 64-bit integer.
+    // However, the firmware might only read 5 bytes (see Dec_ClockOffset line 1965)!
+    // Let's use signed int64 little-endian as the protocol specifies.
+    setOffsetCmd.writeBigInt64LE(offsetBigInt, 2); // Write as little-endian int64
+
+    console.log(`📤 [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET command: [${[...setOffsetCmd].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+
+    await this.wrapper.commandCharacteristic.writeAsync(setOffsetCmd, false);
+    await this.delay(200);
+
+    // Read response to confirm
+    const response = await this.wrapper.commandCharacteristic.readAsync();
+    console.log(`📥 [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET response: [${response ? [...response].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ') : 'null'}]`);
+
+    if (response && response.length >= 4) {
+      const errorCode = response[3];
+      if (errorCode === 0x00) {
+        this.wrapper.deviceInfo.syncState = 'fully_synced';
+        console.log(`✅ [${this.wrapper.deviceInfo.name}] Clock offset applied successfully`);
+      } else {
+        console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET returned error 0x${errorCode.toString(16)}`);
+      }
+    } else {
+      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET: Invalid or no response received`);
+    }
+
+    // Store the normalized offset
+    this.wrapper.deviceInfo.clockOffset = normalizedOffset;
+  }
+
+  // Apply clock offset to device hardware AND exit timesync mode
+  // CRITICAL: Must be called while STILL IN TIMESYNC MODE (before EXIT_TIMESYNC)
+  async applyClockOffsetAndExit(normalizedOffset: number): Promise<void> {
+    if (!this.wrapper.commandCharacteristic) {
+      throw new Error('Command characteristic not available');
+    }
+
+    // Apply the normalized offset
+    console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Applying normalized offset (WHILE IN TIMESYNC MODE): ${normalizedOffset.toFixed(2)}ms`);
+
+    // Mark offset as computed
+    this.wrapper.deviceInfo.syncState = 'offset_computed';
+
+    // FIRMWARE BUG WORKAROUND:
+    // Some devices have firmware that expects offset in MILLISECONDS (matching their internal clock counter),
+    // even though Muse spec says microseconds. We detected this during syncTime() by checking if the
+    // device sends microsecond timestamps. If so, it means the device's internal counter is in milliseconds
+    // (ironically!) and we need to send the offset in milliseconds too.
+    //
+    // Detection: Check if device info has a 'firmwareUsesMilliseconds' flag set during syncTime()
+    const usesMilliseconds = (this.wrapper.deviceInfo as any).firmwareUsesMilliseconds || false;
+
+    let offsetBigInt: bigint;
+    let offsetUnits: string;
+
+    if (usesMilliseconds) {
+      // Send offset in milliseconds (for firmware that sends µs timestamps but expects ms offsets)
+      offsetBigInt = BigInt(Math.round(normalizedOffset));
+      offsetUnits = 'ms';
+    } else {
+      // Send offset in microseconds (per Muse spec, for correct firmware)
+      offsetBigInt = BigInt(Math.round(normalizedOffset * 1000));
+      offsetUnits = 'µs';
+    }
+
+    console.log(`🔍 [${this.wrapper.deviceInfo.name}] Offset conversion:`);
+    console.log(`   Input (ms): ${normalizedOffset.toFixed(2)}`);
+    console.log(`   Firmware expects: ${usesMilliseconds ? 'milliseconds' : 'microseconds'}`);
+    console.log(`   Sending (${offsetUnits}): ${offsetBigInt.toString()}`);
+
+    // Validate offset range
+    const MIN_VALID_OFFSET = usesMilliseconds
+      ? BigInt('-9223372036854775807')  // Full int64 range for ms
+      : BigInt('-9223372036854775');     // Reduced range for µs (fits in ms range)
+    const MAX_VALID_OFFSET = usesMilliseconds
+      ? BigInt('9223372036854775807')
+      : BigInt('9223372036854775');
+
+    if (offsetBigInt >= MIN_VALID_OFFSET && offsetBigInt <= MAX_VALID_OFFSET) {
+      const setOffsetCmd = Buffer.allocUnsafe(10);
+      setOffsetCmd[0] = TROPX_COMMANDS.SET_CLOCK_OFFSET; // 0x31
+      setOffsetCmd[1] = 0x08; // LENGTH (8 bytes for int64)
+      setOffsetCmd.writeBigInt64LE(offsetBigInt, 2); // OFFSET (signed int64)
+
+      console.log(`📤 [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET command: [${[...setOffsetCmd].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+
+      await this.wrapper.commandCharacteristic.writeAsync(setOffsetCmd, false);
+      await this.delay(200); // Increased delay to allow firmware to process
+
+      // Read response to confirm
+      const response = await this.wrapper.commandCharacteristic.readAsync();
+      console.log(`📥 [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET response: [${response ? [...response].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ') : 'null'}]`);
+
+      if (response && response.length >= 4) {
+        const errorCode = response[3];
+        if (errorCode === 0x00) {
+          this.wrapper.deviceInfo.syncState = 'fully_synced';
+          console.log(`✅ [${this.wrapper.deviceInfo.name}] Normalized offset applied successfully`);
+        } else {
+          console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET returned error 0x${errorCode.toString(16)}`);
+        }
+      } else {
+        console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] SET_CLOCK_OFFSET: Invalid or no response received`);
+      }
+    } else {
+      throw new Error(`Offset out of range: ${normalizedOffset.toFixed(2)}ms`);
+    }
+
+    // Store the normalized offset
+    this.wrapper.deviceInfo.clockOffset = normalizedOffset;
+
+    // NOW exit timesync mode (AFTER applying offset!)
+    console.log(`⏱️ [${this.wrapper.deviceInfo.name}] Exiting time sync mode...`);
+    const exitCmd = Buffer.from([TROPX_COMMANDS.EXIT_TIMESYNC, 0x00]);
+    await this.wrapper.commandCharacteristic.writeAsync(exitCmd, false);
+    await this.delay(50);
+  }
+
+  // Legacy method - keeping for compatibility but not used
 
   // Get battery level
   async getBatteryLevel(): Promise<number | null> {
@@ -661,51 +836,111 @@ export class TropXDevice {
     return response;
   }
 
+  // Time Sync API: Send raw command buffer and read response
+  async sendRawCommand(commandBuffer: Buffer): Promise<Buffer> {
+    if (!this.wrapper.commandCharacteristic) {
+      throw new Error('Command characteristic not available');
+    }
+
+    await this.wrapper.commandCharacteristic.writeAsync(commandBuffer, false);
+    await this.delay(50);
+
+    const response = await this.wrapper.commandCharacteristic.readAsync();
+    if (!response) {
+      throw new Error('No response received from device');
+    }
+
+    return response;
+  }
+
+  // Time Sync API: Write command buffer without waiting for response
+  async writeRawCommand(commandBuffer: Buffer): Promise<void> {
+    if (!this.wrapper.commandCharacteristic) {
+      throw new Error('Command characteristic not available');
+    }
+
+    await this.wrapper.commandCharacteristic.writeAsync(commandBuffer, false);
+  }
+
   // Handle incoming data notifications
   private handleDataNotification(data: Buffer): void {
     // PERFORMANCE: Capture reception time immediately (fallback if no device timestamp)
     const receptionTimestamp = Date.now();
 
     try {
-      // Validate packet size
-      if (data.length !== PACKET_SIZES.TOTAL) {
-        console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Invalid packet size: ${data.length}, expected: ${PACKET_SIZES.TOTAL}`);
+      // Validate packet size (mode 0x30 = QUATERNION_TIMESTAMP has 20 bytes)
+      if (data.length !== PACKET_SIZES.TOTAL_QUATERNION_TIMESTAMP) {
+        console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Invalid packet size: ${data.length}, expected: ${PACKET_SIZES.TOTAL_QUATERNION_TIMESTAMP}`);
         return;
       }
 
-      // Parse 8-byte header to extract device timestamp
+      // Parse 8-byte header (general packet header, not the timestamp!)
       const header = data.subarray(0, PACKET_SIZES.HEADER);
 
-      // Try to parse device timestamp from header (64-bit LE at start of header)
-      let deviceTimestamp = 0;
+      // Parse device timestamp from payload (mode 0x30 embeds timestamp AFTER quaternion)
+      // Packet structure: [8-byte header][6-byte quaternion][6-byte timestamp]
+      let syncedTimestamp = 0;
       try {
-        // Assuming header structure: [TIMESTAMP (8 bytes)]
-        deviceTimestamp = Number(header.readBigUInt64LE(0));
+        // Timestamp is 48 bits (6 bytes), located at bytes 14-19 in the packet
+        // Format: 6-byte little-endian integer - SHOULD be milliseconds but some devices send microseconds
+        // Note: GET_TIMESTAMP command returns microseconds, streaming mode 0x30 SHOULD send milliseconds
+        const timestampOffset = PACKET_SIZES.HEADER + PACKET_SIZES.QUATERNION; // Byte 14
+        const timestampBytes = data.subarray(timestampOffset, timestampOffset + PACKET_SIZES.TIMESTAMP);
+        const tmp = Buffer.alloc(8);
+        timestampBytes.copy(tmp, 0, 0, 6); // Copy 6 bytes
+        let deviceTimestamp = Number(tmp.readBigUInt64LE(0) & 0x0000FFFFFFFFFFFFn); // Mask to 48 bits
 
-        // DEBUG: Log first packet to understand header structure
+        // FINAL TRUTH: Firmware ALWAYS uses MILLISECONDS
+        // 48-bit limit (281 trillion) = 8.9 years in microseconds (too small!)
+        // 48-bit limit (281 trillion) = 8,925 years in milliseconds (perfect!)
+        // Therefore: streaming timestamps are ALWAYS in milliseconds
+        const deviceTimestampMs = deviceTimestamp;
+
+        // Hardware clock offset already applied by SET_CLOCK_OFFSET during time sync
+        syncedTimestamp = deviceTimestampMs;
+
+        // DEBUG: Log first packet
         if (!this.hasLoggedFirstPacket) {
-          console.log(`📦 [${this.wrapper.deviceInfo.name}] First packet header analysis:`);
-          console.log(`   Header bytes: [${[...header].map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
-          console.log(`   Parsed timestamp (LE): ${deviceTimestamp}ms`);
-          console.log(`   Reception timestamp: ${receptionTimestamp}ms`);
-          console.log(`   Difference: ${(receptionTimestamp - deviceTimestamp).toFixed(2)}ms`);
+          // Track timestamp for this device
+          TropXDevice.firstPacketTimestamps.set(this.wrapper.deviceInfo.name, syncedTimestamp);
+
+          // If this is the first device, remember it as reference
+          if (TropXDevice.firstDeviceName === null) {
+            TropXDevice.firstDeviceName = this.wrapper.deviceInfo.name;
+          }
+
+          console.log(`🔍 [${this.wrapper.deviceInfo.name}] Firmware always uses MILLISECONDS (48-bit limit requires it)`);
+
+          console.log(`📦 [${this.wrapper.deviceInfo.name}] First packet:`);
+          console.log(`   Raw timestamp bytes: [${Array.from(timestampBytes).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+          console.log(`   Parsed as 48-bit value: ${deviceTimestamp}ms`);
+          console.log(`   Device timestamp: ${deviceTimestampMs.toFixed(3)}ms`);
+          console.log(`   = ${new Date(syncedTimestamp).toISOString()}`);
+
+          // Calculate delta from first device
+          if (TropXDevice.firstDeviceName && TropXDevice.firstDeviceName !== this.wrapper.deviceInfo.name) {
+            const firstTimestamp = TropXDevice.firstPacketTimestamps.get(TropXDevice.firstDeviceName);
+            if (firstTimestamp !== undefined) {
+              const delta = syncedTimestamp - firstTimestamp;
+              console.log(`   ⏱️  Δ from ${TropXDevice.firstDeviceName}: ${delta > 0 ? '+' : ''}${delta.toFixed(3)}ms`);
+            }
+          }
+
+          console.log(`   ℹ️  Hardware clock offset already applied (SET_CLOCK_OFFSET)`);
           this.hasLoggedFirstPacket = true;
         }
       } catch (parseError) {
-        console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Could not parse device timestamp from header, using reception time`);
-        deviceTimestamp = receptionTimestamp;
+        console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Could not parse device timestamp, using reception time`);
+        syncedTimestamp = receptionTimestamp;
       }
 
-      // Parse quaternion data (skip 8-byte header)
-      const quaternionData = data.subarray(PACKET_SIZES.HEADER);
+      // Parse quaternion data (bytes 8-13)
+      // In QUATERNION_TIMESTAMP mode: [8-byte header][6-byte quaternion][6-byte timestamp]
+      const quaternionData = data.subarray(PACKET_SIZES.HEADER, PACKET_SIZES.HEADER + PACKET_SIZES.QUATERNION);
       const quaternion = this.parseQuaternionData(quaternionData);
 
-      // HARDWARE TIME SYNC: Use device-embedded timestamp
-      // - Device adds hardware offset (SET_CLOCK_OFFSET) to its internal counter
-      // - Result: timestamps synchronized across devices with <1ms jitter
-      // - BLE latency variance eliminated (timestamp generated at source)
       const motionData: MotionData = {
-        timestamp: deviceTimestamp, // Device timestamp with hardware offset applied
+        timestamp: syncedTimestamp,
         quaternion
       };
 

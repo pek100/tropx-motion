@@ -26,6 +26,13 @@ export type DeviceConnectionState =
   | 'streaming'
   | 'error';
 
+// Time synchronization states (prevents double-application of clock offset)
+export type DeviceSyncState =
+  | 'not_synced'           // Initial state, no sync performed
+  | 'rtc_initialized'      // SET_DATETIME sent, coarse sync done
+  | 'offset_computed'      // Time sync loop completed, offset calculated
+  | 'fully_synced';        // SET_CLOCK_OFFSET sent, device fully synchronized
+
 // TropX device information
 export interface TropXDeviceInfo {
   id: string;
@@ -35,6 +42,9 @@ export interface TropXDeviceInfo {
   state: DeviceConnectionState;
   batteryLevel: number | null;
   lastSeen: Date;
+  clockOffset?: number;    // Hardware clock offset for timestamp synchronization (ms)
+  syncState?: DeviceSyncState; // Time synchronization state (prevents double-sync)
+  timestampUnit?: 'microseconds' | 'milliseconds'; // Timestamp unit used by this device's firmware
 }
 
 // BLE scan result

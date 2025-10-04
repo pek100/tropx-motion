@@ -158,6 +158,20 @@ export class UnifiedWebSocketBridge {
     };
   }
 
+  // Manual time synchronization for all connected devices
+  async syncAllDevices(): Promise<{ success: boolean; results?: any[]; message?: string }> {
+    try {
+      const result = await this.bleServiceAdapter.syncAllDevices();
+      return result;
+    } catch (error) {
+      console.error('Bridge sync all devices error:', error);
+      return {
+        success: false,
+        message: `Sync failed: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+
   // Get performance metrics across all domains
   getPerformanceMetrics(): {
     throughput: number;

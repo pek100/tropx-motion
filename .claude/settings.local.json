@@ -63,7 +63,9 @@
       "Bash(echo \"  ✅ $file removed\")",
       "WebFetch(domain:medium.com)",
       "WebFetch(domain:docs.bosch-iot-suite.com)",
-      "Read(//mnt/e/mywebapps/tropx/horus_client/tropx-pro/src/**)"
+      "Read(//mnt/e/mywebapps/tropx/horus_client/tropx-pro/src/**)",
+      "WebFetch(domain:gitlab.com)",
+      "Read(//tmp/**)"
     ],
     "deny": [],
     "ask": [],

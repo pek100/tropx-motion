@@ -62,6 +62,9 @@ export class MessageValidator {
       case MESSAGE_TYPES.BLE_DISCONNECT_REQUEST:
         return { valid: true }; // deviceId validated in base message
 
+      case MESSAGE_TYPES.BLE_SYNC_REQUEST:
+        return { valid: true }; // No additional validation needed
+
       case MESSAGE_TYPES.RECORD_START_REQUEST:
         return this.validateRecordStartRequest(message as RecordStartRequest);
 

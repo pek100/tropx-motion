@@ -44,6 +44,11 @@ export const TROPX_COMMANDS = {
   SET_CLOCK_OFFSET: 0x31,    // Set computed clock offset (8-byte signed int64)
 } as const;
 
+// Muse/TropX Reference Epoch (Sunday, January 26, 2020 00:53:20 UTC)
+// Device timestamps use this as epoch instead of Unix epoch (1970)
+export const REFERENCE_EPOCH = 1580000000; // seconds
+export const REFERENCE_EPOCH_MS = REFERENCE_EPOCH * 1000; // milliseconds
+
 export const TROPX_STATES = {
   NONE: 0x00,
   ERROR: 0xff,
@@ -55,7 +60,9 @@ export const TROPX_STATES = {
 
 export const DATA_MODES = {
   NONE: 0x00,
-  QUATERNION: 0x10,  // Quaternion-only mode
+  QUATERNION: 0x10,              // Quaternion-only mode (uses reception timestamps)
+  TIMESTAMP: 0x20,               // Timestamp flag
+  QUATERNION_TIMESTAMP: 0x30,    // Quaternion + embedded timestamps (0x10 | 0x20)
 } as const;
 
 export const DATA_FREQUENCIES = {
@@ -66,9 +73,11 @@ export const DATA_FREQUENCIES = {
 } as const;
 
 export const PACKET_SIZES = {
-  HEADER: 8,        // 8-byte header
-  QUATERNION: 6,    // 6 bytes: 3 x int16 (x,y,z components)
-  TOTAL: 14,        // Total packet size for quaternion mode
+  HEADER: 8,                  // 8-byte header (general packet header)
+  QUATERNION: 6,              // 6 bytes: 3 x int16 (x,y,z components)
+  TIMESTAMP: 6,               // 6 bytes: 48-bit timestamp (per Muse API)
+  TOTAL_QUATERNION: 14,       // Mode 0x10: 8-byte header + 6-byte quaternion
+  TOTAL_QUATERNION_TIMESTAMP: 20,  // Mode 0x30: 8-byte header + 6-byte quat + 6-byte timestamp
 } as const;
 
 export const QUATERNION_SCALE = 1.0 / 32767.0;  // Scale factor for int16 to float conversion

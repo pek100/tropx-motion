@@ -153,6 +153,28 @@ export class MotionService {
     }
   }
 
+  // Manual time synchronization for all connected devices
+  async syncAllDevices(): Promise<ApiResponse> {
+    if (!this.bridge) {
+      return { success: false, message: 'Bridge not initialized' };
+    }
+
+    try {
+      console.log('🔄 Manual sync requested for all devices');
+      const result = await this.bridge.syncAllDevices();
+      return {
+        success: result.success,
+        message: result.message || 'Sync operation completed'
+      };
+    } catch (error) {
+      console.error('Sync all devices error:', error);
+      return {
+        success: false,
+        message: `Sync failed: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+
   async connectToDevice(deviceName: string): Promise<ApiResponse> {
     try {
       console.log(`Device connection to ${deviceName} will be handled by WebSocket Bridge`);

@@ -33,9 +33,9 @@ export class TimeSyncEstimator {
     // Clock offset calculation:
     // Assume symmetric delay: device time at midpoint = t2
     // Master time at midpoint = (t1 + t3) / 2
-    // Offset = device_time - master_time
+    // Offset = master_time - device_time (add to device time to get master time)
     const masterMidpoint = (t1 + t3) / 2;
-    const offset = t2 - masterMidpoint;
+    const offset = masterMidpoint - t2;
 
     this.samples.push({
       t1,
@@ -54,9 +54,9 @@ export class TimeSyncEstimator {
    * 2. Keep best 80% (discard slowest 20% as outliers)
    * 3. Return median of remaining offsets (robust to asymmetric delays)
    *
-   * @returns Clock offset in milliseconds (add to device timestamps to sync with master)
+   * @returns Object with offset and avgRoundTrip for BLE delay normalization
    */
-  computeOffset(): number {
+  computeOffset(): { offset: number; avgRoundTrip: number } {
     if (this.samples.length < this.MIN_SAMPLES) {
       console.warn(`⚠️ Time sync: Only ${this.samples.length} samples collected, ${this.MIN_SAMPLES} recommended`);
     }
@@ -87,7 +87,7 @@ export class TimeSyncEstimator {
       maxRoundTrip: bestSamples[bestSamples.length - 1].roundTrip.toFixed(2) + 'ms'
     });
 
-    return medianOffset;
+    return { offset: medianOffset, avgRoundTrip };
   }
 
   /**

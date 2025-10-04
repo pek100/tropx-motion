@@ -23,6 +23,7 @@ interface BLEService {
   scanForDevices(): Promise<{ success: boolean; devices: any[]; message?: string }>;
   connectToDevice(deviceId: string, deviceName: string): Promise<{ success: boolean; message?: string }>;
   disconnectDevice(deviceId: string): Promise<{ success: boolean; message?: string }>;
+  syncAllDevices(): Promise<{ success: boolean; results?: any[]; message?: string }>;
   startRecording(sessionId: string, exerciseId: string, setNumber: number): Promise<{ success: boolean; message?: string; recordingId?: string }>;
   stopRecording(): Promise<{ success: boolean; message?: string; recordingId?: string }>;
   getConnectedDevices(): any[];
@@ -112,6 +113,7 @@ export class BLEDomainProcessor implements DomainProcessor {
     this.operationHandlers.set(MESSAGE_TYPES.BLE_SCAN_REQUEST, this.handleScanRequest);
     this.operationHandlers.set(MESSAGE_TYPES.BLE_CONNECT_REQUEST, this.handleConnectRequest);
     this.operationHandlers.set(MESSAGE_TYPES.BLE_DISCONNECT_REQUEST, this.handleDisconnectRequest);
+    this.operationHandlers.set(MESSAGE_TYPES.BLE_SYNC_REQUEST, this.handleSyncRequest);
     this.operationHandlers.set(MESSAGE_TYPES.RECORD_START_REQUEST, this.handleRecordStartRequest);
     this.operationHandlers.set(MESSAGE_TYPES.RECORD_STOP_REQUEST, this.handleRecordStopRequest);
   }
@@ -156,6 +158,20 @@ export class BLEDomainProcessor implements DomainProcessor {
       timestamp: Date.now(),
       success: result.success,
       deviceId: request.deviceId,
+      message: result.message
+    } as BaseMessage;
+  };
+
+  // BLE sync all devices handler
+  private handleSyncRequest = async (message: BaseMessage, service: any): Promise<BaseMessage> => {
+    const result = await service.syncAllDevices();
+
+    return {
+      type: MESSAGE_TYPES.BLE_SYNC_RESPONSE,
+      requestId: message.requestId,
+      timestamp: Date.now(),
+      success: result.success,
+      results: result.results,
       message: result.message
     } as BaseMessage;
   };

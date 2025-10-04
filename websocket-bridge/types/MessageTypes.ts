@@ -12,6 +12,8 @@ export const MESSAGE_TYPES = {
   BLE_CONNECT_RESPONSE: 0x13,
   BLE_DISCONNECT_REQUEST: 0x14,
   BLE_DISCONNECT_RESPONSE: 0x15,
+  BLE_SYNC_REQUEST: 0x16,
+  BLE_SYNC_RESPONSE: 0x17,
 
   // Broadcast messages (from original WebSocket service)
   SCAN_REQUEST: 0x40,

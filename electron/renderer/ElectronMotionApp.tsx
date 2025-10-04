@@ -365,6 +365,8 @@ const DeviceManagementPane: React.FC<{
   isScanning: boolean;
   onClearDevices: () => void;
   isRecording: boolean;
+  isSyncing: boolean;
+  onManualSync: () => void;
 }> = ({
         allDevices,
         onScan,
@@ -374,6 +376,8 @@ const DeviceManagementPane: React.FC<{
         isScanning,
         onClearDevices,
         isRecording,
+        isSyncing,
+        onManualSync,
       }) => {
   const allDevicesArray = Array.from(allDevices.values());
   const connectedCount = allDevicesArray.filter((d) => d.state === "connected" || d.state === "streaming").length;
@@ -579,9 +583,30 @@ const DeviceManagementPane: React.FC<{
                   }}
               >
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium" style={{ color: CONSTANTS.UI.COLORS.DARK }}>
-                    Devices ({allDevicesArray.length})
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-medium" style={{ color: CONSTANTS.UI.COLORS.DARK }}>
+                      Devices ({allDevicesArray.length})
+                    </CardTitle>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={isSyncing || allDevicesArray.filter(d => d.state === 'connected' || d.state === 'streaming').length === 0}
+                      onClick={onManualSync}
+                      className="h-7 text-xs"
+                    >
+                      {isSyncing ? (
+                        <>
+                          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          Syncing...
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="mr-1 h-3 w-3" />
+                          Sync
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-3">
                   {allDevicesArray.map((device) => (
@@ -1135,6 +1160,7 @@ const WindowControls: React.FC = () => {
 const ElectronMotionApp: React.FC = () => {
   const [state, dispatch] = useReducer(appStateReducer, initialState);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const bridgeClientRef = useRef<WebSocketBridgeClient | null>(null);
   const batteryTimerRef = useRef<NodeJS.Timeout | null>(null);
   const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -1635,6 +1661,30 @@ const ElectronMotionApp: React.FC = () => {
     }
   };
 
+  // Manual time synchronization
+  const handleManualSync = async () => {
+    if (!bridgeClientRef.current || isSyncing) return;
+
+    try {
+      setIsSyncing(true);
+      console.log('⏱️ Manual sync requested from UI');
+
+      const response = await bridgeClientRef.current.sendReliable({
+        type: MESSAGE_TYPES.BLE_SYNC_REQUEST
+      });
+
+      if (response.success) {
+        console.log(`✅ Manual sync complete: ${response.results?.length || 0} devices synced`);
+      } else {
+        console.error('❌ Manual sync failed:', response.message);
+      }
+    } catch (error) {
+      console.error('❌ Manual sync error:', error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const handleConnectDevices = async (devices: DeviceStateMachine[]) => {
     if (devices.length === 0) {
       alert("No devices available to connect");
@@ -1747,6 +1797,8 @@ const ElectronMotionApp: React.FC = () => {
               isScanning={state.isScanning}
               onClearDevices={handleClearDevices}
               isRecording={state.isRecording}
+              isSyncing={isSyncing}
+              onManualSync={handleManualSync}
           />
           {/* Right Pane - Motion Analysis */}
           <div className="flex-1 p-6 overflow-y-auto">
