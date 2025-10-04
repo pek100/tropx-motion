@@ -172,7 +172,9 @@ export class MainProcess {
       height: WINDOW_CONFIG.DEFAULT_HEIGHT,
       minWidth: WINDOW_CONFIG.MIN_WIDTH,
       minHeight: WINDOW_CONFIG.MIN_HEIGHT,
-      titleBarStyle: 'hiddenInset',
+      frame: false, // Remove window frame on all platforms
+      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden', // macOS vs Windows/Linux
+      trafficLightPosition: process.platform === 'darwin' ? { x: 15, y: 10 } : undefined, // macOS traffic lights position
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,

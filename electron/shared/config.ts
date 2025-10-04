@@ -110,7 +110,7 @@ export const BLUETOOTH_CONFIG = {
 
 // Window configuration
 export const WINDOW_CONFIG = {
-  DEFAULT_WIDTH: 1200,
+  DEFAULT_WIDTH: 1600,
   DEFAULT_HEIGHT: 800,
   MIN_WIDTH: 800,
   MIN_HEIGHT: 600,

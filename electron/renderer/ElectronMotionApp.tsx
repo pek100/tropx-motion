@@ -1138,18 +1138,34 @@ const WindowControls: React.FC = () => {
   const handleClose = () => window.electronAPI?.window.close();
 
   return (
-      <div className="flex items-center gap-1">
-        <Button onClick={handleMinimize} variant="ghost" size="sm" className="h-8 w-8 p-0 hover:bg-gray-100">
+      <div
+        className="flex items-center gap-1"
+        style={{ WebkitAppRegion: 'no-drag' as any }} // Prevent dragging on window controls
+      >
+        <Button
+          onClick={handleMinimize}
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0 hover:bg-gray-100 transition-colors"
+          title="Minimize"
+        >
           <Minimize2 className="w-4 h-4" />
         </Button>
-        <Button onClick={handleMaximize} variant="ghost" size="sm" className="h-8 w-8 p-0 hover:bg-gray-100">
+        <Button
+          onClick={handleMaximize}
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0 hover:bg-gray-100 transition-colors"
+          title="Maximize"
+        >
           <Maximize2 className="w-4 h-4" />
         </Button>
         <Button
             onClick={handleClose}
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0 hover:bg-red-100 hover:text-red-600"
+            className="h-8 w-8 p-0 hover:bg-red-100 hover:text-red-600 transition-colors"
+            title="Close"
         >
           <X className="w-4 h-4" />
         </Button>
@@ -1761,9 +1777,14 @@ const ElectronMotionApp: React.FC = () => {
 
 
   return (
-      <div className="min-h-screen flex flex-col" style={{ backgroundColor: "#fafafa" }}>
+      <div
+        className="min-h-screen flex flex-col drag-region"
+        style={{ backgroundColor: "#fafafa" }}
+      >
         {/* Header */}
-        <div className="border-b bg-white px-6 py-3 flex items-center justify-between drag-region">
+        <div
+          className="border-b bg-white px-6 py-3 flex items-center justify-between drag-region"
+        >
           <div className="flex items-center gap-3">
             <CompanyLogo className="w-8 h-8" />
             <div>
@@ -1773,7 +1794,7 @@ const ElectronMotionApp: React.FC = () => {
               <p className="text-xs text-muted-foreground">Research Suite</p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 no-drag">
             {/* Connection Status */}
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${state.isConnected ? "bg-green-500" : "bg-red-500"}`} />
@@ -1786,7 +1807,7 @@ const ElectronMotionApp: React.FC = () => {
             <WindowControls />
           </div>
         </div>
-        <div className="flex-1 flex">
+        <div className="flex-1 flex no-drag">
           {/* Left Pane - Device Management */}
           <DeviceManagementPane
               allDevices={state.allDevices}

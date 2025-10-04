@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { ApiResponse, DeviceConnectionResponse, RecordingResponse, RecordingSession } from '../shared/types';
 
 export interface ElectronAPI {
+    // Quick access for WebSocket port (used by new tropx-ws-client)
+    getWSPort: () => Promise<number>;
+
     window: {
         minimize: () => Promise<void>;
         maximize: () => Promise<void>;
@@ -41,6 +44,8 @@ export interface ElectronAPI {
 }
 
 const electronAPI: ElectronAPI = {
+    getWSPort: () => ipcRenderer.invoke('motion:getWebSocketPort'),
+
     window: {
         minimize: () => ipcRenderer.invoke('window:minimize'),
         maximize: () => ipcRenderer.invoke('window:maximize'),
@@ -83,5 +88,13 @@ contextBridge.exposeInMainWorld('electronAPI', electronAPI);
 declare global {
     interface Window {
         electronAPI: ElectronAPI;
+        electron: {
+            getWSPort: () => Promise<number>;
+        };
     }
 }
+
+// Also expose simplified electron API for new components
+contextBridge.exposeInMainWorld('electron', {
+    getWSPort: () => ipcRenderer.invoke('motion:getWebSocketPort'),
+});

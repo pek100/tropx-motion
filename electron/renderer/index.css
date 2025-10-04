@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Electron drag region support */
+.drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 @layer base {
   * {
     @apply border-border;

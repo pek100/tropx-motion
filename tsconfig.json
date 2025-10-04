@@ -17,12 +17,12 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./electron/renderer/src/*"]
     }
   },
   "include": [
-    "src/**/*.ts",
-    "src/**/*.tsx",
+    "electron/renderer/src/**/*.ts",
+    "electron/renderer/src/**/*.tsx",
     "electron/**/*.ts"
   ],
   "references": [

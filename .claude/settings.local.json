@@ -65,7 +65,12 @@
       "WebFetch(domain:docs.bosch-iot-suite.com)",
       "Read(//mnt/e/mywebapps/tropx/horus_client/tropx-pro/src/**)",
       "WebFetch(domain:gitlab.com)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(do cp /mnt/e/mywebapps/tropx/tropxmotion/client/components/$file.tsx /mnt/e/mywebapps/tropx/tropxmotion/electron/renderer/src/components/)",
+      "Bash(ls:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": [],

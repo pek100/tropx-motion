@@ -1,0 +1,264 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0); /* Fixed destructive-foreground to be white for text visibility */
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* Adding Tropx color variables */
+  --tropx-original: #ff5f35;
+  --tropx-sand: #ff8a35;
+  --tropx-coral: #ffbdad;
+  --tropx-ivory-blue: #f4f2fb;
+  --tropx-ivory: #fff6f3;
+  --tropx-shadow: #55535f;
+  --tropx-dark: #1f1e24;
+  --tropx-ivory-dark: #b3b0c3;
+  --tropx-coral-translucent: #ffbdad;
+  --tropx-vibrant: #ff4d35;
+  --tropx-white: #ffffff;
+  --tropx-green: #4baf27;
+  --tropx-red: #ff3535;
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.396 0.141 25.723);
+  --destructive-foreground: oklch(0.637 0.237 25.331);
+  --border: oklch(0.269 0 0);
+  --input: oklch(0.269 0 0);
+  --ring: oklch(0.439 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.269 0 0);
+  --sidebar-ring: oklch(0.439 0 0);
+}
+
+/* Tailwind v3 doesn't use @theme - colors are defined in tailwind.config.ts */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Adding leg band pulsating animations on hover */
+@keyframes pulsate-color {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes pulsate-scale {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+.group:hover .leg-band {
+  animation: pulsate-color 1s ease-in-out infinite, pulsate-scale 1s ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* Adding diagonal gradient for right pane */
+.gradient-diagonal {
+  background: linear-gradient(111deg, rgba(252, 106, 111, 0.25) 0%, rgba(238, 229, 255, 0.25) 100%);
+}
+
+/* Adding gradient classes for device cards */
+.gradient-blue-card {
+  background: linear-gradient(135deg, #dfecff 0%, #b8d9ff 100%);
+}
+
+.gradient-red-card {
+  background: linear-gradient(135deg, #ffd5d5 0%, #ffe5e5 100%);
+}
+
+/* Adding purple gradient for synchronizing state */
+.gradient-purple-card {
+  background: linear-gradient(135deg, #e9d5ff 0%, #d8b4fe 100%);
+}
+
+/* Adding flash animation for left pane validation feedback */
+@keyframes flash-border {
+  0%,
+  100% {
+    border-color: #e5e5e5;
+    box-shadow: 0 0 0 0 rgba(255, 77, 53, 0);
+  }
+  50% {
+    border-color: var(--tropx-vibrant);
+    box-shadow: 0 0 20px 5px rgba(255, 77, 53, 0.3);
+  }
+}
+
+.flash-pane {
+  animation: flash-border 0.5s ease-in-out 2;
+}
+
+/* Adding smooth spin animation for sync icon to prevent jittering */
+@keyframes smooth-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-smooth-spin {
+  animation: smooth-spin 1s linear infinite;
+}
+
+/* Adding vibrate animation for locate feature */
+@keyframes vibrate {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  10%,
+  30%,
+  50%,
+  70%,
+  90% {
+    transform: translateX(-4px);
+  }
+  20%,
+  40%,
+  60%,
+  80% {
+    transform: translateX(4px);
+  }
+}
+
+.animate-vibrate {
+  animation: vibrate 0.5s ease-in-out infinite;
+}
+
+/* Adding visor scanning animation for refresh feature */
+@keyframes visor-scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    /* Using large fixed value to ensure visor reaches bottom of container */
+    transform: translateY(800px);
+  }
+}
+
+.visor-scan {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.6) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: visor-scan 2.5s ease-in-out infinite;
+  filter: blur(8px);
+}
+
+/* Adding radial gradient overlay for locate instruction with green tint */
+.locate-overlay {
+  background: radial-gradient(
+    circle at center,
+    rgba(75, 175, 39, 0.15) 0%,
+    rgba(0, 0, 0, 0.1) 40%,
+    rgba(0, 0, 0, 0) 70%
+  );
+  backdrop-filter: blur(2px);
+}
+
+/* Adding lighter green overlay without darkness */
+.locate-overlay-light {
+  /* Increased white gradient opacity values for stronger overlay effect */
+  background: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, 0.7) 0%,
+    rgba(255, 255, 255, 0.5) 50%,
+    rgba(255, 255, 255, 0.3) 70%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  backdrop-filter: blur(0.5px);
+}
+
+/* Adding dark tint overlay for locate instruction */
+.locate-overlay-dark {
+  background: radial-gradient(
+    circle at center,
+    rgba(0, 0, 0, 0.5) 0%,
+    rgba(0, 0, 0, 0.3) 40%,
+    rgba(0, 0, 0, 0.15) 60%,
+    rgba(0, 0, 0, 0) 80%
+  );
+  backdrop-filter: blur(1px);
+}
