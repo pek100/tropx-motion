@@ -68,6 +68,19 @@ export class InterpolationService {
     }
 
     /**
+     * Removes device buffer when device disconnects.
+     * CRITICAL: Prevents stale data from affecting interpolation after disconnect.
+     */
+    removeDevice(deviceId: string): void {
+        const buffer = this.deviceBuffers.get(deviceId);
+        if (buffer) {
+            console.log(`🧹 [INTERPOLATION] Removing device ${deviceId} buffer (had ${buffer.samples.length} samples)`);
+            buffer.samples.length = 0; // Clear array explicitly
+            this.deviceBuffers.delete(deviceId);
+        }
+    }
+
+    /**
      * Performs complete cleanup of buffers and subscriptions.
      * Enhanced with thorough memory cleanup to prevent leaks.
      */

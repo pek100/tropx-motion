@@ -70,7 +70,13 @@
       "Bash(ls:*)",
       "Bash(npm uninstall:*)",
       "Bash(powershell.exe:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(gh workflow run:*)",
+      "Bash(gh repo create:*)",
+      "Bash(git push:*)",
+      "Bash(gh workflow:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)"
     ],
     "deny": [],
     "ask": [],

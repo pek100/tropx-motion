@@ -8,6 +8,7 @@ import { MotionConfig, IMUData, SessionContext, JointAngleData } from './shared/
 import {createMotionConfig, PerformanceProfile} from './shared/config';
 import { CHUNKING, SAMPLE_RATES } from './shared/constants';
 import { PerformanceLogger } from './shared/PerformanceLogger';
+import { DeviceID } from '../registry-management';
 
 interface RecordingStatus {
     isRecording: boolean;
@@ -107,8 +108,9 @@ export class MotionProcessingCoordinator {
 
     /**
      * Processes new IMU data from a specific device.
+     * @param deviceId - DeviceID (0x11, 0x12, 0x21, 0x22) for efficient processing
      */
-    processNewData(deviceId: string, imuData: IMUData): void {
+    processNewData(deviceId: DeviceID | string, imuData: IMUData): void {
         // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
         // console.log(`🔄 [MOTION_COORDINATOR] processNewData called for ${deviceId}:`, {
         //     isInitialized: this.isInitialized,
@@ -143,6 +145,16 @@ export class MotionProcessingCoordinator {
         if (totalDuration > 1) {
             console.warn(`⚠️ [COORD] Slow processing for ${deviceId}: ${totalDuration.toFixed(2)}ms (device: ${deviceDuration.toFixed(2)}ms)`);
         }
+    }
+
+    /**
+     * Removes device from motion processing when it disconnects.
+     * CRITICAL: Must be called on device disconnect to prevent stale data affecting joint processing.
+     * @param deviceId - DeviceID (0x11, 0x12, 0x21, 0x22) or device address
+     */
+    removeDevice(deviceId: DeviceID | string): void {
+        console.log(`🧹 [MOTION_COORDINATOR] Removing device ${deviceId} from motion processing`);
+        this.deviceProcessor.removeDevice(deviceId);
     }
 
     /**

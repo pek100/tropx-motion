@@ -32,6 +32,16 @@ export class NobleBluetoothService {
   private isScanning = false;
   private isInitialized = false;
   private scanTimer: NodeJS.Timeout | null = null;
+  // Burst scanning support
+  private burstEnabled: boolean = BLE_CONFIG.SCAN_BURST_ENABLED;
+  private nextBurstTimer: NodeJS.Timeout | null = null;
+  private burstTimeoutTimer: NodeJS.Timeout | null = null;
+  private isCleaningUp = false;
+
+  // Expose scanning state (for snapshot-based burst scanning)
+  public isScanningActive(): boolean {
+    return this.isScanning;
+  }
 
   // Callbacks
   private motionDataCallback: MotionDataCallback | null = null;
@@ -192,12 +202,9 @@ export class NobleBluetoothService {
       return { success: false, devices: [], message: 'BLE service not initialized' };
     }
 
-    // If noble is null, we're using the mock service - methods were replaced during initialization
     if (!noble) {
       console.log('🧪 Using mock service for scanning (noble is null)');
       console.log('❌ This should not happen - mock service should have replaced this method');
-      // The startScanning method should have been replaced with mock implementation
-      // This shouldn't happen, but if it does, return an error
       return { success: false, devices: [], message: 'Mock service not properly initialized' };
     }
 
@@ -207,15 +214,16 @@ export class NobleBluetoothService {
 
     try {
       console.log(`📡 Starting BLE scan for devices (${BLE_CONFIG.DEVICE_PATTERNS.join(', ')})...`);
-
-      // Don't clear existing devices - keep them available for connection
       console.log(`🔍 Keeping ${this.discoveredPeripherals.size} previously discovered devices`);
       this.isScanning = true;
 
-      // Start scanning for all devices (TropX doesn't advertise service UUID, must filter by name)
-      // Note: Many BLE devices don't include service UUID in advertisement to save space
-      console.log('🔍 Scanning for BLE devices (filtering by device name)...');
       await noble.startScanningAsync([], false);
+
+      // Clear any pending burst timers when a new scan starts
+      if (this.nextBurstTimer) {
+        clearTimeout(this.nextBurstTimer);
+        this.nextBurstTimer = null;
+      }
 
       // Auto-stop scanning after timeout
       this.scanTimer = setTimeout(async () => {
@@ -237,8 +245,8 @@ export class NobleBluetoothService {
     }
   }
 
-  // Stop scanning
-  async stopScanning(): Promise<void> {
+  // Stop scanning (optionally suppress scheduling next burst)
+  async stopScanning(suppressNext: boolean = false): Promise<void> {
     if (!this.isScanning || !noble) return;
 
     try {
@@ -256,6 +264,13 @@ export class NobleBluetoothService {
         .map(peripheral => this.createDeviceInfo(peripheral));
 
       console.log(`✅ Scan completed. Found ${discoveredDevices.length} devices`);
+
+      // Schedule next burst if enabled
+      if (!suppressNext && this.burstEnabled && !this.isCleaningUp) {
+        this.scheduleNextBurst();
+      } else if (suppressNext) {
+        console.log('⏹️ Burst scheduling suppressed for this stop.');
+      }
 
     } catch (error) {
       console.error('Error stopping scan:', error);
@@ -386,6 +401,14 @@ export class NobleBluetoothService {
     console.log(`🎬 Starting global streaming on ${connectedDevices.length} connected devices...`);
     deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STARTING);
 
+    // CRITICAL: Disable burst scanning to prevent interference with active notifications
+    // Noble scan state changes can disrupt GATT notification subscriptions
+    if (this.burstEnabled) {
+      console.log('🛑 Disabling burst scanning during streaming (prevents notification interference)');
+      await this.stopScanning(true); // Stop any active scan, suppress next burst
+      this.setBurstScanningEnabled(false);
+    }
+
     // Start streaming on all connected devices in parallel
     const streamingTasks = connectedDevices.map(device => this.startDeviceStreaming(device.id));
     const results = await Promise.all(streamingTasks);
@@ -428,6 +451,12 @@ export class NobleBluetoothService {
     deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
 
     console.log(`✅ Global streaming stopped: ${successCount}/${streamingDevices.length} devices stopped`);
+
+    // Re-enable burst scanning now that streaming is stopped (allows discovery of new devices)
+    if (BLE_CONFIG.SCAN_BURST_ENABLED && !this.burstEnabled) {
+      console.log('🔁 Re-enabling burst scanning (streaming stopped)');
+      this.setBurstScanningEnabled(true);
+    }
 
     return {
       success: true,
@@ -662,9 +691,14 @@ export class NobleBluetoothService {
   // Cleanup and disconnect all
   async cleanup(): Promise<void> {
     console.log('🧹 Cleaning up Noble BLE service...');
+    this.isCleaningUp = true;
 
     if (this.isScanning) {
-      await this.stopScanning();
+      await this.stopScanning(true); // suppress next burst during cleanup
+    }
+    if (this.nextBurstTimer) {
+      clearTimeout(this.nextBurstTimer);
+      this.nextBurstTimer = null;
     }
 
     // Disconnect all devices
@@ -682,14 +716,23 @@ export class NobleBluetoothService {
     this.discoveredPeripherals.clear();
 
     console.log('✅ Noble BLE service cleanup complete');
+    this.isCleaningUp = false;
   }
 
   // Setup Noble event handlers
   private setupNobleEvents(): void {
     noble.on('stateChange', (state: string) => {
       console.log(`📶 Bluetooth state changed: ${state}`);
-      if (state !== 'poweredOn' && this.isScanning) {
-        this.stopScanning();
+      if (state !== 'poweredOn') {
+        if (this.isScanning) {
+          // Suppress scheduling next burst while adapter is down
+            this.stopScanning(true);
+        }
+      } else {
+        // Adapter came back - resume burst scanning if enabled
+        if (this.burstEnabled && !this.isScanning && !this.nextBurstTimer) {
+          this.scheduleNextBurst();
+        }
       }
     });
 
@@ -769,7 +812,7 @@ export class NobleBluetoothService {
   }
 
   // Wait for Bluetooth to be ready
-  private async waitForBluetoothReady(): Promise<void> {
+  private waitForBluetoothReady(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (noble.state === 'poweredOn') {
         resolve();
@@ -796,17 +839,83 @@ export class NobleBluetoothService {
     return noble?.state === 'poweredOn';
   }
 
-  get scanningStatus(): boolean {
-    return this.isScanning;
+  get isBurstScanningEnabled(): boolean {
+    return this.burstEnabled;
   }
 
-  get connectedDeviceCount(): number {
-    let count = 0;
-    this.devices.forEach(device => {
-      if (device.isConnected) {
-        count++;
+  // Enable/disable burst scanning externally
+  public setBurstScanningEnabled(enabled: boolean): void {
+    if (this.burstEnabled === enabled) return;
+    this.burstEnabled = enabled;
+    console.log(`🔁 Burst scanning ${enabled ? 'enabled' : 'disabled'}`);
+    if (enabled && !this.isScanning && !this.nextBurstTimer) {
+      // Kick off an immediate scan
+      this.startScanning().catch(err => console.error('Burst start error:', err));
+    } else if (!enabled && this.nextBurstTimer) {
+      clearTimeout(this.nextBurstTimer);
+      this.nextBurstTimer = null;
+    }
+  }
+
+  // Enable burst scanning for a duration (e.g., 10 seconds)
+  enableBurstScanningFor(durationMs: number): void {
+    console.log(`🔄 Enabling burst scanning for ${durationMs}ms`);
+
+    // Clear any existing burst timeout
+    if (this.burstTimeoutTimer) {
+      clearTimeout(this.burstTimeoutTimer);
+      this.burstTimeoutTimer = null;
+    }
+
+    // Enable burst mode
+    this.burstEnabled = true;
+
+    // Start first scan immediately if not already scanning
+    if (!this.isScanning && !this.isCleaningUp) {
+      this.startScanning().catch(err => console.error('Failed to start burst scan:', err));
+    }
+
+    // Auto-disable after duration
+    this.burstTimeoutTimer = setTimeout(() => {
+      console.log(`⏱️ Burst scanning duration (${durationMs}ms) elapsed - disabling`);
+      this.disableBurstScanning();
+      this.burstTimeoutTimer = null;
+    }, durationMs);
+  }
+
+  // Manually disable burst scanning (e.g., when user clicks refresh to stop)
+  disableBurstScanning(): void {
+    console.log('🛑 Disabling burst scanning');
+    this.burstEnabled = false;
+
+    // Clear burst timeout timer
+    if (this.burstTimeoutTimer) {
+      clearTimeout(this.burstTimeoutTimer);
+      this.burstTimeoutTimer = null;
+    }
+
+    // Clear next burst timer
+    if (this.nextBurstTimer) {
+      clearTimeout(this.nextBurstTimer);
+      this.nextBurstTimer = null;
+    }
+
+    // Stop current scan
+    if (this.isScanning) {
+      this.stopScanning(true).catch(err => console.error('Failed to stop scan:', err));
+    }
+  }
+
+  private scheduleNextBurst(): void {
+    if (this.isScanning || this.nextBurstTimer) return;
+    if (!this.burstEnabled) return;
+    console.log(`⏳ Scheduling next scan burst in ${BLE_CONFIG.SCAN_BURST_GAP}ms`);
+    this.nextBurstTimer = setTimeout(async () => {
+      this.nextBurstTimer = null;
+      if (this.burstEnabled && !this.isScanning && !this.isCleaningUp) {
+        console.log('🚀 Starting next scan burst');
+        await this.startScanning();
       }
-    });
-    return count;
+    }, BLE_CONFIG.SCAN_BURST_GAP);
   }
 }

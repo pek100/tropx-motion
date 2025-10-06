@@ -32,7 +32,10 @@ export abstract class JointProcessor {
 
         if (angle === null || !this.isValidAngle(angle)) return null;
 
-        return this.createAndProcessAngleData(angle);
+        // Use latest device timestamp (already offset to system time in DeviceProcessor)
+        const latestTimestamp = Math.max(...deviceArray.map(d => d.timestamp));
+        const deviceIds = Array.from(devices.keys()); // Extract device IDs
+        return this.createAndProcessAngleData(angle, latestTimestamp, deviceIds);
     }
 
     /**
@@ -98,15 +101,15 @@ export abstract class JointProcessor {
     /**
      * Creates angle data object, updates statistics, and notifies subscribers.
      */
-    private createAndProcessAngleData(angle: number): JointAngleData {
+    private createAndProcessAngleData(angle: number, timestamp: number, deviceIds: string[]): JointAngleData {
         const processedAngle = roundToPrecision(angle);
         this.statisticsManager.updateStats(this.jointConfig.name, processedAngle);
 
         const angleData: JointAngleData = {
             jointName: this.jointConfig.name,
             angle: processedAngle,
-            timestamp: performance.now(),
-            deviceIds: []
+            timestamp: timestamp, // Use device timestamp (already offset to system time)
+            deviceIds: deviceIds // Device IDs that contributed to this angle
         };
 
         this.latestAngle = angleData;

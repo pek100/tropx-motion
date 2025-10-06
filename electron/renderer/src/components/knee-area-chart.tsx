@@ -182,6 +182,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   const updateCounterRef = useRef(0)
 
   const animationFrameRef = useRef<number>()
+  const pendingUpdateRef = useRef(false)
 
   const toggleKneeVisibility = (kneeKey: string) => {
     setKneeVisibility((prev) => ({
@@ -212,7 +213,8 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
       return
     }
 
-    const timestamp = getTimestamp(leftKnee, rightKnee)
+    // Use sensor timestamps for accurate time axis
+    const timestamp = leftKnee?.sensorTimestamp || rightKnee?.sensorTimestamp || Date.now()
     updateCounterRef.current++
 
     const newDataPoint: ChartDataPoint = {
@@ -222,35 +224,45 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
       _updateId: updateCounterRef.current,
     }
 
+    // Add to buffer immediately for data integrity
     dataBufferRef.current.push(newDataPoint)
 
-    const newChartData = dataBufferRef.current.getChartData(timestamp)
-    setChartData(newChartData)
-  }, [leftKnee, rightKnee, useSensorTimestamps])
+    // Schedule chart update using RAF to batch multiple updates per frame
+    if (!pendingUpdateRef.current) {
+      pendingUpdateRef.current = true
+      animationFrameRef.current = requestAnimationFrame(() => {
+        pendingUpdateRef.current = false
+        // Use latest timestamp from buffer for window calculation
+        const latestPoint = dataBufferRef.current.toArray().slice(-1)[0]
+        if (latestPoint) {
+          const newChartData = dataBufferRef.current.getChartData(latestPoint.time)
+          setChartData(newChartData)
+        }
+      })
+    }
+  }, [leftKnee, rightKnee])
 
   useEffect(() => {
     if (!leftKnee && !rightKnee) {
       return
     }
 
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current)
-    }
-
-    animationFrameRef.current = requestAnimationFrame(updateData)
+    // Update data on every change - RAF batching inside updateData prevents stutter
+    updateData()
 
     return () => {
+      // Cleanup pending RAF on unmount
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
-  }, [leftKnee, rightKnee, useSensorTimestamps])
+  }, [leftKnee, rightKnee, updateData])
 
   useEffect(() => {
     if (clearTrigger > 0) {
       dataBufferRef.current.clear()
-      setChartData([])
       updateCounterRef.current = 0
+      setChartData([])
     }
   }, [clearTrigger])
 

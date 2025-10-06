@@ -104,6 +104,32 @@ export class TropxWSClient {
     return Ok(response);
   }
 
+  async startLocateMode(): Promise<Result<void>> {
+    const result = await this.sendRequest<any>(MESSAGE_TYPES.BLE_LOCATE_START_REQUEST, {});
+    return result.success ? Ok(undefined) : result;
+  }
+
+  async stopLocateMode(): Promise<Result<void>> {
+    const result = await this.sendRequest<any>(MESSAGE_TYPES.BLE_LOCATE_STOP_REQUEST, {});
+    return result.success ? Ok(undefined) : result;
+  }
+
+  async startBurstScan(): Promise<Result<void>> {
+    const result = await this.sendRequest<any>(MESSAGE_TYPES.BLE_BURST_SCAN_START_REQUEST, {});
+    return result.success ? Ok(undefined) : result;
+  }
+
+  async stopBurstScan(): Promise<Result<void>> {
+    const result = await this.sendRequest<any>(MESSAGE_TYPES.BLE_BURST_SCAN_STOP_REQUEST, {});
+    return result.success ? Ok(undefined) : result;
+  }
+
+  async getDevicesState(): Promise<Result<DeviceInfo[]>> {
+    const result = await this.sendRequest<any>(MESSAGE_TYPES.GET_DEVICES_STATE_REQUEST, {});
+    if (!result.success) return result;
+    return Ok(result.data.devices || []);
+  }
+
   // Recording operations
   async startRecording(sessionId: string, exerciseId: string, setNumber: number): Promise<Result<RecordingResponse>> {
     const result = await this.sendRequest<any>(MESSAGE_TYPES.RECORD_START_REQUEST, { sessionId, exerciseId, setNumber });

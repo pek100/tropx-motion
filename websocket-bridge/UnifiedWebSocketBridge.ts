@@ -72,6 +72,10 @@ export class UnifiedWebSocketBridge {
       const nobleInitialized = await this.bleServiceAdapter.initialize();
       if (!nobleInitialized) {
         console.warn('⚠️ Noble BLE service failed to initialize');
+      } else {
+        // Enable burst scanning for 10 seconds on initialization
+        console.log('🔄 Enabling initial 10-second burst scan');
+        this.bleServiceAdapter.enableBurstScanningFor(10000);
       }
 
       // Connect service adapters to existing services

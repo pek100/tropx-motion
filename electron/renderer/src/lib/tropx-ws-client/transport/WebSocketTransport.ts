@@ -145,7 +145,7 @@ export class WebSocketTransport extends TypedEventEmitter {
         console.error('❌ Failed to deserialize message');
         return;
       }
-      console.log('✅ Deserialized message:', message);
+      console.log('✅ Deserialized message:', JSON.stringify(message, null, 2));
       if (message.requestId && this.pendingRequests.has(message.requestId)) {
         const { resolve, timeout } = this.pendingRequests.get(message.requestId)!;
         this.pendingRequests.delete(message.requestId);
@@ -170,6 +170,18 @@ export class WebSocketTransport extends TypedEventEmitter {
         break;
       case 0x32:
         this.emit(EVENT_TYPES.BATTERY_UPDATE, message as any);
+        break;
+      case 0x33:
+        this.emit(EVENT_TYPES.SYNC_STARTED, message as any);
+        break;
+      case 0x34:
+        this.emit(EVENT_TYPES.SYNC_PROGRESS, message as any);
+        break;
+      case 0x35:
+        this.emit(EVENT_TYPES.SYNC_COMPLETE, message as any);
+        break;
+      case 0x36:
+        this.emit(EVENT_TYPES.DEVICE_VIBRATING, message as any);
         break;
       case 0x02:
         this.emit(EVENT_TYPES.MESSAGE, message as any);

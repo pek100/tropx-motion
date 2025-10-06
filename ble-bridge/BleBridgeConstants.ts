@@ -26,6 +26,11 @@ export const BLE_CONFIG = {
   // RSSI threshold for device filtering
   // -80 dBm is ~10m range in typical indoor environment
   MIN_RSSI: -80,
+  // Burst scanning (continuous short scan cycles to keep device list fresh)
+  // Scan duty cycle: SCAN_TIMEOUT active, then SCAN_BURST_GAP idle, repeats while enabled
+  // NOTE: Disabled to let frontend control scanning via burstScanDevices()
+  SCAN_BURST_ENABLED: false,
+  SCAN_BURST_GAP: 500, // 0.5s gap between bursts (keeps ~80% duty cycle with 2s scans)
 } as const;
 
 export const TROPX_COMMANDS = {
@@ -60,9 +65,14 @@ export const TROPX_STATES = {
 
 export const DATA_MODES = {
   NONE: 0x00,
+  GYRO: 0x01,                    // Gyroscope-only mode
+  ACCELEROMETER: 0x02,           // Accelerometer-only mode (for device location detection)
+  IMU: 0x03,                     // IMU: Gyroscope + Accelerometer
+  MAGNETOMETER: 0x04,            // Magnetometer-only mode
   QUATERNION: 0x10,              // Quaternion-only mode (uses reception timestamps)
   TIMESTAMP: 0x20,               // Timestamp flag
   QUATERNION_TIMESTAMP: 0x30,    // Quaternion + embedded timestamps (0x10 | 0x20)
+  ACCELEROMETER_TIMESTAMP: 0x22, // Accelerometer + timestamps (0x02 | 0x20)
 } as const;
 
 export const DATA_FREQUENCIES = {
@@ -74,8 +84,11 @@ export const DATA_FREQUENCIES = {
 
 export const PACKET_SIZES = {
   HEADER: 8,                  // 8-byte header (general packet header)
+  ACCELEROMETER: 6,           // 6 bytes: 3 x int16 (x,y,z axes)
   QUATERNION: 6,              // 6 bytes: 3 x int16 (x,y,z components)
   TIMESTAMP: 6,               // 6 bytes: 48-bit timestamp (per Muse API)
+  TOTAL_ACCELEROMETER: 14,    // Mode 0x02: 8-byte header + 6-byte accelerometer
+  TOTAL_ACCELEROMETER_TIMESTAMP: 20,  // Mode 0x22: 8-byte header + 6-byte accel + 6-byte timestamp
   TOTAL_QUATERNION: 14,       // Mode 0x10: 8-byte header + 6-byte quaternion
   TOTAL_QUATERNION_TIMESTAMP: 20,  // Mode 0x30: 8-byte header + 6-byte quat + 6-byte timestamp
 } as const;

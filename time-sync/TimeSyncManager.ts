@@ -8,17 +8,25 @@
  * - Tracks sync results for all devices
  */
 
-import { TimeSyncDevice, TimeSyncResult } from './types';
+import { TimeSyncDevice, TimeSyncResult, SyncSampleCallback } from './types';
 import { TimeSyncSession } from './TimeSyncSession';
 
 export class TimeSyncManager {
   private results = new Map<string, TimeSyncResult>();
+  private onSampleCallback?: SyncSampleCallback;
+
+  /**
+   * Set callback for live sync sample updates
+   */
+  setOnSampleCallback(callback: SyncSampleCallback): void {
+    this.onSampleCallback = callback;
+  }
 
   /**
    * Sync single device - applies measured offset directly
    */
   async syncDevice(device: TimeSyncDevice, commonTimestampSeconds?: number): Promise<TimeSyncResult> {
-    const session = new TimeSyncSession(device);
+    const session = new TimeSyncSession(device, undefined, this.onSampleCallback);
     const result = await session.run(commonTimestampSeconds);
 
     this.results.set(device.deviceId, result);

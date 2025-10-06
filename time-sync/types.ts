@@ -32,6 +32,7 @@ export interface TimeSyncResult {
   maxRTT: number;
   success: boolean;
   error?: string;
+  deviceTimestampMs?: DeviceTimestampMs; // Current device timestamp at sync completion
 }
 
 // Device system states (per spec)
@@ -40,6 +41,9 @@ export enum DeviceSystemState {
   STREAMING = 0x04,
   RECORDING = 0x08
 }
+
+// Callback for live sync updates during sampling
+export type SyncSampleCallback = (deviceId: string, deviceName: string, deviceTimestampMs: number) => void;
 
 // Device interface for BLE time sync operations
 export interface TimeSyncDevice {

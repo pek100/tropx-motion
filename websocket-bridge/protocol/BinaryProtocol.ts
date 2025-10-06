@@ -1,13 +1,13 @@
 import { MESSAGE_TYPES, PROTOCOL, MessageType } from '../types/MessageTypes';
 import { BaseMessage, MotionDataMessage } from '../types/Interfaces';
 
-// Binary message header structure (12 bytes total)
+// Binary message header structure (16 bytes total)
 interface BinaryHeader {
   version: number;      // 1 byte
   messageType: number;  // 1 byte
   payloadLength: number;// 2 bytes
   requestId: number;    // 4 bytes
-  timestamp: number;    // 4 bytes
+  timestamp: number;    // 8 bytes (Float64 for full ms-since-epoch)
 }
 
 export class BinaryProtocol {
@@ -77,7 +77,7 @@ export class BinaryProtocol {
     offset += 2;
     view.setUint32(offset, header.requestId, true);
     offset += 4;
-    view.setUint32(offset, header.timestamp, true);
+    view.setFloat64(offset, header.timestamp, true); // Use Float64 for full timestamp
   }
 
   // Read header from buffer
@@ -90,7 +90,7 @@ export class BinaryProtocol {
       messageType: view.getUint8(offset++),
       payloadLength: view.getUint16(offset, true),
       requestId: view.getUint32(offset + 2, true),
-      timestamp: view.getUint32(offset + 6, true),
+      timestamp: view.getFloat64(offset + 6, true), // Use Float64 for full timestamp
     };
   }
 
@@ -132,21 +132,17 @@ export class BinaryProtocol {
     if (message.data instanceof Float32Array) {
       floatData = message.data;
     } else {
-      // Convert plain object to Float32Array [left.current, left.max, left.min, right.current, right.max, right.min]
+      // Convert plain object to Float32Array [leftCurrent, rightCurrent]
       const data = message.data as any;
       floatData = new Float32Array([
         data.left?.current || 0,
-        data.left?.max || 0,
-        data.left?.min || 0,
-        data.right?.current || 0,
-        data.right?.max || 0,
-        data.right?.min || 0
+        data.right?.current || 0
       ]);
     }
 
     const floatDataBytes = floatData.byteLength;
 
-    // Structure: [deviceNameLength:2][deviceName:N][floatData:24]
+    // Structure: [deviceNameLength:2][deviceName:N][floatData:8] (2 floats * 4 bytes)
     const buffer = new ArrayBuffer(2 + deviceNameLength + floatDataBytes);
     const view = new DataView(buffer);
     let offset = 0;
@@ -224,17 +220,17 @@ export class BinaryProtocol {
     const floatBuffer = payload.slice(offset);
     const floatArray = new Float32Array(floatBuffer);
 
-    // Convert Float32Array back to object format
+    // Convert Float32Array back to object format (only current values)
     const data = {
       left: {
         current: floatArray[0] || 0,
-        max: floatArray[1] || 0,
-        min: floatArray[2] || 0
+        max: 0,  // deprecated
+        min: 0   // deprecated
       },
       right: {
-        current: floatArray[3] || 0,
-        max: floatArray[4] || 0,
-        min: floatArray[5] || 0
+        current: floatArray[1] || 0,
+        max: 0,  // deprecated
+        min: 0   // deprecated
       },
       timestamp: baseMessage.timestamp
     };
@@ -285,7 +281,7 @@ export class BinaryProtocol {
 
       // Validate Float32Array format
       if (motionMsg.data instanceof Float32Array) {
-        if (motionMsg.data.length !== 6) return false;
+        if (motionMsg.data.length !== 2) return false;
       }
       // Validate object format
       else {

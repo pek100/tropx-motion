@@ -47,7 +47,7 @@ export class BinaryProtocol {
     offset += 2;
     view.setUint32(offset, header.requestId, true);
     offset += 4;
-    view.setUint32(offset, header.timestamp, true);
+    view.setFloat64(offset, header.timestamp, true); // Use Float64 for full timestamp
   }
 
   private static readHeader(buffer: ArrayBuffer): BinaryHeader {
@@ -58,7 +58,7 @@ export class BinaryProtocol {
       messageType: view.getUint8(offset++),
       payloadLength: view.getUint16(offset, true),
       requestId: view.getUint32(offset + 2, true),
-      timestamp: view.getUint32(offset + 6, true),
+      timestamp: view.getFloat64(offset + 6, true), // Use Float64 for full timestamp
     };
   }
 
@@ -137,18 +137,20 @@ export class BinaryProtocol {
     let offset = 0;
     const deviceNameLength = view.getUint16(offset, true);
     offset += 2;
-    if (payload.byteLength < 2 + deviceNameLength + 24) return null;
+    if (payload.byteLength < 2 + deviceNameLength + 8) return null; // 2 floats = 8 bytes
     const deviceNameBytes = new Uint8Array(payload, offset, deviceNameLength);
     const deviceName = new TextDecoder().decode(deviceNameBytes);
     offset += deviceNameLength;
     const floatBuffer = payload.slice(offset);
     const floatArray = new Float32Array(floatBuffer);
-    const data = {
-      left: { current: floatArray[0] || 0, max: floatArray[1] || 0, min: floatArray[2] || 0 },
-      right: { current: floatArray[3] || 0, max: floatArray[4] || 0, min: floatArray[5] || 0 },
-      timestamp: baseMessage.timestamp
-    };
-    return { ...baseMessage, type: MESSAGE_TYPES.MOTION_DATA, deviceName, data } as MotionDataMessage;
+
+    // Keep as Float32Array - no JSON conversion
+    return {
+      ...baseMessage,
+      type: MESSAGE_TYPES.MOTION_DATA,
+      deviceName,
+      data: floatArray // Float32Array[left, right]
+    } as any;
   }
 
   private static deserializeJSON(payload: ArrayBuffer, baseMessage: BaseMessage): BaseMessage | null {

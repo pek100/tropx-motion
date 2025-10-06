@@ -12,8 +12,8 @@ export type MessageDomain = typeof MESSAGE_DOMAINS[keyof typeof MESSAGE_DOMAINS]
 
 // Domain ranges for message classification
 const DOMAIN_RANGES = {
-  [MESSAGE_DOMAINS.BLE]: { min: 0x10, max: 0x23 },
-  [MESSAGE_DOMAINS.STREAMING]: { min: 0x30, max: 0x32 },
+  [MESSAGE_DOMAINS.BLE]: { min: 0x10, max: 0x43 }, // Includes scan/connect (0x10-0x17), recording (0x20-0x23), state query (0x42-0x43)
+  [MESSAGE_DOMAINS.STREAMING]: { min: 0x30, max: 0x35 }, // Motion (0x30), device status (0x31), battery (0x32), sync events (0x33-0x35)
   [MESSAGE_DOMAINS.SYSTEM]: [0x01, 0x02, 0x03, 0xF0, 0xF1, 0xF2]
 } as const;
 

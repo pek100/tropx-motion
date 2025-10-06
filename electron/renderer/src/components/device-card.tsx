@@ -25,7 +25,7 @@ MsCounter.displayName = "MsCounter"
 
 interface DeviceCardProps {
   name: string
-  batteryPercentage: number
+  batteryPercentage: number | null
   signalStrength: 1 | 2 | 3 | 4 // 1-4 bars
   connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing"
   isStreaming?: boolean
@@ -33,6 +33,16 @@ interface DeviceCardProps {
   isLocatingTarget?: boolean
   disabled?: boolean
   onToggleConnection?: () => void
+  syncOffsetMs?: number
+  syncDeviceTimestampMs?: number
+  // Drag & drop (optional)
+  draggable?: boolean
+  isDragging?: boolean
+  isDragOver?: boolean
+  onDragStart?: (e: React.DragEvent) => void
+  onDragOver?: (e: React.DragEvent) => void
+  onDrop?: (e: React.DragEvent) => void
+  onDragEnd?: (e: React.DragEvent) => void
 }
 
 export function DeviceCard({
@@ -45,6 +55,15 @@ export function DeviceCard({
   isLocatingTarget = false,
   disabled = false,
   onToggleConnection,
+  syncOffsetMs,
+  syncDeviceTimestampMs,
+  draggable = false,
+  isDragging = false,
+  isDragOver = false,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
 }: DeviceCardProps) {
   const isLn = name.includes("ln")
   const bgColor =
@@ -68,8 +87,19 @@ export function DeviceCard({
 
     if (connectionStatus === "synchronizing") {
       return (
-        <div className="flex items-center justify-center w-full h-full">
-          <MsCounter />
+        <div className="flex flex-col items-center justify-center w-full h-full">
+          {syncDeviceTimestampMs !== undefined && syncDeviceTimestampMs !== null ? (
+            <>
+              <span className="text-xs font-bold text-purple-600 leading-tight">
+                {String(Math.floor(syncDeviceTimestampMs)).slice(-4)}
+              </span>
+              <span className="text-[8px] font-medium text-purple-500 leading-tight">
+                ms
+              </span>
+            </>
+          ) : (
+            <MsCounter />
+          )}
         </div>
       )
     }
@@ -130,11 +160,25 @@ export function DeviceCard({
 
   return (
     <TooltipProvider>
-      <div className="flex items-center gap-3">
+      <div
+        className={`flex items-center gap-3 cursor-${draggable ? 'grab active:cursor-grabbing' : 'default'} transition-all duration-200 ease-out ${
+          isDragging ? 'opacity-30 scale-95' : 'opacity-100 scale-100'
+        }`}
+        draggable={draggable && !disabled}
+        onDragStart={onDragStart}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        onDragEnd={onDragEnd}
+        aria-grabbed={isDragging}
+        data-dragging={isDragging ? 'true' : 'false'}
+        data-dragover={isDragOver ? 'true' : 'false'}
+      >
         <div
-          className={`${bgColor} rounded-full px-4 py-2.5 flex items-center gap-3 w-[340px] transition-all ${
-            isLocating && !isLocatingTarget ? "grayscale" : ""
-          } ${isLocatingTarget ? "animate-vibrate" : ""}`}
+          className={`${bgColor} rounded-full px-4 py-2.5 flex items-center gap-3 w-[340px] transition-all duration-200 ${
+            isLocating && !isLocatingTarget ? 'grayscale' : ''
+          } ${isLocatingTarget ? 'animate-vibrate' : ''} ${
+            isDragOver ? 'ring-2 ring-offset-2 ring-purple-500 scale-[1.02]' : ''
+          }`}
         >
           <div className="bg-white rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0">
             <SignalIcon />
@@ -148,8 +192,8 @@ export function DeviceCard({
           </div>
 
           <div className="flex items-center gap-2 ml-auto">
-            {/* Show battery ONLY when connected */}
-            {connectionStatus === "connected" && (
+            {/* Show battery ONLY when connected AND battery level is available */}
+            {connectionStatus === "connected" && batteryPercentage !== null && (
               <span className="font-bold text-lg" style={{ color: isLn ? "#0080C0" : "#BF0000" }}>
                 {batteryPercentage}%
               </span>
@@ -193,8 +237,8 @@ export function DeviceCard({
 
         <div
           className={`flex-shrink-0 transition-transform hover:scale-110 cursor-pointer group ${
-            isLocating && !isLocatingTarget ? "grayscale" : ""
-          } ${isLocatingTarget ? "animate-vibrate" : ""}`}
+            isLocating && !isLocatingTarget ? 'grayscale' : ''
+          } ${isLocatingTarget ? 'animate-vibrate' : ''}`}
         >
           {getDeviceSvg()}
         </div>

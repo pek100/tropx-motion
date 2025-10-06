@@ -27,7 +27,10 @@ interface BLEService {
   startRecording(sessionId: string, exerciseId: string, setNumber: number): Promise<{ success: boolean; message?: string; recordingId?: string }>;
   stopRecording(): Promise<{ success: boolean; message?: string; recordingId?: string }>;
   getConnectedDevices(): any[];
+  getAllDevices(): { success: boolean; devices: any[] };
   isRecording(): boolean;
+  enableBurstScanningFor(durationMs: number): void;
+  disableBurstScanning(): void;
 }
 
 // BLE operation handler type
@@ -57,15 +60,21 @@ export class BLEDomainProcessor implements DomainProcessor {
 
   // Process BLE domain message with reliability
   async process(message: BaseMessage, clientId: string): Promise<BaseMessage | void> {
+    console.log(`🔧 [BLE_PROCESSOR] Processing message type ${message.type} (0x${message.type.toString(16)})`);
+
     if (!this.bleService) {
+      console.error('❌ [BLE_PROCESSOR] BLE service unavailable');
       return this.createErrorResponse(message, 'BLE_SERVICE_UNAVAILABLE');
     }
 
     const handler = this.operationHandlers.get(message.type);
     if (!handler) {
+      console.error(`❌ [BLE_PROCESSOR] No handler for message type ${message.type} (0x${message.type.toString(16)})`);
+      console.log(`🔍 [BLE_PROCESSOR] Available handlers:`, Array.from(this.operationHandlers.keys()).map(k => `0x${k.toString(16)}`));
       return this.createErrorResponse(message, 'UNSUPPORTED_BLE_OPERATION');
     }
 
+    console.log(`✅ [BLE_PROCESSOR] Found handler for message type ${message.type}`);
     return this.executeWithRetry(message, handler);
   }
 
@@ -114,8 +123,13 @@ export class BLEDomainProcessor implements DomainProcessor {
     this.operationHandlers.set(MESSAGE_TYPES.BLE_CONNECT_REQUEST, this.handleConnectRequest);
     this.operationHandlers.set(MESSAGE_TYPES.BLE_DISCONNECT_REQUEST, this.handleDisconnectRequest);
     this.operationHandlers.set(MESSAGE_TYPES.BLE_SYNC_REQUEST, this.handleSyncRequest);
+    this.operationHandlers.set(MESSAGE_TYPES.BLE_LOCATE_START_REQUEST, this.handleLocateStartRequest);
+    this.operationHandlers.set(MESSAGE_TYPES.BLE_LOCATE_STOP_REQUEST, this.handleLocateStopRequest);
+    this.operationHandlers.set(MESSAGE_TYPES.BLE_BURST_SCAN_START_REQUEST, this.handleBurstScanStartRequest);
+    this.operationHandlers.set(MESSAGE_TYPES.BLE_BURST_SCAN_STOP_REQUEST, this.handleBurstScanStopRequest);
     this.operationHandlers.set(MESSAGE_TYPES.RECORD_START_REQUEST, this.handleRecordStartRequest);
     this.operationHandlers.set(MESSAGE_TYPES.RECORD_STOP_REQUEST, this.handleRecordStopRequest);
+    this.operationHandlers.set(MESSAGE_TYPES.GET_DEVICES_STATE_REQUEST, this.handleGetDevicesStateRequest);
   }
 
   // BLE scan operation handler
@@ -176,6 +190,60 @@ export class BLEDomainProcessor implements DomainProcessor {
     } as BaseMessage;
   };
 
+  // Locate start operation handler
+  private handleLocateStartRequest = async (message: BaseMessage, service: any): Promise<BaseMessage> => {
+    const result = await service.startLocateMode();
+
+    return {
+      type: MESSAGE_TYPES.BLE_LOCATE_START_RESPONSE,
+      requestId: message.requestId,
+      timestamp: Date.now(),
+      success: result.success,
+      message: result.message
+    } as BaseMessage;
+  };
+
+  // Locate stop operation handler
+  private handleLocateStopRequest = async (message: BaseMessage, service: any): Promise<BaseMessage> => {
+    const result = await service.stopLocateMode();
+
+    return {
+      type: MESSAGE_TYPES.BLE_LOCATE_STOP_RESPONSE,
+      requestId: message.requestId,
+      timestamp: Date.now(),
+      success: result.success,
+      message: result.message
+    } as BaseMessage;
+  };
+
+  // Burst scan start operation handler
+  private handleBurstScanStartRequest = async (message: BaseMessage, service: any): Promise<BaseMessage> => {
+    service.enableBurstScanningFor(10000);
+
+    return {
+      type: MESSAGE_TYPES.BLE_SCAN_RESPONSE,
+      requestId: message.requestId,
+      timestamp: Date.now(),
+      success: true,
+      devices: [],
+      message: 'Burst scanning enabled for 10 seconds'
+    } as BaseMessage;
+  };
+
+  // Burst scan stop operation handler
+  private handleBurstScanStopRequest = async (message: BaseMessage, service: any): Promise<BaseMessage> => {
+    service.disableBurstScanning();
+
+    return {
+      type: MESSAGE_TYPES.BLE_SCAN_RESPONSE,
+      requestId: message.requestId,
+      timestamp: Date.now(),
+      success: true,
+      devices: [],
+      message: 'Burst scanning disabled'
+    } as BaseMessage;
+  };
+
   // Record start operation handler
   private handleRecordStartRequest = async (message: BaseMessage, service: BLEService): Promise<BaseMessage> => {
     if (service.isRecording()) {
@@ -214,6 +282,19 @@ export class BLEDomainProcessor implements DomainProcessor {
       timestamp: Date.now(),
       success: result.success,
       message: result.message
+    } as BaseMessage;
+  };
+
+  // Get devices state operation handler (for persistence/reconnect)
+  private handleGetDevicesStateRequest = async (message: BaseMessage, service: BLEService): Promise<BaseMessage> => {
+    console.log('📋 [BLE_PROCESSOR] Get devices state requested');
+    const result = service.getAllDevices();
+
+    return {
+      type: MESSAGE_TYPES.GET_DEVICES_STATE_RESPONSE,
+      requestId: message.requestId,
+      timestamp: Date.now(),
+      devices: result.devices
     } as BaseMessage;
   };
 

@@ -10,6 +10,7 @@ import { deviceStateManager } from './DeviceStateManager';
 import { deviceRegistry } from '../registry-management';
 import { TimeSyncManager } from '../time-sync';
 import { TropXTimeSyncAdapter } from '../time-sync/adapters/TropXTimeSyncAdapter';
+import { DeviceLocateService } from './DeviceLocateService';
 
 // BLE Service interface from WebSocket Bridge
 interface BLEService {
@@ -36,6 +37,11 @@ export class NobleBLEServiceAdapter implements BLEService {
   private motionCoordinator: any = null;
   private isCurrentlyRecording = false;
   private timeSyncManager = new TimeSyncManager();
+  private deviceLocateService = new DeviceLocateService();
+  private locateBroadcastInterval: NodeJS.Timeout | null = null;
+  private static scanSequence = 0;
+  private lastScanStart = 0;
+  private readonly MIN_RESTART_INTERVAL_MS = 700; // avoid thrash
 
   constructor() {
     // Initialize Noble service with callbacks
@@ -95,33 +101,40 @@ export class NobleBLEServiceAdapter implements BLEService {
   // Scan for TropX devices using Noble
   async scanForDevices(): Promise<{ success: boolean; devices: any[]; message?: string }> {
     try {
-      console.log('📡 Noble: Starting device scan...');
+      const seq = ++NobleBLEServiceAdapter.scanSequence;
+      const scanningActive = typeof (this.nobleService as any).isScanningActive === 'function' && (this.nobleService as any).isScanningActive();
+      console.log(`📡 [SCAN:${seq}] Noble: Starting (or snapshotting). active=${scanningActive}`);
+
+      if (scanningActive) {
+        // If active scan has been running long enough, restart to force fresh discovery cycle
+        const elapsed = Date.now() - this.lastScanStart;
+        if (elapsed > this.MIN_RESTART_INTERVAL_MS) {
+          console.log(`♻️ [SCAN:${seq}] Restarting active scan after ${elapsed}ms for burst cycle`);
+          try { await (this.nobleService as any).stopScanning(); } catch (e) { console.warn('⚠️ Stop scan error (ignored):', e); }
+        } else {
+          const snapshot = deviceStateManager.getDiscoveredDevices().map(this.convertToDeviceInfo);
+          console.log(`📸 [SCAN:${seq}] Snapshot during active scan: count=${snapshot.length}`);
+          return { success: true, devices: snapshot, message: `Snapshot (${snapshot.length}) during active scan [${seq}]` };
+        }
+      }
 
       const result = await this.nobleService.startScanning();
-
       if (result.success) {
-        // For real Noble: wait for scan to complete
-        // For mock service: devices are immediately available
+        this.lastScanStart = Date.now();
         const isRealNoble = result.message && !result.message.includes('Mock');
-
-        if (isRealNoble) {
-          await this.delay(8000); // 8 second scan (shorter than WebSocket timeout)
-        } else {
-          // Mock service - devices available immediately
-          console.log('🧪 Mock service detected - getting devices immediately');
+        if (!isRealNoble) {
+          console.log(`🧪 [SCAN:${seq}] Mock service immediate devices`);
         }
-
         const discoveredDevices = deviceStateManager.getDiscoveredDevices();
         const deviceList = discoveredDevices.map(this.convertToDeviceInfo);
-
-        console.log(`✅ Noble scan completed: ${deviceList.length} devices found`);
-
+        console.log(`✅ [SCAN:${seq}] Kickoff returned ${deviceList.length} devices (non-blocking)`);
         return {
-          success: true,
-          devices: deviceList,
-          message: `Found ${deviceList.length} TropX devices`
+            success: true,
+            devices: deviceList,
+            message: `Scan started (non-blocking), current ${deviceList.length} [${seq}]`
         };
       } else {
+        console.warn(`⚠️ [SCAN:${seq}] Scan start failed: ${result.message}`);
         return result;
       }
 
@@ -183,6 +196,13 @@ export class NobleBLEServiceAdapter implements BLEService {
         // Auto-sync disabled - will be handled in batch after all connections complete
       } else {
         console.error(`❌ Noble: Connection failed for ${deviceName}: ${result.message}`);
+
+        // Broadcast device status update on failure (to update UI)
+        try {
+          await this.broadcastDeviceStatus();
+        } catch (broadcastError) {
+          console.warn(`⚠️ Failed to broadcast device status on error:`, broadcastError);
+        }
       }
 
       return result;
@@ -233,6 +253,33 @@ export class NobleBLEServiceAdapter implements BLEService {
         return { success: false, results: [] };
       }
 
+      // Broadcast SYNC_STARTED
+      if (this.broadcastFunction) {
+        await this.broadcastFunction({
+          type: 0x33, // SYNC_STARTED
+          requestId: 0,
+          timestamp: Date.now(),
+          deviceCount: connectedDevices.length
+        }, []);
+      }
+
+      // Set live sample callback to broadcast device timestamps during sync
+      this.timeSyncManager.setOnSampleCallback((deviceId: string, deviceName: string, deviceTimestampMs: number) => {
+        if (this.broadcastFunction) {
+          this.broadcastFunction({
+            type: 0x34, // SYNC_PROGRESS - reuse for live updates
+            requestId: 0,
+            timestamp: Date.now(),
+            deviceId,
+            deviceName,
+            clockOffsetMs: 0, // Not calculated yet during sampling
+            deviceTimestampMs,
+            success: true,
+            message: 'Sampling...'
+          }, []).catch(err => console.error('Failed to broadcast sync sample:', err));
+        }
+      });
+
       // Create adapters
       const adapters = connectedDevices
         .map(info => {
@@ -244,10 +291,64 @@ export class NobleBLEServiceAdapter implements BLEService {
       // Sync all devices (SET_CLOCK_OFFSET applied inside syncDevices)
       const results = await this.timeSyncManager.syncDevices(adapters);
 
+      // Broadcast SYNC_PROGRESS for each device with clock offset
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        const deviceInfo = connectedDevices[i];
+
+        // DEBUG: Log what we're checking
+        console.log(`🔍 [SYNC] Checking result for ${deviceInfo.name}:`, {
+          success: result.success,
+          finalOffset: result.finalOffset,
+          hasOffset: result.finalOffset !== undefined,
+          deviceId: deviceInfo.id
+        });
+
+        // Store clock offset in registry for DeviceProcessor to use
+        // IMPORTANT: Use DeviceID (not BLE address) as key to match DeviceProcessor lookup
+        if (result.success && result.finalOffset !== undefined) {
+          const registeredDevice = deviceRegistry.getDeviceByAddress(deviceInfo.id);
+          if (registeredDevice) {
+            deviceRegistry.setClockOffset(registeredDevice.deviceID, result.finalOffset, 'fully_synced');
+            console.log(`⏱️ [SYNC] Stored clock offset for ${deviceInfo.name} (DeviceID: 0x${registeredDevice.deviceID.toString(16)}): ${result.finalOffset}ms`);
+          } else {
+            console.error(`❌ [SYNC] Device ${deviceInfo.name} not found in registry - cannot store offset`);
+          }
+        } else {
+          console.warn(`⚠️ [SYNC] NOT storing offset for ${deviceInfo.name}: success=${result.success}, finalOffset=${result.finalOffset}`);
+        }
+
+        if (this.broadcastFunction && deviceInfo) {
+          await this.broadcastFunction({
+            type: 0x34, // SYNC_PROGRESS
+            requestId: 0,
+            timestamp: Date.now(),
+            deviceId: deviceInfo.id,
+            deviceName: deviceInfo.name,
+            clockOffsetMs: result.finalOffset || 0,
+            deviceTimestampMs: result.deviceTimestampMs || 0,
+            success: result.success,
+            message: result.error || 'Synced successfully'
+          }, []);
+        }
+      }
+
+      // Broadcast SYNC_COMPLETE
+      const successCount = results.filter(r => r.success).length;
+      if (this.broadcastFunction) {
+        await this.broadcastFunction({
+          type: 0x35, // SYNC_COMPLETE
+          requestId: 0,
+          timestamp: Date.now(),
+          totalDevices: results.length,
+          successCount,
+          failureCount: results.length - successCount
+        }, []);
+      }
+
       // Broadcast status update
       await this.broadcastDeviceStatus();
 
-      const successCount = results.filter(r => r.success).length;
       console.log(`✅ Manual sync complete: ${successCount}/${results.length} devices synced`);
 
       return { success: true, results };
@@ -271,6 +372,15 @@ export class NobleBLEServiceAdapter implements BLEService {
         // Registry should persist device mappings so they can reconnect with same ID.
         // Physical disconnects (battery, interference) should not lose device identity.
         console.log(`📋 Device ${deviceId} disconnected but registry mapping preserved for reconnection`);
+
+        // CRITICAL: Clean up device from motion processing to prevent stale data
+        if (this.motionCoordinator && typeof this.motionCoordinator.removeDevice === 'function') {
+          const registeredDevice = deviceRegistry.getDeviceByAddress(deviceId);
+          if (registeredDevice) {
+            console.log(`🧹 Cleaning up device 0x${registeredDevice.deviceID.toString(16)} from motion processing`);
+            this.motionCoordinator.removeDevice(registeredDevice.deviceID);
+          }
+        }
 
         // Broadcast device status update
         await this.broadcastDeviceStatus();
@@ -301,6 +411,16 @@ export class NobleBLEServiceAdapter implements BLEService {
       // Reset first packet tracking for delta calculations
       const { TropXDevice } = await import('./TropXDevice');
       TropXDevice.resetFirstPacketTracking();
+
+      // Clear clock offsets for all devices - will be recalculated from first streaming packet
+      const connectedDevices = this.nobleService.getConnectedDevices();
+      for (const device of connectedDevices) {
+        const registeredDevice = deviceRegistry.getDeviceByAddress(device.id);
+        if (registeredDevice) {
+          deviceRegistry.setClockOffset(registeredDevice.deviceID, 0, 'not_synced');
+          console.log(`🔄 [${device.name}] Cleared clock offset - will recalculate from first packet`);
+        }
+      }
 
       // Motion processing will be handled in WebSocket bridge (main process)
 
@@ -399,17 +519,15 @@ export class NobleBLEServiceAdapter implements BLEService {
         };
 
         try {
-          // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
-          // console.log(`🚀 [NobleBLEServiceAdapter] Sending to motion coordinator for processing: ${deviceId}`);
+          // Get the DeviceID (0x11, 0x12, etc.) from registry - most efficient identifier
+          const registeredDevice = deviceRegistry.getDeviceByAddress(deviceId);
+          if (!registeredDevice) {
+            console.error(`❌ [NobleBLEServiceAdapter] Device ${deviceId} not found in registry - cannot process data`);
+            return;
+          }
 
-          // Use device name for motion processing instead of device ID for pattern matching
-          const deviceName = this.getDeviceNameById(deviceId);
-          // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
-          // console.log(`🏷️ [NobleBLEServiceAdapter] Using device name for motion processing: ${deviceId} → ${deviceName}`);
-
-          this.motionCoordinator.processNewData(deviceName, legacyData);
-          // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
-          // console.log(`✅ [NobleBLEServiceAdapter] Motion coordinator processing initiated for ${deviceName} (${deviceId})`);
+          // Pass DeviceID (float) to motion coordinator for efficient lookup
+          this.motionCoordinator.processNewData(registeredDevice.deviceID, legacyData);
         } catch (error) {
           console.error(`❌ [NobleBLEServiceAdapter] Error in motion coordinator processing for ${deviceId}:`, error);
         }
@@ -478,38 +596,26 @@ export class NobleBLEServiceAdapter implements BLEService {
     try {
       // Include ALL devices (discovered, connected, streaming) for real-time UI updates
       const allDevices = deviceStateManager.getAllDevices();
-      const batteryRecord: Record<string, number> = {};
-
-      // PERFORMANCE: Use for...of instead of forEach (faster)
-      for (const device of allDevices) {
-        if (device.batteryLevel !== null) {
-          batteryRecord[device.id] = device.batteryLevel;
-        }
-      }
-
-      // PERFORMANCE: Avoid double map() call - convert once
-      const deviceInfoList = allDevices.map(this.convertToDeviceInfo);
-
-      const statusData = QuaternionBinaryProtocol.serializeDeviceStatus(
-        deviceInfoList,
-        batteryRecord
-      );
-
-      const message = {
-        type: 0x31, // MESSAGE_TYPES.DEVICE_STATUS
-        requestId: 0,
-        timestamp: Date.now(),
-        devices: deviceInfoList,
-        batteryLevels: batteryRecord,
-        data: statusData
-      };
 
       console.log(`📡 Broadcasting device status for ${allDevices.length} devices (all states)`);
 
-      // Use setImmediate to yield event loop
-      setImmediate(() => {
-        this.broadcastFunction!(message, []);
-      });
+      // Send INDIVIDUAL DeviceStatusMessage for each device (per protocol spec)
+      for (const device of allDevices) {
+        const message = {
+          type: 0x31, // MESSAGE_TYPES.DEVICE_STATUS
+          requestId: 0,
+          timestamp: Date.now(),
+          deviceId: device.id,
+          deviceName: device.name,
+          state: device.state,
+          batteryLevel: device.batteryLevel ?? undefined
+        };
+
+        // Use setImmediate to yield event loop
+        setImmediate(() => {
+          this.broadcastFunction!(message, []);
+        });
+      }
 
     } catch (error) {
       console.error('Error broadcasting device status:', error);
@@ -525,13 +631,18 @@ export class NobleBLEServiceAdapter implements BLEService {
 
     try {
       console.log(`🔋 Broadcasting battery update: ${batteryLevel}% for device ${deviceId}`);
-      const batteryData = QuaternionBinaryProtocol.serializeBatteryUpdate(deviceId, batteryLevel);
+
+      // Get device name from state manager
+      const device = deviceStateManager.getDevice(deviceId);
+      const deviceName = device?.name || deviceId;
 
       const message = {
-        type: 'battery_update',
-        data: batteryData,
+        type: 0x32, // MESSAGE_TYPES.BATTERY_UPDATE
+        requestId: 0,
         timestamp: Date.now(),
-        binary: true
+        deviceId,
+        deviceName,
+        batteryLevel
       };
 
       await this.broadcastFunction(message, []);
@@ -644,10 +755,130 @@ export class NobleBLEServiceAdapter implements BLEService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  // Get all devices (for state query on reconnect)
+  getAllDevices(): { success: boolean; devices: any[] } {
+    try {
+      const allDevices = deviceStateManager.getAllDevices();
+      return {
+        success: true,
+        devices: allDevices.map(d => ({
+          id: d.id,
+          name: d.name,
+          address: d.address,
+          rssi: d.rssi,
+          state: d.state,
+          batteryLevel: d.batteryLevel,
+          isManaged: d.isManaged
+        }))
+      };
+    } catch (error) {
+      console.error('Error getting all devices:', error);
+      return { success: false, devices: [] };
+    }
+  }
+
   // Clear device registry (manual cleanup, e.g., before new session)
   clearDeviceRegistry(): void {
     console.log('🗑️ Manually clearing device registry...');
     deviceRegistry.clearAll();
+  }
+
+  // Start locate mode (accelerometer-based device detection)
+  async startLocateMode(): Promise<{ success: boolean; message?: string }> {
+    try {
+      console.log('🔍 Starting locate mode...');
+
+      // CRITICAL: Disable burst scanning to prevent interference with accelerometer notifications
+      if (this.nobleService.isBurstScanningEnabled) {
+        console.log('🛑 Disabling burst scanning during locate mode (prevents notification interference)');
+        this.nobleService.disableBurstScanning();
+      }
+
+      const connectedDevices = this.nobleService.getConnectedDevices();
+      if (connectedDevices.length === 0) {
+        return { success: false, message: 'No connected devices' };
+      }
+
+      // Get TropXDevice instances for all connected devices
+      const deviceInstances = connectedDevices
+        .map(info => this.nobleService.getDeviceInstance(info.id))
+        .filter(device => device !== null);
+
+      if (deviceInstances.length === 0) {
+        return { success: false, message: 'No device instances available' };
+      }
+
+      // Start accelerometer streaming on all devices
+      await this.deviceLocateService.startLocateMode(deviceInstances);
+
+      // Set up periodic broadcast of vibrating devices (every 100ms for responsive UI)
+      // Always broadcast, even if empty, so frontend knows locate mode is active
+      let broadcastInProgress = false;
+      this.locateBroadcastInterval = setInterval(() => {
+        // Skip if previous broadcast still in progress (prevents event loop overflow)
+        if (broadcastInProgress) {
+          console.warn('⚠️ Skipping vibration broadcast - previous still in progress');
+          return;
+        }
+
+        broadcastInProgress = true;
+        const vibratingDeviceIds = this.deviceLocateService.getShakingDevices();
+
+        if (this.broadcastFunction) {
+          // Fire-and-forget (no await) to prevent interval pileup
+          this.broadcastFunction({
+            type: 0x36, // DEVICE_VIBRATING
+            requestId: 0,
+            timestamp: Date.now(),
+            vibratingDeviceIds
+          }, []).finally(() => {
+            broadcastInProgress = false;
+          });
+        } else {
+          broadcastInProgress = false;
+        }
+      }, 100);
+
+      console.log(`✅ Locate mode started for ${deviceInstances.length} devices`);
+      return { success: true };
+
+    } catch (error) {
+      console.error('❌ Failed to start locate mode:', error);
+      return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  // Stop locate mode
+  async stopLocateMode(): Promise<{ success: boolean; message?: string }> {
+    try {
+      console.log('🛑 Stopping locate mode...');
+
+      // Clear broadcast interval
+      if (this.locateBroadcastInterval) {
+        clearInterval(this.locateBroadcastInterval);
+        this.locateBroadcastInterval = null;
+      }
+
+      // Stop accelerometer streaming
+      await this.deviceLocateService.stopLocateMode();
+
+      console.log('✅ Locate mode stopped');
+      return { success: true };
+
+    } catch (error) {
+      console.error('❌ Failed to stop locate mode:', error);
+      return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  // Enable burst scanning for a duration (called on auto-start and refresh)
+  enableBurstScanningFor(durationMs: number): void {
+    this.nobleService.enableBurstScanningFor(durationMs);
+  }
+
+  // Manually disable burst scanning (called when user stops refresh)
+  disableBurstScanning(): void {
+    this.nobleService.disableBurstScanning();
   }
 
   // Cleanup resources
@@ -657,6 +888,14 @@ export class NobleBLEServiceAdapter implements BLEService {
     if (this.isCurrentlyRecording) {
       await this.stopRecording();
     }
+
+    // Stop locate mode if active
+    if (this.locateBroadcastInterval) {
+      await this.stopLocateMode();
+    }
+
+    // Disable burst scanning
+    this.nobleService.disableBurstScanning();
 
     await this.nobleService.cleanup();
   }

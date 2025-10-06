@@ -65,6 +65,21 @@ export class MessageValidator {
       case MESSAGE_TYPES.BLE_SYNC_REQUEST:
         return { valid: true }; // No additional validation needed
 
+      case MESSAGE_TYPES.BLE_LOCATE_START_REQUEST:
+        return { valid: true }; // No additional validation needed
+
+      case MESSAGE_TYPES.BLE_LOCATE_STOP_REQUEST:
+        return { valid: true }; // No additional validation needed
+
+      case MESSAGE_TYPES.BLE_BURST_SCAN_START_REQUEST:
+        return { valid: true }; // No additional validation needed
+
+      case MESSAGE_TYPES.BLE_BURST_SCAN_STOP_REQUEST:
+        return { valid: true }; // No additional validation needed
+
+      case MESSAGE_TYPES.GET_DEVICES_STATE_REQUEST:
+        return { valid: true }; // No additional validation needed
+
       case MESSAGE_TYPES.RECORD_START_REQUEST:
         return this.validateRecordStartRequest(message as RecordStartRequest);
 
@@ -143,8 +158,8 @@ export class MessageValidator {
       return { valid: false, error: 'Motion data must be Float32Array', code: ERROR_CODES.INVALID_MESSAGE };
     }
 
-    if (message.data.length !== 6) {
-      return { valid: false, error: 'Motion data must contain exactly 6 values', code: ERROR_CODES.INVALID_MESSAGE };
+    if (message.data.length !== 2) {
+      return { valid: false, error: 'Motion data must contain exactly 2 values (left, right)', code: ERROR_CODES.INVALID_MESSAGE };
     }
 
     // Validate float values are not NaN or infinite

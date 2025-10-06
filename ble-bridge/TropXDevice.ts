@@ -63,6 +63,11 @@ export class TropXDevice {
     this.eventCallback = eventCallback || null;
   }
 
+  // Public getter for wrapper (for DeviceLocateService)
+  getWrapper(): NoblePeripheralWrapper {
+    return this.wrapper;
+  }
+
   // Connect to device (simplified like Python Bleak)
   async connect(): Promise<boolean> {
     try {
@@ -271,9 +276,24 @@ export class TropXDevice {
       // Reset first packet flag to log fresh timestamps for this session
       this.hasLoggedFirstPacket = false;
 
+      // CRITICAL: Clean up any stale handlers from previous operations (e.g., locate mode)
+      // This prevents handler accumulation and subscription conflicts
+      this.wrapper.dataCharacteristic.removeAllListeners('data');
+      this.wrapper.dataCharacteristic.removeAllListeners('error');
+      console.log(`🧹 [${this.wrapper.deviceInfo.name}] Cleaned up stale handlers before streaming`);
+
       // Subscribe to data notifications first
       const subscriptionStartTime = Date.now();
-      await this.wrapper.dataCharacteristic.subscribeAsync();
+      try {
+        await this.wrapper.dataCharacteristic.subscribeAsync();
+      } catch (subscribeError: any) {
+        // If already subscribed (e.g., incomplete locate cleanup), log but continue
+        if (subscribeError.message?.includes('already') || subscribeError.message?.includes('subscribed')) {
+          console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Already subscribed (cleaning up from previous operation)`);
+        } else {
+          throw subscribeError; // Re-throw other errors
+        }
+      }
 
       // Set up data handler with logging
       this.wrapper.dataCharacteristic.on('data', (data: Buffer) => {
@@ -1036,7 +1056,8 @@ export class TropXDevice {
   }
 
   // Smart command write - uses writeWithoutResponse if supported, otherwise write with response
-  private async writeCommand(buffer: Buffer): Promise<void> {
+  // Public for DeviceLocateService
+  async writeCommand(buffer: Buffer): Promise<void> {
     if (!this.wrapper.commandCharacteristic) {
       throw new Error('Command characteristic not available');
     }

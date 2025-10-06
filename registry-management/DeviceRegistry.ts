@@ -44,12 +44,12 @@ type RegistryChangeHandler = (devices: RegisteredDevice[]) => void;
 export class DeviceRegistry {
   private static instance: DeviceRegistry | null = null;
 
-  // Primary storage: BLE address → device info
-  private devices = new Map<string, RegisteredDevice>();
+  // Primary storage: DeviceID → device info (most efficient lookup)
+  private devices = new Map<DeviceID, RegisteredDevice>();
 
   // Lookup indices for fast runtime queries
   private nameToDevice = new Map<string, RegisteredDevice>();
-  private deviceIDToDevices = new Map<DeviceID, RegisteredDevice[]>();
+  private bleAddressToDevice = new Map<string, RegisteredDevice>();
 
   // Event handlers for UI updates
   private changeHandlers = new Set<RegistryChangeHandler>();
@@ -107,10 +107,18 @@ export class DeviceRegistry {
       }
     }
 
-    // Check if device already registered
-    const existing = this.devices.get(bleAddress);
+    // Check if device already registered (by DeviceID)
+    const existing = this.devices.get(identification.deviceID);
     if (existing) {
+      // Update BLE address and name if changed
+      existing.bleAddress = bleAddress;
+      existing.deviceName = deviceName;
       existing.lastSeen = new Date();
+
+      // Update lookup indices
+      this.nameToDevice.set(deviceName, existing);
+      this.bleAddressToDevice.set(bleAddress, existing);
+
       console.log(`♻️ [DEVICE_REGISTRY] Device "${deviceName}" already registered as ID 0x${existing.deviceID.toString(16)}`);
       this.notifyChanges();
       return existing;
@@ -129,12 +137,12 @@ export class DeviceRegistry {
       isManualOverride: isManual
     };
 
-    // Store in primary map
-    this.devices.set(bleAddress, device);
+    // Store in primary map (using DeviceID as key)
+    this.devices.set(identification.deviceID, device);
 
     // Update lookup indices
     this.nameToDevice.set(deviceName, device);
-    this.addToDeviceIDIndex(identification.deviceID, device);
+    this.bleAddressToDevice.set(bleAddress, device);
 
     // Persist to file system
     this.saveToFileSystem();
@@ -148,24 +156,24 @@ export class DeviceRegistry {
   }
 
   /**
-   * Get device by BLE address (for runtime lookup)
+   * Get device by DeviceID (primary key - most efficient)
    */
-  getDeviceByAddress(bleAddress: string): RegisteredDevice | undefined {
-    return this.devices.get(bleAddress);
+  getDeviceByID(deviceID: DeviceID): RegisteredDevice | undefined {
+    return this.devices.get(deviceID);
   }
 
   /**
-   * Get device by name (for runtime lookup)
+   * Get device by BLE address (lookup index)
+   */
+  getDeviceByAddress(bleAddress: string): RegisteredDevice | undefined {
+    return this.bleAddressToDevice.get(bleAddress);
+  }
+
+  /**
+   * Get device by name (lookup index)
    */
   getDeviceByName(deviceName: string): RegisteredDevice | undefined {
     return this.nameToDevice.get(deviceName);
-  }
-
-  /**
-   * Get all devices assigned to a specific device ID
-   */
-  getDevicesByID(deviceID: DeviceID): RegisteredDevice[] {
-    return this.deviceIDToDevices.get(deviceID) || [];
   }
 
   /**
@@ -186,12 +194,12 @@ export class DeviceRegistry {
    * Unregister device (on disconnect)
    */
   unregisterDevice(bleAddress: string): boolean {
-    const device = this.devices.get(bleAddress);
+    const device = this.bleAddressToDevice.get(bleAddress);
     if (!device) return false;
 
-    this.devices.delete(bleAddress);
+    this.devices.delete(device.deviceID);
     this.nameToDevice.delete(device.deviceName);
-    this.removeFromDeviceIDIndex(device.deviceID, device);
+    this.bleAddressToDevice.delete(bleAddress);
 
     this.saveToFileSystem();
     this.notifyChanges();
@@ -202,9 +210,17 @@ export class DeviceRegistry {
 
   /**
    * Update device last seen timestamp (called from data processing)
+   * Can accept BLE address, device name, or DeviceID
    */
-  updateLastSeen(bleAddress: string): void {
-    const device = this.devices.get(bleAddress);
+  updateLastSeen(deviceIdentifier: string | DeviceID): void {
+    let device: RegisteredDevice | undefined;
+
+    if (typeof deviceIdentifier === 'number') {
+      device = this.devices.get(deviceIdentifier);
+    } else {
+      device = this.bleAddressToDevice.get(deviceIdentifier) || this.nameToDevice.get(deviceIdentifier);
+    }
+
     if (device) {
       device.lastSeen = new Date();
     }
@@ -216,7 +232,7 @@ export class DeviceRegistry {
   clearAll(): void {
     this.devices.clear();
     this.nameToDevice.clear();
-    this.deviceIDToDevices.clear();
+    this.bleAddressToDevice.clear();
     this.saveToFileSystem();
     this.notifyChanges();
     console.log(`🧹 [DEVICE_REGISTRY] Cleared all devices`);
@@ -289,32 +305,21 @@ export class DeviceRegistry {
   }
 
   /**
-   * Add device to deviceID index
-   */
-  private addToDeviceIDIndex(deviceID: DeviceID, device: RegisteredDevice): void {
-    const devices = this.deviceIDToDevices.get(deviceID) || [];
-    devices.push(device);
-    this.deviceIDToDevices.set(deviceID, devices);
-  }
-
-  /**
-   * Remove device from deviceID index
-   */
-  private removeFromDeviceIDIndex(deviceID: DeviceID, device: RegisteredDevice): void {
-    const devices = this.deviceIDToDevices.get(deviceID) || [];
-    const filtered = devices.filter(d => d.bleAddress !== device.bleAddress);
-    if (filtered.length > 0) {
-      this.deviceIDToDevices.set(deviceID, filtered);
-    } else {
-      this.deviceIDToDevices.delete(deviceID);
-    }
-  }
-
-  /**
    * Set clock offset for a device (from time synchronization)
+   * Can accept BLE address, device name, or DeviceID
    */
-  setClockOffset(bleAddress: string, offsetMs: number, syncState?: DeviceSyncState): void {
-    const device = this.devices.get(bleAddress);
+  setClockOffset(deviceIdentifier: string | DeviceID, offsetMs: number, syncState?: DeviceSyncState): void {
+    let device: RegisteredDevice | undefined;
+
+    // Try to find device by different identifiers
+    if (typeof deviceIdentifier === 'number') {
+      // DeviceID (most efficient)
+      device = this.devices.get(deviceIdentifier);
+    } else {
+      // BLE address or device name
+      device = this.bleAddressToDevice.get(deviceIdentifier) || this.nameToDevice.get(deviceIdentifier);
+    }
+
     if (device) {
       device.clockOffset = offsetMs;
       if (syncState) {
@@ -326,15 +331,23 @@ export class DeviceRegistry {
       this.saveToFileSystem();
       this.notifyChanges();
     } else {
-      console.warn(`⚠️ [DEVICE_REGISTRY] Cannot set clock offset: device "${bleAddress}" not found`);
+      console.warn(`⚠️ [DEVICE_REGISTRY] Cannot set clock offset: device "${deviceIdentifier}" not found`);
     }
   }
 
   /**
    * Get clock offset for a device (returns 0 if not set)
+   * Can accept BLE address, device name, or DeviceID
    */
-  getClockOffset(bleAddress: string): number {
-    const device = this.devices.get(bleAddress);
+  getClockOffset(deviceIdentifier: string | DeviceID): number {
+    let device: RegisteredDevice | undefined;
+
+    if (typeof deviceIdentifier === 'number') {
+      device = this.devices.get(deviceIdentifier);
+    } else {
+      device = this.bleAddressToDevice.get(deviceIdentifier) || this.nameToDevice.get(deviceIdentifier);
+    }
+
     return device?.clockOffset ?? 0;
   }
 
@@ -418,9 +431,11 @@ export class DeviceRegistry {
           registeredAt: new Date(deviceData.registeredAt),
           lastSeen: new Date(deviceData.lastSeen)
         };
-        this.devices.set(device.bleAddress, device);
+        // Store with DeviceID as primary key
+        this.devices.set(device.deviceID, device);
+        // Build lookup indices
         this.nameToDevice.set(device.deviceName, device);
-        this.addToDeviceIDIndex(device.deviceID, device);
+        this.bleAddressToDevice.set(device.bleAddress, device);
       });
 
       console.log(`📂 [DEVICE_REGISTRY] Loaded ${devices.length} devices from file system`);

@@ -1,7 +1,7 @@
 import { DeviceCard } from "@/components/device-card"
 import { ChartSvg } from "@/components/chart-svg"
 import KneeAreaChart from "@/components/knee-area-chart"
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWebSocket } from "@/hooks/use-websocket"
@@ -19,11 +19,18 @@ export default function Page() {
     isConnected,
     isScanning,
     isSyncing,
+    syncProgress,
+    vibratingDeviceIds,
     scanDevices,
+    burstScanDevices,
     connectDevice: wsConnectDevice,
     disconnectDevice: wsDisconnectDevice,
     connectAllDevices,
     syncAllDevices,
+    startLocateMode,
+    stopLocateMode,
+    startBurstScan,
+    stopBurstScan,
     startRecording,
     stopRecording,
   } = useWebSocket()
@@ -33,22 +40,73 @@ export default function Page() {
     id: string;
     name: string;
     signalStrength: 1 | 2 | 3 | 4;
-    batteryPercentage: number;
+    batteryPercentage: number | null;
     connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing";
   }>>([])
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [hasStartedStreaming, setHasStartedStreaming] = useState(false)
+  const [isFlashing, setIsFlashing] = useState(false)
+  const [isLocating, setIsLocating] = useState(false)
+  const [streamStartTime, setStreamStartTime] = useState<number | null>(null)
+  const [streamElapsedTime, setStreamElapsedTime] = useState(0)
+  const [clearChartTrigger, setClearChartTrigger] = useState(0)
+  const [isTimerHovered, setIsTimerHovered] = useState(false)
+  // Drag & Drop state for device reordering
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  // Persist custom device order (array of device IDs)
+  const [deviceOrder, setDeviceOrder] = useState<string[]>([])
+
+  // Auto-start connection logic: run burst scanning + connect attempts for first 10s
+  const autoStartRef = useRef(false)
+  const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const connectAllTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    if (!isConnected || autoStartRef.current) return
+    autoStartRef.current = true
+
+    console.log('🔄 Auto-start: Setting isRefreshing=true for 10 seconds')
+
+    // Start UI scanning state for 10 seconds
+    setIsRefreshing(true)
+
+    // Start backend burst scanning (10 seconds)
+    startBurstScan()
+
+    // UI will automatically stop after 10 seconds
+    const scanTimeout = setTimeout(() => {
+      console.log('✅ Auto-start: 10 seconds elapsed, setting isRefreshing=false')
+      setIsRefreshing(false)
+      scanTimeoutRef.current = null
+    }, 10000)
+    scanTimeoutRef.current = scanTimeout
+
+    // Try connecting to any devices after 1 second
+    const connectTimeout = setTimeout(() => {
+      connectAllDevices()
+    }, 1000)
+    connectAllTimeoutRef.current = connectTimeout
+
+    // Cleanup only runs when component unmounts (not on re-renders)
+    return () => {
+      console.log('🧹 Auto-start cleanup: Clearing timers')
+      clearTimeout(scanTimeout)
+      clearTimeout(connectTimeout)
+      scanTimeoutRef.current = null
+      connectAllTimeoutRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected])
 
   // Update devices from WebSocket scan results
   useEffect(() => {
     setDevices(prev => {
-      // If no WebSocket devices, keep existing devices (don't clear on empty scan)
       if (wsDevices.length === 0) {
         return prev;
       }
 
-      // Create a map of WebSocket devices for quick lookup
-      const wsDeviceMap = new Map(wsDevices.map(d => [d.id, d]));
-
-      // Merge: Update existing devices from WebSocket, add new ones, keep connected devices not in scan
       const merged = new Map<string, typeof prev[0]>();
 
       // First, process all WebSocket devices
@@ -99,12 +157,12 @@ export default function Page() {
             return;
           }
 
-          // Error state from backend
+          // Error state from backend - reset to disconnected if was connecting
           if (d.state === 'error') {
             merged.set(d.id, {
               ...existing,
               signalStrength,
-              connectionStatus: 'disabled' as const,
+              connectionStatus: existing.connectionStatus === 'connecting' ? 'disconnected' as const : 'disabled' as const,
             });
             return;
           }
@@ -130,7 +188,7 @@ export default function Page() {
             id: d.id,
             name: d.name,
             signalStrength,
-            batteryPercentage: d.batteryLevel || 0,
+            batteryPercentage: d.batteryLevel ?? null,
             connectionStatus,
           });
         }
@@ -151,23 +209,27 @@ export default function Page() {
     });
   }, [wsDevices])
 
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [hasStartedStreaming, setHasStartedStreaming] = useState(false)
-  const [isFlashing, setIsFlashing] = useState(false)
-  const [isLocating, setIsLocating] = useState(false)
-  const [locatingTargetIndex, setLocatingTargetIndex] = useState<number | null>(null)
+  // Initialize device order when new devices are discovered (use ref to track)
+  const lastDeviceIdsRef = useRef<Set<string>>(new Set());
 
-  const [streamStartTime, setStreamStartTime] = useState<number | null>(null)
-  const [streamElapsedTime, setStreamElapsedTime] = useState(0)
-  const [clearChartTrigger, setClearChartTrigger] = useState(0)
-  const [isTimerHovered, setIsTimerHovered] = useState(false)
+  useEffect(() => {
+    const currentIds = new Set(devices.map(d => d.id));
+    const newDeviceIds = Array.from(currentIds).filter(id => !lastDeviceIdsRef.current.has(id));
 
-  const prevLeftAngle = useRef(0)
-  const prevRightAngle = useRef(0)
-  const prevLeftVelocity = useRef(0)
-  const prevRightVelocity = useRef(0)
-  const prevTimestamp = useRef(Date.now())
+    if (newDeviceIds.length > 0) {
+      setDeviceOrder(prev => {
+        // If no order exists, initialize with all current device IDs
+        if (prev.length === 0) {
+          return Array.from(currentIds);
+        }
+        // Otherwise, just append new device IDs
+        return [...prev, ...newDeviceIds];
+      });
+    }
+
+    // Update the ref
+    lastDeviceIdsRef.current = currentIds;
+  }, [devices]);
 
   useEffect(() => {
     if (!isStreaming || streamStartTime === null) {
@@ -184,12 +246,35 @@ export default function Page() {
 
   // No mock data - WebSocket hook provides real leftKneeData and rightKneeData
 
-  const allDevicesConnected = devices.every((device) => device.connectionStatus === "connected")
+  // Sort devices according to custom order for rendering
+  const sortedDevices = useMemo(() => {
+    if (deviceOrder.length === 0) {
+      return devices;
+    }
 
-  const connectedDevicesCount = devices.filter((device) => device.connectionStatus === "connected").length
+    return [...devices].sort((a, b) => {
+      const indexA = deviceOrder.indexOf(a.id);
+      const indexB = deviceOrder.indexOf(b.id);
+
+      // If both are in order, sort by their position
+      if (indexA !== -1 && indexB !== -1) {
+        return indexA - indexB;
+      }
+      // If only A is in order, it comes first
+      if (indexA !== -1) return -1;
+      // If only B is in order, it comes first
+      if (indexB !== -1) return 1;
+      // Neither in order, maintain current order
+      return 0;
+    });
+  }, [devices, deviceOrder]);
+
+  const allDevicesConnected = sortedDevices.every((device) => device.connectionStatus === "connected")
+
+  const connectedDevicesCount = sortedDevices.filter((device) => device.connectionStatus === "connected").length
 
   const validateStreaming = () => {
-    const connectedDevices = devices.filter((device) => device.connectionStatus === "connected")
+    const connectedDevices = sortedDevices.filter((device) => device.connectionStatus === "connected")
 
     const leftDevices = connectedDevices.filter((device) => device.name.includes("_ln_"))
     const rightDevices = connectedDevices.filter((device) => device.name.includes("_rn_"))
@@ -198,76 +283,53 @@ export default function Page() {
   }
 
   const handleToggleConnection = (index: number) => {
-    if (isLocating || devices.some((d) => d.connectionStatus === "synchronizing")) return
+    if (isLocating || sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
 
-    const device = devices[index]
+    const device = sortedDevices[index]
     if (!device) return
 
-    setDevices((prevDevices) =>
-      prevDevices.map((d, i) => {
-        if (i === index) {
-          if (d.connectionStatus === "connected") {
-            // Disconnect immediately
-            wsDisconnectDevice(device.id)
-            return { ...d, connectionStatus: "disconnected" as const }
-          } else if (d.connectionStatus === "disconnected") {
-            // Start WebSocket connect in background
-            wsConnectDevice(device.id, device.name)
+    // Don't allow re-connecting if already connected or connecting
+    if (device.connectionStatus === "connected" || device.connectionStatus === "connecting") {
+      if (device.connectionStatus === "connected") {
+        // Only allow disconnect
+        wsDisconnectDevice(device.id)
+        setDevices((prevDevices) =>
+          prevDevices.map((d, i) => (i === index ? { ...d, connectionStatus: "disconnected" as const } : d))
+        )
+      }
+      return
+    }
 
-            // UI transitions (exactly like mock)
-            setTimeout(() => {
-              setDevices((prev) =>
-                prev.map((d, idx) => (idx === index ? { ...d, connectionStatus: "synchronizing" as const } : d)),
-              )
-              setTimeout(() => {
-                setDevices((prev) =>
-                  prev.map((d, idx) => (idx === index ? { ...d, connectionStatus: "connected" as const } : d)),
-                )
-              }, 1500)
-            }, 1000)
-            return { ...d, connectionStatus: "connecting" as const }
-          }
-        }
-        return d
-      }),
-    )
+    // Only proceed if disconnected
+    if (device.connectionStatus === "disconnected") {
+      // Start WebSocket connect in background
+      wsConnectDevice(device.id, device.name)
+
+      // Set to connecting - WebSocket events will update to connected
+      setDevices((prevDevices) =>
+        prevDevices.map((d, i) => (i === index ? { ...d, connectionStatus: "connecting" as const } : d))
+      )
+    }
   }
 
   const handleConnectAll = () => {
-    if (isLocating || devices.some((d) => d.connectionStatus === "synchronizing")) return
+    if (isLocating || sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
 
     // Call WebSocket connect all in background
     connectAllDevices()
 
-    // UI transitions (exactly like mock)
+    // Set disconnected devices to connecting - WebSocket events will update to connected
     setDevices((prevDevices) =>
-      prevDevices.map((device) => ({
-        ...device,
-        connectionStatus: "connecting" as const,
-      })),
-    )
-
-    setTimeout(() => {
-      setDevices((prevDevices) =>
-        prevDevices.map((device) => ({
-          ...device,
-          connectionStatus: "synchronizing" as const,
-        })),
+      prevDevices.map((device) =>
+        device.connectionStatus === "disconnected"
+          ? { ...device, connectionStatus: "connecting" as const }
+          : device
       )
-
-      setTimeout(() => {
-        setDevices((prevDevices) =>
-          prevDevices.map((device) => ({
-            ...device,
-            connectionStatus: "connected" as const,
-          })),
-        )
-      }, 1500)
-    }, 1000)
+    )
   }
 
   const handleDisconnectAll = () => {
-    if (isLocating || devices.some((d) => d.connectionStatus === "synchronizing")) return
+    if (isLocating || sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
 
     // Disconnect all immediately
     setDevices((prevDevices) =>
@@ -277,8 +339,8 @@ export default function Page() {
       })),
     )
 
-    // Call WebSocket disconnect for all connected devices
-    devices.forEach(device => {
+    // Call WebSocket disconnect for all connected sortedDevices
+    sortedDevices.forEach(device => {
       if (device.connectionStatus === "connected") {
         wsDisconnectDevice(device.id)
       }
@@ -286,24 +348,32 @@ export default function Page() {
   }
 
   const handleRefresh = async () => {
-    if (isLocating || isSyncing || isScanning) return
+    // NEVER scan during streaming/recording or locate mode
+    if (isLocating || isSyncing || isScanning || isStreaming) return
 
     if (isRefreshing) {
-      // Manual stop - clear the timeout
-      if (refreshTimeoutRef.current) {
-        clearTimeout(refreshTimeoutRef.current)
-        refreshTimeoutRef.current = null
-      }
+      // Stop scanning - clear UI state and stop backend burst scan
       setIsRefreshing(false)
-    } else {
-      // Start refresh with 5 second auto-exit
-      setIsRefreshing(true)
-      await scanDevices()
-      refreshTimeoutRef.current = setTimeout(() => {
-        setIsRefreshing(false)
-        refreshTimeoutRef.current = null
-      }, 5000)
+      if (scanTimeoutRef.current) {
+        clearTimeout(scanTimeoutRef.current)
+        scanTimeoutRef.current = null
+      }
+      // Stop backend burst scanning
+      await stopBurstScan()
+      return
     }
+
+    // Start scanning - set UI state for 10 seconds
+    setIsRefreshing(true)
+
+    // Start backend burst scanning (10 seconds)
+    await startBurstScan()
+
+    // UI will automatically stop after 10 seconds
+    scanTimeoutRef.current = setTimeout(() => {
+      setIsRefreshing(false)
+      scanTimeoutRef.current = null
+    }, 10000)
   }
 
   const handleSync = async () => {
@@ -311,8 +381,31 @@ export default function Page() {
     await syncAllDevices()
   }
 
-  const handleLocate = () => {
-    if (devices.some((d) => d.connectionStatus === "synchronizing")) return
+  // React to isSyncing state from WebSocket events
+  useEffect(() => {
+    if (isSyncing) {
+      // Backend sent SYNC_STARTED - show sync animation on connected devices
+      setDevices((prevDevices) =>
+        prevDevices.map((device) =>
+          device.connectionStatus === "connected"
+            ? { ...device, connectionStatus: "synchronizing" as const }
+            : device
+        )
+      )
+    } else {
+      // Backend sent SYNC_COMPLETE - restore to connected
+      setDevices((prevDevices) =>
+        prevDevices.map((device) =>
+          device.connectionStatus === "synchronizing"
+            ? { ...device, connectionStatus: "connected" as const }
+            : device
+        )
+      )
+    }
+  }, [isSyncing])
+
+  const handleLocate = async () => {
+    if (sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
 
     // If already locating, stop it
     if (isLocating) {
@@ -321,12 +414,12 @@ export default function Page() {
         locateDelayTimeoutRef.current = null
       }
       setIsLocating(false)
-      setLocatingTargetIndex(null)
+      await stopLocateMode()
       return
     }
 
     // Otherwise, start locating
-    const connectedIndices = devices
+    const connectedIndices = sortedDevices
       .map((device, index) => (device.connectionStatus === "connected" ? index : -1))
       .filter((index) => index !== -1)
 
@@ -340,14 +433,31 @@ export default function Page() {
       return
     }
 
-    setIsLocating(true)
-    setLocatingTargetIndex(null) // No device shaking yet
+    // Stop any ongoing scans to free BLE resources for locate mode
+    if (scanTimeoutRef.current) {
+      console.log('🛑 Stopping scan for locate mode')
+      clearTimeout(scanTimeoutRef.current)
+      scanTimeoutRef.current = null
+      setIsRefreshing(false)
+    }
 
-    locateDelayTimeoutRef.current = setTimeout(() => {
-      const randomIndex = connectedIndices[Math.floor(Math.random() * connectedIndices.length)]
-      setLocatingTargetIndex(randomIndex)
-      locateDelayTimeoutRef.current = null
-    }, 1500)
+    setIsLocating(true)
+
+    // Start accelerometer-based locate mode on backend
+    const result = await startLocateMode()
+    if (!result.success) {
+      console.error('Failed to start locate mode:', result.error)
+      setIsLocating(false)
+      toast({
+        title: "Locate Mode Failed",
+        description: result.error || "Failed to start locate mode",
+        variant: "destructive",
+        duration: 4000,
+      })
+    }
+
+    // Backend will now handle accelerometer detection and send vibrating device IDs
+    // vibratingDeviceIds will be updated in real-time via WebSocket events
   }
 
   const handleToggleStreaming = async () => {
@@ -393,6 +503,53 @@ export default function Page() {
       setStreamStartTime(null)
       setStreamElapsedTime(0)
     }
+  }
+
+  // Drag & Drop handlers for device reordering
+  const handleDragStart = (index: number) => (e: React.DragEvent) => {
+    if (isLocating || isSyncing) return
+    setDraggingIndex(index)
+    setDragOverIndex(null)
+    try {
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', String(index))
+      // Create a custom drag image
+      const dragImage = e.currentTarget.cloneNode(true) as HTMLElement
+      dragImage.style.position = 'absolute'
+      dragImage.style.top = '-9999px'
+      document.body.appendChild(dragImage)
+      e.dataTransfer.setDragImage(dragImage, 0, 0)
+      setTimeout(() => document.body.removeChild(dragImage), 0)
+    } catch {}
+  }
+  const handleDragOver = (index: number) => (e: React.DragEvent) => {
+    if (isLocating || isSyncing) return
+    e.preventDefault()
+    if (dragOverIndex !== index && draggingIndex !== index) {
+      setDragOverIndex(index)
+      // Perform real-time reordering by updating device order
+      setDeviceOrder(prev => {
+        const from = draggingIndex
+        if (from === null || from === index) return prev
+        const next = [...prev]
+        const [moved] = next.splice(from, 1)
+        next.splice(index, 0, moved)
+        return next
+      })
+      // Update dragging index to new position
+      setDraggingIndex(index)
+    }
+    try { e.dataTransfer.dropEffect = 'move' } catch {}
+  }
+  const handleDrop = (index: number) => (e: React.DragEvent) => {
+    if (isLocating || isSyncing) return
+    e.preventDefault()
+    setDraggingIndex(null)
+    setDragOverIndex(null)
+  }
+  const handleDragEnd = () => {
+    setDraggingIndex(null)
+    setDragOverIndex(null)
   }
 
   const formatElapsedTime = (seconds: number) => {
@@ -547,7 +704,7 @@ export default function Page() {
                   borderRadius: "36px",
                   height: "500px",
                   WebkitAppRegion: 'no-drag'
-                }}
+                } as any}
               >
                 <div className="flex justify-between mb-4">
                   <div className="flex gap-2">
@@ -715,7 +872,7 @@ export default function Page() {
                     </div>
                   )}
 
-                  {isLocating && locatingTargetIndex === null && (
+                  {isLocating && vibratingDeviceIds.length === 0 && (
                     <>
                       <div className="absolute inset-0 locate-overlay-light z-20 pointer-events-none rounded-xl" />
                       <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none">
@@ -733,18 +890,27 @@ export default function Page() {
                     </>
                   )}
 
-                  {devices.map((device, index) => (
+                  {sortedDevices.map((device, index) => (
                     <DeviceCard
-                      key={device.name}
+                      key={device.id || device.name}
                       name={device.name}
                       signalStrength={device.signalStrength}
                       batteryPercentage={device.batteryPercentage}
                       connectionStatus={device.connectionStatus}
                       isStreaming={isStreaming}
                       isLocating={isLocating}
-                      isLocatingTarget={isLocating && locatingTargetIndex === index}
+                      isLocatingTarget={isLocating && vibratingDeviceIds.includes(device.id)}
                       disabled={isLocating || isSyncing}
                       onToggleConnection={() => handleToggleConnection(index)}
+                      syncOffsetMs={syncProgress[device.id]?.offsetMs}
+                      syncDeviceTimestampMs={syncProgress[device.id]?.deviceTimestampMs}
+                      draggable={!isLocating && !isSyncing}
+                      isDragging={draggingIndex === index}
+                      isDragOver={dragOverIndex === index && draggingIndex !== index}
+                      onDragStart={handleDragStart(index)}
+                      onDragOver={handleDragOver(index)}
+                      onDrop={handleDrop(index)}
+                      onDragEnd={handleDragEnd}
                     />
                   ))}
                 </div>
@@ -800,7 +966,7 @@ export default function Page() {
                   borderRadius: "36px",
                   height: "500px",
                   WebkitAppRegion: 'no-drag'
-                }}
+                } as any}
               >
                 {isStreaming || hasStartedStreaming ? (
                   <KneeAreaChart leftKnee={leftKneeData} rightKnee={rightKneeData} clearTrigger={clearChartTrigger} />

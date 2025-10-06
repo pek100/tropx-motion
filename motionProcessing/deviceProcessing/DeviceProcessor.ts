@@ -4,7 +4,7 @@ import { DataSyncService } from './DataSyncService';
 import { DEVICE, SYSTEM, BATTERY, CONNECTION_STATE } from '../shared/constants';
 import { QuaternionService } from '../shared/QuaternionService';
 import { PerformanceLogger } from '../shared/PerformanceLogger';
-import { deviceRegistry } from '../../registry-management';
+import { deviceRegistry, DeviceID } from '../../registry-management';
 
 interface DeviceStatus {
     total: number;
@@ -35,6 +35,7 @@ export class DeviceProcessor {
     private lastNotificationTime = 0;
     private readonly MIN_NOTIFICATION_INTERVAL = 16; // 60fps cap
     private processingCounter = 0;
+    private sessionOffsetCalculated?: Set<string>; // Track devices that have calculated offset this session
 
     private constructor(private config: MotionConfig) {
         this.interpolationService = new InterpolationService(config.targetHz);
@@ -53,6 +54,39 @@ export class DeviceProcessor {
     }
 
     /**
+     * Removes device from all tracking maps when it disconnects.
+     * CRITICAL: Must be called when device disconnects to prevent stale data affecting joint processing.
+     * @param deviceId - DeviceID (0x11, 0x12, 0x21, 0x22) or device address string
+     */
+    removeDevice(deviceId: DeviceID | string): void {
+        // Convert DeviceID to string for map lookups
+        const deviceIdStr = typeof deviceId === 'number' ? `0x${deviceId.toString(16)}` : deviceId;
+
+        console.log(`🧹 [DEVICE_PROCESSOR] Removing device ${deviceIdStr} from all tracking maps`);
+
+        // Check what we're removing
+        const hadDeviceData = this.latestDeviceData.has(deviceIdStr);
+        const hadJointMapping = this.deviceToJoints.has(deviceIdStr);
+
+        // Remove from all tracking maps
+        this.latestDeviceData.delete(deviceIdStr);
+        this.deviceToJoints.delete(deviceIdStr);
+        this.batteryLevels.delete(deviceIdStr);
+        this.connectionStates.delete(deviceIdStr);
+
+        // Remove from interpolation service
+        this.interpolationService.removeDevice(deviceIdStr);
+
+        console.log(`✅ [DEVICE_PROCESSOR] Device ${deviceIdStr} removed (had data: ${hadDeviceData}, had joint mapping: ${hadJointMapping})`);
+
+        // Log remaining devices for debugging
+        console.log(`📊 [DEVICE_PROCESSOR] Remaining devices: ${Array.from(this.deviceToJoints.keys()).join(', ')}`);
+
+        // Notify subscribers that device state has changed
+        this.notifySubscribers();
+    }
+
+    /**
      * Cleans up singleton instance and releases all resources.
      */
     static reset(): void {
@@ -64,15 +98,9 @@ export class DeviceProcessor {
 
     /**
      * Processes incoming IMU data through synchronization and interpolation pipeline.
+     * @param deviceId - DeviceID (0x11, 0x12, 0x21, 0x22) for most efficient lookup
      */
-    processData(deviceId: string, imuData: IMUData): void {
-        // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
-        // console.log(`🔧 [DEVICE_PROCESSOR] processData called for ${deviceId}:`, {
-        //     deviceId: deviceId,
-        //     hasQuaternion: !!imuData.quaternion,
-        //     timestamp: imuData.timestamp
-        // });
-
+    processData(deviceId: DeviceID | string, imuData: IMUData): void {
         if (!deviceId || !imuData) {
             console.error(`❌ [DEVICE_PROCESSOR] Invalid data: deviceId=${deviceId}, imuData=${!!imuData}`);
             return;
@@ -84,33 +112,61 @@ export class DeviceProcessor {
             this.performPeriodicCleanup();
         }
 
-        // HARDWARE SYNC: Devices now use hardware clock offset (SET_CLOCK_OFFSET command)
-        // Timestamps are already synchronized via BLE hardware sync, no software correction needed
-        // Software sync is DISABLED to avoid double-syncing and interference
-        const synchronizedIMU = imuData; // Use hardware-synced timestamp directly
+        // Get device from registry using DeviceID (most efficient - O(1) lookup)
+        const device = typeof deviceId === 'number'
+            ? deviceRegistry.getDeviceByID(deviceId)
+            : deviceRegistry.getDeviceByAddress(deviceId);
+
+        // TODO: Fix device timestamp offset calculation
+        // Currently device timestamps are showing 1975 after sync, causing stuck in loop
+        // Issue: offset is 0ms even though it should be calculated
+        // For now, use performance.now() for reliable timestamps
+        // const deviceTimestamp = imuData.timestamp || 0;
+        // const deviceIdKey = typeof deviceId === 'number' ? `0x${deviceId.toString(16)}` : deviceId;
+        // if (!this.sessionOffsetCalculated) {
+        //     this.sessionOffsetCalculated = new Set();
+        // }
+        // let clockOffset = device?.clockOffset || 0;
+        // if (!this.sessionOffsetCalculated.has(deviceIdKey) && deviceTimestamp > 0 && device) {
+        //     clockOffset = Date.now() - deviceTimestamp;
+        //     device.clockOffset = clockOffset;
+        //     deviceRegistry.setClockOffset(device.deviceID, clockOffset, 'fully_synced');
+        //     this.sessionOffsetCalculated.add(deviceIdKey);
+        //     console.log(`⏱️ [DEVICE_PROCESSOR] First packet - calculated offset for DeviceID 0x${device.deviceID.toString(16)}: ${clockOffset}ms (system: ${Date.now()}ms, device: ${deviceTimestamp}ms)`);
+        // }
+        // const systemTimestamp = deviceTimestamp + clockOffset;
+
+        // Use Date.now() for absolute timestamps until device timestamp offset is fixed
+        const systemTimestamp = Date.now();
+
+        const synchronizedIMU = {
+            ...imuData,
+            timestamp: systemTimestamp
+        };
 
         // Legacy software sync (DISABLED - kept for reference):
         // const synchronizedIMU = this.dataSyncService.createSynchronizedIMUData(deviceId, imuData);
         // if (!synchronizedIMU) return;
 
-        // Update last seen timestamp in registry (fast O(1) lookup)
+        // Update last seen timestamp in registry
         deviceRegistry.updateLastSeen(deviceId);
 
-        // Get device-to-joint mapping from registry (no pattern matching needed)
-        const device = deviceRegistry.getDeviceByName(deviceId);
+        // Convert DeviceID to string for legacy data structures
+        const deviceIdStr = typeof deviceId === 'number' ? `0x${deviceId.toString(16)}` : deviceId;
+
         if (device) {
             // Ensure mapping exists (will be used by getDevicesForJoint)
-            if (!this.deviceToJoints.has(deviceId)) {
-                this.deviceToJoints.set(deviceId, [device.joint]);
+            if (!this.deviceToJoints.has(deviceIdStr)) {
+                this.deviceToJoints.set(deviceIdStr, [device.joint]);
             }
         }
 
         // Optional bypass: emit raw sample directly without interpolation
         if (this.config.performance?.bypassInterpolation) {
-            console.log(`🚀 [DEVICE_PROCESSOR] Bypassing interpolation for ${deviceId} - emitting raw sample`);
+            console.log(`🚀 [DEVICE_PROCESSOR] Bypassing interpolation for ${deviceIdStr} - emitting raw sample`);
             const rawTimestamp = synchronizedIMU.timestamp || performance.now();
             const deviceSample: DeviceData = {
-                deviceId,
+                deviceId: deviceIdStr,
                 quaternion: QuaternionService.normalize(synchronizedIMU.quaternion ?? QuaternionService.createIdentity()),
                 timestamp: rawTimestamp,
                 interpolated: false,
@@ -118,13 +174,13 @@ export class DeviceProcessor {
             };
             this.updateLatestDeviceData(deviceSample);
             this.notifySubscribers();
-            console.log(`✅ [DEVICE_PROCESSOR] Raw sample processed and subscribers notified for ${deviceId}`);
+            console.log(`✅ [DEVICE_PROCESSOR] Raw sample processed and subscribers notified for ${deviceIdStr}`);
             return;
         }
 
         // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
-        // console.log(`🔄 [DEVICE_PROCESSOR] Sending ${deviceId} to interpolation service`);
-        this.interpolationService.processSample(deviceId, synchronizedIMU);
+        // console.log(`🔄 [DEVICE_PROCESSOR] Sending ${deviceIdStr} to interpolation service`);
+        this.interpolationService.processSample(deviceIdStr, synchronizedIMU);
     }
 
     /**

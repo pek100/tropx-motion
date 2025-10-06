@@ -10,7 +10,7 @@
  * 6. Send final offset to device
  */
 
-import { TimeSyncDevice, TimeSyncResult } from './types';
+import { TimeSyncDevice, TimeSyncResult, SyncSampleCallback } from './types';
 import { OffsetEstimator } from './OffsetEstimator';
 import { SAMPLE_COUNT, SAMPLE_DELAY_MS, RETRY_MAX_ATTEMPTS, RETRY_DELAY_MS } from './constants';
 
@@ -19,7 +19,8 @@ export class TimeSyncSession {
 
   constructor(
     private device: TimeSyncDevice,
-    private sampleCount: number = SAMPLE_COUNT
+    private sampleCount: number = SAMPLE_COUNT,
+    private onSample?: SyncSampleCallback
   ) {}
 
   /**
@@ -64,18 +65,35 @@ export class TimeSyncSession {
 
       this.estimator.addSample(T1, deviceCounter, T4);
 
+      // Broadcast live device timestamp for UI display
+      if (this.onSample) {
+        this.onSample(this.device.deviceId, this.device.deviceName, deviceCounter);
+      }
+
       if (i < this.sampleCount - 1) {
         await this.delay(SAMPLE_DELAY_MS);
       }
     }
 
-    // Compute median offset
+    // Compute median offset using NTP algorithm
     const { medianOffset, avgRTT, sampleCount } = this.estimator.computeMedianOffset();
-    console.log(`⏱️ [${this.device.deviceName}] Median offset: ${medianOffset.toFixed(2)}ms (RTT: ${avgRTT.toFixed(2)}ms)`);
+    console.log(`⏱️ [${this.device.deviceName}] NTP median offset: ${medianOffset.toFixed(2)}ms (RTT: ${avgRTT.toFixed(2)}ms)`);
+
+    // Calculate simple software offset: systemTime - deviceTime
+    // This ensures deviceTime + offset = systemTime
+    const currentSystemTime = Date.now();
+    const currentDeviceTime = await this.device.getDeviceTimestamp();
+    const softwareOffset = currentSystemTime - currentDeviceTime;
+
+    console.log(`⏱️ [${this.device.deviceName}] Software offset calculation:`);
+    console.log(`   System time: ${currentSystemTime}ms (${new Date(currentSystemTime).toISOString()})`);
+    console.log(`   Device time: ${currentDeviceTime}ms (${new Date(currentDeviceTime).toISOString()})`);
+    console.log(`   Offset: ${softwareOffset.toFixed(2)}ms`);
+    console.log(`   Verification: ${currentDeviceTime}ms + ${softwareOffset.toFixed(2)}ms = ${(currentDeviceTime + softwareOffset).toFixed(2)}ms`);
 
     await this.device.exitTimeSyncMode();
 
-    console.log(`✅ [${this.device.deviceName}] Time sync complete`);
+    console.log(`✅ [${this.device.deviceName}] Time sync complete - using software offset: ${softwareOffset.toFixed(2)}ms`);
 
     const samples = this.estimator.getSamples();
     const RTTs = samples.map(s => s.RTT);
@@ -83,8 +101,9 @@ export class TimeSyncSession {
     return {
       deviceId: this.device.deviceId,
       deviceName: this.device.deviceName,
-      medianOffset,
-      finalOffset: medianOffset,  // finalOffset = medianOffset (no compensation)
+      medianOffset: softwareOffset,  // Use software offset instead of NTP offset
+      finalOffset: softwareOffset,
+      deviceTimestampMs: currentDeviceTime, // Include device timestamp for live display
       sampleCount,
       avgRTT,
       minRTT: Math.min(...RTTs),

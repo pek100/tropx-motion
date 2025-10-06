@@ -19,6 +19,11 @@ export class UIProcessor {
     // WebSocket broadcast function for sending processed joint angles to UI
     private webSocketBroadcast: ((message: any, clientIds: string[]) => Promise<void>) | null = null;
 
+    // Throttle WebSocket broadcasts to prevent overwhelming the UI with duplicate messages
+    private lastBroadcastTime = 0;
+    private readonly MIN_BROADCAST_INTERVAL = 10; // Max 100 broadcasts/sec (one per joint update cycle)
+    private pendingBroadcast = false;
+
     private constructor() {
         this.initializeJointData();
     }
@@ -239,22 +244,49 @@ export class UIProcessor {
             return;
         }
 
-        try {
-            const chartFormat = this.getChartFormat();
+        const now = Date.now();
+        const timeSinceLastBroadcast = now - this.lastBroadcastTime;
 
-            // Create WebSocket message with processed joint angle data
+        // Throttle broadcast if called too frequently
+        if (timeSinceLastBroadcast < this.MIN_BROADCAST_INTERVAL) {
+            this.pendingBroadcast = true;
+            return;
+        }
+
+        try {
+            // Use Float32Array for optimized binary protocol
+            // Format: [leftCurrent, rightCurrent] - only 2 floats, no junk
+            const leftKnee = this.jointDataMap.get(JointName.LEFT_KNEE) || this.createEmptyJointData();
+            const rightKnee = this.jointDataMap.get(JointName.RIGHT_KNEE) || this.createEmptyJointData();
+
+            const data = new Float32Array([
+                leftKnee.current,
+                rightKnee.current
+            ]);
+
+            // Create WebSocket message with Float32Array for binary protocol
             const message = {
                 type: 0x30, // MESSAGE_TYPES.MOTION_DATA
                 requestId: 0, // Fire-and-forget streaming data
-                timestamp: angleData.timestamp, // Use sensor timestamp from angle data
+                timestamp: angleData.timestamp, // Use joint angle timestamp (already Date.now())
                 deviceName: angleData.deviceIds.join(','),
-                data: chartFormat
+                data: data
             };
 
             // Send immediately without await - fire and forget for performance
             this.webSocketBroadcast(message, []).catch(error => {
                 console.error('❌ [UI_PROCESSOR] Error broadcasting joint angle data:', error);
             });
+
+            this.lastBroadcastTime = now;
+
+            // If there was a pending broadcast, send it now
+            if (this.pendingBroadcast) {
+                this.pendingBroadcast = false;
+                this.broadcastJointAngleData(angleData).catch(error => {
+                    console.error('❌ [UI_PROCESSOR] Error broadcasting pending joint angle data:', error);
+                });
+            }
 
         } catch (error) {
             console.error('❌ [UI_PROCESSOR] Error creating WebSocket message:', error);
