@@ -1,6 +1,7 @@
 import { DeviceCard } from "@/components/device-card"
 import { ChartSvg } from "@/components/chart-svg"
 import KneeAreaChart from "@/components/knee-area-chart"
+import { PlatformIndicator } from "@/components/platform-indicator"
 import { useState, useRef, useEffect, useMemo } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -62,6 +63,12 @@ export default function Page() {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   // Persist custom device order (array of device IDs)
   const [deviceOrder, setDeviceOrder] = useState<string[]>([])
+  // Track devices that were manually disconnected by the user (should not auto-reconnect)
+  const [userDisconnectedDevices, setUserDisconnectedDevices] = useState<Set<string>>(new Set())
+
+  // Small screen detection (< 350px width or height)
+  const [isSmallScreen, setIsSmallScreen] = useState(false)
+  const [smallScreenOverride, setSmallScreenOverride] = useState<boolean | null>(null) // null = auto, true/false = manual
 
   // Auto-start connection logic: run burst scanning + connect attempts for first 10s
   const autoStartRef = useRef(false)
@@ -105,6 +112,72 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected])
 
+  // Detect small screens (< 350px width or height)
+  useEffect(() => {
+    const checkScreenSize = () => {
+      // If manual override is set, use that instead
+      if (smallScreenOverride !== null) {
+        setIsSmallScreen(smallScreenOverride)
+        return
+      }
+
+      // Otherwise, auto-detect based on window size
+      const isSmall = window.innerWidth < 350 || window.innerHeight < 350
+      setIsSmallScreen(isSmall)
+    }
+
+    // Check on mount
+    checkScreenSize()
+
+    // Listen for resize events
+    window.addEventListener('resize', checkScreenSize)
+
+    return () => {
+      window.removeEventListener('resize', checkScreenSize)
+    }
+  }, [smallScreenOverride])
+
+  // Keyboard shortcut: Ctrl+Shift+R to toggle small screen mode (dev feature)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Shift+R (or Cmd+Shift+R on Mac)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'R') {
+        e.preventDefault()
+
+        setSmallScreenOverride(prev => {
+          const newValue = prev === null ? !isSmallScreen : (prev ? false : true)
+
+          // Show feedback toast
+          const mode = newValue ? 'Small Screen' : 'Normal'
+          const isManual = newValue !== (window.innerWidth < 350 || window.innerHeight < 350)
+
+          toast({
+            title: `${mode} Mode ${isManual ? '(Manual Override)' : '(Auto)'}`,
+            description: `Switched to ${mode.toLowerCase()} layout. Press Ctrl+Shift+R to toggle.`,
+            duration: 2000,
+          })
+
+          return newValue
+        })
+      }
+
+      // Ctrl+Shift+A to reset to auto-detect
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'A') {
+        e.preventDefault()
+        setSmallScreenOverride(null)
+
+        toast({
+          title: "Auto-Detect Mode",
+          description: "Screen size detection reset to automatic.",
+          duration: 2000,
+        })
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isSmallScreen, toast])
+
   // Update devices from WebSocket scan results
   useEffect(() => {
     setDevices(prev => {
@@ -117,6 +190,7 @@ export default function Page() {
       // First, process all WebSocket devices
       wsDevices.forEach(d => {
         const existing = prev.find(p => p.id === d.id);
+        const wasUserDisconnected = userDisconnectedDevices.has(d.id);
 
         // Calculate signal strength from RSSI
         let signalStrength: 1 | 2 | 3 | 4 = 1;
@@ -126,10 +200,36 @@ export default function Page() {
         else signalStrength = 1;
 
         if (existing) {
+          console.log(`🔍 Processing existing device ${d.name}: backend state=${d.state}, UI state=${existing.connectionStatus}, isReconnecting=${d.isReconnecting}, wasUserDisconnected=${wasUserDisconnected}`);
+
+          // If device was manually disconnected by user, it should have been removed from backend
+          // If it somehow reconnects, log a warning (shouldn't happen with removeDevice)
+          if (wasUserDisconnected && (d.state === 'connected' || d.state === 'streaming')) {
+            console.warn(`⚠️ User-disconnected device ${d.name} reconnected unexpectedly - this should not happen`);
+            // Device was removed from backend but is reconnecting somehow
+            // Keep it disconnected in UI but don't fight the backend
+            merged.set(d.id, {
+              ...existing,
+              signalStrength,
+              connectionStatus: 'disconnected' as const,
+              isReconnecting: false,
+              reconnectAttempts: 0,
+            });
+            return;
+          }
+
           // WebSocket confirms connection - override local state
           if (d.state === 'connected' || d.state === 'streaming') {
+            // IMPORTANT: If device is in 'streaming' state but frontend is NOT streaming,
+            // this is incorrect - backend should only have devices in streaming during active recording
+            if (d.state === 'streaming' && !isStreaming) {
+              console.warn(`⚠️ Device ${d.name} reports 'streaming' state but frontend is NOT streaming - backend sync issue`);
+              // Note: We can't force stop recording here because we don't have stopRecording in scope
+              // The backend should handle this - devices should only be in 'streaming' during active recording session
+            }
+
             if (existing.connectionStatus !== 'connected') {
-              console.log(`✅ Device ${d.name} confirmed connected (from WebSocket)`);
+              console.log(`✅ Device ${d.name} confirmed connected (from WebSocket, backend state: ${d.state})`);
             }
             const battery = d.batteryLevel !== null && d.batteryLevel !== undefined ? d.batteryLevel : existing.batteryPercentage;
             console.log(`🔋 Device ${d.name} battery: ${battery}% (from WS: ${d.batteryLevel}, existing: ${existing.batteryPercentage})`);
@@ -146,23 +246,34 @@ export default function Page() {
 
           // WebSocket says disconnected - but keep local transition states
           if (d.state === 'discovered' || d.state === 'disconnected') {
-            // If we're in a connecting transition, keep it
-            if (existing.connectionStatus === 'connecting' || existing.connectionStatus === 'synchronizing') {
+            // Check if device is actively reconnecting
+            const isActivelyReconnecting = d.isReconnecting ?? false;
+
+            // If we're in a connecting transition (and NOT user-disconnected), keep it
+            if (!wasUserDisconnected && (existing.connectionStatus === 'connecting' || existing.connectionStatus === 'synchronizing')) {
               merged.set(d.id, {
                 ...existing,
                 signalStrength,
-                isReconnecting: d.isReconnecting ?? false,
+                isReconnecting: isActivelyReconnecting,
                 reconnectAttempts: d.reconnectAttempts ?? 0,
               });
               return;
             }
-            // Otherwise update to disconnected
+
+            // If device is actively reconnecting, set status to "reconnecting"
+            const status = isActivelyReconnecting ? 'reconnecting' as const : 'disconnected' as const;
+
+            if (existing.connectionStatus !== status) {
+              console.log(`🔄 Device ${d.name} status changing: ${existing.connectionStatus} → ${status} (isReconnecting=${isActivelyReconnecting}, attempts=${d.reconnectAttempts ?? 0})`);
+            }
+
+            // Otherwise update to disconnected or reconnecting
             merged.set(d.id, {
               ...existing,
               signalStrength,
               batteryPercentage: d.batteryLevel !== null && d.batteryLevel !== undefined ? d.batteryLevel : existing.batteryPercentage,
-              connectionStatus: 'disconnected' as const,
-              isReconnecting: d.isReconnecting ?? false,
+              connectionStatus: status,
+              isReconnecting: isActivelyReconnecting,
               reconnectAttempts: d.reconnectAttempts ?? 0,
             });
             return;
@@ -192,7 +303,14 @@ export default function Page() {
           // New device - map WebSocket state to UI state
           let connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing" = 'disconnected';
           if (d.state === 'connected' || d.state === 'streaming') {
-            connectionStatus = 'connected';
+            // If this is a new device that's already connected, but user previously disconnected it,
+            // it shouldn't be reconnecting (since we used removeDevice)
+            if (wasUserDisconnected) {
+              console.warn(`⚠️ User-disconnected device ${d.name} appeared as connected - this should not happen`);
+              connectionStatus = 'disconnected';
+            } else {
+              connectionStatus = 'connected';
+            }
           } else if (d.state === 'error') {
             connectionStatus = 'disabled';
           } else if (d.state === 'discovered') {
@@ -212,6 +330,7 @@ export default function Page() {
       });
 
       // Second, keep any connected/connecting devices not in the scan
+      // (but NOT if they were user-disconnected)
       prev.forEach(device => {
         if (!merged.has(device.id) &&
             (device.connectionStatus === 'connected' ||
@@ -224,7 +343,7 @@ export default function Page() {
 
       return Array.from(merged.values());
     });
-  }, [wsDevices])
+  }, [wsDevices, userDisconnectedDevices, isStreaming])
 
   // Initialize device order when new devices are discovered (use ref to track)
   const lastDeviceIdsRef = useRef<Set<string>>(new Set());
@@ -308,29 +427,78 @@ export default function Page() {
     // Don't allow re-connecting if already connected or connecting
     if (device.connectionStatus === "connected" || device.connectionStatus === "connecting") {
       if (device.connectionStatus === "connected") {
-        // Only allow disconnect
-        wsDisconnectDevice(device.id)
-        setDevices((prevDevices) =>
-          prevDevices.map((d, i) => (i === index ? { ...d, connectionStatus: "disconnected" as const } : d))
-        )
+        // User manually disconnecting - use removeDevice to stop backend auto-reconnect
+        console.log(`🔴 User manually disconnected device: ${device.name} - removing from managed devices`)
+        setUserDisconnectedDevices((prev) => new Set(prev).add(device.id))
+
+        // CRITICAL: If streaming is active, stop the recording session first
+        // Otherwise backend will keep trying to stream from devices
+        if (isStreaming) {
+          console.log(`⚠️ Stopping recording session because user disconnected device during streaming`)
+          stopRecording().then(() => {
+            setIsStreaming(false)
+            console.log(`✅ Recording stopped after user disconnect`)
+          })
+        }
+
+        // Use removeDevice instead of disconnectDevice to stop backend auto-reconnect
+        // Device will still appear in scan results as "discovered"
+        wsRemoveDevice(device.id)
+
+        // Don't remove from local state - just set to disconnected
+        // The device will reappear in wsDevices as "discovered" from scan results
+        setDevices((prevDevices) => {
+          console.log(`🔧 Setting device ${device.id} to disconnected state locally`)
+          return prevDevices.map((d) => {
+            if (d.id === device.id) {
+              console.log(`✏️ Device ${d.name} local state: ${d.connectionStatus} → disconnected`)
+              return {
+                ...d,
+                connectionStatus: "disconnected" as const,
+                isReconnecting: false,
+                reconnectAttempts: 0
+              }
+            }
+            return d
+          })
+        })
       }
       return
     }
 
     // Only proceed if disconnected
     if (device.connectionStatus === "disconnected") {
+      // User manually connecting - remove from userDisconnectedDevices set
+      console.log(`🟢 User manually connected device: ${device.name}`)
+      setUserDisconnectedDevices((prev) => {
+        const next = new Set(prev)
+        next.delete(device.id)
+        return next
+      })
+
       // Start WebSocket connect in background
       wsConnectDevice(device.id, device.name)
 
-      // Set to connecting - WebSocket events will update to connected
-      setDevices((prevDevices) =>
-        prevDevices.map((d, i) => (i === index ? { ...d, connectionStatus: "connecting" as const } : d))
-      )
+      // Set to connecting - WebSocket events will update to connected - use device ID
+      setDevices((prevDevices) => {
+        console.log(`🔧 Setting device ${device.id} to connecting state locally`)
+        return prevDevices.map((d) => {
+          if (d.id === device.id) {
+            console.log(`✏️ Device ${d.name} local state: ${d.connectionStatus} → connecting`)
+            return { ...d, connectionStatus: "connecting" as const }
+          }
+          return d
+        })
+      })
     }
   }
 
   const handleConnectAll = () => {
     if (isLocating || sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
+
+    // User wants to connect all - clear the userDisconnectedDevices set
+    console.log(`🟢 User manually connecting all devices - clearing disconnect list`)
+    setUserDisconnectedDevices(new Set())
 
     // Call WebSocket connect all in background
     connectAllDevices()
@@ -348,18 +516,36 @@ export default function Page() {
   const handleDisconnectAll = () => {
     if (isLocating || sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
 
-    // Disconnect all immediately
+    // User manually disconnecting all - add all device IDs to userDisconnectedDevices set
+    const allDeviceIds = sortedDevices.map(d => d.id)
+    console.log(`🔴 User manually disconnected all devices: ${allDeviceIds.length} devices - removing from managed devices`)
+    setUserDisconnectedDevices(new Set(allDeviceIds))
+
+    // CRITICAL: If streaming is active, stop the recording session first
+    // Otherwise backend will keep trying to stream from devices
+    if (isStreaming) {
+      console.log(`⚠️ Stopping recording session because user disconnected all devices during streaming`)
+      stopRecording().then(() => {
+        setIsStreaming(false)
+        console.log(`✅ Recording stopped after disconnect all`)
+      })
+    }
+
+    // Disconnect all immediately and clear reconnecting states
     setDevices((prevDevices) =>
       prevDevices.map((device) => ({
         ...device,
         connectionStatus: "disconnected" as const,
+        isReconnecting: false,
+        reconnectAttempts: 0
       })),
     )
 
-    // Call WebSocket disconnect for all connected sortedDevices
+    // Use removeDevice for all connected devices to stop backend auto-reconnect
+    // Devices will still appear in scan results as "discovered"
     sortedDevices.forEach(device => {
       if (device.connectionStatus === "connected") {
-        wsDisconnectDevice(device.id)
+        wsRemoveDevice(device.id)
       }
     })
   }
@@ -656,7 +842,7 @@ export default function Page() {
 
   return (
     <TooltipProvider delayDuration={1500}>
-      <div className="min-h-screen bg-[#fff6f3] flex flex-col relative">
+      <div className={isSmallScreen ? "h-screen bg-[#fff6f3] flex flex-col relative overflow-hidden" : "min-h-screen bg-[#fff6f3] flex flex-col relative"}>
         {/* Single big draggable div covering entire viewport */}
         <div
           className="fixed inset-0 w-full h-full"
@@ -668,7 +854,7 @@ export default function Page() {
 
         {/* All content with higher z-index and no-drag */}
         <div
-          className="relative min-h-screen flex flex-col pointer-events-none"
+          className={isSmallScreen ? "relative h-screen flex flex-col pointer-events-none" : "relative min-h-screen flex flex-col pointer-events-none"}
           style={{
             zIndex: 2
           } as any}
@@ -711,68 +897,76 @@ export default function Page() {
             </button>
           </div>
 
-          <header
-            className="p-8 pb-0 pointer-events-auto"
-          >
-            <div className="flex items-start gap-3 mb-2">
-              {/* Logo SVG */}
-              <svg
-                width="40"
-                height="40"
-                viewBox="0 0 1024 1024"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                className="flex-shrink-0 mt-1"
-              >
-                <path
-                  d="M536.573 188.5C480.508 217.268 427.514 275.625 441.339 293.707C458.235 315.077 528.125 283.844 583.423 229.597C645.632 167.952 620.288 146.582 536.573 188.5Z"
-                  fill="var(--tropx-vibrant)"
-                />
-                <path
-                  d="M753.405 396.365C627.93 499.319 494.412 599.86 487.977 595.838C484.76 594.229 480.738 549.187 478.325 497.71C471.89 367.409 452.587 326.388 397.892 326.388C348.828 326.388 279.656 410.038 191.985 575.73C116.378 718.9 98.6828 808.18 138.899 840.353C150.964 850.005 167.051 857.244 175.898 857.244C199.224 857.244 260.352 823.462 326.307 773.594L385.023 729.356L406.74 771.181C452.587 862.874 525.78 873.331 658.494 807.376C699.515 786.463 771.904 739.812 818.555 702.813C899.792 640.076 986.66 563.665 986.66 555.622C986.66 553.209 960.117 570.099 927.14 591.816C817.751 665.814 673.777 728.552 615.061 728.552C583.692 728.552 534.628 701.205 515.324 673.053L496.02 644.098L537.845 607.903C675.385 490.471 853.141 327.193 848.315 322.367C847.511 320.758 804.078 353.736 753.405 396.365ZM389.849 566.882C396.284 603.077 398.697 637.663 396.284 644.098C393.871 650.532 375.371 664.206 355.263 673.858C321.481 690.748 316.655 690.748 296.547 679.488C265.983 662.597 262.765 616.75 289.308 576.534C316.655 535.513 359.285 493.688 370.545 497.71C375.371 499.319 384.219 529.883 389.849 566.882Z"
-                  fill="var(--tropx-vibrant)"
-                />
-              </svg>
+          {/* Platform Indicator - Bottom Left */}
+          <PlatformIndicator />
 
-              <div>
-                <h1 className="text-3xl font-semibold leading-tight">
-                  <span style={{ color: "var(--tropx-dark)" }} className="italic">
-                    TropX
-                  </span>
-                </h1>
+          {/* Header - Hidden on small screens */}
+          {!isSmallScreen && (
+            <header
+              className="p-8 pb-0 pointer-events-auto"
+            >
+              <div className="flex items-start gap-3 mb-2">
+                {/* Logo SVG */}
+                <svg
+                  width="40"
+                  height="40"
+                  viewBox="0 0 1024 1024"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="flex-shrink-0 mt-1"
+                >
+                  <path
+                    d="M536.573 188.5C480.508 217.268 427.514 275.625 441.339 293.707C458.235 315.077 528.125 283.844 583.423 229.597C645.632 167.952 620.288 146.582 536.573 188.5Z"
+                    fill="var(--tropx-vibrant)"
+                  />
+                  <path
+                    d="M753.405 396.365C627.93 499.319 494.412 599.86 487.977 595.838C484.76 594.229 480.738 549.187 478.325 497.71C471.89 367.409 452.587 326.388 397.892 326.388C348.828 326.388 279.656 410.038 191.985 575.73C116.378 718.9 98.6828 808.18 138.899 840.353C150.964 850.005 167.051 857.244 175.898 857.244C199.224 857.244 260.352 823.462 326.307 773.594L385.023 729.356L406.74 771.181C452.587 862.874 525.78 873.331 658.494 807.376C699.515 786.463 771.904 739.812 818.555 702.813C899.792 640.076 986.66 563.665 986.66 555.622C986.66 553.209 960.117 570.099 927.14 591.816C817.751 665.814 673.777 728.552 615.061 728.552C583.692 728.552 534.628 701.205 515.324 673.053L496.02 644.098L537.845 607.903C675.385 490.471 853.141 327.193 848.315 322.367C847.511 320.758 804.078 353.736 753.405 396.365ZM389.849 566.882C396.284 603.077 398.697 637.663 396.284 644.098C393.871 650.532 375.371 664.206 355.263 673.858C321.481 690.748 316.655 690.748 296.547 679.488C265.983 662.597 262.765 616.75 289.308 576.534C316.655 535.513 359.285 493.688 370.545 497.71C375.371 499.319 384.219 529.883 389.849 566.882Z"
+                    fill="var(--tropx-vibrant)"
+                  />
+                </svg>
 
-                {/* Subtitle */}
-                <p className="text-sm" style={{ color: "var(--tropx-shadow)" }}>
-                  Research Suite
-                </p>
+                <div>
+                  <h1 className="text-3xl font-semibold leading-tight">
+                    <span style={{ color: "var(--tropx-dark)" }} className="italic">
+                      TropX
+                    </span>
+                  </h1>
+
+                  {/* Subtitle */}
+                  <p className="text-sm" style={{ color: "var(--tropx-shadow)" }}>
+                    Research Suite
+                  </p>
+                </div>
               </div>
-            </div>
-          </header>
+            </header>
+          )}
 
           <div
-            className="flex-1 flex items-center justify-center px-8 relative pointer-events-none"
+            className={isSmallScreen ? "flex-1 flex relative pointer-events-none" : "flex-1 flex items-center justify-center px-8 relative pointer-events-none"}
           >
-            <div className="flex gap-6 w-[90%] pointer-events-none">
+            <div className={isSmallScreen ? "flex gap-0 w-full h-full pointer-events-none" : "flex gap-6 w-[90%] pointer-events-none"}>
               {/* Left Pane */}
               <div
-                className={`flex-shrink-0 w-[500px] bg-white p-6 flex flex-col transition-all pointer-events-auto ${
+                className={`flex-shrink-0 bg-white flex flex-col transition-all pointer-events-auto ${
                   isFlashing ? "flash-pane" : ""
+                } ${
+                  isSmallScreen ? "w-1/2 h-full p-4" : "w-[500px] p-6"
                 }`}
                 style={{
-                  border: "1px solid #e5e5e5",
-                  borderRadius: "36px",
-                  height: "500px",
+                  border: isSmallScreen ? "none" : "1px solid #e5e5e5",
+                  borderRadius: isSmallScreen ? "0" : "36px",
+                  height: isSmallScreen ? "100%" : "500px",
                   WebkitAppRegion: 'no-drag'
                 } as any}
               >
-                <div className="flex justify-between mb-4">
+                <div className={isSmallScreen ? "flex justify-between mb-3" : "flex justify-between mb-4"}>
                   <div className="flex gap-2">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <button
                           onClick={handleLocate}
                           disabled={devices.some((d) => d.connectionStatus === "synchronizing") || isStreaming || isValidatingState || isValidatingLocate}
-                          className="px-4 py-2 text-sm rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"
+                          className={isSmallScreen ? "px-5 py-3 text-base rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]" : "px-4 py-2 text-sm rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"}
                           style={{
                             backgroundColor: isLocating ? "rgba(75, 175, 39, 0.15)" : "rgba(255, 255, 255, 0.5)",
                             color: isLocating ? "#4baf27" : "var(--tropx-shadow)",
@@ -798,7 +992,7 @@ export default function Page() {
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                             </svg>
                           ) : (
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <svg width={isSmallScreen ? "20" : "16"} height={isSmallScreen ? "20" : "16"} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                               <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
                               <path
                                 d="M12 2v4M12 18v4M2 12h4M18 12h4"
@@ -808,7 +1002,7 @@ export default function Page() {
                               />
                             </svg>
                           )}
-                          {isValidatingLocate ? "Connecting..." : isLocating ? "Stop Locating" : "Locate"}
+                          {isSmallScreen ? "" : (isValidatingLocate ? "Connecting..." : isLocating ? "Stop Locating" : "Locate")}
                         </button>
                       </TooltipTrigger>
                       <TooltipContent>
@@ -821,7 +1015,7 @@ export default function Page() {
                         <button
                           onClick={handleSync}
                           disabled={isLocating || isStreaming || isValidatingState || isValidatingLocate}
-                          className="px-4 py-2 text-sm rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md text-tropx-shadow hover:text-purple-600 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"
+                          className={isSmallScreen ? "px-5 py-3 text-base rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md text-tropx-shadow hover:text-purple-600 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]" : "px-4 py-2 text-sm rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md text-tropx-shadow hover:text-purple-600 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"}
                           style={{
                             backgroundColor: "rgba(255, 255, 255, 0.5)",
                             transition: "all 0.3s ease",
@@ -838,22 +1032,16 @@ export default function Page() {
                           }}
                           aria-label="Sync"
                         >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <svg width={isSmallScreen ? "20" : "16"} height={isSmallScreen ? "20" : "16"} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path
-                              d="M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C14.8273 3 17.35 4.30367 19 6.34267"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                            />
-                            <path
-                              d="M19 3V6.5H15.5"
+                              d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"
                               stroke="currentColor"
                               strokeWidth="2"
                               strokeLinecap="round"
                               strokeLinejoin="round"
                             />
                           </svg>
-                          Sync
+                          {!isSmallScreen && "Sync"}
                         </button>
                       </TooltipTrigger>
                       <TooltipContent>
@@ -867,7 +1055,7 @@ export default function Page() {
                       <button
                         onClick={handleRefresh}
                         disabled={isLocating || isSyncing || isStreaming || isValidatingState || isValidatingLocate}
-                        className="p-2 rounded-full transition-all cursor-pointer backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"
+                        className={isSmallScreen ? "px-5 py-3 text-base rounded-full transition-all cursor-pointer backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] flex items-center gap-2" : "px-4 py-2 text-sm rounded-full transition-all cursor-pointer backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] flex items-center gap-2"}
                         style={{
                           backgroundColor: isRefreshing ? "rgba(255, 77, 53, 0.15)" : "rgba(255, 255, 255, 0.5)",
                           transition: "all 0.3s ease",
@@ -897,8 +1085,8 @@ export default function Page() {
                         aria-label="Refresh"
                       >
                         <svg
-                          width="20"
-                          height="20"
+                          width={isSmallScreen ? "20" : "16"}
+                          height={isSmallScreen ? "20" : "16"}
                           viewBox="0 0 24 24"
                           fill="none"
                           xmlns="http://www.w3.org/2000/svg"
@@ -922,6 +1110,7 @@ export default function Page() {
                             strokeLinejoin="round"
                           />
                         </svg>
+                        <span>Scan</span>
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>
@@ -969,6 +1158,7 @@ export default function Page() {
                       isReconnecting={device.isReconnecting}
                       reconnectAttempts={device.reconnectAttempts}
                       disabled={isLocating || isSyncing}
+                      isSmallScreen={isSmallScreen}
                       onToggleConnection={() => handleToggleConnection(index)}
                       onRemove={async () => {
                         // Call backend to remove device (via WebSocket)
@@ -977,6 +1167,12 @@ export default function Page() {
                           const result = await wsRemoveDevice(device.id);
                           if (result.success) {
                             console.log(`✅ Device ${device.id} removed successfully`);
+                            // Remove from userDisconnectedDevices set
+                            setUserDisconnectedDevices((prev) => {
+                              const next = new Set(prev)
+                              next.delete(device.id)
+                              return next
+                            })
                             // Optimistically remove from local state
                             setDevices(prev => prev.filter(d => d.id !== device.id));
                           } else {
@@ -1010,15 +1206,15 @@ export default function Page() {
                 </div>
 
                 {/* Connect All and Disconnect All Buttons */}
-                <div className="flex gap-3 mt-6">
+                <div className={isSmallScreen ? "flex gap-2 mt-4" : "flex gap-3 mt-6"}>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
                         onClick={handleDisconnectAll}
                         disabled={isLocating || isSyncing}
-                        className="flex-1 py-2 px-4 text-sm rounded-full border-2 border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"
+                        className={isSmallScreen ? "flex-1 py-3 px-5 text-base rounded-full border-2 border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]" : "flex-1 py-2 px-4 text-sm rounded-full border-2 border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"}
                       >
-                        Disconnect All
+                        {isSmallScreen ? "Disconnect" : "Disconnect All"}
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>
@@ -1031,7 +1227,7 @@ export default function Page() {
                       <button
                         onClick={handleConnectAll}
                         disabled={isLocating || isSyncing}
-                        className={`flex-1 py-2 px-4 text-sm rounded-full font-medium transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] ${
+                        className={`flex-1 ${isSmallScreen ? "py-3 px-5 text-base" : "py-2 px-4 text-sm"} rounded-full font-medium transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] ${
                           allDevicesConnected
                             ? "border-2 bg-transparent hover:bg-white/50"
                             : "text-white hover:opacity-90"
@@ -1042,7 +1238,7 @@ export default function Page() {
                             : { backgroundColor: "var(--tropx-vibrant)" }
                         }
                       >
-                        Connect All
+                        {isSmallScreen ? "Connect" : "Connect All"}
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>
@@ -1054,11 +1250,13 @@ export default function Page() {
 
               {/* Right Pane */}
               <div
-                className="flex-1 bg-white p-6 gradient-diagonal flex flex-col items-center justify-center pointer-events-auto"
+                className={`bg-white gradient-diagonal flex flex-col items-center justify-center pointer-events-auto ${
+                  isSmallScreen ? "w-1/2 h-full flex-1 p-4" : "flex-1 p-6"
+                }`}
                 style={{
-                  border: "1px solid #e5e5e5",
-                  borderRadius: "36px",
-                  height: "500px",
+                  border: isSmallScreen ? "none" : "1px solid #e5e5e5",
+                  borderRadius: isSmallScreen ? "0" : "36px",
+                  height: isSmallScreen ? "100%" : "500px",
                   WebkitAppRegion: 'no-drag'
                 } as any}
               >
@@ -1068,28 +1266,28 @@ export default function Page() {
                   <ChartSvg />
                 )}
 
-                <div className="mt-8 flex items-center gap-3">
+                <div className={isSmallScreen ? "mt-4 flex items-center gap-2" : "mt-8 flex items-center gap-3"}>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
                         onClick={handleToggleStreaming}
                         disabled={isLocating || isSyncing || isValidatingState || isValidatingLocate}
-                        className="px-6 py-3 text-base rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md border border-white/50 hover:border-white/60 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"
+                        className={isSmallScreen ? "px-7 py-4 text-lg rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md border border-white/50 hover:border-white/60 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]" : "px-6 py-3 text-base rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md border border-white/50 hover:border-white/60 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"}
                         style={getFillStyle()}
                       >
                         {isValidatingState ? (
                           <>
-                            <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <svg className={isSmallScreen ? "animate-spin h-6 w-6" : "animate-spin h-5 w-5"} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                             </svg>
-                            Connecting...
+                            {!isSmallScreen && "Connecting..."}
                           </>
                         ) : isStreaming ? (
                           <>
                             <svg
-                              width="14"
-                              height="14"
+                              width={isSmallScreen ? "18" : "14"}
+                              height={isSmallScreen ? "18" : "14"}
                               viewBox="0 0 16 16"
                               fill="none"
                               xmlns="http://www.w3.org/2000/svg"
@@ -1097,20 +1295,20 @@ export default function Page() {
                               <rect x="3" y="3" width="4" height="10" rx="1" fill="currentColor" />
                               <rect x="9" y="3" width="4" height="10" rx="1" fill="currentColor" />
                             </svg>
-                            Stop Streaming
+                            {isSmallScreen ? "Stop" : "Stop Streaming"}
                           </>
                         ) : (
                           <>
                             <svg
-                              width="14"
-                              height="14"
+                              width={isSmallScreen ? "18" : "14"}
+                              height={isSmallScreen ? "18" : "14"}
                               viewBox="0 0 16 16"
                               fill="none"
                               xmlns="http://www.w3.org/2000/svg"
                             >
                               <path d="M4 2L13 8L4 14V2Z" fill="currentColor" />
                             </svg>
-                            Start Streaming
+                            {isSmallScreen ? "Start" : "Start Streaming"}
                           </>
                         )}
                       </button>
@@ -1127,7 +1325,7 @@ export default function Page() {
                           onClick={handleClearChart}
                           onMouseEnter={() => setIsTimerHovered(true)}
                           onMouseLeave={() => setIsTimerHovered(false)}
-                          className="px-4 py-3 rounded-full font-medium flex items-center gap-2 backdrop-blur-md border transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.99]"
+                          className={isSmallScreen ? "px-5 py-4 rounded-full font-medium flex items-center gap-2 backdrop-blur-md border transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.99]" : "px-4 py-3 rounded-full font-medium flex items-center gap-2 backdrop-blur-md border transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.99]"}
                           style={{
                             backgroundColor: isTimerHovered ? "rgba(239, 68, 68, 0.15)" : "rgba(255, 255, 255, 0.5)",
                             color: isTimerHovered ? "#dc2626" : "var(--tropx-shadow)",
@@ -1135,11 +1333,11 @@ export default function Page() {
                             transition: "all 0.3s ease",
                           }}
                         >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <svg width={isSmallScreen ? "20" : "16"} height={isSmallScreen ? "20" : "16"} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
                             <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                           </svg>
-                          <span className="text-base">
+                          <span className={isSmallScreen ? "text-lg" : "text-base"}>
                             {isTimerHovered ? "Clear" : formatElapsedTime(streamElapsedTime)}
                           </span>
                         </button>

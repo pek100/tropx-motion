@@ -40,6 +40,7 @@ export interface ElectronAPI {
         platform: string;
         arch: string;
         version: string;
+        getPlatformInfo: () => Promise<any>;
     };
 }
 
@@ -80,6 +81,7 @@ const electronAPI: ElectronAPI = {
         platform: process.platform,
         arch: process.arch,
         version: process.version,
+        getPlatformInfo: () => ipcRenderer.invoke('system:getPlatformInfo'),
     },
 };
 

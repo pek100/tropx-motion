@@ -7,6 +7,7 @@ import { isDev } from './utils/environment';
 import { CONFIG, WINDOW_CONFIG, MESSAGE_TYPES, BLUETOOTH_CONFIG } from '../shared/config';
 import { RecordingSession, ApiResponse } from '../shared/types';
 import { SystemMonitor } from './services/SystemMonitor';
+import { PlatformDetector } from '../../shared/PlatformDetector';
 
 export class MainProcess {
   private mainWindow: BrowserWindow | null = null;
@@ -383,6 +384,13 @@ export class MainProcess {
       chromeVersion: process.versions.chrome,
       nodeVersion: process.versions.node
     }));
+
+    // Platform detection handler
+    ipcMain.handle('system:getPlatformInfo', () => {
+      const info = PlatformDetector.detect();
+      const config = PlatformDetector.getOptimizationConfig();
+      return { info, config };
+    });
 
     // Keep WebSocket port getter for backward compatibility
     ipcMain.handle('motion:getWebSocketPort', () => this.motionService.getWebSocketPort());

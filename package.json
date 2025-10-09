@@ -6,12 +6,16 @@
   "scripts": {
     "dev": "npm run build:main && concurrently \"npm run dev:main\" \"npm run dev:renderer\" \"wait-on http://localhost:3000 && wait-on dist/main/electron/main/main.js && electron .\"",
     "dev:manual": "npm run build:main && npm run dev:renderer",
+    "start": "npm run build && node scripts/start-smart.js",
+    "start:smart": "node scripts/start-smart.js",
     "start:electron": "electron .",
+    "start:pi": "npm run build && bash start.sh",
     "dev:main": "tsc-watch -p tsconfig.main.json --onSuccess \"echo Main process compiled\"",
     "dev:renderer": "vite",
     "build": "npm run build:main && npm run build:renderer",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
+    "build:pi": "npm run build",
     "electron": "electron .",
     "electron:dev": "NODE_ENV=development electron .",
     "package": "electron-forge package",
@@ -20,9 +24,10 @@
     "package:mac": "npm run build && electron-builder --mac",
     "package:mac:portable": "npm run build && electron-builder --mac zip",
     "package:linux": "npm run build && electron-builder --linux",
+    "package:linux-arm64": "npm run build && electron-builder --linux --arm64",
+    "package:pi": "npm run build && electron-builder --linux AppImage --arm64",
     "clean": "rimraf dist build",
     "postinstall": "electron-builder install-app-deps",
-    "start": "electron-forge start",
     "make": "electron-forge make"
   },
   "keywords": [
