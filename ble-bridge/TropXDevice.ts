@@ -261,6 +261,121 @@ export class TropXDevice {
     }
   }
 
+  /**
+   * Reset device to IDLE state
+   * @returns true if successful, false otherwise
+   */
+  async resetToIdle(): Promise<boolean> {
+    const hasCharacteristics = await this.ensureCharacteristics();
+    if (!hasCharacteristics) {
+      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Cannot reset to IDLE: characteristics not available`);
+      return false;
+    }
+
+    try {
+      console.log(`🔄 [${this.wrapper.deviceInfo.name}] Resetting device to IDLE state...`);
+
+      // Send IDLE command (same as stop streaming)
+      const idleCommand = TropXCommands.Cmd_StopStream();
+      await this.writeCommand(Buffer.from(idleCommand));
+
+      // Wait for device to process
+      await this.delay(300);
+
+      console.log(`✅ [${this.wrapper.deviceInfo.name}] Reset command sent`);
+      return true;
+    } catch (error) {
+      console.error(`❌ [${this.wrapper.deviceInfo.name}] Failed to reset to IDLE:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Get current device system state
+   * Device sends response via notification, not via read value
+   * @returns Device state value or NONE if failed
+   */
+  async getSystemState(): Promise<number> {
+    const hasCharacteristics = await this.ensureCharacteristics();
+    if (!hasCharacteristics) {
+      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Cannot get system state: characteristics not available`);
+      return TROPX_STATES.NONE;
+    }
+
+    try {
+      // Set up promise to wait for notification response
+      const responsePromise = new Promise<Buffer>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          // Safety check: characteristic might be null if device disconnected
+          if (this.wrapper.commandCharacteristic) {
+            this.wrapper.commandCharacteristic.removeListener('data', handler);
+          }
+          reject(new Error('State command response timeout'));
+        }, 2000);  // Increased to 2 seconds for devices that respond slowly
+
+        const handler = (data: Buffer) => {
+          clearTimeout(timeout);
+          // Safety check: characteristic might be null if device disconnected
+          if (this.wrapper.commandCharacteristic) {
+            this.wrapper.commandCharacteristic.removeListener('data', handler);
+          }
+          console.log(`📨 [${this.wrapper.deviceInfo.name}] Received state response via notification: [${Array.from(data).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+          resolve(data);
+        };
+
+        this.wrapper.commandCharacteristic.once('data', handler);
+      });
+
+      // Enable notifications if not already enabled
+      try {
+        await this.wrapper.commandCharacteristic.subscribeAsync();
+      } catch (subError: any) {
+        if (!subError.message?.includes('already') && !subError.message?.includes('subscribed')) {
+          console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Could not enable command notifications:`, subError.message);
+        }
+      }
+
+      // Send command
+      const stateCommand = TropXCommands.Cmd_GetSystemState();
+      await this.wrapper.commandCharacteristic.writeAsync(Buffer.from(stateCommand), false);
+
+      // Wait for notification response (not read!)
+      const responseData = await responsePromise;
+
+      // Decode response
+      const state = TropXCommands.Dec_SystemState(new Uint8Array(responseData));
+      return state;
+
+    } catch (error) {
+      console.error(`❌ [${this.wrapper.deviceInfo.name}] Failed to get system state:`, error);
+      return TROPX_STATES.NONE;
+    }
+  }
+
+  /**
+   * Validates device state before starting an operation
+   * @param operation - Operation name for logging
+   * @param validator - Function to validate if state is acceptable
+   * @returns true if state is valid, false otherwise
+   */
+  async validateStateForOperation(operation: string, validator: (state: number) => boolean): Promise<boolean> {
+    console.log(`🔍 [${this.wrapper.deviceInfo.name}] Checking device state for ${operation}...`);
+    const state = await this.getSystemState();
+
+    if (state === TROPX_STATES.NONE) {
+      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Cannot ${operation}: unable to get device state`);
+      return false;
+    }
+
+    if (!validator(state)) {
+      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Cannot ${operation}: device in ${TropXCommands.getStateName(state)} state`);
+      return false;
+    }
+
+    console.log(`✅ [${this.wrapper.deviceInfo.name}] Device state valid for ${operation}: ${TropXCommands.getStateName(state)}`);
+    return true;
+  }
+
   // Start quaternion data streaming (with lazy characteristic discovery like Python)
   async startStreaming(): Promise<boolean> {
     // Ensure characteristics are discovered (uses cached if already done)
@@ -268,6 +383,9 @@ export class TropXDevice {
     if (!hasCharacteristics) {
       return false;
     }
+
+    // State validation now handled globally in NobleBluetoothService.startGlobalStreaming()
+    // Individual devices no longer check state - the global validator handles resets
 
     try {
       const streamingStartTime = Date.now();
@@ -998,6 +1116,12 @@ export class TropXDevice {
     this.cleanup();
     this.wrapper.deviceInfo.state = 'disconnected';
     this.notifyEvent('disconnected');
+
+    // Notify with auto_reconnect flag so service can trigger reconnection
+    this.notifyEvent('auto_reconnect', {
+      deviceId: this.wrapper.deviceInfo.id,
+      deviceName: this.wrapper.deviceInfo.name
+    });
   }
 
   // Start battery monitoring (periodic updates only, initial read done during connect)

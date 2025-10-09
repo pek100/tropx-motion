@@ -1,6 +1,6 @@
 "use client"
 
-import { Link, Link2Off as LinkOff, Loader2, RefreshCw } from "lucide-react"
+import { Link, Link2Off as LinkOff, Loader2, RefreshCw, X } from "lucide-react"
 import { useEffect, useState, memo } from "react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { LegAboveRightKnee } from "./leg-above-right-knee"
@@ -27,12 +27,15 @@ interface DeviceCardProps {
   name: string
   batteryPercentage: number | null
   signalStrength: 1 | 2 | 3 | 4 // 1-4 bars
-  connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing"
+  connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing" | "reconnecting"
   isStreaming?: boolean
   isLocating?: boolean
   isLocatingTarget?: boolean
+  isReconnecting?: boolean
+  reconnectAttempts?: number
   disabled?: boolean
   onToggleConnection?: () => void
+  onRemove?: () => void
   syncOffsetMs?: number
   syncDeviceTimestampMs?: number
   // Drag & drop (optional)
@@ -53,8 +56,11 @@ export function DeviceCard({
   isStreaming = false,
   isLocating = false,
   isLocatingTarget = false,
+  isReconnecting = false,
+  reconnectAttempts = 0,
   disabled = false,
   onToggleConnection,
+  onRemove,
   syncOffsetMs,
   syncDeviceTimestampMs,
   draggable = false,
@@ -118,7 +124,10 @@ export function DeviceCard({
   const ConnectionIcon = () => {
     const iconColor = isLn ? "#0080FF" : "#FF3535"
 
-    if (connectionStatus === "connected") {
+    if (isReconnecting || connectionStatus === "reconnecting") {
+      // Reconnecting: Show spinning refresh icon
+      return <RefreshCw className="w-5 h-5 animate-spin transform-gpu" style={{ color: "#ef4444" }} />
+    } else if (connectionStatus === "connected") {
       // Connected: Show LinkOff icon - click to disconnect
       return <LinkOff className="w-5 h-5" style={{ color: iconColor }} />
     } else if (connectionStatus === "disconnected") {
@@ -135,7 +144,9 @@ export function DeviceCard({
   }
 
   const getStatusText = () => {
-    if (connectionStatus === "connected" && isStreaming) {
+    if (isReconnecting || connectionStatus === "reconnecting") {
+      return `Unavailable - Searching... (${reconnectAttempts}/5)`
+    } else if (connectionStatus === "connected" && isStreaming) {
       return "Streaming"
     } else if (connectionStatus === "connected") {
       return "Connected"
@@ -149,6 +160,9 @@ export function DeviceCard({
   }
 
   const getStatusColor = () => {
+    if (isReconnecting || connectionStatus === "reconnecting") {
+      return "#ef4444" // red for reconnecting
+    }
     if (connectionStatus === "disconnected") {
       return "#9CA3AF" // gray
     }
@@ -199,39 +213,60 @@ export function DeviceCard({
               </span>
             )}
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={onToggleConnection}
-                  disabled={connectionStatus === "disabled" || disabled}
-                  className="hover:scale-110 active:scale-95 transition-transform disabled:cursor-not-allowed cursor-pointer bg-white rounded-full px-3 py-2 flex items-center gap-2 disabled:opacity-50"
-                >
-                  <ConnectionIcon />
-                  {/* Show "Connect" text ONLY when disconnected */}
-                  {connectionStatus === "disconnected" && (
-                    <span className="text-sm font-medium" style={{ color: isLn ? "#0080C0" : "#BF0000" }}>
-                      Connect
+            {/* Show REMOVE button when reconnecting */}
+            {(isReconnecting || connectionStatus === "reconnecting") ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={onRemove}
+                    className="hover:scale-110 active:scale-95 transition-transform cursor-pointer bg-white rounded-full px-3 py-2 flex items-center gap-2"
+                  >
+                    <RefreshCw className="w-4 h-4 animate-spin" style={{ color: "#6b7280" }} />
+                    <X className="w-5 h-5" style={{ color: "#6b7280" }} />
+                    <span className="text-sm font-medium" style={{ color: "#6b7280" }}>
+                      Remove
                     </span>
-                  )}
-                  {/* Show "Connecting" text during connecting */}
-                  {connectionStatus === "connecting" && (
-                    <span className="text-sm font-medium" style={{ color: isLn ? "#0080C0" : "#BF0000" }}>
-                      Connecting
-                    </span>
-                  )}
-                  {/* Show "Syncing" text during synchronizing */}
-                  {connectionStatus === "synchronizing" && (
-                    <span className="text-sm font-medium" style={{ color: "#9333ea" }}>
-                      Syncing
-                    </span>
-                  )}
-                  {/* When connected: NO text, just icon */}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{connectionStatus === "connected" ? "Disconnect device" : "Connect device"}</p>
-              </TooltipContent>
-            </Tooltip>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Stop reconnecting and remove device</p>
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={onToggleConnection}
+                    disabled={connectionStatus === "disabled" || disabled}
+                    className="hover:scale-110 active:scale-95 transition-transform disabled:cursor-not-allowed cursor-pointer bg-white rounded-full px-3 py-2 flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <ConnectionIcon />
+                    {/* Show "Connect" text ONLY when disconnected */}
+                    {connectionStatus === "disconnected" && (
+                      <span className="text-sm font-medium" style={{ color: isLn ? "#0080C0" : "#BF0000" }}>
+                        Connect
+                      </span>
+                    )}
+                    {/* Show "Connecting" text during connecting */}
+                    {connectionStatus === "connecting" && (
+                      <span className="text-sm font-medium" style={{ color: isLn ? "#0080C0" : "#BF0000" }}>
+                        Connecting
+                      </span>
+                    )}
+                    {/* Show "Syncing" text during synchronizing */}
+                    {connectionStatus === "synchronizing" && (
+                      <span className="text-sm font-medium" style={{ color: "#9333ea" }}>
+                        Syncing
+                      </span>
+                    )}
+                    {/* When connected: NO text, just icon */}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{connectionStatus === "connected" ? "Disconnect device" : "Connect device"}</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
         </div>
 

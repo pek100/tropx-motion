@@ -122,6 +122,7 @@ export class BLEDomainProcessor implements DomainProcessor {
     this.operationHandlers.set(MESSAGE_TYPES.BLE_SCAN_REQUEST, this.handleScanRequest);
     this.operationHandlers.set(MESSAGE_TYPES.BLE_CONNECT_REQUEST, this.handleConnectRequest);
     this.operationHandlers.set(MESSAGE_TYPES.BLE_DISCONNECT_REQUEST, this.handleDisconnectRequest);
+    this.operationHandlers.set(MESSAGE_TYPES.BLE_DEVICE_REMOVE_REQUEST, this.handleDeviceRemoveRequest);
     this.operationHandlers.set(MESSAGE_TYPES.BLE_SYNC_REQUEST, this.handleSyncRequest);
     this.operationHandlers.set(MESSAGE_TYPES.BLE_LOCATE_START_REQUEST, this.handleLocateStartRequest);
     this.operationHandlers.set(MESSAGE_TYPES.BLE_LOCATE_STOP_REQUEST, this.handleLocateStopRequest);
@@ -168,6 +169,21 @@ export class BLEDomainProcessor implements DomainProcessor {
 
     return {
       type: MESSAGE_TYPES.BLE_DISCONNECT_RESPONSE,
+      requestId: message.requestId,
+      timestamp: Date.now(),
+      success: result.success,
+      deviceId: request.deviceId,
+      message: result.message
+    } as BaseMessage;
+  };
+
+  // BLE device remove operation handler (cancel reconnect + remove from registry)
+  private handleDeviceRemoveRequest = async (message: BaseMessage, service: any): Promise<BaseMessage> => {
+    const request = message as any;
+    const result = await service.removeDevice(request.deviceId);
+
+    return {
+      type: MESSAGE_TYPES.BLE_DEVICE_REMOVE_RESPONSE,
       requestId: message.requestId,
       timestamp: Date.now(),
       success: result.success,
@@ -264,7 +280,9 @@ export class BLEDomainProcessor implements DomainProcessor {
       timestamp: Date.now(),
       success: result.success,
       sessionId: request.sessionId,
-      message: result.message
+      recordingId: result.recordingId,
+      message: result.message,
+      error: (result as any).error  // Include error message for state validation failures
     } as RecordStartResponse;
   };
 
@@ -281,6 +299,7 @@ export class BLEDomainProcessor implements DomainProcessor {
       requestId: message.requestId,
       timestamp: Date.now(),
       success: result.success,
+      recordingId: result.recordingId,
       message: result.message
     } as BaseMessage;
   };

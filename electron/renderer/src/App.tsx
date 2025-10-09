@@ -25,6 +25,7 @@ export default function Page() {
     burstScanDevices,
     connectDevice: wsConnectDevice,
     disconnectDevice: wsDisconnectDevice,
+    removeDevice: wsRemoveDevice,
     connectAllDevices,
     syncAllDevices,
     startLocateMode,
@@ -41,13 +42,17 @@ export default function Page() {
     name: string;
     signalStrength: 1 | 2 | 3 | 4;
     batteryPercentage: number | null;
-    connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing";
+    connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing" | "reconnecting";
+    isReconnecting?: boolean;
+    reconnectAttempts?: number;
   }>>([])
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isStreaming, setIsStreaming] = useState(false)
   const [hasStartedStreaming, setHasStartedStreaming] = useState(false)
   const [isFlashing, setIsFlashing] = useState(false)
   const [isLocating, setIsLocating] = useState(false)
+  const [isValidatingState, setIsValidatingState] = useState(false)
+  const [isValidatingLocate, setIsValidatingLocate] = useState(false)
   const [streamStartTime, setStreamStartTime] = useState<number | null>(null)
   const [streamElapsedTime, setStreamElapsedTime] = useState(0)
   const [clearChartTrigger, setClearChartTrigger] = useState(0)
@@ -133,6 +138,8 @@ export default function Page() {
               signalStrength,
               batteryPercentage: battery,
               connectionStatus: 'connected' as const,
+              isReconnecting: d.isReconnecting ?? false,
+              reconnectAttempts: d.reconnectAttempts ?? 0,
             });
             return;
           }
@@ -144,6 +151,8 @@ export default function Page() {
               merged.set(d.id, {
                 ...existing,
                 signalStrength,
+                isReconnecting: d.isReconnecting ?? false,
+                reconnectAttempts: d.reconnectAttempts ?? 0,
               });
               return;
             }
@@ -153,6 +162,8 @@ export default function Page() {
               signalStrength,
               batteryPercentage: d.batteryLevel !== null && d.batteryLevel !== undefined ? d.batteryLevel : existing.batteryPercentage,
               connectionStatus: 'disconnected' as const,
+              isReconnecting: d.isReconnecting ?? false,
+              reconnectAttempts: d.reconnectAttempts ?? 0,
             });
             return;
           }
@@ -163,6 +174,8 @@ export default function Page() {
               ...existing,
               signalStrength,
               connectionStatus: existing.connectionStatus === 'connecting' ? 'disconnected' as const : 'disabled' as const,
+              isReconnecting: d.isReconnecting ?? false,
+              reconnectAttempts: d.reconnectAttempts ?? 0,
             });
             return;
           }
@@ -172,6 +185,8 @@ export default function Page() {
             ...existing,
             signalStrength,
             batteryPercentage: d.batteryLevel !== null && d.batteryLevel !== undefined ? d.batteryLevel : existing.batteryPercentage,
+            isReconnecting: d.isReconnecting ?? false,
+            reconnectAttempts: d.reconnectAttempts ?? 0,
           });
         } else {
           // New device - map WebSocket state to UI state
@@ -190,6 +205,8 @@ export default function Page() {
             signalStrength,
             batteryPercentage: d.batteryLevel ?? null,
             connectionStatus,
+            isReconnecting: d.isReconnecting ?? false,
+            reconnectAttempts: d.reconnectAttempts ?? 0,
           });
         }
       });
@@ -349,7 +366,27 @@ export default function Page() {
 
   const handleRefresh = async () => {
     // NEVER scan during streaming/recording or locate mode
-    if (isLocating || isSyncing || isScanning || isStreaming) return
+    if (isStreaming) {
+      toast({
+        title: "Cannot Scan",
+        description: "Stop angle streaming before scanning for devices.",
+        variant: "destructive",
+        duration: 3000,
+      })
+      return
+    }
+
+    if (isLocating) {
+      toast({
+        title: "Cannot Scan",
+        description: "Stop locating mode before scanning for devices.",
+        variant: "destructive",
+        duration: 3000,
+      })
+      return
+    }
+
+    if (isSyncing || isScanning) return
 
     if (isRefreshing) {
       // Stop scanning - clear UI state and stop backend burst scan
@@ -441,10 +478,13 @@ export default function Page() {
       setIsRefreshing(false)
     }
 
+    setIsValidatingLocate(true)
     setIsLocating(true)
 
     // Start accelerometer-based locate mode on backend
     const result = await startLocateMode()
+    setIsValidatingLocate(false)
+
     if (!result.success) {
       console.error('Failed to start locate mode:', result.error)
       setIsLocating(false)
@@ -479,16 +519,35 @@ export default function Page() {
     }
 
     if (!isStreaming) {
+      setIsValidatingState(true)
       setHasStartedStreaming(true)
       setStreamStartTime(Date.now())
       setStreamElapsedTime(0)
       setClearChartTrigger((prev) => prev + 1)
       const sessionId = `session_${Date.now()}`
-      await startRecording(sessionId, "test_exercise", 1)
+
+      const result = await startRecording(sessionId, "test_exercise", 1)
+      setIsValidatingState(false)
+
+      if (result.success) {
+        setIsStreaming(true)
+      } else {
+        setHasStartedStreaming(false)
+        setStreamStartTime(null)
+
+        // Show error toast with device details if available
+        const errorMsg = (result as any).error || result.message || "Failed to start streaming"
+        toast({
+          title: "Cannot Start Streaming",
+          description: errorMsg,
+          variant: "destructive",
+          duration: 6000,
+        })
+      }
     } else {
       await stopRecording()
+      setIsStreaming(false)
     }
-    setIsStreaming(!isStreaming)
   }
 
   const handleClearChart = () => {
@@ -712,7 +771,7 @@ export default function Page() {
                       <TooltipTrigger asChild>
                         <button
                           onClick={handleLocate}
-                          disabled={devices.some((d) => d.connectionStatus === "synchronizing")}
+                          disabled={devices.some((d) => d.connectionStatus === "synchronizing") || isStreaming || isValidatingState || isValidatingLocate}
                           className="px-4 py-2 text-sm rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"
                           style={{
                             backgroundColor: isLocating ? "rgba(75, 175, 39, 0.15)" : "rgba(255, 255, 255, 0.5)",
@@ -733,16 +792,23 @@ export default function Page() {
                           }}
                           aria-label="Locate"
                         >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
-                            <path
-                              d="M12 2v4M12 18v4M2 12h4M18 12h4"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                            />
-                          </svg>
-                          {isLocating ? "Stop Locating" : "Locate"}
+                          {isValidatingLocate ? (
+                            <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          ) : (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+                              <path
+                                d="M12 2v4M12 18v4M2 12h4M18 12h4"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                              />
+                            </svg>
+                          )}
+                          {isValidatingLocate ? "Connecting..." : isLocating ? "Stop Locating" : "Locate"}
                         </button>
                       </TooltipTrigger>
                       <TooltipContent>
@@ -754,7 +820,7 @@ export default function Page() {
                       <TooltipTrigger asChild>
                         <button
                           onClick={handleSync}
-                          disabled={isLocating}
+                          disabled={isLocating || isStreaming || isValidatingState || isValidatingLocate}
                           className="px-4 py-2 text-sm rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md text-tropx-shadow hover:text-purple-600 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"
                           style={{
                             backgroundColor: "rgba(255, 255, 255, 0.5)",
@@ -800,7 +866,7 @@ export default function Page() {
                     <TooltipTrigger asChild>
                       <button
                         onClick={handleRefresh}
-                        disabled={isLocating || isSyncing}
+                        disabled={isLocating || isSyncing || isStreaming || isValidatingState || isValidatingLocate}
                         className="p-2 rounded-full transition-all cursor-pointer backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"
                         style={{
                           backgroundColor: isRefreshing ? "rgba(255, 77, 53, 0.15)" : "rgba(255, 255, 255, 0.5)",
@@ -900,8 +966,36 @@ export default function Page() {
                       isStreaming={isStreaming}
                       isLocating={isLocating}
                       isLocatingTarget={isLocating && vibratingDeviceIds.includes(device.id)}
+                      isReconnecting={device.isReconnecting}
+                      reconnectAttempts={device.reconnectAttempts}
                       disabled={isLocating || isSyncing}
                       onToggleConnection={() => handleToggleConnection(index)}
+                      onRemove={async () => {
+                        // Call backend to remove device (via WebSocket)
+                        // This will cancel reconnect and remove from registry
+                        try {
+                          const result = await wsRemoveDevice(device.id);
+                          if (result.success) {
+                            console.log(`✅ Device ${device.id} removed successfully`);
+                            // Optimistically remove from local state
+                            setDevices(prev => prev.filter(d => d.id !== device.id));
+                          } else {
+                            console.error(`❌ Failed to remove device: ${result.error}`);
+                            toast({
+                              title: "Remove Failed",
+                              description: result.error || "Could not remove device",
+                              variant: "destructive"
+                            });
+                          }
+                        } catch (error) {
+                          console.error('Failed to remove device:', error);
+                          toast({
+                            title: "Error",
+                            description: "An unexpected error occurred",
+                            variant: "destructive"
+                          });
+                        }
+                      }}
                       syncOffsetMs={syncProgress[device.id]?.offsetMs}
                       syncDeviceTimestampMs={syncProgress[device.id]?.deviceTimestampMs}
                       draggable={!isLocating && !isSyncing}
@@ -979,11 +1073,19 @@ export default function Page() {
                     <TooltipTrigger asChild>
                       <button
                         onClick={handleToggleStreaming}
-                        disabled={isLocating || isSyncing}
+                        disabled={isLocating || isSyncing || isValidatingState || isValidatingLocate}
                         className="px-6 py-3 text-base rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md border border-white/50 hover:border-white/60 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"
                         style={getFillStyle()}
                       >
-                        {isStreaming ? (
+                        {isValidatingState ? (
+                          <>
+                            <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Connecting...
+                          </>
+                        ) : isStreaming ? (
                           <>
                             <svg
                               width="14"

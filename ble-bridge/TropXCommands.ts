@@ -6,7 +6,7 @@
  * adapted from the proven Muse SDK implementation.
  */
 
-import { TROPX_COMMANDS, TROPX_STATES, DATA_MODES, DATA_FREQUENCIES } from './BleBridgeConstants';
+import { TROPX_COMMANDS, TROPX_STATES, DATA_MODES, DATA_FREQUENCIES, STATE_NAMES } from './BleBridgeConstants';
 
 /**
  * Creates and manages TropX device commands following the TropX protocol
@@ -130,6 +130,85 @@ export class TropXCommands {
     console.log(`🕐 TropX Set DateTime command: [${Array.from(buffer).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}] = ${date.toISOString()}`);
 
     return buffer;
+  }
+
+  /**
+   * Decodes system state from device response
+   * Response format (notification has 2-byte header):
+   * - Byte 0-1: Header (0x00, 0x03)
+   * - Byte 2: Command (0x82 = CMD_STATE | READ_MASK)
+   * - Byte 3: ACK (0x00 = success, 0x01 = error)
+   * - Byte 4: State value
+   *
+   * @param response - Raw response buffer from device
+   * @returns System state value or NONE if invalid
+   */
+  static Dec_SystemState(response: Uint8Array): number {
+    // Check if response has header (notifications include 2-byte header)
+    let offset = 0;
+    if (response.length >= 5 && response[0] === 0x00 && response[1] === 0x03) {
+      // Skip 2-byte header for notification responses
+      offset = 2;
+      console.log(`🔍 Detected notification header, skipping 2 bytes`);
+    }
+
+    if (response.length < offset + 3) {
+      console.warn(`⚠️  Invalid system state response: too short (${response.length} bytes)`);
+      return TROPX_STATES.NONE;
+    }
+
+    const command = response[offset] & 0x7F; // Mask off read bit
+    const ack = response[offset + 1];
+    const state = response[offset + 2];
+
+    if (command !== TROPX_COMMANDS.STATE) {
+      console.warn(`⚠️  Invalid system state response: wrong command 0x${command.toString(16)}`);
+      return TROPX_STATES.NONE;
+    }
+
+    if (ack !== 0x00) {
+      console.warn(`⚠️  System state request failed: ACK = 0x${ack.toString(16)}`);
+      return TROPX_STATES.ERROR;
+    }
+
+    console.log(`📊 Device state: ${STATE_NAMES[state] || `Unknown (0x${state.toString(16)})`}`);
+    return state;
+  }
+
+  /**
+   * Validates if device is in correct state for streaming
+   * Device must be in IDLE, STANDBY, or already STREAMING state
+   */
+  static isValidForStreaming(state: number): boolean {
+    return state === TROPX_STATES.IDLE ||
+           state === TROPX_STATES.STANDBY ||
+           state === TROPX_STATES.TX_DIRECT ||
+           state === TROPX_STATES.TX_BUFFERED;
+  }
+
+  /**
+   * Validates if device is in correct state for locate mode
+   * Device must be in IDLE or STANDBY (not streaming, recording, etc.)
+   */
+  static isValidForLocate(state: number): boolean {
+    return state === TROPX_STATES.IDLE || state === TROPX_STATES.STANDBY;
+  }
+
+  /**
+   * Validates if device is in a busy state (cannot accept new commands)
+   */
+  static isBusy(state: number): boolean {
+    return state === TROPX_STATES.LOG ||        // Recording to memory
+           state === TROPX_STATES.READOUT ||    // Downloading files
+           state === TROPX_STATES.CALIB ||      // Calibrating
+           state === TROPX_STATES.STARTUP;      // Starting up
+  }
+
+  /**
+   * Gets human-readable state name
+   */
+  static getStateName(state: number): string {
+    return STATE_NAMES[state] || `Unknown (0x${state.toString(16)})`;
   }
 
   /**

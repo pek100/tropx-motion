@@ -142,6 +142,8 @@ export function useWebSocket() {
                         batteryLevel: status.batteryLevel ?? d.batteryLevel,
                         lastSeen: Date.now(),
                         rssi: (status as any).rssi ?? d.rssi,
+                        isReconnecting: (status as any).isReconnecting ?? false,
+                        reconnectAttempts: (status as any).reconnectAttempts ?? 0,
                       }
                     : d
                 ),
@@ -155,6 +157,8 @@ export function useWebSocket() {
                 rssi: (status as any).rssi ?? 0,
                 address: (status as any).deviceAddress || '',
                 lastSeen: Date.now(),
+                isReconnecting: (status as any).isReconnecting ?? false,
+                reconnectAttempts: (status as any).reconnectAttempts ?? 0,
               } as DeviceInfo;
               return {
                 ...prev,
@@ -356,6 +360,17 @@ export function useWebSocket() {
       : { success: false, error: result.error || 'Disconnection failed' };
   }, []);
 
+  // Remove device (cancel reconnect + remove from registry)
+  const removeDevice = useCallback(async (id: string): Promise<Result<void>> => {
+    if (!clientRef.current) {
+      return { success: false, error: 'WebSocket not connected' };
+    }
+    const result = await clientRef.current.removeDevice(id);
+    return result.success
+      ? { success: true, data: undefined }
+      : { success: false, error: result.error || 'Remove device failed' };
+  }, []);
+
   // Connect all devices
   const connectAllDevices = useCallback(async (): Promise<Result<void>> => {
     if (!clientRef.current) {
@@ -481,6 +496,7 @@ export function useWebSocket() {
     burstScanDevices,
     connectDevice,
     disconnectDevice,
+    removeDevice,
     connectAllDevices,
     syncAllDevices,
     startLocateMode,

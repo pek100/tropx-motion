@@ -20,6 +20,8 @@ export interface DeviceInfo {
   state: 'discovered' | 'connecting' | 'connected' | 'streaming' | 'disconnected' | 'error';
   batteryLevel: number | null;
   lastSeen: Date;
+  isReconnecting?: boolean;
+  reconnectAttempts?: number;
 }
 
 // Scan response

@@ -32,6 +32,11 @@ export interface RegisteredDevice {
   clockOffset?: number;     // Clock offset in milliseconds (from time sync)
   syncState?: DeviceSyncState; // Time sync state (prevents double-application of offset)
   timestampUnit?: 'microseconds' | 'milliseconds'; // Timestamp unit used by this device's firmware
+  deviceState?: string;     // Current device state (Ready, Standby, Streaming, etc.)
+  deviceStateValue?: number; // Numeric state value
+  deviceStateLastUpdate?: number; // Timestamp of last state update
+  isReconnecting?: boolean; // Whether device is currently reconnecting
+  reconnectAttempts?: number; // Number of reconnect attempts made
 }
 
 type RegistryChangeHandler = (devices: RegisteredDevice[]) => void;
@@ -352,6 +357,100 @@ export class DeviceRegistry {
   }
 
   /**
+   * Update device state (from state polling)
+   * Can accept BLE address, device name, or DeviceID
+   */
+  setDeviceState(deviceIdentifier: string | DeviceID, stateName: string, stateValue: number): void {
+    let device: RegisteredDevice | undefined;
+
+    if (typeof deviceIdentifier === 'number') {
+      device = this.devices.get(deviceIdentifier);
+    } else {
+      device = this.bleAddressToDevice.get(deviceIdentifier) || this.nameToDevice.get(deviceIdentifier);
+    }
+
+    if (device) {
+      const previousState = device.deviceState;
+      device.deviceState = stateName;
+      device.deviceStateValue = stateValue;
+      device.deviceStateLastUpdate = Date.now();
+
+      // Only log and notify if state actually changed
+      if (previousState !== stateName) {
+        console.log(`📊 [DEVICE_REGISTRY] Device "${device.deviceName}" state: ${previousState || 'Unknown'} → ${stateName}`);
+        this.notifyChanges();
+      }
+    }
+  }
+
+  /**
+   * Set device as reconnecting
+   * Can accept BLE address, device name, or DeviceID
+   */
+  setReconnecting(deviceIdentifier: string | DeviceID, attempts: number): void {
+    let device: RegisteredDevice | undefined;
+
+    if (typeof deviceIdentifier === 'number') {
+      device = this.devices.get(deviceIdentifier);
+    } else {
+      device = this.bleAddressToDevice.get(deviceIdentifier) || this.nameToDevice.get(deviceIdentifier);
+    }
+
+    if (device) {
+      device.isReconnecting = true;
+      device.reconnectAttempts = attempts;
+      console.log(`🔄 [DEVICE_REGISTRY] Device "${device.deviceName}" reconnecting (attempt ${attempts})`);
+      this.notifyChanges();
+    }
+  }
+
+  /**
+   * Clear reconnecting state
+   * Can accept BLE address, device name, or DeviceID
+   */
+  clearReconnecting(deviceIdentifier: string | DeviceID): void {
+    let device: RegisteredDevice | undefined;
+
+    if (typeof deviceIdentifier === 'number') {
+      device = this.devices.get(deviceIdentifier);
+    } else {
+      device = this.bleAddressToDevice.get(deviceIdentifier) || this.nameToDevice.get(deviceIdentifier);
+    }
+
+    if (device) {
+      device.isReconnecting = false;
+      device.reconnectAttempts = 0;
+      console.log(`✅ [DEVICE_REGISTRY] Device "${device.deviceName}" reconnecting cleared`);
+      this.notifyChanges();
+    }
+  }
+
+  /**
+   * Remove device entirely from registry
+   * Can accept BLE address, device name, or DeviceID
+   */
+  removeDevice(deviceIdentifier: string | DeviceID): boolean {
+    let device: RegisteredDevice | undefined;
+
+    if (typeof deviceIdentifier === 'number') {
+      device = this.devices.get(deviceIdentifier);
+    } else {
+      device = this.bleAddressToDevice.get(deviceIdentifier) || this.nameToDevice.get(deviceIdentifier);
+    }
+
+    if (device) {
+      this.devices.delete(device.deviceID);
+      this.nameToDevice.delete(device.deviceName);
+      this.bleAddressToDevice.delete(device.bleAddress);
+      this.saveToFileSystem();
+      this.notifyChanges();
+      console.log(`🗑️ [DEVICE_REGISTRY] Removed device "${device.deviceName}" from registry`);
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Notify all change handlers
    */
   private notifyChanges(): void {
@@ -429,7 +528,10 @@ export class DeviceRegistry {
         const device: RegisteredDevice = {
           ...deviceData,
           registeredAt: new Date(deviceData.registeredAt),
-          lastSeen: new Date(deviceData.lastSeen)
+          lastSeen: new Date(deviceData.lastSeen),
+          // Clear reconnecting state on app restart (stale from previous session)
+          isReconnecting: false,
+          reconnectAttempts: 0
         };
         // Store with DeviceID as primary key
         this.devices.set(device.deviceID, device);

@@ -62,6 +62,9 @@ export class NobleBLEServiceAdapter implements BLEService {
 
       if (initialized) {
         console.log('✅ Noble BLE Service Adapter ready');
+
+        // Start state polling for device health monitoring
+        this.nobleService.startStatePolling();
       } else {
         console.error('❌ Failed to initialize Noble BLE Service Adapter');
       }
@@ -399,6 +402,35 @@ export class NobleBLEServiceAdapter implements BLEService {
     }
   }
 
+  // Remove device entirely (cancel reconnect and remove from registry)
+  async removeDevice(deviceId: string): Promise<{ success: boolean; message?: string }> {
+    try {
+      console.log(`🗑️ Noble: Removing device ${deviceId}`);
+
+      const result = await this.nobleService.removeDevice(deviceId);
+
+      if (result.success) {
+        // Clean up device from motion processing
+        const registeredDevice = deviceRegistry.getDeviceByAddress(deviceId);
+        if (registeredDevice && this.motionCoordinator && typeof this.motionCoordinator.removeDevice === 'function') {
+          console.log(`🧹 Cleaning up device 0x${registeredDevice.deviceID.toString(16)} from motion processing`);
+          this.motionCoordinator.removeDevice(registeredDevice.deviceID);
+        }
+
+        // Broadcast device status update to remove from UI
+        await this.broadcastDeviceStatus();
+      }
+
+      return result;
+    } catch (error) {
+      console.error(`❌ Noble remove device failed for ${deviceId}:`, error);
+      return {
+        success: false,
+        message: `Remove device failed: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+
   // Start recording (streaming quaternion data)
   async startRecording(sessionId: string, exerciseId: string, setNumber: number): Promise<{ success: boolean; message?: string; recordingId?: string }> {
     if (this.isCurrentlyRecording) {
@@ -424,8 +456,8 @@ export class NobleBLEServiceAdapter implements BLEService {
 
       // Motion processing will be handled in WebSocket bridge (main process)
 
-      // Start streaming on all connected devices
-      const streamingResult = await this.nobleService.startStreamingAll();
+      // Start streaming on all connected devices with state validation
+      const streamingResult = await this.nobleService.startGlobalStreaming();
 
       if (streamingResult.success && streamingResult.started > 0) {
         this.isCurrentlyRecording = true;
@@ -439,10 +471,12 @@ export class NobleBLEServiceAdapter implements BLEService {
           recordingId: sessionId
         };
       } else {
+        // Return detailed error if devices couldn't be reset
         return {
           success: false,
-          message: `Failed to start streaming: ${streamingResult.started}/${streamingResult.total} devices`
-        };
+          message: streamingResult.error || `Failed to start streaming: ${streamingResult.started}/${streamingResult.total} devices`,
+          error: streamingResult.error
+        } as any;
       }
 
     } catch (error) {
@@ -561,6 +595,18 @@ export class NobleBLEServiceAdapter implements BLEService {
       // Also broadcast device status to ensure UI gets battery update
       await this.broadcastDeviceStatus();
     }
+
+    // Handle state changes (from state polling)
+    if (event === 'state_changed' && data) {
+      // Broadcast device status to update UI with new state
+      await this.broadcastDeviceStatus();
+    }
+
+    // Handle auto-reconnect trigger
+    if (event === 'auto_reconnect' && data) {
+      console.log(`🔄 Auto-reconnect triggered for ${data.deviceName}`);
+      this.nobleService.scheduleReconnect(data.deviceId, data.deviceName);
+    }
   }
 
   // Broadcast device status update
@@ -601,6 +647,12 @@ export class NobleBLEServiceAdapter implements BLEService {
 
       // Send INDIVIDUAL DeviceStatusMessage for each device (per protocol spec)
       for (const device of allDevices) {
+        // Get device state from polling service
+        const deviceState = this.nobleService.getDeviceState(device.id);
+
+        // Get reconnecting state from registry
+        const registryDevice = deviceRegistry.getDeviceByAddress(device.id) || deviceRegistry.getDeviceByName(device.name);
+
         const message = {
           type: 0x31, // MESSAGE_TYPES.DEVICE_STATUS
           requestId: 0,
@@ -608,7 +660,12 @@ export class NobleBLEServiceAdapter implements BLEService {
           deviceId: device.id,
           deviceName: device.name,
           state: device.state,
-          batteryLevel: device.batteryLevel ?? undefined
+          batteryLevel: device.batteryLevel ?? undefined,
+          deviceState: deviceState?.stateName || undefined,  // Add device state (Ready/Standby/etc)
+          deviceStateValue: deviceState?.state || undefined,  // Add numeric state value
+          deviceStateLastUpdate: deviceState?.lastUpdate || undefined,
+          isReconnecting: registryDevice?.isReconnecting || false,  // Add reconnecting flag
+          reconnectAttempts: registryDevice?.reconnectAttempts || 0  // Add reconnect attempts
         };
 
         // Use setImmediate to yield event loop

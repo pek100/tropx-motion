@@ -43,6 +43,30 @@ export class DeviceLocateService extends EventEmitter {
     }
 
     console.log(`🔍 Starting locate mode for ${devices.length} devices...`);
+
+    // Validate device states before starting
+    // Now using proper pattern: notifications enabled on command characteristic before reads
+    const { TropXCommands } = await import('./TropXCommands');
+    const invalidDevices: string[] = [];
+
+    for (const device of devices) {
+      const wrapper = device.getWrapper();
+      const state = await device.getSystemState();
+
+      if (state === 0x00) { // NONE - unable to get state
+        invalidDevices.push(`${wrapper.deviceInfo.name} (cannot read state)`);
+      } else if (!TropXCommands.isValidForLocate(state)) {
+        invalidDevices.push(`${wrapper.deviceInfo.name} (${TropXCommands.getStateName(state)})`);
+      }
+    }
+
+    if (invalidDevices.length > 0) {
+      console.error(`❌ Cannot start locate mode - invalid device states:\n  ${invalidDevices.join('\n  ')}`);
+      throw new Error(`Invalid device states: ${invalidDevices.join(', ')}`);
+    }
+
+    console.log(`✅ All devices in valid state for locate mode`);
+
     this.isActive = true;
     this.devices.clear();
     this.accelerometerData.clear();

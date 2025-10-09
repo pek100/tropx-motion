@@ -55,13 +55,32 @@ export const REFERENCE_EPOCH = 1580000000; // seconds
 export const REFERENCE_EPOCH_MS = REFERENCE_EPOCH * 1000; // milliseconds
 
 export const TROPX_STATES = {
-  NONE: 0x00,
-  ERROR: 0xff,
-  STARTUP: 0x01,
-  IDLE: 0x02,
-  STANDBY: 0x03,
-  STREAMING: 0x08,
+  NONE: 0x00,           // Not a state - used only on software side
+  STARTUP: 0x01,        // Starting up
+  IDLE: 0x02,           // Ready
+  STANDBY: 0x03,        // Low power
+  LOG: 0x04,            // Recording to memory
+  READOUT: 0x05,        // Downloading files
+  TX_BUFFERED: 0x06,    // Streaming (buffered)
+  CALIB: 0x07,          // Calibrating
+  TX_DIRECT: 0x08,      // Streaming (direct) - same as STREAMING
+  STREAMING: 0x08,      // Alias for TX_DIRECT
+  ERROR: 0xff,          // Error state
 } as const;
+
+// Human-readable state names
+export const STATE_NAMES: Record<number, string> = {
+  [TROPX_STATES.NONE]: 'None',
+  [TROPX_STATES.STARTUP]: 'Starting Up',
+  [TROPX_STATES.IDLE]: 'Ready',
+  [TROPX_STATES.STANDBY]: 'Standby',
+  [TROPX_STATES.LOG]: 'Recording',
+  [TROPX_STATES.READOUT]: 'Downloading',
+  [TROPX_STATES.TX_BUFFERED]: 'Streaming (Buffered)',
+  [TROPX_STATES.CALIB]: 'Calibrating',
+  [TROPX_STATES.TX_DIRECT]: 'Streaming (Direct)',
+  [TROPX_STATES.ERROR]: 'Error',
+};
 
 export const DATA_MODES = {
   NONE: 0x00,

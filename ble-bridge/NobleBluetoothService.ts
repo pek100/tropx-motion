@@ -38,6 +38,18 @@ export class NobleBluetoothService {
   private burstTimeoutTimer: NodeJS.Timeout | null = null;
   private isCleaningUp = false;
 
+  // State polling support
+  private statePollingTimer: NodeJS.Timeout | null = null;
+  private isStatePollingEnabled = false;
+  private deviceStates = new Map<string, { state: number; stateName: string; lastUpdate: number }>();
+
+  // Auto-reconnect support
+  private reconnectTimers = new Map<string, NodeJS.Timeout>();
+  private reconnectAttempts = new Map<string, number>();
+  private readonly MAX_RECONNECT_ATTEMPTS = 5;
+  private readonly BASE_RECONNECT_DELAY = 2000; // 2 seconds
+  private readonly MAX_RECONNECT_DELAY = 60000; // 60 seconds
+
   // Expose scanning state (for snapshot-based burst scanning)
   public isScanningActive(): boolean {
     return this.isScanning;
@@ -120,6 +132,13 @@ export class NobleBluetoothService {
           this.cleanup = mockService.cleanup.bind(mockService);
 
           console.log('✅ Mock Noble service initialized (for testing)');
+
+          // Clear stale device states from previous session
+          const { deviceStateManager: dsm, GlobalStreamingState: gss } = await import('./DeviceStateManager');
+          dsm.clearAllDevices();
+          dsm.setGlobalStreamingState(gss.STOPPED);
+          console.log('🧹 Cleared stale device states from previous session');
+
           console.log('🔍 Setting isInitialized to true...');
           this.isInitialized = true;
           console.log('🔍 isInitialized is now:', this.isInitialized);
@@ -137,6 +156,13 @@ export class NobleBluetoothService {
       // Wait for Bluetooth adapter to be ready
       try {
         await this.waitForBluetoothReady();
+
+        // Clear stale device states from previous session
+        const { deviceStateManager, GlobalStreamingState } = await import('./DeviceStateManager');
+        deviceStateManager.clearAllDevices();
+        deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
+        console.log('🧹 Cleared stale device states from previous session');
+
         this.isInitialized = true;
         console.log('✅ Noble BLE service initialized');
         return true;
@@ -175,6 +201,12 @@ export class NobleBluetoothService {
           this.getConnectedDevices = mockService.getConnectedDevices.bind(mockService);
           this.getAllBatteryLevels = mockService.getAllBatteryLevels.bind(mockService);
           this.cleanup = mockService.cleanup.bind(mockService);
+
+          // Clear stale device states from previous session
+          const { deviceStateManager: dsm2, GlobalStreamingState: gss2 } = await import('./DeviceStateManager');
+          dsm2.clearAllDevices();
+          dsm2.setGlobalStreamingState(gss2.STOPPED);
+          console.log('🧹 Cleared stale device states from previous session');
 
           console.log('✅ Mock Noble service initialized (Bluetooth fallback)');
           this.isInitialized = true;
@@ -389,8 +421,8 @@ export class NobleBluetoothService {
     }
   }
 
-  // Global streaming management with per-device control
-  async startGlobalStreaming(): Promise<{ success: boolean; started: number; total: number; results: any[] }> {
+  // Global streaming management with per-device control and state validation
+  async startGlobalStreaming(): Promise<{ success: boolean; started: number; total: number; results: any[]; error?: string }> {
     const connectedDevices = deviceStateManager.getConnectedDevices();
 
     if (connectedDevices.length === 0) {
@@ -409,7 +441,20 @@ export class NobleBluetoothService {
       this.setBurstScanningEnabled(false);
     }
 
-    // Start streaming on all connected devices in parallel
+    // STEP 1: Validate and reset device states (up to 2 attempts)
+    const resetResult = await this.validateAndResetDeviceStates(connectedDevices, 2);
+    if (!resetResult.success) {
+      deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
+      return {
+        success: false,
+        started: 0,
+        total: connectedDevices.length,
+        results: [],
+        error: resetResult.error
+      };
+    }
+
+    // STEP 2: Start streaming on all connected devices in parallel
     const streamingTasks = connectedDevices.map(device => this.startDeviceStreaming(device.id));
     const results = await Promise.all(streamingTasks);
 
@@ -430,6 +475,76 @@ export class NobleBluetoothService {
       total: connectedDevices.length,
       results
     };
+  }
+
+  /**
+   * Validate device states and reset non-IDLE devices
+   * Retries up to maxAttempts times
+   */
+  private async validateAndResetDeviceStates(
+    connectedDevices: any[],
+    maxAttempts: number
+  ): Promise<{ success: boolean; error?: string }> {
+    const { TropXCommands } = await import('./TropXCommands');
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      console.log(`🔍 State validation attempt ${attempt}/${maxAttempts}...`);
+
+      // Check all device states in parallel
+      const stateChecks = connectedDevices.map(async (deviceState) => {
+        const device = this.devices.get(deviceState.id);
+        if (!device) return { id: deviceState.id, name: deviceState.name, state: 0x00, valid: false };
+
+        const state = await device.getSystemState();
+        const valid = TropXCommands.isValidForStreaming(state);
+
+        return {
+          id: deviceState.id,
+          name: deviceState.name,
+          state,
+          stateName: TropXCommands.getStateName(state),
+          valid
+        };
+      });
+
+      const deviceStates = await Promise.all(stateChecks);
+
+      // Check if all devices are valid
+      const invalidDevices = deviceStates.filter(d => !d.valid);
+
+      if (invalidDevices.length === 0) {
+        console.log(`✅ All devices in valid state for streaming`);
+        return { success: true };
+      }
+
+      // If this is not the last attempt, try to reset invalid devices
+      if (attempt < maxAttempts) {
+        console.log(`⚠️ ${invalidDevices.length} device(s) not ready: ${invalidDevices.map(d => `${d.name} (${d.stateName})`).join(', ')}`);
+        console.log(`🔄 Resetting devices to IDLE state...`);
+
+        // Reset all invalid devices in parallel
+        const resetTasks = invalidDevices.map(async (deviceInfo) => {
+          const device = this.devices.get(deviceInfo.id);
+          if (device) {
+            return await device.resetToIdle();
+          }
+          return false;
+        });
+
+        await Promise.all(resetTasks);
+
+        // Wait for devices to settle
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } else {
+        // Last attempt failed
+        const deviceList = invalidDevices.map(d => `${d.name} (${d.stateName})`).join(', ');
+        const error = `Failed to reset devices to IDLE state: ${deviceList}. Please check if all devices are powered on.`;
+        console.error(`❌ ${error}`);
+        return { success: false, error };
+      }
+    }
+
+    return { success: false, error: 'Unexpected error in state validation' };
   }
 
   async stopGlobalStreaming(): Promise<{ success: boolean; stopped: number; total: number }> {
@@ -688,10 +803,213 @@ export class NobleBluetoothService {
     return batteryLevels;
   }
 
+  // State Polling - Poll device states every 5 seconds when not streaming
+  startStatePolling(): void {
+    if (this.isStatePollingEnabled) {
+      console.log('ℹ️  State polling already enabled');
+      return;
+    }
+
+    console.log('🔄 Starting device state polling (every 5 seconds)');
+    this.isStatePollingEnabled = true;
+    this.pollDeviceStates(); // Start immediately
+  }
+
+  stopStatePolling(): void {
+    if (!this.isStatePollingEnabled) return;
+
+    console.log('🛑 Stopping device state polling');
+    this.isStatePollingEnabled = false;
+
+    if (this.statePollingTimer) {
+      clearTimeout(this.statePollingTimer);
+      this.statePollingTimer = null;
+    }
+  }
+
+  private async pollDeviceStates(): Promise<void> {
+    if (!this.isStatePollingEnabled) return;
+
+    // Don't poll during streaming - BLE is busy
+    const isStreaming = deviceStateManager.getGlobalStreamingState() === GlobalStreamingState.ACTIVE;
+    if (isStreaming) {
+      // Schedule next poll
+      this.statePollingTimer = setTimeout(() => this.pollDeviceStates(), 5000);
+      return;
+    }
+
+    const connectedDevices = deviceStateManager.getConnectedDevices();
+    if (connectedDevices.length === 0) {
+      // No devices to poll, schedule next check
+      this.statePollingTimer = setTimeout(() => this.pollDeviceStates(), 5000);
+      return;
+    }
+
+    // Poll all devices in parallel
+    const { TropXCommands } = await import('./TropXCommands');
+    const { deviceRegistry } = await import('../registry-management');
+
+    await Promise.all(connectedDevices.map(async (deviceInfo) => {
+      const device = this.devices.get(deviceInfo.id);
+      if (!device) return;
+
+      try {
+        const state = await device.getSystemState();
+        const stateName = TropXCommands.getStateName(state);
+
+        // Store state locally
+        const previousState = this.deviceStates.get(deviceInfo.id);
+        this.deviceStates.set(deviceInfo.id, {
+          state,
+          stateName,
+          lastUpdate: Date.now()
+        });
+
+        // Update registry (single source of truth) - registry will notify UI
+        deviceRegistry.setDeviceState(deviceInfo.id, stateName, state);
+
+        // Notify via event callback (for backwards compatibility)
+        if (!previousState || previousState.state !== state) {
+          if (this.deviceEventCallback) {
+            this.deviceEventCallback(deviceInfo.id, 'state_changed', { state, stateName });
+          }
+        }
+      } catch (error) {
+        console.error(`❌ [${deviceInfo.name}] Failed to poll state:`, error);
+      }
+    }));
+
+    // Schedule next poll
+    this.statePollingTimer = setTimeout(() => this.pollDeviceStates(), 5000);
+  }
+
+  getDeviceState(deviceId: string): { state: number; stateName: string; lastUpdate: number } | null {
+    return this.deviceStates.get(deviceId) || null;
+  }
+
+  // Auto-reconnect with exponential backoff
+  scheduleReconnect(deviceId: string, deviceName: string): void {
+    // Clear any existing timer
+    const existingTimer = this.reconnectTimers.get(deviceId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    const attempts = this.reconnectAttempts.get(deviceId) || 0;
+
+    if (attempts >= this.MAX_RECONNECT_ATTEMPTS) {
+      console.log(`❌ [${deviceName}] Max reconnect attempts (${this.MAX_RECONNECT_ATTEMPTS}) reached. Auto-removing device.`);
+      this.reconnectAttempts.delete(deviceId);
+      this.reconnectTimers.delete(deviceId);
+
+      // Auto-remove device from registry
+      (async () => {
+        const { deviceRegistry } = await import('../registry-management');
+        deviceRegistry.clearReconnecting(deviceId);
+        deviceRegistry.removeDevice(deviceId);
+      })();
+      return;
+    }
+
+    // Set reconnecting state in registry
+    (async () => {
+      const { deviceRegistry } = await import('../registry-management');
+      deviceRegistry.setReconnecting(deviceId, attempts + 1);
+    })();
+
+    // Exponential backoff: 2s, 4s, 8s, 16s, 32s (capped at 60s)
+    const delay = Math.min(
+      this.BASE_RECONNECT_DELAY * Math.pow(2, attempts),
+      this.MAX_RECONNECT_DELAY
+    );
+
+    console.log(`🔄 [${deviceName}] Scheduling reconnect attempt ${attempts + 1}/${this.MAX_RECONNECT_ATTEMPTS} in ${delay}ms`);
+
+    const timer = setTimeout(async () => {
+      this.reconnectTimers.delete(deviceId);
+      await this.attemptReconnect(deviceId, deviceName);
+    }, delay);
+
+    this.reconnectTimers.set(deviceId, timer);
+    this.reconnectAttempts.set(deviceId, attempts + 1);
+  }
+
+  private async attemptReconnect(deviceId: string, deviceName: string): Promise<void> {
+    if (this.isCleaningUp) return;
+
+    const attempts = this.reconnectAttempts.get(deviceId) || 0;
+    console.log(`🔌 [${deviceName}] Reconnect attempt ${attempts}/${this.MAX_RECONNECT_ATTEMPTS}...`);
+
+    const result = await this.connectToDevice(deviceId);
+
+    if (result.success) {
+      console.log(`✅ [${deviceName}] Reconnected successfully!`);
+      this.reconnectAttempts.delete(deviceId);
+      this.reconnectTimers.delete(deviceId);
+
+      // Clear reconnecting state in registry
+      const { deviceRegistry } = await import('../registry-management');
+      deviceRegistry.clearReconnecting(deviceId);
+    } else {
+      console.log(`❌ [${deviceName}] Reconnect failed: ${result.message}`);
+      // Schedule next attempt
+      this.scheduleReconnect(deviceId, deviceName);
+    }
+  }
+
+  cancelReconnect(deviceId: string): void {
+    const timer = this.reconnectTimers.get(deviceId);
+    if (timer) {
+      clearTimeout(timer);
+      this.reconnectTimers.delete(deviceId);
+    }
+    this.reconnectAttempts.delete(deviceId);
+
+    // Clear reconnecting state in registry
+    (async () => {
+      const { deviceRegistry } = await import('../registry-management');
+      deviceRegistry.clearReconnecting(deviceId);
+    })();
+  }
+
+  async removeDevice(deviceId: string): Promise<{ success: boolean; message?: string }> {
+    try {
+      // Cancel any ongoing reconnect
+      this.cancelReconnect(deviceId);
+
+      // Remove from registry
+      const { deviceRegistry } = await import('../registry-management');
+      const removed = deviceRegistry.removeDevice(deviceId);
+
+      if (removed) {
+        console.log(`🗑️ Device ${deviceId} removed successfully`);
+        return { success: true, message: 'Device removed' };
+      } else {
+        return { success: false, message: 'Device not found' };
+      }
+    } catch (error) {
+      console.error(`Failed to remove device ${deviceId}:`, error);
+      return {
+        success: false,
+        message: `Failed to remove device: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+
   // Cleanup and disconnect all
   async cleanup(): Promise<void> {
     console.log('🧹 Cleaning up Noble BLE service...');
     this.isCleaningUp = true;
+
+    // Stop state polling
+    this.stopStatePolling();
+
+    // Clear all reconnect timers
+    for (const timer of this.reconnectTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.reconnectTimers.clear();
+    this.reconnectAttempts.clear();
 
     if (this.isScanning) {
       await this.stopScanning(true); // suppress next burst during cleanup
@@ -730,8 +1048,14 @@ export class NobleBluetoothService {
         }
       } else {
         // Adapter came back - resume burst scanning if enabled
-        if (this.burstEnabled && !this.isScanning && !this.nextBurstTimer) {
+        // BUT: Don't resume if we're currently streaming (prevents interference)
+        const isCurrentlyStreaming = deviceStateManager.getGlobalStreamingState() === GlobalStreamingState.ACTIVE
+          || deviceStateManager.getGlobalStreamingState() === GlobalStreamingState.STARTING;
+
+        if (this.burstEnabled && !this.isScanning && !this.nextBurstTimer && !isCurrentlyStreaming) {
           this.scheduleNextBurst();
+        } else if (isCurrentlyStreaming) {
+          console.log('⏸️ Skipping burst resume - streaming is active');
         }
       }
     });
@@ -909,6 +1233,14 @@ export class NobleBluetoothService {
   private scheduleNextBurst(): void {
     if (this.isScanning || this.nextBurstTimer) return;
     if (!this.burstEnabled) return;
+
+    // GUARD: Never schedule bursts during streaming
+    const streamingState = deviceStateManager.getGlobalStreamingState();
+    if (streamingState === GlobalStreamingState.ACTIVE || streamingState === GlobalStreamingState.STARTING) {
+      console.log('⏸️ Skipping burst schedule - streaming is active');
+      return;
+    }
+
     console.log(`⏳ Scheduling next scan burst in ${BLE_CONFIG.SCAN_BURST_GAP}ms`);
     this.nextBurstTimer = setTimeout(async () => {
       this.nextBurstTimer = null;

@@ -94,6 +94,16 @@ export class TropxWSClient {
     return Ok(response);
   }
 
+  async removeDevice(id: string): Promise<Result<ConnectionResponse>> {
+    const result = await this.sendRequest<any>(MESSAGE_TYPES.BLE_DEVICE_REMOVE_REQUEST, { deviceId: id });
+    if (!result.success) return result;
+    const response: ConnectionResponse = {
+      deviceId: id,
+      message: result.data.message
+    };
+    return Ok(response);
+  }
+
   async syncAllDevices(): Promise<Result<SyncResponse>> {
     const result = await this.sendRequest<any>(MESSAGE_TYPES.BLE_SYNC_REQUEST, {});
     if (!result.success) return result;
