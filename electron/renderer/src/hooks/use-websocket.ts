@@ -24,23 +24,6 @@ export interface WebSocketState {
 
 export function useWebSocket() {
   const clientRef = useRef<TropxWSClient | null>(null);
-
-  // PERFORMANCE: Use refs for high-frequency motion data (200Hz) to avoid setState overhead
-  const leftKneeRef = useRef<KneeData>({
-    current: 0,
-    sensorTimestamp: Date.now(),
-    velocity: 0,
-    acceleration: 0,
-    quality: 100,
-  });
-  const rightKneeRef = useRef<KneeData>({
-    current: 0,
-    sensorTimestamp: Date.now(),
-    velocity: 0,
-    acceleration: 0,
-    quality: 100,
-  });
-
   const [state, setState] = useState<WebSocketState>({
     isConnected: false,
     devices: [],
@@ -95,8 +78,8 @@ export function useWebSocket() {
           console.error('WebSocket error:', error);
         });
 
-        // Motion data handler - Use refs to avoid 200Hz setState calls
-        // PERFORMANCE: Store in refs immediately (no re-render), then batch with setInterval
+        // Motion data handler - single state update for both knees
+        // PERFORMANCE: NO console.logs in hot path (200 msg/sec causes event loop blocking)
         client.on(EVENT_TYPES.MOTION_DATA, (message) => {
           const raw = (message as any).data;
           let dataArray: Float32Array;
@@ -116,22 +99,26 @@ export function useWebSocket() {
           }
           const timestamp = (message as any).timestamp || Date.now();
 
-          // Update refs immediately (no React re-render)
-          leftKneeRef.current = {
-            current: dataArray[0] || 0,
-            sensorTimestamp: timestamp,
-            velocity: 0,
-            acceleration: 0,
-            quality: 100,
-          };
-          rightKneeRef.current = {
-            current: dataArray[1] || 0,
-            sensorTimestamp: timestamp,
-            velocity: 0,
-            acceleration: 0,
-            quality: 100,
-          };
-          // State will be updated by setInterval below (60Hz batched updates)
+          const leftCurrent = dataArray[0] || 0;
+          const rightCurrent = dataArray[1] || 0;
+
+          setState(prev => ({
+            ...prev,
+            leftKneeData: {
+              current: leftCurrent,
+              sensorTimestamp: timestamp,
+              velocity: 0,
+              acceleration: 0,
+              quality: 100,
+            },
+            rightKneeData: {
+              current: rightCurrent,
+              sensorTimestamp: timestamp,
+              velocity: 0,
+              acceleration: 0,
+              quality: 100,
+            }
+          }));
         });
 
         // Device status handler
@@ -245,21 +232,11 @@ export function useWebSocket() {
 
     initClient();
 
-    // PERFORMANCE: Batch motion data updates at 60Hz using setInterval (not RAF - RAF gets throttled)
-    // This prevents 200Hz setState calls from overwhelming React
-    const updateInterval = setInterval(() => {
-      setState(prev => ({
-        ...prev,
-        leftKneeData: { ...leftKneeRef.current },
-        rightKneeData: { ...rightKneeRef.current },
-      }));
-    }, 1000 / 60); // 60 FPS update rate
-
     // CRITICAL: DO NOT disconnect on unmount - this causes disconnection on page refresh
     // The WebSocket should persist through React component lifecycle changes
     // Cleanup is only needed on app shutdown (handled by Electron main process)
     return () => {
-      clearInterval(updateInterval);
+      // Intentionally empty - WebSocket persists
       console.log('🔵 Component unmounting - WebSocket persists (no disconnect)');
     };
   }, []);

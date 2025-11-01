@@ -46,11 +46,10 @@ export class MainProcess {
       'enable-bluetooth-web-api',
       'enable-features=WebBluetooth,WebBluetoothScanning',
       'enable-blink-features=WebBluetooth,WebBluetoothScanning',
-      'disable-features=OutOfBlinkCors,IntensiveWakeUpThrottling', // CRITICAL: Disable timer throttling
+      'disable-features=OutOfBlinkCors',
       'enable-bluetooth-advertising',
       'enable-bluetooth-device-discovery',
       'disable-web-security',
-      'disable-renderer-backgrounding', // CRITICAL: Prevent renderer throttling when backgrounded
       'autoplay-policy=no-user-gesture-required'
     ];
 
