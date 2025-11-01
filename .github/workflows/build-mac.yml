@@ -1,0 +1,51 @@
+name: Build macOS App
+
+on:
+  push:
+    branches: [ main, performance-optimization ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Package for macOS (DMG + Zip)
+        run: npm run package:mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload DMG artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tropx-research-macos-dmg
+          path: build/*.dmg
+          if-no-files-found: error
+
+      - name: Upload Zip artifacts (portable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tropx-research-macos-portable
+          path: build/*.zip
+          if-no-files-found: error
+
+      - name: List build output
+        if: always()
+        run: ls -lh build/

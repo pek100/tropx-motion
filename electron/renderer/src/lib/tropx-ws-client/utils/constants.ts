@@ -1,0 +1,28 @@
+// Connection constants
+export const CONNECTION = {
+  DEFAULT_RECONNECT_DELAY: 2000,
+  MAX_RECONNECT_ATTEMPTS: 5,
+  REQUEST_TIMEOUT: 10000,
+  HEARTBEAT_INTERVAL: 30000,
+  MAX_RECONNECT_DELAY: 10000,
+} as const;
+
+// Operation timeouts
+export const TIMEOUTS = {
+  SCAN: 15000,
+  CONNECT: 15000,
+  DISCONNECT: 5000,
+  RECORD_START: 30000,
+  RECORD_STOP: 10000,
+  SYNC: 20000,
+  STATUS: 5000,
+  PING: 5000,
+} as const;
+
+// Retry configuration
+export const RETRY = {
+  MAX_ATTEMPTS: 3,
+  BASE_DELAY: 1000,
+  MAX_DELAY: 10000,
+  BACKOFF_MULTIPLIER: 2,
+} as const;

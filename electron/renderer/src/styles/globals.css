@@ -1,0 +1,282 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Tailwind v3 compatible HSL format (no hsl() wrapper for opacity modifiers to work) */
+  --background: 0 0% 100%;
+  --foreground: 0 0% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 3.9%;
+  --primary: 0 0% 9%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 0 0% 96.1%;
+  --secondary-foreground: 0 0% 9%;
+  --muted: 0 0% 96.1%;
+  --muted-foreground: 0 0% 45.1%;
+  --accent: 0 0% 96.1%;
+  --accent-foreground: 0 0% 9%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 0 0% 89.8%;
+  --input: 0 0% 89.8%;
+  --ring: 0 0% 3.9%;
+  --chart-1: 12 76% 61%;
+  --chart-2: 173 58% 39%;
+  --chart-3: 197 37% 24%;
+  --chart-4: 43 74% 66%;
+  --chart-5: 27 87% 67%;
+  --radius: 0.625rem;
+  --sidebar: 0 0% 98%;
+  --sidebar-foreground: 0 0% 3.9%;
+  --sidebar-primary: 0 0% 9%;
+  --sidebar-primary-foreground: 0 0% 98%;
+  --sidebar-accent: 0 0% 96.1%;
+  --sidebar-accent-foreground: 0 0% 9%;
+  --sidebar-border: 0 0% 89.8%;
+  --sidebar-ring: 0 0% 3.9%;
+
+  /* Adding Tropx color variables */
+  --tropx-original: #ff5f35;
+  --tropx-sand: #ff8a35;
+  --tropx-coral: #ffbdad;
+  --tropx-ivory-blue: #f4f2fb;
+  --tropx-ivory: #fff6f3;
+  --tropx-shadow: #55535f;
+  --tropx-dark: #1f1e24;
+  --tropx-ivory-dark: #b3b0c3;
+  --tropx-coral-translucent: #ffbdad;
+  --tropx-vibrant: #ff4d35;
+  --tropx-white: #ffffff;
+  --tropx-green: #4baf27;
+  --tropx-red: #ff3535;
+}
+
+.dark {
+  /* Tailwind v3 compatible HSL format */
+  --background: 0 0% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 0 0% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 0 0% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 0 0% 9%;
+  --secondary: 0 0% 14.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 0 0% 14.9%;
+  --muted-foreground: 0 0% 63.9%;
+  --accent: 0 0% 14.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 0 0% 14.9%;
+  --input: 0 0% 14.9%;
+  --ring: 0 0% 83.1%;
+  --chart-1: 220 70% 50%;
+  --chart-2: 160 60% 45%;
+  --chart-3: 30 80% 55%;
+  --chart-4: 280 65% 60%;
+  --chart-5: 340 75% 55%;
+  --sidebar: 0 0% 9%;
+  --sidebar-foreground: 0 0% 98%;
+  --sidebar-primary: 220 70% 50%;
+  --sidebar-primary-foreground: 0 0% 98%;
+  --sidebar-accent: 0 0% 14.9%;
+  --sidebar-accent-foreground: 0 0% 98%;
+  --sidebar-border: 0 0% 14.9%;
+  --sidebar-ring: 0 0% 83.1%;
+}
+
+/* Tailwind v3 doesn't use @theme - colors are defined in tailwind.config.ts */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Adding leg band pulsating animations on hover */
+@keyframes pulsate-color {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes pulsate-scale {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+.group:hover .leg-band {
+  animation: pulsate-color 1s ease-in-out infinite, pulsate-scale 1s ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* Adding diagonal gradient for right pane */
+.gradient-diagonal {
+  background: linear-gradient(111deg, rgba(252, 106, 111, 0.25) 0%, rgba(238, 229, 255, 0.25) 100%);
+}
+
+/* Adding gradient classes for device cards */
+.gradient-blue-card {
+  background: linear-gradient(135deg, #dfecff 0%, #b8d9ff 100%);
+}
+
+.gradient-red-card {
+  background: linear-gradient(135deg, #ffd5d5 0%, #ffe5e5 100%);
+}
+
+/* Adding purple gradient for synchronizing state */
+.gradient-purple-card {
+  background: linear-gradient(135deg, #e9d5ff 0%, #d8b4fe 100%);
+}
+
+/* Adding flash animation for left pane validation feedback */
+@keyframes flash-border {
+  0%,
+  100% {
+    border-color: #e5e5e5;
+    box-shadow: 0 0 0 0 rgba(255, 77, 53, 0);
+  }
+  50% {
+    border-color: var(--tropx-vibrant);
+    box-shadow: 0 0 20px 5px rgba(255, 77, 53, 0.3);
+  }
+}
+
+.flash-pane {
+  animation: flash-border 0.5s ease-in-out 2;
+}
+
+/* Adding smooth spin animation for sync icon to prevent jittering */
+@keyframes smooth-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-smooth-spin {
+  animation: smooth-spin 1s linear infinite;
+}
+
+/* Adding vibrate animation for locate feature */
+@keyframes vibrate {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  10%,
+  30%,
+  50%,
+  70%,
+  90% {
+    transform: translateX(-4px);
+  }
+  20%,
+  40%,
+  60%,
+  80% {
+    transform: translateX(4px);
+  }
+}
+
+.animate-vibrate {
+  animation: vibrate 0.5s ease-in-out infinite;
+}
+
+/* Adding visor scanning animation for refresh feature */
+@keyframes visor-scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    /* Using large fixed value to ensure visor reaches bottom of container */
+    transform: translateY(800px);
+  }
+}
+
+.visor-scan {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.6) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: visor-scan 2.5s ease-in-out infinite;
+  filter: blur(8px);
+}
+
+/* Adding radial gradient overlay for locate instruction with green tint */
+.locate-overlay {
+  background: radial-gradient(
+    circle at center,
+    rgba(75, 175, 39, 0.15) 0%,
+    rgba(0, 0, 0, 0.1) 40%,
+    rgba(0, 0, 0, 0) 70%
+  );
+  backdrop-filter: blur(2px);
+}
+
+/* Adding lighter green overlay without darkness */
+.locate-overlay-light {
+  /* Increased white gradient opacity values for stronger overlay effect */
+  background: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, 0.7) 0%,
+    rgba(255, 255, 255, 0.5) 50%,
+    rgba(255, 255, 255, 0.3) 70%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  backdrop-filter: blur(0.5px);
+}
+
+/* Smooth drag-and-drop transitions */
+@keyframes slide-in {
+  from {
+    transform: translateY(-10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.drag-transition {
+  transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+}
+
+/* Adding dark tint overlay for locate instruction */
+.locate-overlay-dark {
+  background: radial-gradient(
+    circle at center,
+    rgba(0, 0, 0, 0.5) 0%,
+    rgba(0, 0, 0, 0.3) 40%,
+    rgba(0, 0, 0, 0.15) 60%,
+    rgba(0, 0, 0, 0) 80%
+  );
+  backdrop-filter: blur(1px);
+}
