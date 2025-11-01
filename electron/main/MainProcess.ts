@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol, powerSaveBlocker } from 'electron';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
 import { MotionService } from './services/MotionService';
@@ -8,12 +8,14 @@ import { CONFIG, WINDOW_CONFIG, MESSAGE_TYPES, BLUETOOTH_CONFIG } from '../share
 import { RecordingSession, ApiResponse } from '../shared/types';
 import { SystemMonitor } from './services/SystemMonitor';
 import { PlatformDetector } from '../../shared/PlatformDetector';
+import { getWindowDimensions } from './window-size-override';
 
 export class MainProcess {
   private mainWindow: BrowserWindow | null = null;
   private motionService: MotionService;
   private bluetoothService: BluetoothService;
   private systemMonitor: SystemMonitor; // monitor for memory/CPU
+  private powerSaveBlockerId: number | null = null; // Prevent system sleep during critical operations
 
   constructor() {
     this.motionService = new MotionService();
@@ -44,10 +46,11 @@ export class MainProcess {
       'enable-bluetooth-web-api',
       'enable-features=WebBluetooth,WebBluetoothScanning',
       'enable-blink-features=WebBluetooth,WebBluetoothScanning',
-      'disable-features=OutOfBlinkCors',
+      'disable-features=OutOfBlinkCors,IntensiveWakeUpThrottling', // CRITICAL: Disable timer throttling
       'enable-bluetooth-advertising',
       'enable-bluetooth-device-discovery',
       'disable-web-security',
+      'disable-renderer-backgrounding', // CRITICAL: Prevent renderer throttling when backgrounded
       'autoplay-policy=no-user-gesture-required'
     ];
 
@@ -86,6 +89,18 @@ export class MainProcess {
       } catch (e) {
         console.warn('Failed to start SystemMonitor:', e);
       }
+
+      // Prevent renderer suspension on focus loss
+      app.on('browser-window-blur', () => {
+        console.log('🔵 Window lost focus - maintaining WebSocket connections');
+        // CRITICAL: Do NOT pause/suspend anything when window loses focus
+        // WebSocket and timers must continue running for sensor data streaming
+      });
+
+      app.on('browser-window-focus', () => {
+        console.log('🟢 Window gained focus - connections maintained');
+        // WebSocket connections were never interrupted, no reconnection needed
+      });
 
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {
@@ -168,11 +183,14 @@ export class MainProcess {
       ? path.join(app.getAppPath(), 'dist', 'main', 'electron', 'preload', 'preload.js')
       : path.join(__dirname, '../preload/preload.js');
 
+    // Detect screen dimensions for small displays (e.g., Raspberry Pi 3.5" LCD)
+    const windowDims = getWindowDimensions();
+
     this.mainWindow = new BrowserWindow({
-      width: WINDOW_CONFIG.DEFAULT_WIDTH,
-      height: WINDOW_CONFIG.DEFAULT_HEIGHT,
-      minWidth: WINDOW_CONFIG.MIN_WIDTH,
-      minHeight: WINDOW_CONFIG.MIN_HEIGHT,
+      width: windowDims.width,
+      height: windowDims.height,
+      minWidth: windowDims.minWidth,
+      minHeight: windowDims.minHeight,
       frame: false, // Remove window frame on all platforms
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden', // macOS vs Windows/Linux
       trafficLightPosition: process.platform === 'darwin' ? { x: 15, y: 10 } : undefined, // macOS traffic lights position
@@ -184,6 +202,7 @@ export class MainProcess {
         experimentalFeatures: true,
         enableBlinkFeatures: 'WebBluetooth,WebBluetoothScanning',
         allowRunningInsecureContent: true,
+        backgroundThrottling: false, // CRITICAL: Prevent throttling WebSocket/timers when window loses focus
       },
       show: false,
     });
@@ -279,9 +298,26 @@ export class MainProcess {
       this.setupBluetoothHandlers();
     });
 
+    // CRITICAL: Prevent any throttling or suspension when window loses focus
+    this.mainWindow.on('blur', () => {
+      console.log('🔵 Main window blur - maintaining all connections and timers');
+      // Ensure renderer continues processing even when not focused
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        // Force renderer to stay active
+        this.mainWindow.webContents.setBackgroundThrottling(false);
+      }
+    });
+
+    this.mainWindow.on('focus', () => {
+      console.log('🟢 Main window focus - connections maintained throughout');
+    });
+
     this.mainWindow.on('closed', () => {
       this.mainWindow = null;
     });
+
+    // Start power save blocker to prevent system throttling during critical operations
+    this.startPowerSaveBlocker();
   }
 
   private loadFallbackPage(): void {
@@ -473,10 +509,38 @@ export class MainProcess {
     });
   }
 
+  // Start power save blocker to prevent system throttling
+  private startPowerSaveBlocker(): void {
+    if (this.powerSaveBlockerId === null) {
+      try {
+        // 'prevent-app-suspension' prevents the app from being suspended
+        // This is critical for real-time sensor data streaming
+        this.powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+        console.log('🔋 Power save blocker started - preventing app suspension during streaming');
+      } catch (error) {
+        console.error('Failed to start power save blocker:', error);
+      }
+    }
+  }
+
+  // Stop power save blocker
+  private stopPowerSaveBlocker(): void {
+    if (this.powerSaveBlockerId !== null) {
+      try {
+        powerSaveBlocker.stop(this.powerSaveBlockerId);
+        this.powerSaveBlockerId = null;
+        console.log('🔋 Power save blocker stopped');
+      } catch (error) {
+        console.error('Failed to stop power save blocker:', error);
+      }
+    }
+  }
+
   // Cleanup resources on app shutdown
   private cleanup(): void {
     console.log('Cleaning up resources...');
     try {
+      this.stopPowerSaveBlocker();
       this.motionService.cleanup();
       this.bluetoothService.cleanup();
       // stop monitor

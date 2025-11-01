@@ -262,8 +262,9 @@ export class BLEDomainProcessor implements DomainProcessor {
 
   // Record start operation handler
   private handleRecordStartRequest = async (message: BaseMessage, service: BLEService): Promise<BaseMessage> => {
+    // Allow multiple recording sessions (removed constraint)
     if (service.isRecording()) {
-      return this.createErrorResponse(message, 'RECORDING_ALREADY_ACTIVE');
+      console.warn('⚠️ Starting new recording while previous is active - this will override the previous session');
     }
 
     const connectedDevices = service.getConnectedDevices();

@@ -161,9 +161,9 @@ export class MotionProcessingCoordinator {
      * Initiates a new recording session with specified parameters.
      */
     startRecording(sessionId: string, exerciseId: string, setNumber: number): boolean {
+        // Allow multiple recording sessions (removed constraint)
         if (this.isRecording) {
-            console.warn('⚠️ Recording already in progress');
-            return false;
+            console.warn('⚠️ Starting new recording while previous is active - this will override the previous session');
         }
 
         try {

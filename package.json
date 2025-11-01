@@ -26,6 +26,10 @@
     "package:linux": "npm run build && electron-builder --linux",
     "package:linux-arm64": "npm run build && electron-builder --linux --arm64",
     "package:pi": "npm run build && electron-builder --linux AppImage --arm64",
+    "package:pi:portable": "npm run build && electron-builder --linux tar.gz --arm64",
+    "deploy:pi": "bash scripts/deploy-to-pi.sh",
+    "deploy:pi:docker": "bash scripts/build-pi-docker.sh",
+    "update:pi": "bash scripts/quick-update-pi.sh",
     "clean": "rimraf dist build",
     "postinstall": "electron-builder install-app-deps",
     "make": "electron-forge make"
@@ -86,7 +90,6 @@
     "clsx": "^2.1.1",
     "lucide-react": "^0.263.1",
     "next-themes": "^0.4.6",
-    "noble": "^1.9.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recharts": "^3.1.2",
@@ -198,5 +201,8 @@
     "@rollup/rollup-linux-x64-gnu": "^4.52.4",
     "bufferutil": "^4.0.9",
     "utf-8-validate": "^6.0.5"
+  },
+  "overrides": {
+    "bluetooth-hci-socket": "npm:@abandonware/bluetooth-hci-socket@^0.5.3-12"
   }
 }

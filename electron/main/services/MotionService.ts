@@ -53,8 +53,9 @@ export class MotionService {
   }
 
   async startRecording(sessionData: RecordingSession): Promise<RecordingResponse> {
+    // Allow multiple recording sessions (removed constraint)
     if (this.isRecording) {
-      return { success: false, message: 'Recording already in progress' };
+      console.log('⚠️ Starting new recording while previous is active - this will override the previous session');
     }
 
     try {

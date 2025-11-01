@@ -1,0 +1,96 @@
+# Dockerfile for building TropX Motion for Raspberry Pi (ARM64)
+# Uses QEMU emulation to compile native modules correctly
+
+# Use full node image (not slim) to ensure all build tools are available
+FROM --platform=linux/arm64 node:22-bookworm
+
+# Metadata
+LABEL maintainer="TropX"
+LABEL description="TropX Motion for Raspberry Pi ARM64"
+LABEL architecture="arm64"
+
+# Install build dependencies for native modules
+# These are required for @abandonware/noble and other native modules
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    python3 \
+    git \
+    libbluetooth-dev \
+    libudev-dev \
+    rsync \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Verify npm is available and show environment
+RUN echo "Node version:" && node --version && \
+    echo "NPM version:" && npm --version && \
+    echo "PATH: $PATH" && \
+    which npm && \
+    ls -la /usr/local/bin/ | grep npm || true
+
+# Copy package files first (for Docker layer caching)
+# This layer will be cached unless package.json changes
+COPY package.json package-lock.json ./
+
+# Install ALL dependencies (including devDependencies for building)
+# This compiles native modules (@abandonware/noble) for ARM64
+# We need devDependencies like typescript, vite, electron-builder for the build
+# Use --ignore-scripts to skip phantomjs-prebuilt install (doesn't support ARM64)
+# Then manually run electron-builder install-app-deps for native modules
+RUN echo "Installing dependencies (this may take 10-15 minutes)..." && \
+    npm ci --ignore-scripts && \
+    echo "Running electron-builder install-app-deps..." && \
+    npx electron-builder install-app-deps && \
+    echo "Dependencies installed successfully"
+
+# Copy TypeScript configuration
+COPY tsconfig*.json ./
+
+# Copy source code
+# Separated from dependencies for better caching
+COPY electron ./electron
+COPY ble-bridge ./ble-bridge
+COPY websocket-bridge ./websocket-bridge
+COPY motionProcessing ./motionProcessing
+COPY shared ./shared
+COPY registry-management ./registry-management
+COPY scripts ./scripts
+COPY time-sync ./time-sync
+COPY start.sh ./start.sh
+COPY vite.config.ts ./vite.config.ts
+COPY tailwind.config.ts ./tailwind.config.ts
+COPY postcss.config.js ./postcss.config.js
+
+# Build the application (devDependencies already installed above)
+RUN echo "Building main process..." && \
+    npm run build:main && \
+    echo "Building renderer..." && \
+    npm run build:renderer && \
+    echo "Build complete"
+
+# Verify build output
+RUN echo "Verifying build..." && \
+    test -f dist/main/electron/main/main.js || (echo "ERROR: Main process not built" && exit 1) && \
+    test -d dist/renderer || (echo "ERROR: Renderer not built" && exit 1) && \
+    echo "Build verification passed"
+
+# Clean up devDependencies to reduce size
+RUN npm prune --production
+
+# Create output tarball
+RUN echo "Creating distribution package..." && \
+    mkdir -p /output && \
+    tar czf /output/tropxmotion-pi.tar.gz \
+        --exclude='*.log' \
+        --exclude='.git' \
+        --exclude='node_modules/.cache' \
+        dist/ \
+        node_modules/ \
+        package.json \
+        start.sh \
+        scripts/start-smart.js && \
+    echo "Package created: $(du -h /output/tropxmotion-pi.tar.gz | cut -f1)"
+
+# Default command
+CMD ["bash"]

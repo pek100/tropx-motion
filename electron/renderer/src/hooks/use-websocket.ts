@@ -24,6 +24,23 @@ export interface WebSocketState {
 
 export function useWebSocket() {
   const clientRef = useRef<TropxWSClient | null>(null);
+
+  // PERFORMANCE: Use refs for high-frequency motion data (200Hz) to avoid setState overhead
+  const leftKneeRef = useRef<KneeData>({
+    current: 0,
+    sensorTimestamp: Date.now(),
+    velocity: 0,
+    acceleration: 0,
+    quality: 100,
+  });
+  const rightKneeRef = useRef<KneeData>({
+    current: 0,
+    sensorTimestamp: Date.now(),
+    velocity: 0,
+    acceleration: 0,
+    quality: 100,
+  });
+
   const [state, setState] = useState<WebSocketState>({
     isConnected: false,
     devices: [],
@@ -78,9 +95,9 @@ export function useWebSocket() {
           console.error('WebSocket error:', error);
         });
 
-        // Motion data handler - single state update for both knees
+        // Motion data handler - Use refs to avoid 200Hz setState calls
+        // PERFORMANCE: Store in refs immediately (no re-render), then batch with setInterval
         client.on(EVENT_TYPES.MOTION_DATA, (message) => {
-          console.log('📊 [MOTION_DATA] Received:', message);
           const raw = (message as any).data;
           let dataArray: Float32Array;
           if (raw instanceof Float32Array) {
@@ -99,34 +116,27 @@ export function useWebSocket() {
           }
           const timestamp = (message as any).timestamp || Date.now();
 
-          console.log(`📊 [MOTION_DATA] Parsed Float32Array[${dataArray.length}]: [${dataArray[0]}, ${dataArray[1]}], timestamp: ${timestamp}`);
-
-          const leftCurrent = dataArray[0] || 0;
-          const rightCurrent = dataArray[1] || 0;
-
-          setState(prev => ({
-            ...prev,
-            leftKneeData: {
-              current: leftCurrent,
-              sensorTimestamp: timestamp,
-              velocity: 0,
-              acceleration: 0,
-              quality: 100,
-            },
-            rightKneeData: {
-              current: rightCurrent,
-              sensorTimestamp: timestamp,
-              velocity: 0,
-              acceleration: 0,
-              quality: 100,
-            }
-          }));
+          // Update refs immediately (no React re-render)
+          leftKneeRef.current = {
+            current: dataArray[0] || 0,
+            sensorTimestamp: timestamp,
+            velocity: 0,
+            acceleration: 0,
+            quality: 100,
+          };
+          rightKneeRef.current = {
+            current: dataArray[1] || 0,
+            sensorTimestamp: timestamp,
+            velocity: 0,
+            acceleration: 0,
+            quality: 100,
+          };
+          // State will be updated by setInterval below (60Hz batched updates)
         });
 
         // Device status handler
+        // PERFORMANCE: Reduced logging (device status can update frequently)
         client.on(EVENT_TYPES.DEVICE_STATUS, (status) => {
-          console.log(`📱 [use-websocket] Device status received:`, JSON.stringify(status, null, 2));
-
           setState(prev => {
             const existingDevice = prev.devices.find(d => d.id === status.deviceId);
 
@@ -170,7 +180,6 @@ export function useWebSocket() {
 
         // Battery update handler
         client.on(EVENT_TYPES.BATTERY_UPDATE, (battery) => {
-          console.log(`🔋 [use-websocket] Battery update received:`, JSON.stringify(battery, null, 2));
           setState(prev => ({
             ...prev,
             devices: prev.devices.map(d =>
@@ -183,13 +192,11 @@ export function useWebSocket() {
 
         // Sync event handlers
         client.on(EVENT_TYPES.SYNC_STARTED, (sync) => {
-          console.log(`🔄 [use-websocket] Sync started:`, JSON.stringify(sync, null, 2));
-          // Keep previous syncProgress values instead of clearing
+          console.log(`🔄 Sync started`);
           setState(prev => ({ ...prev, isSyncing: true }));
         });
 
         client.on(EVENT_TYPES.SYNC_PROGRESS, (progress) => {
-          console.log(`⏱️ [use-websocket] Sync progress:`, JSON.stringify(progress, null, 2));
           setState(prev => ({
             ...prev,
             syncProgress: {
@@ -204,13 +211,12 @@ export function useWebSocket() {
         });
 
         client.on(EVENT_TYPES.SYNC_COMPLETE, (complete) => {
-          console.log(`✅ [use-websocket] Sync complete:`, JSON.stringify(complete, null, 2));
+          console.log(`✅ Sync complete`);
           setState(prev => ({ ...prev, isSyncing: false }));
         });
 
         // Device vibrating handler (locate mode)
         client.on(EVENT_TYPES.DEVICE_VIBRATING, (vibrating) => {
-          console.log(`📳 [use-websocket] Device vibrating:`, vibrating.vibratingDeviceIds);
           setState(prev => ({ ...prev, vibratingDeviceIds: vibrating.vibratingDeviceIds }));
         });
 
@@ -239,11 +245,22 @@ export function useWebSocket() {
 
     initClient();
 
-    // Cleanup on unmount
+    // PERFORMANCE: Batch motion data updates at 60Hz using setInterval (not RAF - RAF gets throttled)
+    // This prevents 200Hz setState calls from overwhelming React
+    const updateInterval = setInterval(() => {
+      setState(prev => ({
+        ...prev,
+        leftKneeData: { ...leftKneeRef.current },
+        rightKneeData: { ...rightKneeRef.current },
+      }));
+    }, 1000 / 60); // 60 FPS update rate
+
+    // CRITICAL: DO NOT disconnect on unmount - this causes disconnection on page refresh
+    // The WebSocket should persist through React component lifecycle changes
+    // Cleanup is only needed on app shutdown (handled by Electron main process)
     return () => {
-      if (clientRef.current) {
-        clientRef.current.disconnect();
-      }
+      clearInterval(updateInterval);
+      console.log('🔵 Component unmounting - WebSocket persists (no disconnect)');
     };
   }, []);
 

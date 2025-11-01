@@ -433,8 +433,9 @@ export class NobleBLEServiceAdapter implements BLEService {
 
   // Start recording (streaming quaternion data)
   async startRecording(sessionId: string, exerciseId: string, setNumber: number): Promise<{ success: boolean; message?: string; recordingId?: string }> {
+    // Allow multiple recording sessions (removed constraint)
     if (this.isCurrentlyRecording) {
-      return { success: false, message: 'Recording already in progress' };
+      console.log('⚠️ Starting new recording while previous is active - this will override the previous session');
     }
 
     try {

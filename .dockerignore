@@ -1,0 +1,57 @@
+# Docker ignore file for TropX Motion
+# Excludes unnecessary files from Docker context (faster builds)
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+
+# Build output
+dist/
+build/
+electron-cache/
+out/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Temp
+*.tmp
+.cache/
+.temp/
+
+# Test
+coverage/
+.nyc_output/
+
+# Documentation (not needed in container)
+*.md
+!README.md
+docs/
+
+# Backups
+*.backup
+*.bak
+electron/renderer.backup*/
+
+# Development only
+.env.local
+.env.*.local

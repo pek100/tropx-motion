@@ -139,18 +139,16 @@ export class WebSocketTransport extends TypedEventEmitter {
 
   private handleMessage(event: MessageEvent): void {
     try {
-      console.log('📨 Received WebSocket message, data type:', typeof event.data, 'instanceof ArrayBuffer:', event.data instanceof ArrayBuffer);
+      // PERFORMANCE: Removed console.logs from hot path (200 msg/sec causes event loop blocking)
       const message = BinaryProtocol.deserialize(event.data as ArrayBuffer);
       if (!message) {
         console.error('❌ Failed to deserialize message');
         return;
       }
-      console.log('✅ Deserialized message:', JSON.stringify(message, null, 2));
       if (message.requestId && this.pendingRequests.has(message.requestId)) {
         const { resolve, timeout } = this.pendingRequests.get(message.requestId)!;
         this.pendingRequests.delete(message.requestId);
         clearTimeout(timeout);
-        console.log('✅ Resolving pending request:', message.requestId);
         resolve(message);
       }
       this.emitMessageEvent(message);
