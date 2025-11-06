@@ -1,14 +1,22 @@
 /**
- * BLE Bridge - Noble-based Bluetooth Low Energy implementation
+ * BLE Bridge - Platform-aware Bluetooth Low Energy implementation
+ *
+ * Windows/Mac: Uses @abandonware/noble (HCI socket)
+ * Linux/Raspberry Pi: Uses node-ble (BlueZ via DBus)
  *
  * Public API exports for TropX device communication
  */
 
-// Main service class
+// Main service classes
 export { NobleBluetoothService } from './NobleBluetoothService';
+export { NodeBleService } from './NodeBleService';
 
 // Device protocol handler
 export { TropXDevice } from './TropXDevice';
+
+// Platform-aware factory
+export { createBleService } from './BleServiceFactory';
+export type { IBleService } from './BleServiceFactory';
 
 // Type definitions
 export type {
@@ -35,14 +43,14 @@ export {
   TIMING
 } from './BleBridgeConstants';
 
-// Import types and class for factory function
+// Import types for legacy factory function
 import type { MotionDataCallback, DeviceEventCallback } from './BleBridgeTypes';
-import { NobleBluetoothService } from './NobleBluetoothService';
+import { createBleService } from './BleServiceFactory';
 
-// Factory function for easy initialization
-export function createNobleBluetoothService(
+// Legacy factory function - now uses platform-aware factory
+export async function createNobleBluetoothService(
   motionCallback?: MotionDataCallback,
   eventCallback?: DeviceEventCallback
-): NobleBluetoothService {
-  return new NobleBluetoothService(motionCallback, eventCallback);
+): Promise<any> {
+  return await createBleService(motionCallback, eventCallback);
 }

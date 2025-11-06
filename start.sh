@@ -23,5 +23,22 @@ if [ ! -f "dist/main/electron/main/main.js" ]; then
     exit 1
 fi
 
-# Use Node.js smart launcher
-node scripts/start-smart.js
+# On Raspberry Pi: Apply display and touch rotation before starting app
+if [ -f "/proc/device-tree/model" ] && grep -q "Raspberry Pi" /proc/device-tree/model; then
+    echo "🔄 Applying display rotation for Raspberry Pi..."
+    export DISPLAY=:0
+    xrandr --output DSI-2 --rotate right 2>/dev/null || true
+    echo "🔄 Applying touchscreen rotation..."
+    xinput --map-to-output "11-005d Goodix Capacitive TouchScreen" DSI-2 2>/dev/null || true
+    sleep 1
+
+    # On Raspberry Pi, run with sudo to allow Bluetooth access
+    # Preserve DISPLAY and XAUTHORITY for GUI
+    export XAUTHORITY=/run/user/1000/gdm/Xauthority
+    [ -f "/var/run/lightdm/$USER/:0" ] && export XAUTHORITY="/var/run/lightdm/$USER/:0"
+    echo "🔐 Running with Bluetooth privileges..."
+    sudo -E node scripts/start-smart.js
+else
+    # Use Node.js smart launcher
+    node scripts/start-smart.js
+fi

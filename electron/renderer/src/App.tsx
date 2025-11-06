@@ -112,9 +112,24 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected])
 
-  // Detect small screens (< 350px width or height)
+  // Detect small screens (< 350px width or height) OR force on Raspberry Pi
   useEffect(() => {
-    const checkScreenSize = () => {
+    const checkScreenSize = async () => {
+      // Check if running on Raspberry Pi
+      try {
+        const platformInfo = await window.electronAPI?.system?.getPlatformInfo()
+        const isRaspberryPi = platformInfo?.info?.isRaspberryPi || false
+
+        // Force small screen mode on Raspberry Pi regardless of actual screen size
+        if (isRaspberryPi && smallScreenOverride === null) {
+          console.log('🍓 Raspberry Pi detected - forcing small screen layout')
+          setIsSmallScreen(true)
+          return
+        }
+      } catch (err) {
+        console.warn('Could not detect platform:', err)
+      }
+
       // If manual override is set, use that instead
       if (smallScreenOverride !== null) {
         setIsSmallScreen(smallScreenOverride)

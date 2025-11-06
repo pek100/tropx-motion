@@ -1145,16 +1145,20 @@ export class NobleBluetoothService {
 
       const timeout = setTimeout(() => {
         reject(new Error('Bluetooth adapter timeout'));
-      }, 10000);
+      }, 15000); // Increased timeout to 15s to allow for state transitions
 
-      noble.once('stateChange', (state: string) => {
-        clearTimeout(timeout);
+      const stateChangeHandler = (state: string) => {
+        console.log(`🔄 Bluetooth state during initialization: ${state}`);
         if (state === 'poweredOn') {
+          clearTimeout(timeout);
+          noble.removeListener('stateChange', stateChangeHandler);
           resolve();
-        } else {
-          reject(new Error(`Bluetooth not ready: ${state}`));
         }
-      });
+        // Don't reject on other states - keep waiting for poweredOn
+        // Only timeout will cause rejection if poweredOn never arrives
+      };
+
+      noble.on('stateChange', stateChangeHandler);
     });
   }
 

@@ -1,5 +1,6 @@
 
  import { screen } from 'electron';
+  import * as fs from 'fs';
 
   export function getWindowDimensions() {
     try {
@@ -7,6 +8,34 @@
       const { width, height } = display.bounds;
 
       console.log(`Screen detected: ${width}x${height}`);
+
+      // Check if running on Raspberry Pi
+      let isRaspberryPi = false;
+      try {
+        if (fs.existsSync('/proc/device-tree/model')) {
+          const model = fs.readFileSync('/proc/device-tree/model', 'utf8');
+          isRaspberryPi = model.includes('Raspberry Pi');
+          if (isRaspberryPi) {
+            console.log(`Raspberry Pi detected: ${model.trim()}`);
+          }
+        }
+      } catch (err) {
+        console.warn('Could not detect Raspberry Pi:', err);
+      }
+
+      // Force fullscreen + small screen mode on Raspberry Pi regardless of actual screen size
+      if (isRaspberryPi) {
+        console.log('Raspberry Pi - using fullscreen mode with small screen layout');
+        return {
+          width,
+          height,
+          minWidth: width,
+          minHeight: height,
+          isSmallScreen: true,
+          isRaspberryPi: true,
+          fullscreen: true
+        };
+      }
 
       // Use actual screen size if it's small (<=480px)
       if (width <= 480 || height <= 480) {

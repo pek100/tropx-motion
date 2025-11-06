@@ -26,6 +26,7 @@ import {
 import { TropXCommands } from './TropXCommands';
 import { TimeSyncEstimator } from './TimeSyncEstimator';
 import { deviceRegistry } from '../registry-management/DeviceRegistry';
+import { bleLogger } from './BleLogger';
 
 export class TropXDevice {
   private wrapper: NoblePeripheralWrapper;
@@ -70,16 +71,74 @@ export class TropXDevice {
 
   // Connect to device (simplified like Python Bleak)
   async connect(): Promise<boolean> {
+    const deviceId = this.wrapper.deviceInfo.id;
+    const deviceName = this.wrapper.deviceInfo.name;
+
+    bleLogger.logConnection(deviceId, deviceName, 'CONNECT_START', {
+      peripheralState: this.wrapper.peripheral.state,
+      peripheralId: this.wrapper.peripheral.id
+    });
+
     try {
       console.log(`🔗 Connecting to TropX device: ${this.wrapper.deviceInfo.name}`);
 
+      // CRITICAL: Register disconnect handler BEFORE attempting connection
+      // This prevents "unknown peripheral null connected" errors on Raspberry Pi
+      bleLogger.info(`Registering disconnect handler for ${deviceName}`, {}, 'CONNECTION');
+      this.wrapper.peripheral.once('disconnect', () => {
+        this.handleDisconnect();
+      });
+      bleLogger.info(`Disconnect handler registered for ${deviceName}`, {}, 'CONNECTION');
+
       // Simple connection like Python Bleak - no complex setup
       if (this.wrapper.peripheral.state === 'connected') {
+        bleLogger.info(`Device already connected: ${deviceName}`, { state: this.wrapper.peripheral.state }, 'CONNECTION');
         console.log('✅ Device already connected');
       } else {
+        bleLogger.info(`Establishing BLE connection to ${deviceName}...`, {
+          peripheralState: this.wrapper.peripheral.state
+        }, 'CONNECTION');
         console.log('🔗 Establishing BLE connection...');
-        await this.wrapper.peripheral.connectAsync();
-        console.log('✅ Physical BLE connection established');
+
+        // ARM/Raspberry Pi Fix: Use callback-based connect with timeout
+        // connectAsync() can hang indefinitely on ARM systems
+        try {
+          const connectStartTime = Date.now();
+          await new Promise<void>((resolve, reject) => {
+            // Raspberry Pi/ARM fix: Noble on Raspberry Pi 5 takes 45-50 seconds to establish connections
+            // Windows connects in ~2 seconds, but Pi needs significantly more time
+            const timeout = setTimeout(() => {
+              bleLogger.error(`Connection timeout after 60s for ${deviceName}`, {
+                elapsedMs: Date.now() - connectStartTime,
+                peripheralState: this.wrapper.peripheral.state
+              }, 'CONNECTION');
+              reject(new Error('Connection timeout after 60s'));
+            }, 60000);
+
+            bleLogger.debug(`Calling peripheral.connect() for ${deviceName}`, {}, 'CONNECTION');
+            this.wrapper.peripheral.connect((error: any) => {
+              clearTimeout(timeout);
+              const elapsedMs = Date.now() - connectStartTime;
+
+              if (error) {
+                bleLogger.logConnectionError(deviceId, deviceName, 'CONNECT_CALLBACK', error);
+                console.error(`❌ Connection error from noble:`, error);
+                reject(error);
+              } else {
+                bleLogger.logConnection(deviceId, deviceName, 'CONNECT_SUCCESS', {
+                  elapsedMs,
+                  newState: this.wrapper.peripheral.state
+                });
+                console.log('✅ Physical BLE connection established');
+                resolve();
+              }
+            });
+          });
+        } catch (connectError) {
+          bleLogger.logConnectionError(deviceId, deviceName, 'CONNECT_FAILED', connectError);
+          console.error(`❌ Failed to establish connection:`, connectError);
+          throw connectError;
+        }
       }
 
       this.wrapper.deviceInfo.state = 'connected';
@@ -87,22 +146,32 @@ export class TropXDevice {
       // so UI gets complete device info including battery
 
       // Simple delay like Python approach
+      bleLogger.debug(`Waiting 1s for device stability: ${deviceName}`, {}, 'CONNECTION');
       console.log('⏳ Brief delay for device stability...');
       await this.delay(1000);
 
       // Simplified service discovery (like Python Bleak approach)
+      bleLogger.info(`Starting service discovery for ${deviceName}`, {}, 'CONNECTION');
       console.log('🔍 Discovering services...');
       let allServices: any[] = [];
 
       try {
+        const discoveryStartTime = Date.now();
         // Simple discovery - just get all services
         const result = await this.wrapper.peripheral.discoverServicesAsync([]);
         allServices = result.services || [];
+        bleLogger.info(`Service discovery completed for ${deviceName}`, {
+          servicesFound: allServices.length,
+          elapsedMs: Date.now() - discoveryStartTime,
+          serviceUUIDs: allServices.map((s: any) => s.uuid)
+        }, 'CONNECTION');
         console.log(`✅ Found ${allServices.length} services`);
 
         // If no services found, try one more time with callback method (matches Python's simplicity)
         if (allServices.length === 0) {
+          bleLogger.warn(`No services found, retrying with callback method for ${deviceName}`, {}, 'CONNECTION');
           console.log('🔍 Retrying with callback method...');
+          const callbackStartTime = Date.now();
           const callbackResult = await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error('Timeout')), 5000);
             this.wrapper.peripheral.discoverServices([], (error: any, services: any[]) => {
@@ -114,10 +183,16 @@ export class TropXDevice {
 
           if (Array.isArray(callbackResult)) {
             allServices = callbackResult;
+            bleLogger.info(`Callback method succeeded for ${deviceName}`, {
+              servicesFound: allServices.length,
+              elapsedMs: Date.now() - callbackStartTime,
+              serviceUUIDs: allServices.map((s: any) => s.uuid)
+            }, 'CONNECTION');
             console.log(`✅ Callback method found ${allServices.length} services`);
           }
         }
       } catch (error) {
+        bleLogger.logConnectionError(deviceId, deviceName, 'SERVICE_DISCOVERY', error);
         console.log(`❌ Service discovery failed:`, error);
       }
 
@@ -155,16 +230,17 @@ export class TropXDevice {
         this.wrapper.service = allServices[0];
       }
 
-      // Setup disconnect handler
-      this.wrapper.peripheral.once('disconnect', () => {
-        this.handleDisconnect();
-      });
-
       // Discover command characteristic for battery reading
+      bleLogger.info(`Starting characteristic discovery for ${deviceName}`, {}, 'CONNECTION');
       await this.ensureCharacteristics();
 
       // Get initial battery level synchronously BEFORE firing connected event
       // This ensures battery is available when device status is broadcast
+      bleLogger.info(`Reading initial battery level for ${deviceName}`, {
+        deviceState: this.wrapper.deviceInfo.state,
+        hasCommandChar: !!this.wrapper.commandCharacteristic,
+        peripheralState: this.wrapper.peripheral.state
+      }, 'CONNECTION');
       console.log(`🔋 [${this.wrapper.deviceInfo.name}] Reading initial battery level...`);
       console.log(`🔋 [${this.wrapper.deviceInfo.name}] Current device state: ${this.wrapper.deviceInfo.state}`);
       console.log(`🔋 [${this.wrapper.deviceInfo.name}] Command characteristic available: ${!!this.wrapper.commandCharacteristic}`);
@@ -173,11 +249,14 @@ export class TropXDevice {
       try {
         const batteryResult = await this.getBatteryLevel();
         if (batteryResult === null) {
+          bleLogger.warn(`Initial battery read returned null for ${deviceName}`, {}, 'CONNECTION');
           console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Initial battery read returned null (may indicate ARM/Noble issue)`);
         } else {
+          bleLogger.info(`Initial battery read successful for ${deviceName}`, { batteryLevel: batteryResult }, 'CONNECTION');
           console.log(`✅ [${this.wrapper.deviceInfo.name}] Initial battery read successful: ${batteryResult}%`);
         }
       } catch (error: any) {
+        bleLogger.logConnectionError(deviceId, deviceName, 'BATTERY_READ', error);
         console.warn(`⚠️ Failed to read initial battery, will retry later:`, error);
         console.warn(`   Error type: ${error?.constructor?.name || 'unknown'}`);
         console.warn(`   Error message: ${error?.message || error}`);
@@ -188,15 +267,23 @@ export class TropXDevice {
       this.startBatteryMonitoring();
 
       // Now fire 'connected' event with complete device info (including battery)
+      bleLogger.info(`Firing 'connected' event for ${deviceName}`, {}, 'CONNECTION');
       console.log(`🔔 [${this.wrapper.deviceInfo.name}] Firing 'connected' event to notify UI...`);
       this.notifyEvent('connected');
 
+      bleLogger.logConnection(deviceId, deviceName, 'CONNECT_COMPLETE', {
+        batteryLevel: this.wrapper.deviceInfo.batteryLevel,
+        deviceState: this.wrapper.deviceInfo.state,
+        hasCommandChar: !!this.wrapper.commandCharacteristic,
+        hasDataChar: !!this.wrapper.dataCharacteristic
+      });
       console.log(`✅ Connected to TropX device: ${this.wrapper.deviceInfo.name}`);
       console.log(`   Battery level: ${this.wrapper.deviceInfo.batteryLevel !== null ? this.wrapper.deviceInfo.batteryLevel + '%' : 'null (not read yet)'}`);
       console.log(`   Device state: ${this.wrapper.deviceInfo.state}`);
       return true;
 
     } catch (error) {
+      bleLogger.logConnectionError(deviceId, deviceName, 'CONNECT_EXCEPTION', error);
       console.error(`❌ Failed to connect to device ${this.wrapper.deviceInfo.name}:`, error);
       this.wrapper.deviceInfo.state = 'error';
       this.notifyEvent('error', error);

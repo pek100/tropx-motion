@@ -176,6 +176,7 @@ export class MainProcess {
       height: windowDims.height,
       minWidth: windowDims.minWidth,
       minHeight: windowDims.minHeight,
+      fullscreen: (windowDims as any).fullscreen || false, // Fullscreen on Raspberry Pi
       frame: false, // Remove window frame on all platforms
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden', // macOS vs Windows/Linux
       trafficLightPosition: process.platform === 'darwin' ? { x: 15, y: 10 } : undefined, // macOS traffic lights position

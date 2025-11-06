@@ -280,3 +280,9 @@
   );
   backdrop-filter: blur(1px);
 }
+
+
+/* Hide cursor on Raspberry Pi for kiosk mode */
+* {
+  cursor: none !important;
+}
