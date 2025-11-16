@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { TropxWSClient } from '../lib/tropx-ws-client';
 import type { DeviceInfo, Result } from '../lib/tropx-ws-client';
-import { EVENT_TYPES } from '../lib/tropx-ws-client';
+import { EVENT_TYPES, MESSAGE_TYPES } from '../lib/tropx-ws-client';
+import type { ClientMetadata } from '../lib/tropx-ws-client/types/messages';
 
 export interface KneeData {
   current: number;
@@ -14,6 +15,7 @@ export interface KneeData {
 export interface WebSocketState {
   isConnected: boolean;
   devices: DeviceInfo[];
+  connectedClients: ClientMetadata[];
   leftKneeData: KneeData;
   rightKneeData: KneeData;
   isScanning: boolean;
@@ -24,9 +26,13 @@ export interface WebSocketState {
 
 export function useWebSocket() {
   const clientRef = useRef<TropxWSClient | null>(null);
+  const hasConnectedOnceRef = useRef(false);
+  const lastMotionDataTimeRef = useRef<number>(Date.now());
+  const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [state, setState] = useState<WebSocketState>({
     isConnected: false,
     devices: [],
+    connectedClients: [],
     leftKneeData: {
       current: 0,
       sensorTimestamp: Date.now(),
@@ -60,9 +66,28 @@ export function useWebSocket() {
         clientRef.current = client;
 
         // Setup event listeners
-        client.on(EVENT_TYPES.CONNECTED, () => {
+        client.on(EVENT_TYPES.CONNECTED, async () => {
+          const isReconnection = hasConnectedOnceRef.current;
           setState(prev => ({ ...prev, isConnected: true }));
-          console.log('✅ WebSocket connected');
+          console.log(isReconnection ? '✅ WebSocket reconnected' : '✅ WebSocket connected');
+
+          // CRITICAL: Re-query all backend state on reconnection
+          if (isReconnection) {
+            console.log('🔄 Reconnection detected - re-querying all backend state...');
+            try {
+              const stateResult = await client.getDevicesState();
+              if (stateResult.success && stateResult.data.length > 0) {
+                console.log(`✅ Re-synced ${stateResult.data.length} devices from backend`);
+                setState(prev => ({ ...prev, devices: stateResult.data }));
+              } else {
+                console.log('📭 No devices to restore from backend');
+              }
+            } catch (error) {
+              console.error('❌ Failed to re-sync state on reconnection:', error);
+            }
+          }
+
+          hasConnectedOnceRef.current = true;
         });
 
         client.on(EVENT_TYPES.DISCONNECTED, ({ code, reason }) => {
@@ -80,6 +105,9 @@ export function useWebSocket() {
 
         // Motion data handler - single state update for both knees
         client.on(EVENT_TYPES.MOTION_DATA, (message) => {
+          // Update heartbeat timestamp for health monitoring
+          lastMotionDataTimeRef.current = Date.now();
+
           console.log('📊 [MOTION_DATA] Received:', message);
           const raw = (message as any).data;
           let dataArray: Float32Array;
@@ -214,6 +242,12 @@ export function useWebSocket() {
           setState(prev => ({ ...prev, vibratingDeviceIds: vibrating.vibratingDeviceIds }));
         });
 
+        // Client list update handler
+        client.on(EVENT_TYPES.CLIENT_LIST_UPDATE, (update) => {
+          console.log('👥 Client list update:', update.clients);
+          setState(prev => ({ ...prev, connectedClients: update.clients }));
+        });
+
         // Get WebSocket port from Electron main process
         const port = await window.electron.getWSPort();
         console.log(`🔌 Connecting to WebSocket on port ${port}`);
@@ -241,11 +275,50 @@ export function useWebSocket() {
 
     // Cleanup on unmount
     return () => {
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current);
+        healthCheckIntervalRef.current = null;
+      }
       if (clientRef.current) {
         clientRef.current.disconnect();
       }
     };
   }, []);
+
+  // Connection health monitoring - separate effect with access to current state
+  useEffect(() => {
+    if (!state.isConnected) return;
+
+    const healthCheckInterval = setInterval(() => {
+      if (!clientRef.current?.isConnected()) return;
+
+      // Check if any devices are streaming
+      const streamingDevices = state.devices.filter(d => d.state === 'streaming');
+      if (streamingDevices.length === 0) return;
+
+      // Check motion data heartbeat
+      const timeSinceLastData = Date.now() - lastMotionDataTimeRef.current;
+      const HEARTBEAT_TIMEOUT = 5000; // 5 seconds
+
+      if (timeSinceLastData > HEARTBEAT_TIMEOUT) {
+        console.error(`⚠️ Motion data heartbeat timeout: ${timeSinceLastData}ms since last data`);
+        console.log(`📊 Streaming devices: ${streamingDevices.map(d => d.name).join(', ')}`);
+        console.log('🔄 Forcing reconnection to recover data stream...');
+
+        // Force reconnection to recover
+        if (clientRef.current) {
+          clientRef.current.disconnect();
+          // The transport will automatically attempt to reconnect
+        }
+      }
+    }, 2000); // Check every 2 seconds
+
+    healthCheckIntervalRef.current = healthCheckInterval;
+
+    return () => {
+      clearInterval(healthCheckInterval);
+    };
+  }, [state.isConnected, state.devices]);
 
   // Scan for devices
   const scanDevices = useCallback(async (): Promise<Result<DeviceInfo[]>> => {
@@ -480,10 +553,28 @@ export function useWebSocket() {
     return await clientRef.current.ping();
   }, []);
 
+  // Trigger client action
+  const triggerClientAction = useCallback(async (clientId: string, actionId: string): Promise<Result<void>> => {
+    if (!clientRef.current) {
+      return { success: false, error: 'WebSocket not connected' };
+    }
+
+    const message = {
+      type: MESSAGE_TYPES.CLIENT_ACTION_TRIGGER,
+      timestamp: Date.now(),
+      clientId,
+      actionId,
+    };
+
+    await clientRef.current.sendMessage(message);
+    return { success: true, data: undefined };
+  }, []);
+
   return {
     // State
     isConnected: state.isConnected,
     devices: state.devices,
+    connectedClients: state.connectedClients,
     leftKneeData: state.leftKneeData,
     rightKneeData: state.rightKneeData,
     isScanning: state.isScanning,
@@ -506,6 +597,7 @@ export function useWebSocket() {
     startRecording,
     stopRecording,
     ping,
+    triggerClientAction,
 
     // Client reference (for advanced usage)
     client: clientRef.current,

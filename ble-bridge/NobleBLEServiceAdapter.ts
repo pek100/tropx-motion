@@ -1,10 +1,12 @@
 /**
- * Noble BLE Service Adapter for WebSocket Bridge Integration
+ * BLE Service Adapter for WebSocket Bridge Integration
  *
- * Replaces the broken Web Bluetooth BLEServiceAdapter with Noble-based implementation
+ * Platform-agnostic adapter that works with both Noble (Windows/Mac) and node-ble (Linux/RPi).
+ * Uses dependency injection to accept any IBleService implementation.
  */
 
-import { NobleBluetoothService, MotionData, TropXDeviceInfo } from './index';
+import { IBleService } from './BleServiceFactory';
+import { MotionData, TropXDeviceInfo } from './index';
 import { QuaternionBinaryProtocol } from './QuaternionBinaryProtocol';
 import { deviceStateManager } from './DeviceStateManager';
 import { deviceRegistry } from '../registry-management';
@@ -32,7 +34,7 @@ interface DeviceInfo {
 }
 
 export class NobleBLEServiceAdapter implements BLEService {
-  private nobleService: NobleBluetoothService;
+  private bleService: IBleService;
   private broadcastFunction: ((message: any, clientIds: string[]) => Promise<void>) | null = null;
   private motionCoordinator: any = null;
   private isCurrentlyRecording = false;
@@ -41,37 +43,28 @@ export class NobleBLEServiceAdapter implements BLEService {
   private locateBroadcastInterval: NodeJS.Timeout | null = null;
   private static scanSequence = 0;
   private lastScanStart = 0;
-  private readonly MIN_RESTART_INTERVAL_MS = 700; // avoid thrash
+  private readonly MIN_RESTART_INTERVAL_MS = 700;
 
-  constructor() {
-    // Initialize Noble service with callbacks
-    this.nobleService = new NobleBluetoothService(
-      this.handleMotionData.bind(this),
-      this.handleDeviceEvent.bind(this)
-    );
-
-    // Wire up immediate UI notifications from state manager
+  constructor(bleService: IBleService) {
+    this.bleService = bleService;
     this.setupStateManagerEventListeners();
   }
 
-  // Initialize the adapter
   async initialize(): Promise<boolean> {
     try {
-      console.log('🔧 Initializing Noble BLE Service Adapter...');
-      const initialized = await this.nobleService.initialize();
+      console.log('🔧 Initializing BLE Service Adapter...');
+      const initialized = await this.bleService.initialize();
 
       if (initialized) {
-        console.log('✅ Noble BLE Service Adapter ready');
-
-        // Start state polling for device health monitoring
-        this.nobleService.startStatePolling();
+        console.log('✅ BLE Service Adapter ready');
+        this.bleService.startStatePolling();
       } else {
-        console.error('❌ Failed to initialize Noble BLE Service Adapter');
+        console.error('❌ Failed to initialize BLE Service Adapter');
       }
 
       return initialized;
     } catch (error) {
-      console.error('❌ Noble BLE Service Adapter initialization error:', error);
+      console.error('❌ BLE Service Adapter initialization error:', error);
       return false;
     }
   }
@@ -105,7 +98,7 @@ export class NobleBLEServiceAdapter implements BLEService {
   async scanForDevices(): Promise<{ success: boolean; devices: any[]; message?: string }> {
     try {
       const seq = ++NobleBLEServiceAdapter.scanSequence;
-      const scanningActive = typeof (this.nobleService as any).isScanningActive === 'function' && (this.nobleService as any).isScanningActive();
+      const scanningActive = this.bleService.isScanningActive();
       console.log(`📡 [SCAN:${seq}] Noble: Starting (or snapshotting). active=${scanningActive}`);
 
       if (scanningActive) {
@@ -113,7 +106,7 @@ export class NobleBLEServiceAdapter implements BLEService {
         const elapsed = Date.now() - this.lastScanStart;
         if (elapsed > this.MIN_RESTART_INTERVAL_MS) {
           console.log(`♻️ [SCAN:${seq}] Restarting active scan after ${elapsed}ms for burst cycle`);
-          try { await (this.nobleService as any).stopScanning(); } catch (e) { console.warn('⚠️ Stop scan error (ignored):', e); }
+          try { await this.bleService.stopScanning(); } catch (e) { console.warn('⚠️ Stop scan error (ignored):', e); }
         } else {
           const snapshot = deviceStateManager.getDiscoveredDevices().map(this.convertToDeviceInfo);
           console.log(`📸 [SCAN:${seq}] Snapshot during active scan: count=${snapshot.length}`);
@@ -121,7 +114,7 @@ export class NobleBLEServiceAdapter implements BLEService {
         }
       }
 
-      const result = await this.nobleService.startScanning();
+      const result = await this.bleService.startScanning();
       if (result.success) {
         this.lastScanStart = Date.now();
         const isRealNoble = result.message && !result.message.includes('Mock');
@@ -156,7 +149,7 @@ export class NobleBLEServiceAdapter implements BLEService {
     try {
       console.log(`🔗 Noble: Connecting to device ${deviceName} (${deviceId})`);
 
-      const result = await this.nobleService.connectToDevice(deviceId);
+      const result = await this.bleService.connectToDevice(deviceId);
 
       if (result.success) {
         console.log(`✅ Noble: Successfully connected to ${deviceName}`);
@@ -180,7 +173,7 @@ export class NobleBLEServiceAdapter implements BLEService {
 
         // CRITICAL: Clear device instance sync state
         // Must be done AFTER registry clear
-        const tropxDeviceInstance = this.nobleService.getDeviceInstance(deviceId);
+        const tropxDeviceInstance = this.bleService.getDeviceInstance(deviceId);
         if (tropxDeviceInstance) {
           // Reset sync state to ensure fresh time sync
           (tropxDeviceInstance as any).wrapper.deviceInfo.syncState = 'not_synced';
@@ -223,7 +216,7 @@ export class NobleBLEServiceAdapter implements BLEService {
    * Sync single device using new time-sync module
    */
   private async syncSingleDevice(deviceId: string): Promise<void> {
-    const tropxDevice = this.nobleService.getDeviceInstance(deviceId);
+    const tropxDevice = this.bleService.getDeviceInstance(deviceId);
     if (!tropxDevice) {
       console.warn(`⚠️ Could not get device instance for sync: ${deviceId}`);
       return;
@@ -251,7 +244,7 @@ export class NobleBLEServiceAdapter implements BLEService {
       this.timeSyncManager.reset();
 
       // Get all connected devices
-      const connectedDevices = this.nobleService.getConnectedDevices();
+      const connectedDevices = this.bleService.getConnectedDevices();
       if (connectedDevices.length === 0) {
         return { success: false, results: [] };
       }
@@ -286,7 +279,7 @@ export class NobleBLEServiceAdapter implements BLEService {
       // Create adapters
       const adapters = connectedDevices
         .map(info => {
-          const device = this.nobleService.getDeviceInstance(info.id);
+          const device = this.bleService.getDeviceInstance(info.id);
           return device ? new TropXTimeSyncAdapter(device) : null;
         })
         .filter((adapter): adapter is TropXTimeSyncAdapter => adapter !== null);
@@ -366,7 +359,7 @@ export class NobleBLEServiceAdapter implements BLEService {
     try {
       console.log(`🔌 Noble: Disconnecting device ${deviceId}`);
 
-      const result = await this.nobleService.disconnectDevice(deviceId);
+      const result = await this.bleService.disconnectDevice(deviceId);
 
       console.log(`🔌 Disconnect result for ${deviceId}:`, result);
 
@@ -407,7 +400,7 @@ export class NobleBLEServiceAdapter implements BLEService {
     try {
       console.log(`🗑️ Noble: Removing device ${deviceId}`);
 
-      const result = await this.nobleService.removeDevice(deviceId);
+      const result = await this.bleService.removeDevice(deviceId);
 
       if (result.success) {
         // Clean up device from motion processing
@@ -445,7 +438,7 @@ export class NobleBLEServiceAdapter implements BLEService {
       TropXDevice.resetFirstPacketTracking();
 
       // Clear clock offsets for all devices - will be recalculated from first streaming packet
-      const connectedDevices = this.nobleService.getConnectedDevices();
+      const connectedDevices = this.bleService.getConnectedDevices();
       for (const device of connectedDevices) {
         const registeredDevice = deviceRegistry.getDeviceByAddress(device.id);
         if (registeredDevice) {
@@ -457,7 +450,7 @@ export class NobleBLEServiceAdapter implements BLEService {
       // Motion processing will be handled in WebSocket bridge (main process)
 
       // Start streaming on all connected devices with state validation
-      const streamingResult = await this.nobleService.startGlobalStreaming();
+      const streamingResult = await this.bleService.startGlobalStreaming();
 
       if (streamingResult.success && streamingResult.started > 0) {
         this.isCurrentlyRecording = true;
@@ -498,7 +491,7 @@ export class NobleBLEServiceAdapter implements BLEService {
       console.log('🛑 Noble: Stopping recording session');
 
       // Stop streaming on all devices
-      await this.nobleService.stopStreamingAll();
+      await this.bleService.stopStreamingAll();
 
       // Motion processing stop will be handled in WebSocket bridge (main process)
 
@@ -525,7 +518,7 @@ export class NobleBLEServiceAdapter implements BLEService {
   getConnectedDevices(): any[] {
     // Get devices from NobleBluetoothService which has actual TropXDevice instances with battery info
     // deviceStateManager only tracks connection states, not battery levels
-    const devices = this.nobleService.getConnectedDevices();
+    const devices = this.bleService.getConnectedDevices();
     return devices.map(this.convertToDeviceInfo);
   }
 
@@ -580,8 +573,8 @@ export class NobleBLEServiceAdapter implements BLEService {
     return device?.name || deviceId;
   }
 
-  // Handle device events
-  private async handleDeviceEvent(deviceId: string, event: string, data?: any): Promise<void> {
+  // Handle device events (public so it can be used as callback from BLE service)
+  async handleDeviceEvent(deviceId: string, event: string, data?: any): Promise<void> {
     console.log(`📱 Device event: ${deviceId} - ${event}`, data ? data : '');
 
     // Broadcast device status updates
@@ -605,7 +598,7 @@ export class NobleBLEServiceAdapter implements BLEService {
     // Handle auto-reconnect trigger
     if (event === 'auto_reconnect' && data) {
       console.log(`🔄 Auto-reconnect triggered for ${data.deviceName}`);
-      this.nobleService.scheduleReconnect(data.deviceId, data.deviceName);
+      this.bleService.scheduleReconnect(data.deviceId, data.deviceName);
     }
   }
 
@@ -648,7 +641,7 @@ export class NobleBLEServiceAdapter implements BLEService {
       // Send INDIVIDUAL DeviceStatusMessage for each device (per protocol spec)
       for (const device of allDevices) {
         // Get device state from polling service
-        const deviceState = this.nobleService.getDeviceState(device.id);
+        const deviceState = this.bleService.getDeviceState(device.id);
 
         // Get reconnecting state from registry
         const registryDevice = deviceRegistry.getDeviceByAddress(device.id) || deviceRegistry.getDeviceByName(device.name);
@@ -846,19 +839,19 @@ export class NobleBLEServiceAdapter implements BLEService {
       console.log('🔍 Starting locate mode...');
 
       // CRITICAL: Disable burst scanning to prevent interference with accelerometer notifications
-      if (this.nobleService.isBurstScanningEnabled) {
+      if (this.bleService.isBurstScanningEnabled) {
         console.log('🛑 Disabling burst scanning during locate mode (prevents notification interference)');
-        this.nobleService.disableBurstScanning();
+        this.bleService.disableBurstScanning();
       }
 
-      const connectedDevices = this.nobleService.getConnectedDevices();
+      const connectedDevices = this.bleService.getConnectedDevices();
       if (connectedDevices.length === 0) {
         return { success: false, message: 'No connected devices' };
       }
 
       // Get TropXDevice instances for all connected devices
       const deviceInstances = connectedDevices
-        .map(info => this.nobleService.getDeviceInstance(info.id))
+        .map(info => this.bleService.getDeviceInstance(info.id))
         .filter(device => device !== null);
 
       if (deviceInstances.length === 0) {
@@ -928,14 +921,12 @@ export class NobleBLEServiceAdapter implements BLEService {
     }
   }
 
-  // Enable burst scanning for a duration (called on auto-start and refresh)
   enableBurstScanningFor(durationMs: number): void {
-    this.nobleService.enableBurstScanningFor(durationMs);
+    this.bleService.enableBurstScanningFor(durationMs);
   }
 
-  // Manually disable burst scanning (called when user stops refresh)
   disableBurstScanning(): void {
-    this.nobleService.disableBurstScanning();
+    this.bleService.disableBurstScanning();
   }
 
   // Cleanup resources
@@ -951,9 +942,7 @@ export class NobleBLEServiceAdapter implements BLEService {
       await this.stopLocateMode();
     }
 
-    // Disable burst scanning
-    this.nobleService.disableBurstScanning();
-
-    await this.nobleService.cleanup();
+    this.bleService.disableBurstScanning();
+    await this.bleService.cleanup();
   }
 }

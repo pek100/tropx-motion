@@ -2,6 +2,8 @@ import { DeviceCard } from "@/components/device-card"
 import { ChartSvg } from "@/components/chart-svg"
 import KneeAreaChart from "@/components/knee-area-chart"
 import { PlatformIndicator } from "@/components/platform-indicator"
+import { DynamicIsland, ClientRegistry } from "@/components/DynamicIsland"
+import { ClientLauncher, ClientSnappedIsland, ClientIframe, type ClientDisplayMode } from "@/components/DynamicIsland/ClientLauncher"
 import { useState, useRef, useEffect, useMemo } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -15,6 +17,7 @@ export default function Page() {
   // Use WebSocket hook for REAL data
   const {
     devices: wsDevices,
+    connectedClients,
     leftKneeData,
     rightKneeData,
     isConnected,
@@ -35,6 +38,7 @@ export default function Page() {
     stopBurstScan,
     startRecording,
     stopRecording,
+    triggerClientAction,
   } = useWebSocket()
 
   // Local device state for UI management (with connection state transitions)
@@ -65,6 +69,12 @@ export default function Page() {
   const [deviceOrder, setDeviceOrder] = useState<string[]>([])
   // Track devices that were manually disconnected by the user (should not auto-reconnect)
   const [userDisconnectedDevices, setUserDisconnectedDevices] = useState<Set<string>>(new Set())
+  // Dynamic Island state
+  const [islandExpanded, setIslandExpanded] = useState(false)
+
+  // Client Launcher state (singleton)
+  const [clientLaunched, setClientLaunched] = useState(false)
+  const [clientDisplay, setClientDisplay] = useState<ClientDisplayMode>('closed')
 
   // Small screen detection (< 350px width or height)
   const [isSmallScreen, setIsSmallScreen] = useState(false)
@@ -456,8 +466,9 @@ export default function Page() {
           })
         }
 
-        // Use removeDevice instead of disconnectDevice to stop backend auto-reconnect
-        // Device will still appear in scan results as "discovered"
+        // CRITICAL: First disconnect the device from BlueZ, then remove from registry
+        // This ensures the physical BLE connection is closed
+        wsDisconnectDevice(device.id)
         wsRemoveDevice(device.id)
 
         // Don't remove from local state - just set to disconnected
@@ -556,10 +567,11 @@ export default function Page() {
       })),
     )
 
-    // Use removeDevice for all connected devices to stop backend auto-reconnect
-    // Devices will still appear in scan results as "discovered"
+    // CRITICAL: Disconnect all connected devices first, then remove from registry
+    // This ensures physical BLE connections are closed
     sortedDevices.forEach(device => {
       if (device.connectionStatus === "connected") {
+        wsDisconnectDevice(device.id)
         wsRemoveDevice(device.id)
       }
     })
@@ -763,6 +775,33 @@ export default function Page() {
       setStreamStartTime(null)
       setStreamElapsedTime(0)
     }
+  }
+
+  // Client Launcher handlers
+  const handleLaunchClient = () => {
+    setClientLaunched(true)
+    setClientDisplay('modal')
+  }
+
+  const handleCloseClient = () => {
+    setClientLaunched(false)
+    setClientDisplay('closed')
+  }
+
+  const handleMinimizeClient = () => {
+    setClientDisplay('minimized')
+  }
+
+  const handleSnapClientLeft = () => {
+    setClientDisplay('snapped-left')
+  }
+
+  const handleSnapClientRight = () => {
+    setClientDisplay('snapped-right')
+  }
+
+  const handleClientBackToModal = () => {
+    setClientDisplay('modal')
   }
 
   // Drag & Drop handlers for device reordering
@@ -970,15 +1009,29 @@ export default function Page() {
                 className={`flex-shrink-0 bg-white flex flex-col transition-all pointer-events-auto ${
                   isFlashing ? "flash-pane" : ""
                 } ${
-                  isSmallScreen ? "w-2/3 h-full p-4" : "w-[500px] p-6"
+                  isSmallScreen ? "flex-1 h-full p-4" : "w-[500px] p-6"
                 }`}
                 style={{
                   border: isSmallScreen ? "none" : "1px solid #e5e5e5",
                   borderRadius: isSmallScreen ? "0" : "36px",
                   height: isSmallScreen ? "100%" : "500px",
-                  WebkitAppRegion: 'no-drag'
+                  WebkitAppRegion: 'no-drag',
+                  position: 'relative',
+                  padding: clientDisplay === 'snapped-left' ? '0' : undefined,
                 } as any}
               >
+                {clientDisplay === 'snapped-left' ? (
+                  <>
+                    <ClientIframe className="client-iframe" />
+                    <ClientSnappedIsland
+                      isLeft={true}
+                      onClose={handleCloseClient}
+                      onBackToModal={handleClientBackToModal}
+                    />
+                  </>
+                ) : (
+                  <>
+
                 <div className={isSmallScreen ? "flex justify-between mb-3" : "flex justify-between mb-4"}>
                   <div className="flex gap-2">
                     <Tooltip>
@@ -1266,20 +1319,78 @@ export default function Page() {
                     </TooltipContent>
                   </Tooltip>
                 </div>
+
+                {/* Dynamic Island - Bottom Center */}
+                <DynamicIsland
+                  expanded={islandExpanded}
+                  onToggle={() => setIslandExpanded(!islandExpanded)}
+                >
+                  {islandExpanded ? (
+                    <ClientRegistry
+                      clients={connectedClients}
+                      onActionTrigger={triggerClientAction}
+                    />
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px' }}>
+                      <span>👥</span>
+                      <span>{connectedClients.length} client{connectedClients.length !== 1 ? 's' : ''}</span>
+                      {!clientLaunched && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleLaunchClient()
+                          }}
+                          style={{
+                            background: 'rgba(255, 77, 53, 0.15)',
+                            border: 'none',
+                            borderRadius: '8px',
+                            width: '28px',
+                            height: '28px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            transition: 'all 0.2s ease',
+                          }}
+                          title="Launch Test Client"
+                        >
+                          🚀
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </DynamicIsland>
+                  </>
+                )}
               </div>
 
               {/* Right Pane */}
               <div
                 className={`bg-white gradient-diagonal flex flex-col items-center justify-center pointer-events-auto ${
-                  isSmallScreen ? "w-1/3 h-full p-4" : "flex-1 p-6"
+                  isSmallScreen ? "flex-1 h-full p-4" : "flex-1 p-6"
                 }`}
                 style={{
                   border: isSmallScreen ? "none" : "1px solid #e5e5e5",
                   borderRadius: isSmallScreen ? "0" : "36px",
                   height: isSmallScreen ? "100%" : "500px",
-                  WebkitAppRegion: 'no-drag'
+                  WebkitAppRegion: 'no-drag',
+                  position: 'relative',
+                  padding: clientDisplay === 'snapped-right' ? '0' : undefined,
                 } as any}
               >
+                {clientDisplay === 'snapped-right' ? (
+                  <>
+                    <ClientIframe className="client-iframe" />
+                    <ClientSnappedIsland
+                      isLeft={false}
+                      onClose={handleCloseClient}
+                      onBackToModal={handleClientBackToModal}
+                    />
+                  </>
+                ) : (
+                  <>
+
                 {isStreaming || hasStartedStreaming ? (
                   <KneeAreaChart leftKnee={leftKneeData} rightKnee={rightKneeData} clearTrigger={clearChartTrigger} />
                 ) : (
@@ -1370,10 +1481,24 @@ export default function Page() {
                     </Tooltip>
                   )}
                 </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
         </div>
+
+        {/* Client Launcher - Global singleton */}
+        <ClientLauncher
+          isLaunched={clientLaunched}
+          displayMode={clientDisplay}
+          onLaunch={handleLaunchClient}
+          onClose={handleCloseClient}
+          onMinimize={handleMinimizeClient}
+          onSnapLeft={handleSnapClientLeft}
+          onSnapRight={handleSnapClientRight}
+          onBackToModal={handleClientBackToModal}
+        />
       </div>
     </TooltipProvider>
   )

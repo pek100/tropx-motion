@@ -4,7 +4,9 @@ import { UnifiedMessageRouter } from './core/UnifiedMessageRouter';
 import { BLEDomainProcessor } from './processors/BLEDomainProcessor';
 import { StreamingDomainProcessor } from './processors/StreamingDomainProcessor';
 import { SystemDomainProcessor } from './processors/SystemDomainProcessor';
+import { ClientMetadataProcessor } from './processors/ClientMetadataProcessor';
 import { NobleBLEServiceAdapter } from '../ble-bridge/NobleBLEServiceAdapter';
+import { createBleService } from '../ble-bridge/BleServiceFactory';
 import { MESSAGE_TYPES, DELIVERY_MODES } from './types/MessageTypes';
 
 // Configuration for unified bridge
@@ -34,9 +36,10 @@ export class UnifiedWebSocketBridge {
   private bleProcessor: BLEDomainProcessor;
   private streamingProcessor: StreamingDomainProcessor;
   private systemProcessor: SystemDomainProcessor;
+  private clientMetadataProcessor: ClientMetadataProcessor;
 
-  // Service adapters
-  private bleServiceAdapter: NobleBLEServiceAdapter;
+  // Service adapters (initialized in initialize())
+  private bleServiceAdapter: NobleBLEServiceAdapter | null = null;
 
   private config: UnifiedBridgeConfig;
   private isRunning = false;
@@ -56,24 +59,40 @@ export class UnifiedWebSocketBridge {
     this.bleProcessor = new BLEDomainProcessor();
     this.streamingProcessor = new StreamingDomainProcessor();
     this.systemProcessor = new SystemDomainProcessor();
-
-    // Initialize service adapters
-    this.bleServiceAdapter = new NobleBLEServiceAdapter();
+    this.clientMetadataProcessor = new ClientMetadataProcessor();
 
     this.setupUnifiedIntegration();
   }
 
-  // Initialize with existing services
   async initialize(services: UnifiedServices): Promise<number> {
     console.log('🚀 Initializing Unified WebSocket Bridge...');
 
     try {
-      // Initialize Noble BLE service adapter
-      const nobleInitialized = await this.bleServiceAdapter.initialize();
-      if (!nobleInitialized) {
-        console.warn('⚠️ Noble BLE service failed to initialize');
+      // Create adapter first so we can reference its event handler
+      this.bleServiceAdapter = new NobleBLEServiceAdapter(null as any); // Temporary, will inject service below
+
+      // Create platform-appropriate BLE service using factory with callbacks
+      console.log('🔍 Creating platform-appropriate BLE service...');
+      const bleService = await createBleService(
+        // CRITICAL: Motion callback must be provided to forward streaming data to UI
+        (deviceId: string, motionData: any) => {
+          // Forward motion data to adapter which processes and sends to motion coordinator
+          (this.bleServiceAdapter as any).handleMotionData(deviceId, motionData);
+        },
+        (deviceId: string, event: string, data?: any) => {
+          // Forward device events to adapter's handler
+          this.bleServiceAdapter!.handleDeviceEvent(deviceId, event, data);
+        }
+      );
+
+      // Inject service into adapter
+      (this.bleServiceAdapter as any).bleService = bleService;
+
+      // Initialize BLE service adapter
+      const bleInitialized = await this.bleServiceAdapter.initialize();
+      if (!bleInitialized) {
+        console.warn('⚠️ BLE service failed to initialize');
       } else {
-        // Enable burst scanning for 10 seconds on initialization
         console.log('🔄 Enabling initial 10-second burst scan');
         this.bleServiceAdapter.enableBurstScanningFor(10000);
       }
@@ -81,21 +100,33 @@ export class UnifiedWebSocketBridge {
       // Connect service adapters to existing services
       this.bleServiceAdapter.connect(services.motionCoordinator);
 
+      // Setup broadcast function for BLE adapter
+      this.bleServiceAdapter.setBroadcastFunction(async (message, clientIds) => {
+        await this.connectionManager.broadcast(message);
+      });
+
       // Inject services into domain processors
       this.bleProcessor.setBLEService(this.bleServiceAdapter);
       if (services.systemMonitor) {
         this.systemProcessor.setSystemService(services.systemMonitor);
       }
+      this.clientMetadataProcessor.setConnectionManager(this.connectionManager);
 
       // Setup streaming overload notifier
       this.streamingProcessor.setOverloadNotifier({
         notifyOverload: (stats) => this.notifyStreamingOverload(stats)
       });
 
+      // Setup broadcast function for streaming processor
+      this.streamingProcessor.setBroadcastFunction(async (message) => {
+        await this.connectionManager.broadcast(message);
+      });
+
       // Register domain processors with unified router
       this.unifiedRouter.registerProcessor(this.bleProcessor);
       this.unifiedRouter.registerProcessor(this.streamingProcessor);
       this.unifiedRouter.registerProcessor(this.systemProcessor);
+      this.unifiedRouter.registerProcessor(this.clientMetadataProcessor);
 
       // Start the bridge
       this.currentPort = await this.start(this.config.port);
@@ -153,7 +184,8 @@ export class UnifiedWebSocketBridge {
       domains: {
         ble: this.bleProcessor.getStats(),
         streaming: this.streamingProcessor.getStats(),
-        system: this.systemProcessor.getStats()
+        system: this.systemProcessor.getStats(),
+        clientMetadata: this.clientMetadataProcessor.getStats()
       },
       performance: {
         router: this.unifiedRouter.getStats(),
@@ -162,8 +194,11 @@ export class UnifiedWebSocketBridge {
     };
   }
 
-  // Manual time synchronization for all connected devices
   async syncAllDevices(): Promise<{ success: boolean; results?: any[]; message?: string }> {
+    if (!this.bleServiceAdapter) {
+      return { success: false, message: 'BLE service not initialized' };
+    }
+
     try {
       const result = await this.bleServiceAdapter.syncAllDevices();
       return result;
@@ -197,9 +232,8 @@ export class UnifiedWebSocketBridge {
     };
   }
 
-  // Setup unified integration
   private setupUnifiedIntegration(): void {
-    // Connect connection manager to unified router (single entry point)
+    // Connect connection manager to unified router
     this.connectionManager.onMessage(async (message, clientId) => {
       console.log(`📨 Unified Bridge: Routing message type ${message.type} (0x${message.type.toString(16)}) from ${clientId}`);
 
@@ -214,12 +248,6 @@ export class UnifiedWebSocketBridge {
     // Connect streaming transport to connection manager
     this.streamingTransport.setSendFunction(async (message, clientId) => {
       return await this.connectionManager.sendToClient(clientId, message);
-    });
-
-    // Setup broadcast functions for service adapters
-    this.bleServiceAdapter.setBroadcastFunction(async (message, clientIds) => {
-      // Broadcast directly through connection manager to all connected clients
-      await this.connectionManager.broadcast(message);
     });
 
     // Update client lists when connections change

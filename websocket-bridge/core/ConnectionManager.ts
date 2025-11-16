@@ -35,16 +35,36 @@ interface ClientMetrics {
   lastPongTime: number;
 }
 
+// Client metadata types
+export interface ClientAction {
+  id: string;
+  label: string;
+  icon?: string;
+  category?: string;
+}
+
+export interface ClientMetadata {
+  clientId: string;
+  name: string;
+  type: 'main' | 'recording' | 'monitor' | 'custom';
+  capabilities?: string[];
+  actions?: ClientAction[];
+  registeredAt: number;
+  lastUpdated: number;
+}
+
 const HEALTH_CHECK_INTERVAL = 10000; // 10 seconds
 const PERFORMANCE_WINDOW = 60000; // 1 minute
 
 export class ConnectionManager {
   private server: WebSocketServer;
   private clientMetrics = new Map<string, ClientMetrics>();
+  private clientRegistry = new Map<string, ClientMetadata>();
   private healthCheckTimer: NodeJS.Timeout | null = null;
   private performanceHistory: Array<{ timestamp: number; messages: number; errors: number }> = [];
 
   private healthChangeHandler: ((health: SystemHealth) => void) | null = null;
+  private clientListChangeHandler: ((clients: ClientMetadata[]) => void) | null = null;
 
   constructor() {
     this.server = new WebSocketServer();
@@ -64,6 +84,7 @@ export class ConnectionManager {
     this.stopHealthMonitoring();
     await this.server.stop();
     this.clientMetrics.clear();
+    this.clientRegistry.clear();
     this.performanceHistory = [];
     console.log('Connection manager stopped');
   }
@@ -79,6 +100,11 @@ export class ConnectionManager {
   // Set health change handler
   onHealthChange(handler: (health: SystemHealth) => void): void {
     this.healthChangeHandler = handler;
+  }
+
+  // Set client list change handler
+  onClientListChange(handler: (clients: ClientMetadata[]) => void): void {
+    this.clientListChangeHandler = handler;
   }
 
   // Send message to client with tracking
@@ -189,6 +215,101 @@ export class ConnectionManager {
     this.healthChangeHandler?.(health);
   }
 
+  // Register client with metadata
+  registerClient(clientId: string, metadata: Omit<ClientMetadata, 'clientId' | 'registeredAt' | 'lastUpdated'>): void {
+    const now = Date.now();
+    const fullMetadata: ClientMetadata = {
+      ...metadata,
+      clientId,
+      registeredAt: now,
+      lastUpdated: now,
+    };
+
+    this.clientRegistry.set(clientId, fullMetadata);
+    this.notifyClientListChange();
+    console.log(`Client registered: ${clientId} (${metadata.name})`);
+  }
+
+  // Update client metadata
+  updateClientMetadata(clientId: string, updates: Partial<Omit<ClientMetadata, 'clientId' | 'registeredAt'>>): void {
+    const existing = this.clientRegistry.get(clientId);
+    if (!existing) return;
+
+    const updated: ClientMetadata = {
+      ...existing,
+      ...updates,
+      clientId: existing.clientId,
+      registeredAt: existing.registeredAt,
+      lastUpdated: Date.now(),
+    };
+
+    this.clientRegistry.set(clientId, updated);
+    this.notifyClientListChange();
+    console.log(`Client metadata updated: ${clientId}`);
+  }
+
+  // Add action to client
+  addClientAction(clientId: string, action: ClientAction): void {
+    const existing = this.clientRegistry.get(clientId);
+    if (!existing) return;
+
+    const actions = existing.actions || [];
+    const actionExists = actions.some(a => a.id === action.id);
+    if (actionExists) return;
+
+    this.updateClientMetadata(clientId, {
+      actions: [...actions, action],
+    });
+  }
+
+  // Remove action from client
+  removeClientAction(clientId: string, actionId: string): void {
+    const existing = this.clientRegistry.get(clientId);
+    if (!existing || !existing.actions) return;
+
+    this.updateClientMetadata(clientId, {
+      actions: existing.actions.filter(a => a.id !== actionId),
+    });
+  }
+
+  // Get all registered clients
+  getRegisteredClients(): ClientMetadata[] {
+    return Array.from(this.clientRegistry.values());
+  }
+
+  // Get client metadata by ID
+  getClientMetadata(clientId: string): ClientMetadata | null {
+    return this.clientRegistry.get(clientId) || null;
+  }
+
+  // Remove client from registry
+  unregisterClient(clientId: string): void {
+    const existed = this.clientRegistry.delete(clientId);
+    if (existed) {
+      this.notifyClientListChange();
+      console.log(`Client unregistered: ${clientId}`);
+    }
+  }
+
+  // Broadcast current client list to all connected clients
+  async broadcastClientList(): Promise<void> {
+    const clients = this.getRegisteredClients();
+    const message: BaseMessage = {
+      type: MESSAGE_TYPES.CLIENT_LIST_UPDATE,
+      timestamp: Date.now(),
+      clients,
+    } as any;
+
+    await this.broadcast(message);
+  }
+
+  // Notify client list change handler and broadcast
+  private notifyClientListChange(): void {
+    const clients = this.getRegisteredClients();
+    this.clientListChangeHandler?.(clients);
+    this.broadcastClientList().catch(console.error);
+  }
+
   // Setup server event handlers
   private setupEventHandlers(): void {
     this.server.onConnection((clientId, connected) => {
@@ -197,6 +318,7 @@ export class ConnectionManager {
         console.log(`Client metrics initialized: ${clientId}`);
       } else {
         this.clientMetrics.delete(clientId);
+        this.unregisterClient(clientId);
         console.log(`Client metrics cleaned up: ${clientId}`);
       }
     });

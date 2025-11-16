@@ -1,4 +1,4 @@
-import type { MotionDataMessage, DeviceStatusMessage, BatteryUpdateMessage, ErrorMessage, SyncStartedMessage, SyncProgressMessage, SyncCompleteMessage, DeviceVibratingMessage } from './messages';
+import type { MotionDataMessage, DeviceStatusMessage, BatteryUpdateMessage, ErrorMessage, SyncStartedMessage, SyncProgressMessage, SyncCompleteMessage, DeviceVibratingMessage, ClientListUpdateMessage } from './messages';
 
 // Event types
 export const EVENT_TYPES = {
@@ -13,6 +13,7 @@ export const EVENT_TYPES = {
   SYNC_PROGRESS: 'syncProgress',
   SYNC_COMPLETE: 'syncComplete',
   DEVICE_VIBRATING: 'deviceVibrating',
+  CLIENT_LIST_UPDATE: 'clientList',
   MESSAGE: 'message',
 } as const;
 
@@ -31,6 +32,7 @@ export interface EventPayloadMap {
   [EVENT_TYPES.SYNC_PROGRESS]: SyncProgressMessage;
   [EVENT_TYPES.SYNC_COMPLETE]: SyncCompleteMessage;
   [EVENT_TYPES.DEVICE_VIBRATING]: DeviceVibratingMessage;
+  [EVENT_TYPES.CLIENT_LIST_UPDATE]: ClientListUpdateMessage;
   [EVENT_TYPES.MESSAGE]: ErrorMessage;
 }
 

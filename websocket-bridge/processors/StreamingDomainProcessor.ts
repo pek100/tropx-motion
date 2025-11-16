@@ -49,9 +49,15 @@ export class StreamingDomainProcessor implements DomainProcessor {
   private lastOverloadNotification = 0;
   private overloadNotifier: OverloadNotifier | null = null;
   private isProcessing = false;
+  private broadcastFunction: ((message: BaseMessage) => Promise<void>) | null = null;
 
   constructor() {
     this.startThroughputMonitoring();
+  }
+
+  // Set broadcast function to forward messages to all clients
+  setBroadcastFunction(fn: (message: BaseMessage) => Promise<void>): void {
+    this.broadcastFunction = fn;
   }
 
   getDomain(): MessageDomain {
@@ -147,21 +153,43 @@ export class StreamingDomainProcessor implements DomainProcessor {
 
   // Handle motion data streaming
   private async handleMotionData(message: BaseMessage, clientId: string): Promise<void> {
-    // Forward to connected clients (broadcast)
-    // This would typically forward to a broadcast service
-    console.log(`📊 Motion data processed for client ${clientId}`);
+    // Broadcast motion data to all connected clients
+    if (this.broadcastFunction) {
+      try {
+        await this.broadcastFunction(message);
+        console.log(`📊 Motion data broadcast to all clients`);
+      } catch (error) {
+        console.error('Failed to broadcast motion data:', error);
+      }
+    } else {
+      console.warn('⚠️ No broadcast function set for StreamingDomainProcessor');
+    }
   }
 
   // Handle device status updates
   private async handleDeviceStatus(message: BaseMessage, clientId: string): Promise<void> {
-    // Update device status and broadcast
-    console.log(`📱 Device status updated for client ${clientId}`);
+    // Broadcast device status to all connected clients
+    if (this.broadcastFunction) {
+      try {
+        await this.broadcastFunction(message);
+        console.log(`📱 Device status broadcast to all clients`);
+      } catch (error) {
+        console.error('Failed to broadcast device status:', error);
+      }
+    }
   }
 
   // Handle battery updates
   private async handleBatteryUpdate(message: BaseMessage, clientId: string): Promise<void> {
-    // Update battery information and broadcast
-    console.log(`🔋 Battery update processed for client ${clientId}`);
+    // Broadcast battery update to all connected clients
+    if (this.broadcastFunction) {
+      try {
+        await this.broadcastFunction(message);
+        console.log(`🔋 Battery update broadcast to all clients`);
+      } catch (error) {
+        console.error('Failed to broadcast battery update:', error);
+      }
+    }
   }
 
   // Check if system is overloaded

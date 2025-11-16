@@ -41,9 +41,17 @@ export const MESSAGE_TYPES = {
   SYNC_COMPLETE: 0x35,
   DEVICE_VIBRATING: 0x36,  // Locate mode: array of device IDs currently being shaken
 
+  // Client metadata protocol
+  CLIENT_REGISTER: 0x40,
+  CLIENT_METADATA_UPDATE: 0x41,
+  CLIENT_ACTION_REGISTER: 0x42,
+  CLIENT_ACTION_TRIGGER: 0x43,
+  CLIENT_ACTION_RESULT: 0x44,
+  CLIENT_LIST_UPDATE: 0x45,
+
   // Device state query (for persistence/reconnect)
-  GET_DEVICES_STATE_REQUEST: 0x42,
-  GET_DEVICES_STATE_RESPONSE: 0x43,
+  GET_DEVICES_STATE_REQUEST: 0x50,
+  GET_DEVICES_STATE_RESPONSE: 0x51,
 
   // Internal protocol
   ACK: 0xF0,

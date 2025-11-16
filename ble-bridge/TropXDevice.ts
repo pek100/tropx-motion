@@ -146,9 +146,10 @@ export class TropXDevice {
       // so UI gets complete device info including battery
 
       // Simple delay like Python approach
-      bleLogger.debug(`Waiting 1s for device stability: ${deviceName}`, {}, 'CONNECTION');
+      // Optimized: Reduced from 1000ms to 200ms for faster connections
+      bleLogger.debug(`Waiting 200ms for device stability: ${deviceName}`, {}, 'CONNECTION');
       console.log('⏳ Brief delay for device stability...');
-      await this.delay(1000);
+      await this.delay(200);
 
       // Simplified service discovery (like Python Bleak approach)
       bleLogger.info(`Starting service discovery for ${deviceName}`, {}, 'CONNECTION');

@@ -1,0 +1,184 @@
+/* Launch Button */
+.client-launcher-button {
+  background: rgba(255, 77, 53, 0.15);
+  border: none;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.2s ease;
+}
+
+.client-launcher-button:hover {
+  background: rgba(255, 77, 53, 0.25);
+  transform: scale(1.05);
+}
+
+.client-launcher-button:active {
+  transform: scale(0.95);
+}
+
+/* Modal */
+.client-launcher-modal {
+  max-width: 95vw !important;
+  width: 95vw !important;
+  height: 90vh !important;
+  padding: 0 !important;
+  border-radius: 24px !important;
+  overflow: hidden !important;
+}
+
+.client-launcher-content {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.client-launcher-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  flex: 1;
+}
+
+/* Modal Dynamic Island */
+.client-modal-island-container {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  pointer-events: none;
+}
+
+.client-modal-island {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15),
+              0 2px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 24px;
+  padding: 12px 16px;
+  pointer-events: auto;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.client-modal-island-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-island-btn {
+  background: rgba(0, 0, 0, 0.05);
+  border: none;
+  border-radius: 12px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: #000;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.modal-island-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.modal-island-btn:active {
+  transform: translateY(0);
+}
+
+.modal-island-btn-danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+.modal-island-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.modal-island-divider {
+  width: 1px;
+  height: 24px;
+  background: rgba(0, 0, 0, 0.1);
+  margin: 0 4px;
+}
+
+/* Snapped Island (for when client is snapped to a pane) */
+.client-snapped-island-container {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  pointer-events: none;
+}
+
+.client-snapped-island {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12),
+              0 2px 6px rgba(0, 0, 0, 0.08);
+  border-radius: 20px;
+  padding: 10px 14px;
+  pointer-events: auto;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.client-snapped-island-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.snapped-island-btn {
+  background: rgba(0, 0, 0, 0.05);
+  border: none;
+  border-radius: 10px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: #000;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.snapped-island-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.snapped-island-btn:active {
+  transform: translateY(0);
+}
+
+.snapped-island-btn-danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+.snapped-island-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* Client iframe for snapped panes */
+.client-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}

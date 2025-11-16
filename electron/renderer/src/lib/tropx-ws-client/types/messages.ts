@@ -30,8 +30,14 @@ export const MESSAGE_TYPES = {
   SYNC_PROGRESS: 0x34,
   SYNC_COMPLETE: 0x35,
   DEVICE_VIBRATING: 0x36,
-  GET_DEVICES_STATE_REQUEST: 0x42,
-  GET_DEVICES_STATE_RESPONSE: 0x43,
+  CLIENT_REGISTER: 0x40,
+  CLIENT_METADATA_UPDATE: 0x41,
+  CLIENT_ACTION_REGISTER: 0x42,
+  CLIENT_ACTION_TRIGGER: 0x43,
+  CLIENT_ACTION_RESULT: 0x44,
+  CLIENT_LIST_UPDATE: 0x45,
+  GET_DEVICES_STATE_REQUEST: 0x50,
+  GET_DEVICES_STATE_RESPONSE: 0x51,
   ACK: 0xF0,
   PING: 0xF1,
   PONG: 0xF2,
@@ -153,4 +159,27 @@ export interface ErrorMessage extends BaseMessage {
   code: ErrorCode;
   message: string;
   details?: any;
+}
+
+// Client action definition
+export interface ClientAction {
+  id: string;
+  label: string;
+  icon?: string;
+  category?: string;
+}
+
+// Client metadata
+export interface ClientMetadata {
+  clientId: string;
+  name: string;
+  type: 'main' | 'recording' | 'monitor' | 'custom';
+  capabilities?: string[];
+  actions?: ClientAction[];
+}
+
+// Client list update message
+export interface ClientListUpdateMessage extends BaseMessage {
+  type: typeof MESSAGE_TYPES.CLIENT_LIST_UPDATE;
+  clients: ClientMetadata[];
 }

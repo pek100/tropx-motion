@@ -18,6 +18,16 @@ export const MESSAGE_TYPES = {
   MOTION_DATA: 0x30,
   DEVICE_STATUS: 0x31,
   BATTERY_UPDATE: 0x32,
+  SYNC_STARTED: 0x33,
+  SYNC_PROGRESS: 0x34,
+  SYNC_COMPLETE: 0x35,
+  DEVICE_VIBRATING: 0x36,
+  CLIENT_REGISTER: 0x40,
+  CLIENT_METADATA_UPDATE: 0x41,
+  CLIENT_ACTION_REGISTER: 0x42,
+  CLIENT_ACTION_TRIGGER: 0x43,
+  CLIENT_ACTION_RESULT: 0x44,
+  CLIENT_LIST_UPDATE: 0x45,
   ACK: 0xF0,
   PING: 0xF1,
   PONG: 0xF2,
@@ -87,4 +97,63 @@ export interface ErrorMessage extends BaseMessage {
   code: ErrorCode;
   message: string;
   details?: any;
+}
+
+// Client metadata protocol
+export interface ClientAction {
+  id: string;
+  label: string;
+  icon?: string;
+  category?: string;
+}
+
+export interface ClientMetadata {
+  clientId: string;
+  name: string;
+  type: 'main' | 'recording' | 'monitor' | 'custom';
+  capabilities?: string[];
+  actions?: ClientAction[];
+}
+
+// Client register message
+export interface ClientRegisterMessage extends BaseMessage {
+  type: typeof MESSAGE_TYPES.CLIENT_REGISTER;
+  metadata: ClientMetadata;
+}
+
+// Client metadata update message
+export interface ClientMetadataUpdateMessage extends BaseMessage {
+  type: typeof MESSAGE_TYPES.CLIENT_METADATA_UPDATE;
+  metadata: Partial<ClientMetadata>;
+}
+
+// Client action register message
+export interface ClientActionRegisterMessage extends BaseMessage {
+  type: typeof MESSAGE_TYPES.CLIENT_ACTION_REGISTER;
+  clientId: string;
+  action: ClientAction;
+}
+
+// Client action trigger message
+export interface ClientActionTriggerMessage extends BaseMessage {
+  type: typeof MESSAGE_TYPES.CLIENT_ACTION_TRIGGER;
+  clientId: string;
+  actionId: string;
+  params?: any;
+}
+
+// Client action result message
+export interface ClientActionResultMessage extends BaseMessage {
+  type: typeof MESSAGE_TYPES.CLIENT_ACTION_RESULT;
+  clientId: string;
+  actionId: string;
+  success: boolean;
+  result?: any;
+  error?: string;
+}
+
+// Client list update message
+export interface ClientListUpdateMessage extends BaseMessage {
+  type: typeof MESSAGE_TYPES.CLIENT_LIST_UPDATE;
+  clients: ClientMetadata[];
 }

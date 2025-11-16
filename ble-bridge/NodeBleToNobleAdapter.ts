@@ -24,18 +24,40 @@ export class NodeBleToNobleAdapter extends EventEmitter {
     this.advertisement = {
       localName: deviceInfo.name
     };
+
+    // Device is already physically connected, but GATT server not ready yet
+    // Keep state as 'disconnected' until connect() gets GATT server
+    this.state = 'disconnected';
+
+    // CRITICAL: Set up disconnect handler for node-ble
+    // TropXDevice registers a 'disconnect' handler in connect() (line 88-90)
+    // We need to forward node-ble's disconnect events to match Noble's behavior
+    this.setupDisconnectHandler();
+  }
+
+  // Set up disconnect event forwarding from node-ble to Noble-style events
+  private setupDisconnectHandler(): void {
+    // Note: node-ble devices don't have built-in disconnect events
+    // We need to monitor the connection status or handle it at the service level
+    // For now, we'll emit disconnect when disconnectAsync() is called
+    console.log(`🔌 [NodeBleAdapter] Disconnect handler setup for ${this.advertisement.localName}`);
   }
 
   // Noble-compatible connect method (callback-based)
+  // Device is already connected at BLE level, just get GATT server
   connect(callback: (error?: Error) => void): void {
-    this.nodeBleDevice.connect()
-      .then(async () => {
+    console.log(`🔗 [NodeBleAdapter] Getting GATT server for ${this.advertisement.localName}...`);
+
+    // Device already connected at node-ble level, just get GATT server
+    this.nodeBleDevice.gatt()
+      .then((gattServer: any) => {
+        this.gattServer = gattServer;
         this.state = 'connected';
-        // Get GATT server for later use
-        this.gattServer = await this.nodeBleDevice.gatt();
+        console.log(`✅ [NodeBleAdapter] GATT server ready for ${this.advertisement.localName}`);
         callback();
       })
       .catch((error: Error) => {
+        console.error(`❌ [NodeBleAdapter] Failed to get GATT server for ${this.advertisement.localName}:`, error);
         callback(error);
       });
   }
@@ -47,24 +69,32 @@ export class NodeBleToNobleAdapter extends EventEmitter {
       return;
     }
 
+    console.log(`🔍 [NodeBleAdapter] Discovering services for ${this.advertisement.localName}...`);
+
     this.gattServer.services()
-      .then(async (serviceUUIDs: string[]) => {
+      .then(async (discoveredServiceUUIDs: string[]) => {
+        console.log(`🔍 [NodeBleAdapter] Found ${discoveredServiceUUIDs.length} service UUIDs:`, discoveredServiceUUIDs);
         const services = [];
 
-        for (const uuid of serviceUUIDs) {
+        for (const uuid of discoveredServiceUUIDs) {
           try {
+            console.log(`🔍 [NodeBleAdapter] Getting service: ${uuid}`);
             const service = await this.gattServer.getPrimaryService(uuid);
             const serviceWrapper = new NodeBleServiceAdapter(service, uuid);
             this.services.set(uuid, serviceWrapper);
             services.push(serviceWrapper);
+            console.log(`✅ [NodeBleAdapter] Service ${uuid} wrapped successfully`);
           } catch (e) {
             // Service not available, skip
+            console.warn(`⚠️ [NodeBleAdapter] Failed to get service ${uuid}:`, e);
           }
         }
 
+        console.log(`✅ [NodeBleAdapter] Service discovery complete: ${services.length} services`);
         callback(null, services);
       })
       .catch((error: Error) => {
+        console.error(`❌ [NodeBleAdapter] Service discovery failed:`, error);
         callback(error, []);
       });
   }
@@ -97,7 +127,8 @@ class NodeBleServiceAdapter extends EventEmitter {
   constructor(nodeBleService: any, uuid: string) {
     super();
     this.nodeBleService = nodeBleService;
-    this.uuid = uuid;
+    // Normalize UUID to match Noble format (remove dashes)
+    this.uuid = uuid.replace(/-/g, '');
   }
 
   // Set max listeners to avoid warnings
@@ -114,8 +145,12 @@ class NodeBleServiceAdapter extends EventEmitter {
         for (const uuid of charUUIDs) {
           try {
             const char = await this.nodeBleService.getCharacteristic(uuid);
-            const charWrapper = new NodeBleCharacteristicAdapter(char, uuid);
-            this.characteristics.set(uuid, charWrapper);
+            // Normalize UUID to match Noble format (remove dashes)
+            // node-ble returns: d5913036-2d8a-41ee-85b9-4e361aa5c8a7
+            // Noble returns:    d59130362d8a41ee85b94e361aa5c8a7
+            const normalizedUuid = uuid.replace(/-/g, '');
+            const charWrapper = new NodeBleCharacteristicAdapter(char, normalizedUuid);
+            this.characteristics.set(normalizedUuid, charWrapper);
             characteristics.push(charWrapper);
           } catch (e) {
             // Characteristic not available, skip
@@ -202,15 +237,28 @@ class NodeBleCharacteristicAdapter extends EventEmitter {
 
   // Noble-compatible subscribe
   subscribe(callback: (error?: Error) => void): void {
+    console.log(`🔔 [NodeBleCharAdapter] Starting notifications for ${this.uuid}`);
+
     this.nodeBleChar.startNotifications()
       .then(() => {
-        // Listen for value changes and emit as 'data' event (Noble style)
+        console.log(`✅ [NodeBleCharAdapter] Notifications started for ${this.uuid}`);
+
+        // CRITICAL: Listen for value changes and emit as 'data' event (Noble style)
+        // Remove any existing listeners first to prevent duplicates
+        this.nodeBleChar.removeAllListeners('valuechanged');
+
         this.nodeBleChar.on('valuechanged', (buffer: Buffer) => {
+          console.log(`📨 [NodeBleCharAdapter] Value changed for ${this.uuid}, emitting 'data' event`);
           this.emit('data', buffer);
         });
+
+        console.log(`🎧 [NodeBleCharAdapter] Event listener attached for ${this.uuid}`);
         callback();
       })
-      .catch((error: Error) => callback(error));
+      .catch((error: Error) => {
+        console.error(`❌ [NodeBleCharAdapter] Failed to start notifications for ${this.uuid}:`, error);
+        callback(error);
+      });
   }
 
   // Noble-compatible async subscribe
@@ -225,8 +273,18 @@ class NodeBleCharacteristicAdapter extends EventEmitter {
 
   // Noble-compatible unsubscribe
   async unsubscribeAsync(): Promise<void> {
-    await this.nodeBleChar.stopNotifications();
+    console.log(`🔕 [NodeBleCharAdapter] Stopping notifications for ${this.uuid}`);
+    try {
+      await this.nodeBleChar.stopNotifications();
+      console.log(`✅ [NodeBleCharAdapter] Notifications stopped for ${this.uuid}`);
+    } catch (error) {
+      console.warn(`⚠️ [NodeBleCharAdapter] Error stopping notifications for ${this.uuid}:`, error);
+    }
+
+    // Clean up event listeners
     this.nodeBleChar.removeAllListeners('valuechanged');
+    this.removeAllListeners('data');
+    console.log(`🧹 [NodeBleCharAdapter] Event listeners cleaned up for ${this.uuid}`);
   }
 
   // Noble event forwarding

@@ -24,6 +24,7 @@ import { TropXDevice } from './TropXDevice';
 import { deviceStateManager, GlobalStreamingState } from './DeviceStateManager';
 import { bleLogger } from './BleLogger';
 import { NodeBleToNobleAdapter } from './NodeBleToNobleAdapter';
+import { ConnectionQueue } from './ConnectionQueue';
 
 // node-ble imports
 const { createBluetooth } = require('node-ble');
@@ -35,6 +36,7 @@ export class NodeBleService {
   private devices = new Map<string, TropXDevice>();
   private discoveredDevices = new Map<string, any>(); // node-ble Device objects
   private isScanning = false;
+  private isStartingScanning = false; // Tracks if startScanning() is in progress
   private isInitialized = false;
   private scanTimer: NodeJS.Timeout | null = null;
   private isCleaningUp = false;
@@ -43,6 +45,10 @@ export class NodeBleService {
   private isConnecting = false;
   // Per-device connection lock - prevents duplicate connection attempts
   private connectingDevices = new Set<string>();
+
+  // CRITICAL: Connection queue for Linux/node-ble
+  // Ensures sequential connections with state-based progression
+  private connectionQueue: ConnectionQueue;
 
   // Burst scanning support (kept for compatibility)
   private burstEnabled: boolean = BLE_CONFIG.SCAN_BURST_ENABLED;
@@ -71,6 +77,19 @@ export class NodeBleService {
   ) {
     this.motionDataCallback = motionCallback || null;
     this.deviceEventCallback = eventCallback || null;
+
+    // Initialize connection queue
+    this.connectionQueue = new ConnectionQueue();
+    // Set up the connection handler - this does the actual connection work
+    this.connectionQueue.setConnectionHandler(async (deviceId: string) => {
+      const result = await this.connectSingleDeviceInternal(deviceId);
+      // Ensure message is always defined
+      return {
+        success: result.success,
+        deviceId: result.deviceId,
+        message: result.message || (result.success ? 'Connected successfully' : 'Connection failed')
+      };
+    });
   }
 
   // Initialize node-ble
@@ -97,6 +116,10 @@ export class NodeBleService {
       deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
       console.log('🧹 Cleared stale device states from previous session');
 
+      // CRITICAL: Disconnect any zombie devices left from previous session
+      // This handles the case where app was closed while devices were still connected
+      await this.cleanupZombieDevices();
+
       this.isInitialized = true;
       console.log('✅ node-ble service initialized successfully');
       return true;
@@ -107,22 +130,142 @@ export class NodeBleService {
     }
   }
 
+  // Clean up zombie devices (devices still connected from previous session)
+  // ENHANCED: Force disconnect ALL TropX devices regardless of connection state
+  private async cleanupZombieDevices(): Promise<void> {
+    try {
+      console.log('🔍 Performing aggressive zombie device cleanup (all TropX devices)...');
+
+      // Get all known device addresses from BlueZ
+      const deviceAddresses = await this.adapter.devices();
+
+      if (deviceAddresses.length === 0) {
+        console.log('✅ No devices in BlueZ - clean state');
+        return;
+      }
+
+      console.log(`🔍 Found ${deviceAddresses.length} device(s) in BlueZ, checking for TropX devices...`);
+
+      let tropxDeviceCount = 0;
+      let disconnectedCount = 0;
+      let errorCount = 0;
+
+      // Force disconnect ALL TropX devices, regardless of reported state
+      // This handles cases where BlueZ has stale GATT connections not reported by isConnected()
+      for (const address of deviceAddresses) {
+        try {
+          const device = await this.adapter.getDevice(address);
+
+          // Get device name for filtering
+          let deviceName = address;
+          try {
+            deviceName = await device.getName();
+          } catch (e) {
+            // Try alias as fallback
+            try {
+              deviceName = await device.getAlias();
+            } catch (e2) {
+              // Name not available, use address
+            }
+          }
+
+          // Check if it's a TropX device
+          const nameLower = deviceName.toLowerCase();
+          const isTropXDevice = BLE_CONFIG.DEVICE_PATTERNS.some(pattern =>
+            nameLower.includes(pattern.toLowerCase())
+          );
+
+          if (!isTropXDevice) {
+            continue; // Skip non-TropX devices
+          }
+
+          tropxDeviceCount++;
+
+          // Get detailed state information for debugging
+          let isConnected = false;
+          let isPaired = false;
+          let isTrusted = false;
+
+          try {
+            isConnected = await device.isConnected();
+          } catch (e) {}
+
+          try {
+            isPaired = await device.isPaired();
+          } catch (e) {}
+
+          try {
+            isTrusted = await device.isTrusted();
+          } catch (e) {}
+
+          console.log(`🔍 TropX device: ${deviceName} (${address}) | Connected: ${isConnected}, Paired: ${isPaired}, Trusted: ${isTrusted}`);
+
+          // CRITICAL: Force disconnect regardless of state
+          // BlueZ can have stale GATT connections even when isConnected() returns false
+          try {
+            console.log(`🧹 Force disconnecting: ${deviceName}...`);
+            await device.disconnect();
+            disconnectedCount++;
+            console.log(`✅ Disconnected: ${deviceName}`);
+          } catch (disconnectError: any) {
+            // "Not Connected" error is actually success - device was already disconnected
+            if (disconnectError.type === 'org.bluez.Error.NotConnected' ||
+                disconnectError.text?.includes('Not Connected')) {
+              console.log(`✅ ${deviceName} already disconnected`);
+              disconnectedCount++;
+            } else {
+              errorCount++;
+              console.warn(`⚠️ Failed to disconnect ${deviceName}:`, disconnectError.type || disconnectError.message);
+            }
+          }
+
+        } catch (deviceError) {
+          // Ignore errors for individual devices (may be inaccessible)
+          console.warn(`⚠️ Error processing device ${address}:`, deviceError);
+          errorCount++;
+        }
+      }
+
+      if (tropxDeviceCount > 0) {
+        console.log(`🧹 Zombie cleanup complete: ${disconnectedCount}/${tropxDeviceCount} TropX devices cleaned (${errorCount} errors)`);
+      } else {
+        console.log('✅ No TropX devices found in BlueZ - clean state');
+      }
+
+    } catch (error) {
+      console.error('❌ Error during zombie device cleanup:', error);
+      // Don't throw - initialization should continue even if cleanup fails
+    }
+  }
+
   // Start scanning for TropX devices
   async startScanning(): Promise<BleScanResult> {
     console.log('🔍 NodeBleService.startScanning called');
 
+    // CRITICAL: Prevent duplicate concurrent startScanning calls
+    // Check and set this flag FIRST before any other logic
+    if (this.isStartingScanning) {
+      console.log('⏸️ Scan already starting - rejecting duplicate call');
+      return { success: false, devices: [], message: 'Scan already starting' };
+    }
+    this.isStartingScanning = true; // Set lock immediately
+
+    // Now check other conditions
     if (!this.isInitialized || !this.adapter) {
       console.log('❌ Service not initialized');
+      this.isStartingScanning = false; // Release lock
       return { success: false, devices: [], message: 'BLE service not initialized' };
     }
 
     // CRITICAL: Prevent scanning while connecting devices
     if (this.isConnecting) {
       console.log('⏸️ Cannot start scan - device connection in progress');
+      this.isStartingScanning = false; // Release lock
       return { success: false, devices: [], message: 'Connection in progress - scanning disabled' };
     }
 
     if (this.isScanning) {
+      this.isStartingScanning = false; // Release lock
       return { success: false, devices: [], message: 'Already scanning' };
     }
 
@@ -130,11 +273,26 @@ export class NodeBleService {
       console.log(`📡 Starting BLE scan for devices (${BLE_CONFIG.DEVICE_PATTERNS.join(', ')})...`);
       this.isScanning = true;
 
-      // Start discovery if not already discovering
-      const isDiscovering = await this.adapter.isDiscovering();
-      if (!isDiscovering) {
-        await this.adapter.startDiscovery();
+      // ALWAYS try to stop any existing discovery first (unconditionally)
+      // This handles race conditions and stale states more reliably
+      console.log('🔄 Stopping any existing discovery session...');
+      try {
+        await this.adapter.stopDiscovery();
+        console.log('✅ Stopped existing discovery');
+        await new Promise(resolve => setTimeout(resolve, 500)); // Wait for cleanup
+      } catch (stopError: any) {
+        // Ignore "Not Authorized" or "Does Not Exist" errors (means no discovery running)
+        if (stopError.type === 'org.bluez.Error.DoesNotExist' ||
+            stopError.text?.includes('Does Not Exist')) {
+          console.log('ℹ️ No existing discovery to stop');
+        } else {
+          console.warn('⚠️ Error stopping existing discovery:', stopError.type || stopError.message);
+        }
       }
+
+      // Start fresh discovery
+      console.log('🚀 Starting fresh discovery session...');
+      await this.adapter.startDiscovery();
 
       // Poll for new devices during scan
       this.pollForDevices();
@@ -156,6 +314,9 @@ export class NodeBleService {
       console.error('❌ Failed to start scanning:', error);
       this.isScanning = false;
       return { success: false, devices: [], message: `Scan failed: ${error}` };
+    } finally {
+      // Always release the starting lock
+      this.isStartingScanning = false;
     }
   }
 
@@ -172,7 +333,21 @@ export class NodeBleService {
 
         try {
           const device = await this.adapter.getDevice(address);
-          const name = await device.getName();
+
+          // Try to get device name - use Alias as fallback (includes address if no name)
+          let name: string;
+          try {
+            name = await device.getName();
+          } catch (nameError: any) {
+            // Name property not available during discovery - try Alias
+            try {
+              name = await device.getAlias();
+            } catch (aliasError) {
+              // No name available - skip this device
+              console.log(`⚠️ Skipping device ${address} - no name available`);
+              continue;
+            }
+          }
 
           // Check if this is a TropX device
           const nameLower = name.toLowerCase();
@@ -180,7 +355,10 @@ export class NodeBleService {
             nameLower.includes(pattern.toLowerCase())
           );
 
-          if (!isTargetDevice) continue;
+          if (!isTargetDevice) {
+            console.log(`⏭️ Skipping device: ${name} (${address}) - not a target device`);
+            continue;
+          }
 
           // Get RSSI
           let rssi = -100;
@@ -277,20 +455,40 @@ export class NodeBleService {
     return deviceStateManager.getAllDevices();
   }
 
-  // Connect to single device
+  // Connect to single device (uses queue system)
   async connectToDevice(deviceId: string): Promise<BleConnectionResult> {
-    const results = await this.connectToDevices([deviceId]);
-    return results[0] || {
-      success: false,
-      deviceId,
-      message: 'Connection failed - no result returned'
-    };
+    console.log(`🔗 connectToDevice called for ${deviceId} - adding to queue`);
+
+    // Use the connection queue to ensure sequential connections
+    return await this.connectionQueue.enqueue(deviceId);
   }
 
-  // Connect to multiple devices sequentially
+  // Connect to multiple devices (uses queue system)
   async connectToDevices(deviceIds: string[]): Promise<BleConnectionResult[]> {
+    console.log(`🔗 connectToDevices called for ${deviceIds.length} device(s) - adding all to queue`);
+
+    // Add all devices to the queue - they will be processed sequentially
+    const promises = deviceIds.map(deviceId => this.connectionQueue.enqueue(deviceId));
+
+    // Wait for all to complete
+    return await Promise.all(promises);
+  }
+
+  // OLD IMPLEMENTATION - kept as reference but not used anymore
+  // The queue system handles all of this logic now
+  private async connectToDevicesOld(deviceIds: string[]): Promise<BleConnectionResult[]> {
     if (deviceIds.length === 0) {
       return [];
+    }
+
+    // CRITICAL: Reject concurrent connection attempts BEFORE entering
+    if (this.isConnecting) {
+      console.log('⏸️ Connection already in progress - rejecting duplicate request');
+      return deviceIds.map(deviceId => ({
+        success: false,
+        deviceId,
+        message: 'Connection already in progress'
+      }));
     }
 
     try {
@@ -310,8 +508,23 @@ export class NodeBleService {
         this.nextBurstTimer = null;
       }
 
-      // Give adapter time to stabilize
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // CRITICAL: Ensure discovery is completely stopped
+      // BlueZ can have race conditions if connection attempts happen too soon after scanning
+      console.log('🔄 Ensuring discovery is fully stopped...');
+      try {
+        await this.adapter.stopDiscovery();
+        console.log('✅ Discovery explicitly stopped');
+      } catch (stopError: any) {
+        // Ignore "Does Not Exist" error (means discovery already stopped)
+        if (stopError.type !== 'org.bluez.Error.DoesNotExist') {
+          console.warn('⚠️ Error stopping discovery:', stopError.type || stopError.message);
+        }
+      }
+
+      // Give BlueZ time to stabilize after scanning
+      console.log('⏳ Waiting 1s for BlueZ to stabilize after scanning...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      console.log('✅ BlueZ stabilized, ready to connect');
 
       // Update devices to connecting state
       deviceIds.forEach(deviceId => {
@@ -321,23 +534,43 @@ export class NodeBleService {
         }
       });
 
-      // Connect sequentially
-      console.log(`🔗 Connecting devices sequentially...`);
+      // CRITICAL: Connect devices SEQUENTIALLY, not in parallel
+      // BlueZ can only establish ONE connection at a time due to state machine limitations
+      // Attempting parallel connections causes "le-connection-abort-by-local" errors
+      // See: https://stackoverflow.com/questions/33484600/establishing-multiple-ble-connections-simultaneously-using-bluez
+      console.log(`🔗 Connecting ${deviceIds.length} device(s) SEQUENTIALLY...`);
+
       const results: BleConnectionResult[] = [];
 
-      for (const deviceId of deviceIds) {
-        const result = await this.connectSingleDevice(deviceId);
+      for (let i = 0; i < deviceIds.length; i++) {
+        const deviceId = deviceIds[i];
+        console.log(`🚀 [${i + 1}/${deviceIds.length}] Starting connection to ${deviceId}`);
+
+        const result = await this.connectSingleDeviceInternal(deviceId);
         results.push(result);
 
-        // Delay between connections
         if (result.success) {
-          console.log(`✅ Device connected, waiting 500ms before next connection...`);
-          await new Promise(resolve => setTimeout(resolve, 500));
+          console.log(`✅ [${i + 1}/${deviceIds.length}] Connected ${deviceId} successfully`);
+
+          // CRITICAL: Give BlueZ time to stabilize between connections
+          // This prevents state machine conflicts when connecting multiple devices
+          if (i < deviceIds.length - 1) {
+            console.log(`⏳ Waiting 500ms before next connection...`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        } else {
+          console.error(`❌ [${i + 1}/${deviceIds.length}] Failed to connect ${deviceId}: ${result.message}`);
+
+          // Add a small delay even on failure to let BlueZ recover
+          if (i < deviceIds.length - 1) {
+            console.log(`⏳ Waiting 500ms before retrying next device...`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
         }
       }
 
       const successCount = results.filter(r => r.success).length;
-      console.log(`✅ Connection completed: ${successCount}/${deviceIds.length} device(s) connected`);
+      console.log(`✅ Sequential connection completed: ${successCount}/${deviceIds.length} device(s) connected`);
 
       return results;
 
@@ -354,8 +587,8 @@ export class NodeBleService {
     }
   }
 
-  // Connect to single device (internal)
-  private async connectSingleDevice(deviceId: string): Promise<BleConnectionResult> {
+  // Connect to single device (internal - called by connection queue)
+  private async connectSingleDeviceInternal(deviceId: string): Promise<BleConnectionResult> {
     // CRITICAL: Reject duplicate connection attempts
     if (this.connectingDevices.has(deviceId)) {
       bleLogger.warn(`Connection already in progress for ${deviceId} - rejecting duplicate attempt`, {}, 'CONNECTION');
@@ -387,8 +620,84 @@ export class NodeBleService {
 
       const connectStartTime = Date.now();
 
-      // Connect using node-ble
-      await nodeBleDevice.connect();
+      // CRITICAL: Retry connection with exponential backoff
+      // The "le-connection-abort-by-local" error is often transient due to BlueZ timing
+      // Also handle stale device objects by re-fetching from BlueZ
+      // Optimized: Retry up to 3 times with faster delays (100ms, 400ms, 1000ms)
+      const MAX_RETRIES = 3;
+      let lastError: any = null;
+      let currentDevice = nodeBleDevice;
+
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+          if (attempt > 0) {
+            // Optimized: 100ms * 4^(attempt-1) = 100ms, 400ms, 1600ms (but cap at 1000ms)
+            const retryDelay = Math.min(100 * Math.pow(4, attempt - 1), 1000); // 100ms, 400ms, 1000ms
+            console.log(`🔄 [${deviceId}] Retry attempt ${attempt + 1}/${MAX_RETRIES} after ${retryDelay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+
+            // CRITICAL: Re-fetch device from BlueZ to handle stale device objects
+            // DBus errors like "Method 'Get' doesn't exist" indicate stale references
+            try {
+              console.log(`🔄 [${deviceId}] Re-fetching device from BlueZ...`);
+              currentDevice = await this.adapter.getDevice(deviceId);
+              this.discoveredDevices.set(deviceId, currentDevice);
+              console.log(`✅ [${deviceId}] Device re-fetched successfully`);
+            } catch (refetchError) {
+              console.warn(`⚠️ [${deviceId}] Could not re-fetch device:`, refetchError);
+              // Continue with existing device reference
+            }
+          }
+
+          // Connect using node-ble (low-level connection only)
+          await currentDevice.connect();
+
+          // Connection successful, break out of retry loop
+          console.log(`✅ [${deviceId}] Connection attempt ${attempt + 1} succeeded`);
+          lastError = null;
+          break;
+
+        } catch (connectError: any) {
+          lastError = connectError;
+          const errorMessage = String(connectError.message || connectError);
+          const errorType = connectError.type || '';
+          const fullError = errorType + ' ' + errorMessage;
+
+          console.error(`❌ [${deviceId}] Attempt ${attempt + 1}/${MAX_RETRIES} failed:`, fullError);
+
+          // Check if this is a retryable error
+          const isRetryable =
+            fullError.includes('le-connection-abort-by-local') ||
+            fullError.includes('le-connection-abort') ||
+            fullError.includes('DBus.Properties') ||
+            fullError.includes('Method') && fullError.includes('doesn\'t exist');
+
+          if (isRetryable) {
+            console.warn(`⚠️ [${deviceId}] Transient error detected - will retry`);
+
+            if (attempt < MAX_RETRIES - 1) {
+              continue; // Try again
+            } else {
+              console.error(`❌ [${deviceId}] All ${MAX_RETRIES} connection attempts exhausted`);
+              throw connectError; // Out of retries, throw the error
+            }
+          } else {
+            // Different error - don't retry, throw immediately
+            console.error(`❌ [${deviceId}] Non-retryable error - aborting`);
+            throw connectError;
+          }
+        }
+      }
+
+      // If we still have an error after all retries, throw it
+      if (lastError) {
+        throw lastError;
+      }
+
+      // Update the stored device reference if it was re-fetched
+      if (currentDevice !== nodeBleDevice) {
+        this.discoveredDevices.set(deviceId, currentDevice);
+      }
 
       const connectDuration = Date.now() - connectStartTime;
 
@@ -396,7 +705,7 @@ export class NodeBleService {
         durationMs: connectDuration
       });
 
-      console.log(`✅ [${deviceId}] Connected successfully in ${connectDuration}ms`);
+      console.log(`✅ [${deviceId}] Low-level connection established in ${connectDuration}ms`);
 
       // Get device info
       const address = await nodeBleDevice.getAddress();
@@ -410,7 +719,7 @@ export class NodeBleService {
         name: deviceName,
         address: address,
         rssi: rssi,
-        state: 'connected' as DeviceConnectionState,
+        state: 'connecting' as DeviceConnectionState, // Still connecting until TropXDevice completes
         batteryLevel: null,
         lastSeen: new Date()
       };
@@ -426,8 +735,25 @@ export class NodeBleService {
         this.deviceEventCallback || undefined
       );
 
+      // CRITICAL: Call TropXDevice.connect() to discover services, characteristics, and read battery
+      // This matches Noble's behavior exactly
+      const connected = await tropxDevice.connect();
+
+      if (!connected) {
+        bleLogger.logConnectionError(deviceId, deviceName, 'TROPX_CONNECT_FAILED', new Error('TropXDevice connection failed'));
+        console.error(`❌ [${deviceId}] TropXDevice connection failed`);
+        deviceStateManager.setDeviceConnectionState(deviceId, 'error');
+        return {
+          success: false,
+          deviceId,
+          message: 'TropXDevice connection failed'
+        };
+      }
+
       this.devices.set(deviceId, tropxDevice);
       deviceStateManager.setDeviceConnectionState(deviceId, 'connected');
+
+      console.log(`✅ [${deviceId}] Full connection complete with battery reading`)
 
       // Auto-recovery: start streaming if global streaming is active
       const streamingRecovered = await this.recoverStreamingForDevice(deviceId);
@@ -544,7 +870,6 @@ export class NodeBleService {
     };
   }
 
-  // Stop global streaming
   async stopGlobalStreaming(): Promise<{ success: boolean; stopped: number; total: number }> {
     const streamingDevices = deviceStateManager.getStreamingDevices();
 
@@ -575,6 +900,10 @@ export class NodeBleService {
       stopped: successCount,
       total: streamingDevices.length
     };
+  }
+
+  async stopStreamingAll(): Promise<void> {
+    await this.stopGlobalStreaming();
   }
 
   // Start streaming on device
@@ -733,6 +1062,9 @@ export class NodeBleService {
   async cleanup(): Promise<void> {
     console.log('🧹 Cleaning up node-ble service...');
     this.isCleaningUp = true;
+
+    // Clear connection queue
+    this.connectionQueue.clear();
 
     if (this.isScanning) {
       await this.stopScanning(true);

@@ -2,9 +2,10 @@ import { app, BrowserWindow, ipcMain, protocol } from 'electron';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
 import { MotionService } from './services/MotionService';
-import { BluetoothService } from './services/BluetoothService';
+// Web Bluetooth removed - we use node-ble/Noble directly
+// import { BluetoothService } from './services/BluetoothService';
 import { isDev } from './utils/environment';
-import { CONFIG, WINDOW_CONFIG, MESSAGE_TYPES, BLUETOOTH_CONFIG } from '../shared/config';
+import { CONFIG, WINDOW_CONFIG, MESSAGE_TYPES } from '../shared/config';
 import { RecordingSession, ApiResponse } from '../shared/types';
 import { SystemMonitor } from './services/SystemMonitor';
 import { PlatformDetector } from '../../shared/PlatformDetector';
@@ -13,55 +14,59 @@ import { getWindowDimensions } from './window-size-override';
 export class MainProcess {
   private mainWindow: BrowserWindow | null = null;
   private motionService: MotionService;
-  private bluetoothService: BluetoothService;
+  // Web Bluetooth is deprecated - we use node-ble/Noble directly
+  // private bluetoothService: BluetoothService;
   private systemMonitor: SystemMonitor; // monitor for memory/CPU
 
   constructor() {
     this.motionService = new MotionService();
-    this.bluetoothService = new BluetoothService();
+    // Web Bluetooth is deprecated - we use node-ble/Noble directly
+    // this.bluetoothService = new BluetoothService();
     this.systemMonitor = new SystemMonitor(() => this.mainWindow); // defer window resolution
 
     // Disable hardware acceleration to prevent GPU-related issues
     console.log('Disabling hardware acceleration for stability');
     app.disableHardwareAcceleration();
 
-    this.enableWebBluetoothFeatures();
+    // Web Bluetooth removed - conflicts with node-ble on Linux
+    // this.enableWebBluetoothFeatures();
     this.setupAppEvents();
     this.setupIpcHandlers();
   }
 
-  // Enable Web Bluetooth API features
-  private enableWebBluetoothFeatures(): void {
-    console.log('Enabling Web Bluetooth features...');
-
-    if (process.env.TROPX_SAFE_MODE === '1') {
-      console.log('TROPX_SAFE_MODE=1 -> Skipping all Chromium feature flags');
-      return;
-    }
-
-    const flags = [
-      'enable-experimental-web-platform-features',
-      'enable-web-bluetooth',
-      'enable-bluetooth-web-api',
-      'enable-features=WebBluetooth,WebBluetoothScanning',
-      'enable-blink-features=WebBluetooth,WebBluetoothScanning',
-      'disable-features=OutOfBlinkCors',
-      'enable-bluetooth-advertising',
-      'enable-bluetooth-device-discovery',
-      'disable-web-security',
-      'autoplay-policy=no-user-gesture-required'
-    ];
-
-    flags.forEach(flag => {
-      const parts = flag.split('=');
-      if (parts.length === 2) {
-        app.commandLine.appendSwitch(parts[0], parts[1]);
-      } else {
-        app.commandLine.appendSwitch(flag);
-      }
-    });
-    console.log('Web Bluetooth features enabled');
-  }
+  // Web Bluetooth API features - DEPRECATED
+  // Removed because it conflicts with node-ble on Linux
+  // private enableWebBluetoothFeatures(): void {
+  //   console.log('Enabling Web Bluetooth features...');
+  //
+  //   if (process.env.TROPX_SAFE_MODE === '1') {
+  //     console.log('TROPX_SAFE_MODE=1 -> Skipping all Chromium feature flags');
+  //     return;
+  //   }
+  //
+  //   const flags = [
+  //     'enable-experimental-web-platform-features',
+  //     'enable-web-bluetooth',
+  //     'enable-bluetooth-web-api',
+  //     'enable-features=WebBluetooth,WebBluetoothScanning',
+  //     'enable-blink-features=WebBluetooth,WebBluetoothScanning',
+  //     'disable-features=OutOfBlinkCors',
+  //     'enable-bluetooth-advertising',
+  //     'enable-bluetooth-device-discovery',
+  //     'disable-web-security',
+  //     'autoplay-policy=no-user-gesture-required'
+  //   ];
+  //
+  //   flags.forEach(flag => {
+  //     const parts = flag.split('=');
+  //     if (parts.length === 2) {
+  //       app.commandLine.appendSwitch(parts[0], parts[1]);
+  //     } else {
+  //       app.commandLine.appendSwitch(flag);
+  //     }
+  //   });
+  //   console.log('Web Bluetooth features enabled');
+  // }
 
   // Setup application lifecycle events
   private setupAppEvents(): void {
@@ -186,7 +191,8 @@ export class MainProcess {
         preload: preloadPath,
         webSecurity: false,
         experimentalFeatures: true,
-        enableBlinkFeatures: 'WebBluetooth,WebBluetoothScanning',
+        // Web Bluetooth removed - conflicts with node-ble on Linux
+        // enableBlinkFeatures: 'WebBluetooth,WebBluetoothScanning',
         allowRunningInsecureContent: true,
       },
       show: false,
@@ -279,8 +285,9 @@ export class MainProcess {
     });
 
     this.mainWindow.webContents.once('did-finish-load', () => {
-      console.log('Renderer finished load; initializing Bluetooth handlers');
-      this.setupBluetoothHandlers();
+      console.log('Renderer finished load');
+      // Web Bluetooth handlers removed - we use node-ble/Noble directly
+      // this.setupBluetoothHandlers();
     });
 
     this.mainWindow.on('closed', () => {
@@ -321,52 +328,53 @@ export class MainProcess {
     this.mainWindow?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fallbackHtml)}`);
   }
 
-  // Setup Bluetooth device selection handlers
-  private setupBluetoothHandlers(): void {
-    if (!this.mainWindow?.webContents) {
-      console.error('Cannot setup Bluetooth handlers - webContents is null');
-      return;
-    }
-
-    console.log('Setting up Web Bluetooth handlers...');
-    this.bluetoothService.initialize(this.mainWindow.webContents);
-
-    // Handle device discovery results
-    this.mainWindow.webContents.on('select-bluetooth-device', (event, deviceList, callback) => {
-      event.preventDefault();
-      console.log('Device discovery event:', deviceList.length, 'devices found');
-
-      const validDevices = deviceList.filter(device => {
-        const name = (device.deviceName || '').toLowerCase();
-        // Use single source of truth for device patterns
-        return BLUETOOTH_CONFIG.DEVICE_PATTERNS.some(pattern => name.includes(pattern.toLowerCase()));
-      });
-
-      if (validDevices.length === 0) {
-        this.motionService.broadcastMessage(MESSAGE_TYPES.DEVICE_SCAN_RESULT, {
-          devices: [],
-          success: false,
-          message: 'No valid devices found - ensure devices are in pairing mode',
-          scanComplete: true
-        });
-        return;
-      }
-
-      this.motionService.broadcastMessage(MESSAGE_TYPES.DEVICE_SCAN_RESULT, {
-        devices: validDevices.map(device => ({
-          id: device.deviceId,
-          name: device.deviceName || 'Unknown Device',
-          connected: false,
-          batteryLevel: null
-        })),
-        success: true,
-        message: `Found ${validDevices.length} device(s)`,
-        scanComplete: true
-      });
-    });
-
-    console.log('Bluetooth handlers setup complete');
-  }
+  // Web Bluetooth device selection handlers - DEPRECATED
+  // Removed because we use node-ble/Noble directly via UnifiedWebSocketBridge
+  // private setupBluetoothHandlers(): void {
+  //   if (!this.mainWindow?.webContents) {
+  //     console.error('Cannot setup Bluetooth handlers - webContents is null');
+  //     return;
+  //   }
+  //
+  //   console.log('Setting up Web Bluetooth handlers...');
+  //   this.bluetoothService.initialize(this.mainWindow.webContents);
+  //
+  //   // Handle device discovery results
+  //   this.mainWindow.webContents.on('select-bluetooth-device', (event, deviceList, callback) => {
+  //     event.preventDefault();
+  //     console.log('Device discovery event:', deviceList.length, 'devices found');
+  //
+  //     const validDevices = deviceList.filter(device => {
+  //       const name = (device.deviceName || '').toLowerCase();
+  //       // Use single source of truth for device patterns
+  //       return BLUETOOTH_CONFIG.DEVICE_PATTERNS.some(pattern => name.includes(pattern.toLowerCase()));
+  //     });
+  //
+  //     if (validDevices.length === 0) {
+  //       this.motionService.broadcastMessage(MESSAGE_TYPES.DEVICE_SCAN_RESULT, {
+  //         devices: [],
+  //         success: false,
+  //         message: 'No valid devices found - ensure devices are in pairing mode',
+  //         scanComplete: true
+  //       });
+  //       return;
+  //     }
+  //
+  //     this.motionService.broadcastMessage(MESSAGE_TYPES.DEVICE_SCAN_RESULT, {
+  //       devices: validDevices.map(device => ({
+  //         id: device.deviceId,
+  //         name: device.deviceName || 'Unknown Device',
+  //         connected: false,
+  //         batteryLevel: null
+  //       })),
+  //       success: true,
+  //       message: `Found ${validDevices.length} device(s)`,
+  //       scanComplete: true
+  //     });
+  //   });
+  //
+  //   console.log('Bluetooth handlers setup complete');
+  // }
 
   // Setup IPC handlers for renderer communication
   private setupIpcHandlers(): void {
@@ -482,7 +490,8 @@ export class MainProcess {
     console.log('Cleaning up resources...');
     try {
       this.motionService.cleanup();
-      this.bluetoothService.cleanup();
+      // Web Bluetooth removed - we use node-ble/Noble directly
+      // this.bluetoothService.cleanup();
       // stop monitor
       this.systemMonitor.stop();
     } catch (error) {

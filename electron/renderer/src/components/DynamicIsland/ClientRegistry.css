@@ -1,0 +1,287 @@
+.client-registry {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 300px;
+  max-width: 500px;
+  padding: 12px;
+}
+
+.client-registry-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.header-icon {
+  font-size: 16px;
+}
+
+.header-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: #000;
+}
+
+.client-registry-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 24px;
+  color: rgba(0, 0, 0, 0.5);
+}
+
+.empty-icon {
+  font-size: 24px;
+}
+
+.empty-text {
+  font-size: 12px;
+}
+
+.client-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 350px;
+  overflow-y: auto;
+}
+
+.client-card {
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 12px;
+  padding: 10px;
+  border-left: 3px solid;
+  transition: all 0.2s ease;
+}
+
+.client-card:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.client-card-compact {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.client-card-compact:hover {
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 8px;
+}
+
+.client-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.client-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.client-icon {
+  font-size: 20px;
+}
+
+.client-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.client-details-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.client-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #000;
+}
+
+.client-name-compact {
+  font-size: 13px;
+  font-weight: 600;
+  color: #000;
+}
+
+.client-type {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.client-type-compact {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.client-actions-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pin-button,
+.launch-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px;
+  opacity: 0.6;
+  transition: all 0.2s ease;
+}
+
+.pin-button:hover,
+.launch-button:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.status-indicator-compact {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.client-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.action-button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid;
+  border-radius: 8px;
+  color: #000;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.action-button:hover {
+  background: rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
+.action-button:active {
+  transform: translateY(0);
+}
+
+.action-icon {
+  font-size: 12px;
+}
+
+.action-label {
+  white-space: nowrap;
+}
+
+.client-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.client-modal {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  width: 90vw;
+  height: 85vh;
+  max-width: 1200px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.client-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.client-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #000;
+}
+
+.client-modal-icon {
+  font-size: 20px;
+}
+
+.client-modal-close {
+  background: rgba(0, 0, 0, 0.05);
+  border: none;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  color: #000;
+  transition: all 0.2s ease;
+}
+
+.client-modal-close:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.client-modal-content {
+  flex: 1;
+  overflow: hidden;
+}
+
+.client-modal-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}

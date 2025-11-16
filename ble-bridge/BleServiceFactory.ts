@@ -6,21 +6,73 @@
  */
 
 import os from 'os';
-import { MotionDataCallback, DeviceEventCallback } from './BleBridgeTypes';
+import {
+  MotionDataCallback,
+  DeviceEventCallback,
+  BleScanResult,
+  BleConnectionResult,
+  TropXDeviceInfo
+} from './BleBridgeTypes';
+import { TropXDevice } from './TropXDevice';
 
 export interface IBleService {
+  // Core lifecycle
   initialize(): Promise<boolean>;
-  startScanning(): Promise<any>;
-  stopScanning(suppressNext?: boolean): Promise<void>;
-  connectToDevice(deviceId: string): Promise<any>;
-  connectToDevices(deviceIds: string[]): Promise<any[]>;
-  disconnectDevice(deviceId: string): Promise<any>;
-  getDiscoveredDevices(): any[];
-  getConnectedDevices(): any[];
-  startGlobalStreaming(): Promise<any>;
-  stopGlobalStreaming(): Promise<any>;
   cleanup(): Promise<void>;
-  // ... other common methods
+
+  // Scanning
+  startScanning(): Promise<BleScanResult>;
+  stopScanning(suppressNext?: boolean): Promise<void>;
+  isScanningActive(): boolean;
+
+  // Device discovery & connection
+  getDiscoveredDevices(): TropXDeviceInfo[];
+  connectToDevice(deviceId: string): Promise<BleConnectionResult>;
+  connectToDevices(deviceIds: string[]): Promise<BleConnectionResult[]>;
+  disconnectDevice(deviceId: string): Promise<BleConnectionResult>;
+  removeDevice(deviceId: string): Promise<{ success: boolean; message?: string }>;
+
+  // Connected devices
+  getConnectedDevices(): TropXDeviceInfo[];
+  getDeviceInstance(deviceId: string): TropXDevice | null;
+
+  // Streaming
+  startGlobalStreaming(): Promise<{
+    success: boolean;
+    started: number;
+    total: number;
+    results: any[];
+    error?: string;
+  }>;
+  stopGlobalStreaming(): Promise<{
+    success: boolean;
+    stopped: number;
+    total: number;
+  }>;
+  stopStreamingAll(): Promise<void>;
+
+  // Battery & diagnostics
+  getAllBatteryLevels(): Promise<Map<string, number>>;
+  getDeviceState(deviceId: string): {
+    state: number;
+    stateName: string;
+    lastUpdate: number;
+  } | null;
+
+  // State polling
+  startStatePolling(): void;
+  stopStatePolling(): void;
+
+  // Auto-reconnect
+  scheduleReconnect(deviceId: string, deviceName: string): void;
+  cancelReconnect(deviceId: string): void;
+
+  // Burst scanning
+  enableBurstScanningFor(durationMs: number): void;
+  disableBurstScanning(): void;
+  setBurstScanningEnabled(enabled: boolean): void;
+  isBurstScanningEnabled: boolean;
+  isBluetoothReady: boolean;
 }
 
 /**
