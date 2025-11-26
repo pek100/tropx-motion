@@ -20,7 +20,9 @@
       "WebFetch(domain:forums.raspberrypi.com)",
       "Read(//boot/firmware/overlays/**)",
       "Bash(sudo cat:*)",
-      "Bash(xinput:*)"
+      "Bash(xinput:*)",
+      "Bash(curl:*)",
+      "Bash(npm run build:renderer:*)"
     ],
     "deny": [],
     "ask": [],

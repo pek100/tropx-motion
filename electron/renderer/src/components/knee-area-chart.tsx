@@ -6,6 +6,17 @@ import { ComposedChart, Area, XAxis, YAxis, CartesianGrid, ReferenceLine, Respon
 import { ChartContainer } from "@/components/ui/chart"
 import { Check } from "lucide-react"
 
+// Debug trace logging
+const DEBUG_TRACE = true;
+const trace = (component: string, msg: string, data?: any) => {
+  if (!DEBUG_TRACE) return;
+  if (data !== undefined) {
+    console.log(`[TRACE:${component}] ${msg}`, data);
+  } else {
+    console.log(`[TRACE:${component}] ${msg}`);
+  }
+};
+
 interface ChartDataPoint {
   time: number
   leftAngle: number
@@ -126,6 +137,7 @@ interface KneeAreaChartProps {
   recordingStartTime?: Date | null
   useSensorTimestamps?: boolean
   clearTrigger?: number // Added clearTrigger prop to reset chart data
+  modalOpen?: boolean // Track modal state to detect when chart might freeze
 }
 
 const KNEE_CONFIGS = [
@@ -167,6 +179,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   recordingStartTime,
   useSensorTimestamps = true,
   clearTrigger = 0, // Added clearTrigger prop
+  modalOpen = false, // Track modal state
 }) => {
   const [kneeVisibility, setKneeVisibility] = useState({
     left: true,
@@ -174,6 +187,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   })
 
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
+  const [chartKey, setChartKey] = useState(0) // Force remount when chart breaks
 
   const dataBufferRef = useRef<SimpleCircularBuffer<ChartDataPoint>>(
     new SimpleCircularBuffer<ChartDataPoint>(MAX_DATA_POINTS),
@@ -210,6 +224,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   const updateData = useCallback(() => {
     if (!leftKnee && !rightKnee) {
+      trace('CHART', 'updateData skipped - no knee data');
       return
     }
 
@@ -224,19 +239,25 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
       _updateId: updateCounterRef.current,
     }
 
+    trace('CHART', `updateData: left=${newDataPoint.leftAngle}, right=${newDataPoint.rightAngle}, ts=${timestamp}, updateId=${updateCounterRef.current}`);
+
     // Add to buffer immediately for data integrity
     dataBufferRef.current.push(newDataPoint)
+    trace('CHART', `Buffer push: bufferSize=${dataBufferRef.current.getSize()}`);
 
     // Schedule chart update using RAF to batch multiple updates per frame
     if (!pendingUpdateRef.current) {
       pendingUpdateRef.current = true
+      trace('CHART', 'Scheduling RAF');
       animationFrameRef.current = requestAnimationFrame(() => {
         pendingUpdateRef.current = false
+        trace('CHART', 'RAF executing');
         // Use latest timestamp from buffer for window calculation
         const latestPoint = dataBufferRef.current.toArray().slice(-1)[0]
         if (latestPoint) {
           const newChartData = dataBufferRef.current.getChartData(latestPoint.time)
           setChartData(newChartData)
+          trace('CHART', `Chart data updated: points=${newChartData.length}`);
         }
       })
     }
@@ -244,8 +265,11 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   useEffect(() => {
     if (!leftKnee && !rightKnee) {
+      trace('CHART', 'useEffect skipped - no knee data');
       return
     }
+
+    trace('CHART', `Props changed: left=${leftKnee?.current}, right=${rightKnee?.current}, leftTs=${leftKnee?.sensorTimestamp}, rightTs=${rightKnee?.sensorTimestamp}`);
 
     // Update data on every change - RAF batching inside updateData prevents stutter
     updateData()
@@ -260,11 +284,38 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   useEffect(() => {
     if (clearTrigger > 0) {
+      trace('CHART', `Clear trigger fired: ${clearTrigger}, forcing chart remount`);
+      // Cancel any pending RAF and reset RAF state
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = undefined
+      }
+      pendingUpdateRef.current = false // CRITICAL: Reset pending flag so RAF can be scheduled again
+
       dataBufferRef.current.clear()
       updateCounterRef.current = 0
       setChartData([])
+      // Increment chartKey to force complete remount of Recharts (fixes frozen rendering)
+      setChartKey(prev => prev + 1)
     }
   }, [clearTrigger])
+
+  // Detect modal close and force chart remount to fix frozen Recharts rendering
+  const prevModalOpenRef = useRef(modalOpen)
+  useEffect(() => {
+    if (prevModalOpenRef.current && !modalOpen) {
+      // Modal just closed - force remount to fix any rendering issues
+      trace('CHART', 'Modal closed, forcing chart remount to recover from freeze');
+      // Cancel any pending RAF and reset RAF state
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = undefined
+      }
+      pendingUpdateRef.current = false // CRITICAL: Reset pending flag so RAF can be scheduled again
+      setChartKey(prev => prev + 1)
+    }
+    prevModalOpenRef.current = modalOpen
+  }, [modalOpen])
 
   const formatYAxis = (value: number) => `${value}${Labels.ANGLE_UNIT}`
 
@@ -356,7 +407,11 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
           className="h-full w-full"
         >
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={CHART_LAYOUT.MARGINS}>
+            <ComposedChart
+              key={chartKey}
+              data={chartData}
+              margin={CHART_LAYOUT.MARGINS}
+            >
               <defs>
                 <linearGradient id="colorLeft" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={Colors.LEFT_KNEE_PRIMARY} stopOpacity={0.15} />

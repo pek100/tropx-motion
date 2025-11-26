@@ -4,6 +4,18 @@ import type { DeviceInfo, Result } from '../lib/tropx-ws-client';
 import { EVENT_TYPES, MESSAGE_TYPES } from '../lib/tropx-ws-client';
 import type { ClientMetadata } from '../lib/tropx-ws-client/types/messages';
 
+// Debug trace logging toggle
+const DEBUG_TRACE = true;
+const trace = (component: string, msg: string, data?: any) => {
+  if (!DEBUG_TRACE) return;
+  const timestamp = Date.now();
+  if (data !== undefined) {
+    console.log(`[TRACE:${component}] ${msg}`, data);
+  } else {
+    console.log(`[TRACE:${component}] ${msg}`);
+  }
+};
+
 export interface KneeData {
   current: number;
   sensorTimestamp: number;
@@ -105,10 +117,13 @@ export function useWebSocket() {
 
         // Motion data handler - single state update for both knees
         client.on(EVENT_TYPES.MOTION_DATA, (message) => {
-          // Update heartbeat timestamp for health monitoring
-          lastMotionDataTimeRef.current = Date.now();
+          const now = Date.now();
 
-          console.log('📊 [MOTION_DATA] Received:', message);
+          // Update heartbeat timestamp for health monitoring
+          lastMotionDataTimeRef.current = now;
+
+          trace('WS', `Motion data received: ts=${now}`);
+
           const raw = (message as any).data;
           let dataArray: Float32Array;
           if (raw instanceof Float32Array) {
@@ -127,11 +142,13 @@ export function useWebSocket() {
           }
           const timestamp = (message as any).timestamp || Date.now();
 
-          console.log(`📊 [MOTION_DATA] Parsed Float32Array[${dataArray.length}]: [${dataArray[0]}, ${dataArray[1]}], timestamp: ${timestamp}`);
-
           const leftCurrent = dataArray[0] || 0;
           const rightCurrent = dataArray[1] || 0;
 
+          trace('WS', `Parsed data: left=${leftCurrent.toFixed(1)}, right=${rightCurrent.toFixed(1)}, msgTs=${timestamp}`);
+          trace('WS', `Calling setState: ts=${now}`);
+
+          const setStateStartTime = Date.now();
           setState(prev => ({
             ...prev,
             leftKneeData: {
@@ -149,6 +166,8 @@ export function useWebSocket() {
               quality: 100,
             }
           }));
+
+          trace('WS', `setState completed: elapsed=${Date.now() - setStateStartTime}ms`);
         });
 
         // Device status handler
@@ -289,21 +308,32 @@ export function useWebSocket() {
   useEffect(() => {
     if (!state.isConnected) return;
 
+    trace('HEALTH', 'Health monitor started');
+
     const healthCheckInterval = setInterval(() => {
-      if (!clientRef.current?.isConnected()) return;
+      if (!clientRef.current?.isConnected()) {
+        trace('HEALTH', 'Health check skipped - client not connected');
+        return;
+      }
 
       // Check if any devices are streaming
       const streamingDevices = state.devices.filter(d => d.state === 'streaming');
-      if (streamingDevices.length === 0) return;
+      if (streamingDevices.length === 0) {
+        trace('HEALTH', 'Health check skipped - no streaming devices');
+        return;
+      }
 
       // Check motion data heartbeat
       const timeSinceLastData = Date.now() - lastMotionDataTimeRef.current;
       const HEARTBEAT_TIMEOUT = 5000; // 5 seconds
 
+      trace('HEALTH', `Health check: timeSinceLastData=${timeSinceLastData}ms, streamingDevices=${streamingDevices.length}, threshold=${HEARTBEAT_TIMEOUT}ms`);
+
       if (timeSinceLastData > HEARTBEAT_TIMEOUT) {
         console.error(`⚠️ Motion data heartbeat timeout: ${timeSinceLastData}ms since last data`);
         console.log(`📊 Streaming devices: ${streamingDevices.map(d => d.name).join(', ')}`);
         console.log('🔄 Forcing reconnection to recover data stream...');
+        trace('HEALTH', 'FORCING RECONNECTION - heartbeat timeout exceeded');
 
         // Force reconnection to recover
         if (clientRef.current) {
@@ -316,6 +346,7 @@ export function useWebSocket() {
     healthCheckIntervalRef.current = healthCheckInterval;
 
     return () => {
+      trace('HEALTH', 'Health monitor stopped');
       clearInterval(healthCheckInterval);
     };
   }, [state.isConnected, state.devices]);

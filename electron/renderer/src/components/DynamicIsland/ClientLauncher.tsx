@@ -1,9 +1,18 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import './ClientLauncher.css';
 
-const CLIENT_URL = 'http://localhost:3000';
+// Debug trace logging
+const DEBUG_TRACE = true;
+const trace = (component: string, msg: string, data?: any) => {
+  if (!DEBUG_TRACE) return;
+  if (data !== undefined) {
+    console.log(`[TRACE:${component}] ${msg}`, data);
+  } else {
+    console.log(`[TRACE:${component}] ${msg}`);
+  }
+};
 
 export type ClientDisplayMode = 'modal' | 'snapped-left' | 'snapped-right' | 'minimized' | 'closed';
 
@@ -31,30 +40,81 @@ export function ClientLauncher({
   // Modal is open when in modal mode
   const isModalOpen = displayMode === 'modal';
 
+  // Dynamic port discovery for test client
+  const [clientUrl, setClientUrl] = useState<string | null>(null);
+  const [portError, setPortError] = useState<string | null>(null);
+
+  // Monitor client launcher state changes
+  useEffect(() => {
+    trace('CLIENT_LAUNCHER', `State changed: isLaunched=${isLaunched}, displayMode=${displayMode}, isModalOpen=${isModalOpen}`);
+  }, [isLaunched, displayMode, isModalOpen]);
+
+  // Monitor modal open/close specifically
+  useEffect(() => {
+    if (isModalOpen) {
+      trace('CLIENT_LAUNCHER', 'Modal OPENED');
+    } else if (isLaunched) {
+      trace('CLIENT_LAUNCHER', `Modal CLOSED (now in ${displayMode} mode)`);
+    }
+  }, [isModalOpen, isLaunched, displayMode]);
+
+  // Discover test client port when modal opens
+  useEffect(() => {
+    if (isModalOpen && !clientUrl) {
+      trace('CLIENT_LAUNCHER', 'Discovering test client port...');
+      window.electronAPI.testClient.discoverPort().then(result => {
+        if (result.success && result.url) {
+          trace('CLIENT_LAUNCHER', `Test client discovered at ${result.url}`);
+          setClientUrl(result.url);
+          setPortError(null);
+        } else {
+          trace('CLIENT_LAUNCHER', `Port discovery failed: ${result.error}`);
+          setPortError(result.error || 'Dev server not running');
+        }
+      }).catch(err => {
+        trace('CLIENT_LAUNCHER', `Port discovery error: ${err.message}`);
+        setPortError('Failed to discover port');
+      });
+    }
+  }, [isModalOpen, clientUrl]);
+
   return (
     <>
-      {/* Launch Button - shown in main Dynamic Island */}
-      {!isLaunched && (
-        <button className="client-launcher-button" onClick={onLaunch} title="Launch Test Client">
-          🚀
-        </button>
-      )}
-
       {/* Modal with iframe and controls */}
-      <Dialog open={isModalOpen} onOpenChange={(open) => !open && onMinimize()}>
+      <Dialog
+        open={isModalOpen}
+        onOpenChange={(open) => {
+          trace('CLIENT_LAUNCHER', `Dialog onOpenChange: open=${open}`);
+          if (!open) {
+            trace('CLIENT_LAUNCHER', 'Dialog closing, calling onMinimize()');
+            onMinimize();
+          }
+        }}
+      >
         <DialogContent className="client-launcher-modal" showCloseButton={false}>
           <div className="client-launcher-content">
-            <iframe
-              src={CLIENT_URL}
-              className="client-launcher-iframe"
-              title="Test Client"
-              sandbox="allow-scripts allow-same-origin allow-forms"
-            />
+            {portError ? (
+              <div className="client-launcher-error">
+                <p>Could not connect to test client dev server</p>
+                <p className="error-details">{portError}</p>
+                <p className="error-hint">Make sure the dev server is running on ports 3000-3010</p>
+              </div>
+            ) : clientUrl ? (
+              <iframe
+                src={clientUrl}
+                className="client-launcher-iframe"
+                title="Test Client"
+                sandbox="allow-scripts allow-same-origin allow-forms"
+              />
+            ) : (
+              <div className="client-launcher-loading">
+                <p>Discovering test client...</p>
+              </div>
+            )}
 
             {/* Modal Dynamic Island - floating controls at bottom */}
             <ClientModalIsland
               onClose={onClose}
-              onMinimize={onMinimize}
               onSnapLeft={onSnapLeft}
               onSnapRight={onSnapRight}
             />
@@ -67,14 +127,12 @@ export function ClientLauncher({
 
 interface ClientModalIslandProps {
   onClose: () => void;
-  onMinimize: () => void;
   onSnapLeft: () => void;
   onSnapRight: () => void;
 }
 
 function ClientModalIsland({
   onClose,
-  onMinimize,
   onSnapLeft,
   onSnapRight,
 }: ClientModalIslandProps) {
@@ -98,17 +156,6 @@ function ClientModalIsland({
               <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
             <span>Exit</span>
-          </button>
-
-          <button
-            className="modal-island-btn"
-            onClick={onMinimize}
-            title="Minimize to background"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            <span>Minimize</span>
           </button>
 
           <div className="modal-island-divider" />
@@ -196,9 +243,23 @@ interface ClientIframeProps {
 }
 
 export function ClientIframe({ className }: ClientIframeProps) {
+  const [clientUrl, setClientUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    window.electronAPI.testClient.discoverPort().then(result => {
+      if (result.success && result.url) {
+        setClientUrl(result.url);
+      }
+    });
+  }, []);
+
+  if (!clientUrl) {
+    return <div className={className || 'client-iframe'}>Loading test client...</div>;
+  }
+
   return (
     <iframe
-      src={CLIENT_URL}
+      src={clientUrl}
       className={className || 'client-iframe'}
       title="Test Client"
       sandbox="allow-scripts allow-same-origin allow-forms"

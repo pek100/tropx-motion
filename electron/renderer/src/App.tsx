@@ -9,6 +9,17 @@ import { useToast } from "@/hooks/use-toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWebSocket } from "@/hooks/use-websocket"
 
+// Debug trace logging
+const DEBUG_TRACE = true;
+const trace = (component: string, msg: string, data?: any) => {
+  if (!DEBUG_TRACE) return;
+  if (data !== undefined) {
+    console.log(`[TRACE:${component}] ${msg}`, data);
+  } else {
+    console.log(`[TRACE:${component}] ${msg}`);
+  }
+};
+
 export default function Page() {
   const { toast } = useToast()
   const refreshTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -69,8 +80,6 @@ export default function Page() {
   const [deviceOrder, setDeviceOrder] = useState<string[]>([])
   // Track devices that were manually disconnected by the user (should not auto-reconnect)
   const [userDisconnectedDevices, setUserDisconnectedDevices] = useState<Set<string>>(new Set())
-  // Dynamic Island state
-  const [islandExpanded, setIslandExpanded] = useState(false)
 
   // Client Launcher state (singleton)
   const [clientLaunched, setClientLaunched] = useState(false)
@@ -654,6 +663,16 @@ export default function Page() {
     }
   }, [isSyncing])
 
+  // Monitor knee data state changes
+  useEffect(() => {
+    trace('APP', `Knee data changed: left=${leftKneeData?.current}, right=${rightKneeData?.current}, leftTs=${leftKneeData?.sensorTimestamp}, rightTs=${rightKneeData?.sensorTimestamp}`);
+  }, [leftKneeData, rightKneeData])
+
+  // Monitor streaming state changes
+  useEffect(() => {
+    trace('APP', `Streaming state: isStreaming=${isStreaming}, hasStartedStreaming=${hasStartedStreaming}`);
+  }, [isStreaming, hasStartedStreaming])
+
   const handleLocate = async () => {
     if (sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
 
@@ -921,28 +940,17 @@ export default function Page() {
               WebkitAppRegion: 'no-drag'
             } as any}
           >
-            {/* Hide minimize/maximize buttons on small screens (RPi) */}
+            {/* Hide maximize button on small screens (RPi) */}
             {!isSmallScreen && (
-              <>
-                <button
-                  onClick={() => window.electronAPI?.window.minimize()}
-                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm"
-                  title="Minimize"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="5" y1="12" x2="19" y2="12"></line>
-                  </svg>
-                </button>
-                <button
-                  onClick={() => window.electronAPI?.window.maximize()}
-                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm"
-                  title="Maximize"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                  </svg>
-                </button>
-              </>
+              <button
+                onClick={() => window.electronAPI?.window.maximize()}
+                className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm"
+                title="Maximize"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                </svg>
+              </button>
             )}
             <button
               onClick={() => window.electronAPI?.window.close()}
@@ -1320,47 +1328,18 @@ export default function Page() {
                   </Tooltip>
                 </div>
 
-                {/* Dynamic Island - Bottom Center */}
-                <DynamicIsland
-                  expanded={islandExpanded}
-                  onToggle={() => setIslandExpanded(!islandExpanded)}
-                >
-                  {islandExpanded ? (
-                    <ClientRegistry
-                      clients={connectedClients}
-                      onActionTrigger={triggerClientAction}
-                    />
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px' }}>
-                      <span>👥</span>
-                      <span>{connectedClients.length} client{connectedClients.length !== 1 ? 's' : ''}</span>
-                      {!clientLaunched && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleLaunchClient()
-                          }}
-                          style={{
-                            background: 'rgba(255, 77, 53, 0.15)',
-                            border: 'none',
-                            borderRadius: '8px',
-                            width: '28px',
-                            height: '28px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            cursor: 'pointer',
-                            fontSize: '14px',
-                            transition: 'all 0.2s ease',
-                          }}
-                          title="Launch Test Client"
-                        >
-                          🚀
-                        </button>
-                      )}
+                {/* Dynamic Island - Launch Client */}
+                {!clientLaunched && (
+                  <DynamicIsland
+                    expanded={false}
+                    onToggle={handleLaunchClient}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', cursor: 'pointer' }}>
+                      <span style={{ fontSize: '18px' }}>🚀</span>
+                      <span style={{ fontWeight: 500 }}>Launch Client</span>
                     </div>
-                  )}
-                </DynamicIsland>
+                  </DynamicIsland>
+                )}
                   </>
                 )}
               </div>
@@ -1392,7 +1371,12 @@ export default function Page() {
                   <>
 
                 {isStreaming || hasStartedStreaming ? (
-                  <KneeAreaChart leftKnee={leftKneeData} rightKnee={rightKneeData} clearTrigger={clearChartTrigger} />
+                  <KneeAreaChart
+                    leftKnee={leftKneeData}
+                    rightKnee={rightKneeData}
+                    clearTrigger={clearChartTrigger}
+                    modalOpen={clientDisplay === 'modal'}
+                  />
                 ) : (
                   <ChartSvg />
                 )}

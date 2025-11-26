@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, protocol } from 'electron';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
+import log from 'electron-log';
 import { MotionService } from './services/MotionService';
 // Web Bluetooth removed - we use node-ble/Noble directly
 // import { BluetoothService } from './services/BluetoothService';
@@ -10,6 +11,15 @@ import { RecordingSession, ApiResponse } from '../shared/types';
 import { SystemMonitor } from './services/SystemMonitor';
 import { PlatformDetector } from '../../shared/PlatformDetector';
 import { getWindowDimensions } from './window-size-override';
+
+// Configure electron-log
+log.transports.file.level = 'debug';
+log.transports.file.maxSize = 10 * 1024 * 1024; // 10MB max file size
+log.transports.file.format = '[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {text}';
+log.transports.console.level = 'debug';
+
+// Log file location
+console.log('Electron log file location:', log.transports.file.getFile().path);
 
 export class MainProcess {
   private mainWindow: BrowserWindow | null = null;
@@ -24,9 +34,21 @@ export class MainProcess {
     // this.bluetoothService = new BluetoothService();
     this.systemMonitor = new SystemMonitor(() => this.mainWindow); // defer window resolution
 
+    // Log startup information
+    log.info('='.repeat(80));
+    log.info('TropxMotion Application Starting');
+    log.info(`Log file: ${log.transports.file.getFile().path}`);
+    log.info('='.repeat(80));
+
     // Disable hardware acceleration to prevent GPU-related issues
-    console.log('Disabling hardware acceleration for stability');
+    log.info('Disabling hardware acceleration for stability');
     app.disableHardwareAcceleration();
+
+    // Disable background throttling to keep WebSocket streaming when window loses focus
+    log.info('Disabling background throttling for continuous WebSocket streaming');
+    app.commandLine.appendSwitch('disable-renderer-backgrounding');
+    app.commandLine.appendSwitch('disable-background-timer-throttling');
+    app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
     // Web Bluetooth removed - conflicts with node-ble on Linux
     // this.enableWebBluetoothFeatures();
@@ -194,6 +216,7 @@ export class MainProcess {
         // Web Bluetooth removed - conflicts with node-ble on Linux
         // enableBlinkFeatures: 'WebBluetooth,WebBluetoothScanning',
         allowRunningInsecureContent: true,
+        backgroundThrottling: false,  // Disable throttling when window loses focus
       },
       show: false,
     });
@@ -236,52 +259,24 @@ export class MainProcess {
 
     this.mainWindow.once('ready-to-show', () => this.mainWindow?.show());
 
-    // Robust renderer diagnostics
-    // PERFORMANCE FIX: Use async file writes with buffering to prevent event loop blocking
-    const logBuffer: string[] = [];
-    const LOG_FLUSH_INTERVAL = 1000; // Flush every 1 second
-    const LOG_MAX_BUFFER = 100; // Or when buffer reaches 100 messages
-
-    const logToFile = (msg: string) => {
-      // Add to buffer instead of immediate sync write
-      logBuffer.push(`[${new Date().toISOString()}] ${msg}\n`);
-
-      // Flush if buffer is full
-      if (logBuffer.length >= LOG_MAX_BUFFER) {
-        flushLogBuffer();
-      }
-    };
-
-    const flushLogBuffer = () => {
-      if (logBuffer.length === 0) return;
-
-      const fs = require('fs').promises;
-      const logDir = app.getPath('userData');
-      const messages = logBuffer.splice(0).join('');
-
-      // Async write - doesn't block event loop
-      fs.appendFile(path.join(logDir, 'renderer.log'), messages)
-        .catch((err: any) => console.error('Log write error:', err));
-    };
-
-    // Periodic flush
-    setInterval(flushLogBuffer, LOG_FLUSH_INTERVAL);
-
+    // Capture renderer console logs using electron-log
     this.mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
       const lvl = ['LOG', 'WARN', 'ERROR'][level] || String(level);
-      const msg = `CONSOLE ${lvl}: ${message} (${sourceId}:${line})`;
-      console.log(msg);
-      logToFile(msg);
+      const msg = `[RENDERER] ${message} (${sourceId}:${line})`;
+
+      // Log to electron-log based on level
+      if (level === 0) log.info(msg);
+      else if (level === 1) log.warn(msg);
+      else if (level === 2) log.error(msg);
+      else log.debug(msg);
     });
+
     this.mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
-      const msg = `did-fail-load code=${errorCode} desc=${errorDescription} url=${validatedURL}`;
-      console.error(msg);
-      logToFile(msg);
+      log.error(`[RENDERER] did-fail-load code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
     });
+
     this.mainWindow.webContents.on('render-process-gone', (_e, details) => {
-      const msg = `render-process-gone: ${JSON.stringify(details)}`;
-      console.error(msg);
-      logToFile(msg);
+      log.error(`[RENDERER] render-process-gone: ${JSON.stringify(details)}`);
     });
 
     this.mainWindow.webContents.once('did-finish-load', () => {
@@ -406,6 +401,42 @@ export class MainProcess {
 
     // Keep WebSocket port getter for backward compatibility
     ipcMain.handle('motion:getWebSocketPort', () => this.motionService.getWebSocketPort());
+
+    // Test client port discovery (probes common dev server ports)
+    ipcMain.handle('testClient:discoverPort', async () => {
+      const http = require('http');
+      // Check common dev server ports: 3000-3010, 5173-5177 (Vite), 8080
+      const portsToCheck = [
+        ...Array.from({ length: 11 }, (_, i) => 3000 + i), // 3000-3010
+        ...Array.from({ length: 5 }, (_, i) => 5173 + i),  // 5173-5177
+        8080
+      ];
+
+      for (const port of portsToCheck) {
+        try {
+          const isAvailable = await new Promise<boolean>((resolve) => {
+            const req = http.get(`http://localhost:${port}`, { timeout: 500 }, (res: any) => {
+              resolve(res.statusCode === 200);
+            });
+            req.on('error', () => resolve(false));
+            req.on('timeout', () => {
+              req.destroy();
+              resolve(false);
+            });
+          });
+
+          if (isAvailable) {
+            log.info(`Test client dev server discovered on port ${port}`);
+            return { success: true, port, url: `http://localhost:${port}` };
+          }
+        } catch (err) {
+          // Continue to next port
+        }
+      }
+
+      log.warn('Test client dev server not found on common ports (3000-3010, 5173-5177, 8080)');
+      return { success: false, error: 'Dev server not running on common ports' };
+    });
 
     // Performance monitor handlers
     ipcMain.handle('monitor:start', (_e, opts?: { intervalMs?: number }) => {
