@@ -282,7 +282,7 @@
 }
 
 
-/* Hide cursor on Raspberry Pi for kiosk mode */
-* {
+/* Hide cursor only on Raspberry Pi for kiosk mode */
+.raspberry-pi * {
   cursor: none !important;
 }

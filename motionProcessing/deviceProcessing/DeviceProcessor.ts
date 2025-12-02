@@ -1,5 +1,4 @@
 import { IMUData, DeviceData, MotionConfig } from '../shared/types';
-import { InterpolationService } from './InterpolationService';
 import { DataSyncService } from './DataSyncService';
 import { DEVICE, SYSTEM, BATTERY, CONNECTION_STATE } from '../shared/constants';
 import { QuaternionService } from '../shared/QuaternionService';
@@ -14,20 +13,24 @@ interface DeviceStatus {
 }
 
 /**
- * Manages device data processing, synchronization, and state tracking.
- * Coordinates between interpolation service, sync service, and joint processors
- * while maintaining device health monitoring and joint-device mapping.
+ * Manages device data processing and state tracking.
+ * Processes raw quaternion data directly without interpolation for real-time responsiveness.
+ * Maintains device health monitoring and joint-device mapping.
+ *
+ * ARCHITECTURE NOTE: Interpolation was removed because:
+ * 1. It introduced lag during rapid movements (SLERP correction factor)
+ * 2. Small buffers (4 samples) caused data loss during BLE jitter
+ * 3. Real-time motion capture needs latest data, not smoothed/interpolated data
+ * 4. The sensors already provide clean 100Hz data - no interpolation needed
  */
 export class DeviceProcessor {
     private static instance: DeviceProcessor | null = null;
-    private interpolationService: InterpolationService;
     private dataSyncService: DataSyncService;
     private subscribers = new Set<() => void>();
     private batteryLevels = new Map<string, number>();
     private connectionStates = new Map<string, string>();
     private latestDeviceData = new Map<string, DeviceData>();
     private deviceToJoints = new Map<string, string[]>();
-    private interpolationSubscription: (() => void) | null = null;
 
     // Async notification state
     private pendingNotifications = 0;
@@ -35,12 +38,9 @@ export class DeviceProcessor {
     private lastNotificationTime = 0;
     private readonly MIN_NOTIFICATION_INTERVAL = 16; // 60fps cap
     private processingCounter = 0;
-    private sessionOffsetCalculated?: Set<string>; // Track devices that have calculated offset this session
 
     private constructor(private config: MotionConfig) {
-        this.interpolationService = new InterpolationService(config.targetHz);
         this.dataSyncService = new DataSyncService();
-        this.setupInterpolationSubscription();
     }
 
     /**
@@ -73,9 +73,6 @@ export class DeviceProcessor {
         this.deviceToJoints.delete(deviceIdStr);
         this.batteryLevels.delete(deviceIdStr);
         this.connectionStates.delete(deviceIdStr);
-
-        // Remove from interpolation service
-        this.interpolationService.removeDevice(deviceIdStr);
 
         console.log(`✅ [DEVICE_PROCESSOR] Device ${deviceIdStr} removed (had data: ${hadDeviceData}, had joint mapping: ${hadJointMapping})`);
 
@@ -161,26 +158,19 @@ export class DeviceProcessor {
             }
         }
 
-        // Optional bypass: emit raw sample directly without interpolation
-        if (this.config.performance?.bypassInterpolation) {
-            console.log(`🚀 [DEVICE_PROCESSOR] Bypassing interpolation for ${deviceIdStr} - emitting raw sample`);
-            const rawTimestamp = synchronizedIMU.timestamp || performance.now();
-            const deviceSample: DeviceData = {
-                deviceId: deviceIdStr,
-                quaternion: QuaternionService.normalize(synchronizedIMU.quaternion ?? QuaternionService.createIdentity()),
-                timestamp: rawTimestamp,
-                interpolated: false,
-                connectionState: 'streaming' as any
-            };
-            this.updateLatestDeviceData(deviceSample);
-            this.notifySubscribers();
-            console.log(`✅ [DEVICE_PROCESSOR] Raw sample processed and subscribers notified for ${deviceIdStr}`);
-            return;
-        }
+        // Process raw quaternion data directly - no interpolation
+        // This provides real-time responsiveness without lag or buffer-induced artifacts
+        const rawTimestamp = synchronizedIMU.timestamp || performance.now();
+        const deviceSample: DeviceData = {
+            deviceId: deviceIdStr,
+            quaternion: QuaternionService.normalize(synchronizedIMU.quaternion ?? QuaternionService.createIdentity()),
+            timestamp: rawTimestamp,
+            interpolated: false,
+            connectionState: 'streaming' as any
+        };
 
-        // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
-        // console.log(`🔄 [DEVICE_PROCESSOR] Sending ${deviceIdStr} to interpolation service`);
-        this.interpolationService.processSample(deviceIdStr, synchronizedIMU);
+        this.updateLatestDeviceData(deviceSample);
+        this.notifySubscribers();
     }
 
     /**
@@ -279,51 +269,15 @@ export class DeviceProcessor {
 
     /**
      * Performs complete cleanup of all services and internal state.
-     * Enhanced to prevent event listener leaks.
      */
     cleanup(): void {
-        // CRITICAL FIX: Clean up subscriptions first to prevent callback accumulation
-        if (this.interpolationSubscription) {
-            this.interpolationSubscription();
-            this.interpolationSubscription = null;
-        }
-
         // Clear subscribers explicitly before cleanup
         this.subscribers.clear();
 
-        this.interpolationService.cleanup();
         this.dataSyncService.reset();
         this.clearAllMaps();
 
         console.log('🧹 DeviceProcessor cleanup completed');
-    }
-
-
-    /**
-     * Establishes subscription to interpolation service for processed data.
-     */
-    private setupInterpolationSubscription(): void {
-        this.interpolationSubscription = this.interpolationService.subscribe((interpolatedData: DeviceData[]) => {
-            this.handleInterpolatedData(interpolatedData);
-        });
-    }
-
-    /**
-     * Processes interpolated data and notifies subscribers of updates.
-     */
-    private handleInterpolatedData(interpolatedData: DeviceData[]): void {
-        if (interpolatedData.length === 0) return;
-
-        let hasNewData = false;
-        for (const deviceData of interpolatedData) {
-            if (this.updateLatestDeviceData(deviceData)) {
-                hasNewData = true;
-            }
-        }
-
-        if (hasNewData) {
-            this.notifySubscribers();
-        }
     }
 
     /**
@@ -412,51 +366,24 @@ export class DeviceProcessor {
     }
 
     /**
-     * Safely notifies all subscribers of data updates.
+     * Notifies all subscribers of data updates.
+     *
+     * ARCHITECTURE NOTE: Throttling was REMOVED because:
+     * 1. At 100Hz × 2 devices, 16ms throttle dropped 75% of updates
+     * 2. Dropped updates caused "out of sync" after chaotic movement
+     * 3. Each notification is only ~0.1ms of work - throttling is counterproductive
+     * 4. Real-time motion capture needs every sample for accurate joint angles
      */
     private notifySubscribers(): void {
-        // DISABLED for performance (called at 100Hz)
-        // console.log(`🔔 [DEVICE_PROCESSOR] notifySubscribers called:`, {
-        //     subscriberCount: this.subscribers.size,
-        //     latestDeviceDataCount: this.latestDeviceData.size,
-        //     deviceIds: Array.from(this.latestDeviceData.keys())
-        // });
-
-        const now = performance.now();
-
-        // Throttling: Enforce minimum interval between notifications
-        if (now - this.lastNotificationTime < this.MIN_NOTIFICATION_INTERVAL) {
-            // DISABLED for performance (called at 100Hz)
-            // console.log(`⏳ [DEVICE_PROCESSOR] Throttled - too soon since last notification`);
-            return;
-        }
-
-        // Backpressure: Skip if too many notifications are pending
-        if (this.pendingNotifications >= this.MAX_PENDING_NOTIFICATIONS) {
-            // DISABLED for performance (called at 100Hz)
-            // console.log(`⚠️ [DEVICE_PROCESSOR] Backpressure - too many pending notifications`);
-            return;
-        }
-
-        const runCallbacks = () => {
-            this.pendingNotifications--;
-            // DISABLED for performance (called at 100Hz)
-            // console.log(`📢 [DEVICE_PROCESSOR] Calling ${this.subscribers.size} subscribers`);
-            this.subscribers.forEach(callback => {
-                try {
-                    callback();
-                } catch (error) {
-                    console.error(`❌ [DEVICE_PROCESSOR] Subscriber callback error:`, error);
-                    PerformanceLogger.warn('DEVICE', 'Callback error', error);
-                }
-            });
-        };
-
-        this.lastNotificationTime = now;
-        this.pendingNotifications++;
-
-        // Always use async processing to prevent event loop blocking
-        queueMicrotask(runCallbacks);
+        // Notify synchronously for lowest latency - callbacks are fast
+        this.subscribers.forEach(callback => {
+            try {
+                callback();
+            } catch (error) {
+                console.error(`❌ [DEVICE_PROCESSOR] Subscriber callback error:`, error);
+                PerformanceLogger.warn('DEVICE', 'Callback error', error);
+            }
+        });
     }
 
     /**
@@ -483,14 +410,6 @@ export class DeviceProcessor {
                 this.latestDeviceData.set(id, data);
             });
         }
-
-        // Trigger interpolation service cleanup
-        if (this.interpolationService && typeof this.interpolationService.performPeriodicCleanup === 'function') {
-            this.interpolationService.performPeriodicCleanup();
-        }
-
-        // DISABLED: Cleanup logging is noisy and unnecessary
-        // PerformanceLogger.info('DEVICE', `Periodic cleanup: ${this.subscribers.size} subscribers, ${this.latestDeviceData.size} device entries`);
     }
 
     /**

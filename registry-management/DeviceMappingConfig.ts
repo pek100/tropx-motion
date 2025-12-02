@@ -52,6 +52,10 @@ export const DEVICE_MAPPING_CONFIG = {
   /**
    * Pattern matching rules (checked in order)
    * Uses simple substring matching (case-insensitive)
+   *
+   * NOTE: Naming convention is INVERTED from physical placement:
+   * - "bottom" sensors are physically on the SHIN (below knee) = distal
+   * - "top" sensors are physically on the THIGH (above knee) = proximal
    */
   rules: [
     {
@@ -59,28 +63,28 @@ export const DEVICE_MAPPING_CONFIG = {
       deviceID: DeviceID.LEFT_KNEE_BOTTOM,
       joint: 'left-knee',
       position: 'bottom',
-      description: 'Left knee bottom sensor (thigh sensor)'
+      description: 'Left knee "bottom" sensor (physically on SHIN - distal)'
     },
     {
       pattern: 'ln_top',
       deviceID: DeviceID.LEFT_KNEE_TOP,
       joint: 'left-knee',
       position: 'top',
-      description: 'Left knee top sensor (shin sensor)'
+      description: 'Left knee "top" sensor (physically on THIGH - proximal)'
     },
     {
       pattern: 'rn_bottom',
       deviceID: DeviceID.RIGHT_KNEE_BOTTOM,
       joint: 'right-knee',
       position: 'bottom',
-      description: 'Right knee bottom sensor (thigh sensor)'
+      description: 'Right knee "bottom" sensor (physically on SHIN - distal)'
     },
     {
       pattern: 'rn_top',
       deviceID: DeviceID.RIGHT_KNEE_TOP,
       joint: 'right-knee',
       position: 'top',
-      description: 'Right knee top sensor (shin sensor)'
+      description: 'Right knee "top" sensor (physically on THIGH - proximal)'
     },
   ] as DeviceMappingRule[],
 
@@ -129,15 +133,33 @@ export function isRightKnee(deviceID: DeviceID): boolean {
 }
 
 /**
- * Check if device ID represents a bottom (thigh) sensor
+ * Check if device ID represents a "bottom" named sensor.
+ *
+ * IMPORTANT: Naming is INVERTED from physical placement!
+ * - "bottom" sensors are physically placed on the SHIN (below knee) = anatomically DISTAL
  */
 export function isBottomSensor(deviceID: DeviceID): boolean {
   return getPositionID(deviceID) === 1;
 }
 
 /**
- * Check if device ID represents a top (shin) sensor
+ * Check if device ID represents a "top" named sensor.
+ *
+ * IMPORTANT: Naming is INVERTED from physical placement!
+ * - "top" sensors are physically placed on the THIGH (above knee) = anatomically PROXIMAL
  */
 export function isTopSensor(deviceID: DeviceID): boolean {
   return getPositionID(deviceID) === 2;
+}
+
+export type JointName = 'left_knee' | 'right_knee';
+
+/**
+ * Map device ID to joint name
+ * @returns Joint name or null if deviceID is invalid
+ */
+export function getJointName(deviceID: DeviceID): JointName | null {
+  if (isLeftKnee(deviceID)) return 'left_knee';
+  if (isRightKnee(deviceID)) return 'right_knee';
+  return null;
 }

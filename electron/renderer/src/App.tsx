@@ -2,23 +2,18 @@ import { DeviceCard } from "@/components/device-card"
 import { ChartSvg } from "@/components/chart-svg"
 import KneeAreaChart from "@/components/knee-area-chart"
 import { PlatformIndicator } from "@/components/platform-indicator"
-import { DynamicIsland, ClientRegistry } from "@/components/DynamicIsland"
-import { ClientLauncher, ClientSnappedIsland, ClientIframe, type ClientDisplayMode } from "@/components/DynamicIsland/ClientLauncher"
-import { useState, useRef, useEffect, useMemo } from "react"
+import { useState, useRef, useEffect, useMemo, lazy, Suspense } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWebSocket } from "@/hooks/use-websocket"
+import { persistence } from "@/lib/persistence"
 
-// Debug trace logging
-const DEBUG_TRACE = true;
-const trace = (component: string, msg: string, data?: any) => {
-  if (!DEBUG_TRACE) return;
-  if (data !== undefined) {
-    console.log(`[TRACE:${component}] ${msg}`, data);
-  } else {
-    console.log(`[TRACE:${component}] ${msg}`);
-  }
-};
+// Lazy load RPi-specific components only when needed
+const DynamicIsland = lazy(() => import("@/components/DynamicIsland").then(m => ({ default: m.DynamicIsland })))
+const ClientLauncher = lazy(() => import("@/components/DynamicIsland/ClientLauncher").then(m => ({ default: m.ClientLauncher })))
+const ClientSnappedIsland = lazy(() => import("@/components/DynamicIsland/ClientLauncher").then(m => ({ default: m.ClientSnappedIsland })))
+const ClientIframe = lazy(() => import("@/components/DynamicIsland/ClientLauncher").then(m => ({ default: m.ClientIframe })))
+type ClientDisplayMode = 'closed' | 'modal' | 'minimized' | 'snapped-left' | 'snapped-right';
 
 export default function Page() {
   const { toast } = useToast()
@@ -28,7 +23,6 @@ export default function Page() {
   // Use WebSocket hook for REAL data
   const {
     devices: wsDevices,
-    connectedClients,
     leftKneeData,
     rightKneeData,
     isConnected,
@@ -49,7 +43,6 @@ export default function Page() {
     stopBurstScan,
     startRecording,
     stopRecording,
-    triggerClientAction,
   } = useWebSocket()
 
   // Local device state for UI management (with connection state transitions)
@@ -78,21 +71,112 @@ export default function Page() {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   // Persist custom device order (array of device IDs)
   const [deviceOrder, setDeviceOrder] = useState<string[]>([])
-  // Track devices that were manually disconnected by the user (should not auto-reconnect)
+  // Track devices manually disconnected by user to prevent auto-reconnect
   const [userDisconnectedDevices, setUserDisconnectedDevices] = useState<Set<string>>(new Set())
-
-  // Client Launcher state (singleton)
-  const [clientLaunched, setClientLaunched] = useState(false)
-  const [clientDisplay, setClientDisplay] = useState<ClientDisplayMode>('closed')
 
   // Small screen detection (< 350px width or height)
   const [isSmallScreen, setIsSmallScreen] = useState(false)
   const [smallScreenOverride, setSmallScreenOverride] = useState<boolean | null>(null) // null = auto, true/false = manual
+  const [isRaspberryPi, setIsRaspberryPi] = useState(false)
+
+  // Client Launcher state (singleton) - Only used on Raspberry Pi
+  const [clientLaunched, setClientLaunched] = useState(false)
+  const [clientDisplay, setClientDisplay] = useState<ClientDisplayMode>('closed')
 
   // Auto-start connection logic: run burst scanning + connect attempts for first 10s
   const autoStartRef = useRef(false)
   const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const connectAllTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const [showSessionRecovery, setShowSessionRecovery] = useState(false)
+  const [sessionRecoveryData, setSessionRecoveryData] = useState<{
+    deviceIds: string[];
+    sessionId: string | null;
+  } | null>(null)
+
+  // Load persisted state on mount
+  useEffect(() => {
+    const savedState = persistence.loadState()
+
+    console.log('📦 Loading persisted state:', savedState)
+
+    // Restore UI preferences
+    if (savedState.deviceOrder.length > 0) {
+      setDeviceOrder(savedState.deviceOrder)
+      console.log('✅ Restored device order:', savedState.deviceOrder)
+    }
+
+    if (savedState.smallScreenOverride !== null) {
+      setSmallScreenOverride(savedState.smallScreenOverride)
+      console.log('✅ Restored screen preference:', savedState.smallScreenOverride)
+    }
+
+    if (savedState.clientDisplay !== 'closed') {
+      setClientDisplay(savedState.clientDisplay)
+      setClientLaunched(savedState.clientDisplay !== 'closed')
+      console.log('✅ Restored client display:', savedState.clientDisplay)
+    }
+
+    // Check for session recovery
+    if (savedState.wasStreaming && savedState.lastConnectedDeviceIds.length >= 2) {
+      setSessionRecoveryData({
+        deviceIds: savedState.lastConnectedDeviceIds,
+        sessionId: savedState.streamingSessionId,
+      })
+      setShowSessionRecovery(true)
+      console.log('🔄 Session recovery available:', savedState.lastConnectedDeviceIds)
+    }
+  }, [])
+
+  // Save state changes to persistence
+  useEffect(() => {
+    persistence.saveDeviceOrder(deviceOrder)
+  }, [deviceOrder])
+
+  useEffect(() => {
+    persistence.saveScreenPreference(smallScreenOverride)
+  }, [smallScreenOverride])
+
+  useEffect(() => {
+    persistence.saveClientDisplay(clientDisplay)
+  }, [clientDisplay])
+
+  // Save streaming session state
+  useEffect(() => {
+    const connectedDeviceIds = devices
+      .filter(d => d.connectionStatus === 'connected')
+      .map(d => d.id)
+
+    persistence.saveStreamingSession(
+      isStreaming,
+      connectedDeviceIds,
+      isStreaming ? `session_${Date.now()}` : null,
+      streamStartTime
+    )
+  }, [isStreaming, devices, streamStartTime])
+
+  // Save state before page unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const connectedDeviceIds = devices
+        .filter(d => d.connectionStatus === 'connected')
+        .map(d => d.id)
+
+      persistence.saveStateImmediate({
+        deviceOrder,
+        smallScreenOverride,
+        clientDisplay,
+        wasStreaming: isStreaming,
+        lastConnectedDeviceIds: connectedDeviceIds,
+        streamingSessionId: isStreaming ? `session_${Date.now()}` : null,
+        streamStartTime: isStreaming ? streamStartTime : null,
+      })
+
+      console.log('💾 Saved state before unload')
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [deviceOrder, smallScreenOverride, clientDisplay, isStreaming, devices, streamStartTime])
 
   useEffect(() => {
     if (!isConnected || autoStartRef.current) return
@@ -137,16 +221,18 @@ export default function Page() {
       // Check if running on Raspberry Pi
       try {
         const platformInfo = await window.electronAPI?.system?.getPlatformInfo()
-        const isRaspberryPi = platformInfo?.info?.isRaspberryPi || false
+        const isRPi = platformInfo?.info?.isRaspberryPi || false
+        setIsRaspberryPi(isRPi)
 
         // Force small screen mode on Raspberry Pi regardless of actual screen size
-        if (isRaspberryPi && smallScreenOverride === null) {
+        if (isRPi && smallScreenOverride === null) {
           console.log('🍓 Raspberry Pi detected - forcing small screen layout')
           setIsSmallScreen(true)
           return
         }
       } catch (err) {
         console.warn('Could not detect platform:', err)
+        setIsRaspberryPi(false)
       }
 
       // If manual override is set, use that instead
@@ -155,8 +241,11 @@ export default function Page() {
         return
       }
 
-      // Otherwise, auto-detect based on window size (500px for Pi 480x320 display)
-      const isSmall = window.innerWidth <= 500 || window.innerHeight <= 500
+      // Otherwise, auto-detect based on window size
+      // RPi: 500px threshold for 480x320 displays
+      // PC/Mac: 350px threshold (original)
+      const threshold = isRPi ? 500 : 350
+      const isSmall = window.innerWidth <= threshold || window.innerHeight <= threshold
       setIsSmallScreen(isSmall)
     }
 
@@ -183,7 +272,8 @@ export default function Page() {
 
           // Show feedback toast
           const mode = newValue ? 'Small Screen' : 'Normal'
-          const isManual = newValue !== (window.innerWidth <= 500 || window.innerHeight <= 500)
+          const threshold = isRaspberryPi ? 500 : 350
+          const isManual = newValue !== (window.innerWidth <= threshold || window.innerHeight <= threshold)
 
           toast({
             title: `${mode} Mode ${isManual ? '(Manual Override)' : '(Auto)'}`,
@@ -475,9 +565,8 @@ export default function Page() {
           })
         }
 
-        // CRITICAL: First disconnect the device from BlueZ, then remove from registry
-        // This ensures the physical BLE connection is closed
-        wsDisconnectDevice(device.id)
+        // Use removeDevice instead of disconnectDevice to stop backend auto-reconnect
+        // Device will still appear in scan results as "discovered"
         wsRemoveDevice(device.id)
 
         // Don't remove from local state - just set to disconnected
@@ -576,11 +665,10 @@ export default function Page() {
       })),
     )
 
-    // CRITICAL: Disconnect all connected devices first, then remove from registry
-    // This ensures physical BLE connections are closed
+    // Use removeDevice for all connected devices to stop backend auto-reconnect
+    // Devices will still appear in scan results as "discovered"
     sortedDevices.forEach(device => {
       if (device.connectionStatus === "connected") {
-        wsDisconnectDevice(device.id)
         wsRemoveDevice(device.id)
       }
     })
@@ -663,15 +751,6 @@ export default function Page() {
     }
   }, [isSyncing])
 
-  // Monitor knee data state changes
-  useEffect(() => {
-    trace('APP', `Knee data changed: left=${leftKneeData?.current}, right=${rightKneeData?.current}, leftTs=${leftKneeData?.sensorTimestamp}, rightTs=${rightKneeData?.sensorTimestamp}`);
-  }, [leftKneeData, rightKneeData])
-
-  // Monitor streaming state changes
-  useEffect(() => {
-    trace('APP', `Streaming state: isStreaming=${isStreaming}, hasStartedStreaming=${hasStartedStreaming}`);
-  }, [isStreaming, hasStartedStreaming])
 
   const handleLocate = async () => {
     if (sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
@@ -915,7 +994,7 @@ export default function Page() {
 
   return (
     <TooltipProvider delayDuration={1500}>
-      <div className={isSmallScreen ? "h-screen bg-[#fff6f3] flex flex-col relative overflow-hidden" : "min-h-screen bg-[#fff6f3] flex flex-col relative"}>
+      <div className={`${isSmallScreen ? "h-screen bg-[#fff6f3] flex flex-col relative overflow-hidden" : "min-h-screen bg-[#fff6f3] flex flex-col relative"} ${isRaspberryPi ? "raspberry-pi" : ""}`}>
         {/* Single big draggable div covering entire viewport */}
         <div
           className="fixed inset-0 w-full h-full"
@@ -940,18 +1019,24 @@ export default function Page() {
               WebkitAppRegion: 'no-drag'
             } as any}
           >
-            {/* Hide maximize button on small screens (RPi) */}
-            {!isSmallScreen && (
-              <button
-                onClick={() => window.electronAPI?.window.maximize()}
-                className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm"
-                title="Maximize"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                </svg>
-              </button>
-            )}
+            <button
+              onClick={() => window.electronAPI?.window.minimize()}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm"
+              title="Minimize"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
+            <button
+              onClick={() => window.electronAPI?.window.maximize()}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm"
+              title="Maximize"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              </svg>
+            </button>
             <button
               onClick={() => window.electronAPI?.window.close()}
               className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-red-500 hover:text-white transition-all shadow-sm"
@@ -1017,7 +1102,7 @@ export default function Page() {
                 className={`flex-shrink-0 bg-white flex flex-col transition-all pointer-events-auto ${
                   isFlashing ? "flash-pane" : ""
                 } ${
-                  isSmallScreen ? "flex-1 h-full p-4" : "w-[500px] p-6"
+                  isSmallScreen ? "w-1/2 h-full p-4" : "w-[500px] p-6"
                 }`}
                 style={{
                   border: isSmallScreen ? "none" : "1px solid #e5e5e5",
@@ -1028,15 +1113,17 @@ export default function Page() {
                   padding: clientDisplay === 'snapped-left' ? '0' : undefined,
                 } as any}
               >
-                {clientDisplay === 'snapped-left' ? (
-                  <>
-                    <ClientIframe className="client-iframe" />
-                    <ClientSnappedIsland
-                      isLeft={true}
-                      onClose={handleCloseClient}
-                      onBackToModal={handleClientBackToModal}
-                    />
-                  </>
+                {isRaspberryPi && clientDisplay === 'snapped-left' ? (
+                  <Suspense fallback={null}>
+                    <>
+                      <ClientIframe className="client-iframe" />
+                      <ClientSnappedIsland
+                        isLeft={true}
+                        onClose={handleCloseClient}
+                        onBackToModal={handleClientBackToModal}
+                      />
+                    </>
+                  </Suspense>
                 ) : (
                   <>
 
@@ -1328,17 +1415,19 @@ export default function Page() {
                   </Tooltip>
                 </div>
 
-                {/* Dynamic Island - Launch Client */}
-                {!clientLaunched && (
-                  <DynamicIsland
-                    expanded={false}
-                    onToggle={handleLaunchClient}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', cursor: 'pointer' }}>
-                      <span style={{ fontSize: '18px' }}>🚀</span>
-                      <span style={{ fontWeight: 500 }}>Launch Client</span>
-                    </div>
-                  </DynamicIsland>
+                {/* Dynamic Island - Launch Client - Only on Raspberry Pi */}
+                {isRaspberryPi && !clientLaunched && (
+                  <Suspense fallback={null}>
+                    <DynamicIsland
+                      expanded={false}
+                      onToggle={handleLaunchClient}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', cursor: 'pointer' }}>
+                        <span style={{ fontSize: '18px' }}>🚀</span>
+                        <span style={{ fontWeight: 500 }}>Launch Client</span>
+                      </div>
+                    </DynamicIsland>
+                  </Suspense>
                 )}
                   </>
                 )}
@@ -1347,36 +1436,17 @@ export default function Page() {
               {/* Right Pane */}
               <div
                 className={`bg-white gradient-diagonal flex flex-col items-center justify-center pointer-events-auto ${
-                  isSmallScreen ? "flex-1 h-full p-4" : "flex-1 p-6"
+                  isSmallScreen ? "w-1/2 h-full flex-1 p-4" : "flex-1 p-6"
                 }`}
                 style={{
                   border: isSmallScreen ? "none" : "1px solid #e5e5e5",
                   borderRadius: isSmallScreen ? "0" : "36px",
                   height: isSmallScreen ? "100%" : "500px",
-                  WebkitAppRegion: 'no-drag',
-                  position: 'relative',
-                  padding: clientDisplay === 'snapped-right' ? '0' : undefined,
+                  WebkitAppRegion: 'no-drag'
                 } as any}
               >
-                {clientDisplay === 'snapped-right' ? (
-                  <>
-                    <ClientIframe className="client-iframe" />
-                    <ClientSnappedIsland
-                      isLeft={false}
-                      onClose={handleCloseClient}
-                      onBackToModal={handleClientBackToModal}
-                    />
-                  </>
-                ) : (
-                  <>
-
                 {isStreaming || hasStartedStreaming ? (
-                  <KneeAreaChart
-                    leftKnee={leftKneeData}
-                    rightKnee={rightKneeData}
-                    clearTrigger={clearChartTrigger}
-                    modalOpen={clientDisplay === 'modal'}
-                  />
+                  <KneeAreaChart leftKnee={leftKneeData} rightKnee={rightKneeData} clearTrigger={clearChartTrigger} />
                 ) : (
                   <ChartSvg />
                 )}
@@ -1465,24 +1535,26 @@ export default function Page() {
                     </Tooltip>
                   )}
                 </div>
-                  </>
-                )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Client Launcher - Global singleton */}
-        <ClientLauncher
-          isLaunched={clientLaunched}
-          displayMode={clientDisplay}
-          onLaunch={handleLaunchClient}
-          onClose={handleCloseClient}
-          onMinimize={handleMinimizeClient}
-          onSnapLeft={handleSnapClientLeft}
-          onSnapRight={handleSnapClientRight}
-          onBackToModal={handleClientBackToModal}
-        />
+        {/* Client Launcher - Global singleton - Only on Raspberry Pi */}
+        {isRaspberryPi && (
+          <Suspense fallback={null}>
+            <ClientLauncher
+              isLaunched={clientLaunched}
+              displayMode={clientDisplay}
+              onLaunch={handleLaunchClient}
+              onClose={handleCloseClient}
+              onMinimize={handleMinimizeClient}
+              onSnapLeft={handleSnapClientLeft}
+              onSnapRight={handleSnapClientRight}
+              onBackToModal={handleClientBackToModal}
+            />
+          </Suspense>
+        )}
       </div>
     </TooltipProvider>
   )

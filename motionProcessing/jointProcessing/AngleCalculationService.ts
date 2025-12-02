@@ -1,7 +1,7 @@
 import { Quaternion, DeviceData, JointConfig, MotionConfig } from '../shared/types';
-import {CACHE, DEVICE, SYSTEM} from '../shared/constants';
-import {testDevicePattern} from '../shared/utils';
+import {CACHE, SYSTEM} from '../shared/constants';
 import {QuaternionService} from "../shared/QuaternionService";
+import { isBottomSensor, isTopSensor, DeviceID } from '../../registry-management';
 
 interface CacheEntry {
     angle: number;
@@ -20,18 +20,20 @@ export class AngleCalculationService {
     private readonly workingQuat2 = new Float32Array(4);
     private readonly workingQuatRel = new Float32Array(4);
     private readonly workingMatrix = new Float32Array(9);
-    private deviceSortOrderCache = new Map<string, number>();
-    private sampleCounter = 0;
 
     constructor(private jointConfig: JointConfig, motionConfig: MotionConfig) {
         this.jointPrefix = jointConfig.name;
         this.maxCacheSize = motionConfig.performance.cacheSize;
-        this.precomputeDeviceSortOrder();
     }
 
     /**
      * Calculates joint angle from device quaternion data using specified rotation axis.
-     * Returns cached result if available, otherwise performs full calculation.
+     *
+     * ARCHITECTURE NOTE: Cache was DISABLED because:
+     * 1. During streaming, every quaternion sample is unique
+     * 2. Cache hits returned stale angles from previous calculations
+     * 3. This caused "out of sync" appearance after chaotic movement
+     * 4. Angle calculation is fast (~0.05ms) - caching is counterproductive
      */
     calculateJointAngle(devices: DeviceData[], axis: 'x' | 'y' | 'z' = 'y'): number | null {
         if (devices.length < SYSTEM.MINIMUM_DEVICES_FOR_JOINT) return null;
@@ -39,14 +41,16 @@ export class AngleCalculationService {
         const sortedDevices = this.sortDevicesByPattern(devices);
         const [proximal, distal] = sortedDevices;
 
-        const cached = this.getCachedAngle(proximal, distal, axis);
-        if (cached !== null) return cached;
+        // Cache DISABLED - always calculate fresh angle for real-time accuracy
+        // const cached = this.getCachedAngle(proximal, distal, axis);
+        // if (cached !== null) return cached;
 
         try {
             const angle = this.calculateAngle(proximal.quaternion, distal.quaternion, axis);
             const finalAngle = this.applyCalibration(angle);
 
-            this.cacheAngle(proximal, distal, finalAngle, axis);
+            // Cache disabled - no need to store
+            // this.cacheAngle(proximal, distal, finalAngle, axis);
             return finalAngle;
         } catch {
             return null;
@@ -61,47 +65,89 @@ export class AngleCalculationService {
     }
 
     /**
-     * Pre-computes device sort order from joint configuration patterns.
-     * Improves performance by avoiding repeated pattern matching.
+     * Parses DeviceID from device identifier string.
+     * DeviceID format: "0x11", "0x12", "0x21", "0x22"
+     *
+     * @throws Error if deviceId is not a valid DeviceID format
      */
-    private precomputeDeviceSortOrder(): void {
-        const allPatterns = [...this.jointConfig.topSensorPattern, ...this.jointConfig.bottomSensorPattern];
-        allPatterns.forEach((pattern, index) => {
-            this.deviceSortOrderCache.set(pattern, index);
-        });
+    private parseDeviceID(deviceId: string): DeviceID {
+        // Parse hex string (e.g., "0x11" -> 17)
+        const numericId = parseInt(deviceId, 16);
+
+        // Validate it's a known DeviceID
+        const validDeviceIDs = [DeviceID.LEFT_KNEE_BOTTOM, DeviceID.LEFT_KNEE_TOP,
+                                DeviceID.RIGHT_KNEE_BOTTOM, DeviceID.RIGHT_KNEE_TOP];
+
+        if (!validDeviceIDs.includes(numericId)) {
+            throw new Error(
+                `CRITICAL: Unknown DeviceID "${deviceId}" (parsed as ${numericId}). ` +
+                `Valid DeviceIDs are: 0x11 (left-bottom), 0x12 (left-top), 0x21 (right-bottom), 0x22 (right-top). ` +
+                `Sensor ordering cannot proceed without valid device identification.`
+            );
+        }
+
+        return numericId as DeviceID;
     }
 
     /**
-     * Determines sort order for device based on pattern matching.
-     * Returns high value for unknown devices to sort them last.
+     * Determines sort order for device based on DeviceID position encoding.
+     *
+     * PHYSICAL REALITY (naming is inverted from placement):
+     * - 0x_1 = "bottom" in name, but physically on SHIN (below knee) = DISTAL → sort order 1 (second)
+     * - 0x_2 = "top" in name, but physically on THIGH (above knee) = PROXIMAL → sort order 0 (first)
+     *
+     * For knee angle: angle = inverse(q_proximal) * q_distal
+     * - Proximal sensor (thigh) must be first
+     * - Distal sensor (shin) must be second
+     *
+     * @throws Error if device position cannot be determined
      */
     private getDeviceSortOrder(deviceId: string): number {
-        // Check exact matches first
-        for (const [pattern, order] of this.deviceSortOrderCache.entries()) {
-            if (deviceId === pattern) {
-                return order;
-            }
+        const numericId = this.parseDeviceID(deviceId);
+
+        if (isTopSensor(numericId)) {
+            // "Top" in name = physically on THIGH = proximal → sorts first
+            return 0;
         }
 
-        // Check regex patterns
-        for (const [pattern, order] of this.deviceSortOrderCache.entries()) {
-            if (testDevicePattern(deviceId, pattern)) {
-                return order;
-            }
+        if (isBottomSensor(numericId)) {
+            // "Bottom" in name = physically on SHIN = distal → sorts second
+            return 1;
         }
 
-        return DEVICE.UNKNOWN_SORT_ORDER;
+        // This should never happen if parseDeviceID validated correctly
+        throw new Error(
+            `CRITICAL: DeviceID "${deviceId}" (0x${numericId.toString(16)}) has invalid position encoding. ` +
+            `Lower nibble must be 1 (bottom) or 2 (top), got ${numericId & 0x0F}.`
+        );
     }
 
     /**
-     * Sorts devices by joint configuration pattern order.
-     * Ensures consistent proximal-distal ordering for angle calculations.
+     * Sorts devices by anatomical position for consistent angle calculation.
+     *
+     * Order: [proximal (thigh - "top" named sensors), distal (shin - "bottom" named sensors)]
+     *
+     * NOTE: Device naming is INVERTED from physical placement:
+     * - "top" sensors are physically on the THIGH (above knee) = proximal
+     * - "bottom" sensors are physically on the SHIN (below knee) = distal
+     *
+     * This ordering is CRITICAL for correct joint angle calculation:
+     * - angle = inverse(q_proximal) * q_distal
+     * - Swapping proximal/distal inverts or corrupts the angle
+     *
+     * @throws Error if any device has unknown position
      */
     private sortDevicesByPattern(devices: DeviceData[]): DeviceData[] {
+        // Validate ALL devices have known positions before sorting
+        for (const device of devices) {
+            this.getDeviceSortOrder(device.deviceId); // Throws if unknown
+        }
+
+        // Sort: "top" sensors (proximal/thigh) before "bottom" sensors (distal/shin)
         return devices.sort((a, b) => {
-            const aIndex = this.getDeviceSortOrder(a.deviceId);
-            const bIndex = this.getDeviceSortOrder(b.deviceId);
-            return aIndex - bIndex;
+            const aOrder = this.getDeviceSortOrder(a.deviceId);
+            const bOrder = this.getDeviceSortOrder(b.deviceId);
+            return aOrder - bOrder;
         });
     }
 

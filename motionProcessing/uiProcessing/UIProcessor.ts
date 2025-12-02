@@ -235,8 +235,11 @@ export class UIProcessor {
     }
 
     /**
-     * Broadcast processed joint angle data via WebSocket to UI
-     * REVERTED: Send immediately - throttling caused stutters
+     * Broadcast processed joint angle data via WebSocket to UI.
+     *
+     * ARCHITECTURE NOTE: Throttling kept minimal (10ms = 100 broadcasts/sec max)
+     * but pending broadcasts now use CURRENT joint data, not stale parameter.
+     * This prevents "out of sync" where old angles would be broadcast.
      */
     private async broadcastJointAngleData(angleData: JointAngleData): Promise<void> {
         if (!this.webSocketBroadcast) {
@@ -256,6 +259,7 @@ export class UIProcessor {
         try {
             // Use Float32Array for optimized binary protocol
             // Format: [leftCurrent, rightCurrent] - only 2 floats, no junk
+            // CRITICAL: Always use CURRENT joint data from map, not stale angleData parameter
             const leftKnee = this.jointDataMap.get(JointName.LEFT_KNEE) || this.createEmptyJointData();
             const rightKnee = this.jointDataMap.get(JointName.RIGHT_KNEE) || this.createEmptyJointData();
 
@@ -268,7 +272,7 @@ export class UIProcessor {
             const message = {
                 type: 0x30, // MESSAGE_TYPES.MOTION_DATA
                 requestId: 0, // Fire-and-forget streaming data
-                timestamp: angleData.timestamp, // Use joint angle timestamp (already Date.now())
+                timestamp: now, // Use current time for broadcast timestamp
                 deviceName: angleData.deviceIds.join(','),
                 data: data
             };
@@ -279,14 +283,7 @@ export class UIProcessor {
             });
 
             this.lastBroadcastTime = now;
-
-            // If there was a pending broadcast, send it now
-            if (this.pendingBroadcast) {
-                this.pendingBroadcast = false;
-                this.broadcastJointAngleData(angleData).catch(error => {
-                    console.error('❌ [UI_PROCESSOR] Error broadcasting pending joint angle data:', error);
-                });
-            }
+            this.pendingBroadcast = false;
 
         } catch (error) {
             console.error('❌ [UI_PROCESSOR] Error creating WebSocket message:', error);

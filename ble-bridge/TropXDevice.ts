@@ -1239,8 +1239,6 @@ export class TropXDevice {
 
       // Forward to callback
       if (this.motionCallback) {
-        // DISABLED for performance (100Hz × 2 devices = 200 logs/sec causes stuttering)
-        // console.log(`📊 [${this.wrapper.deviceInfo.name}] Parsed motion data: q(${motionData.quaternion.w.toFixed(3)}, ${motionData.quaternion.x.toFixed(3)}, ${motionData.quaternion.y.toFixed(3)}, ${motionData.quaternion.z.toFixed(3)}) at ${motionData.timestamp}`);
         this.motionCallback(this.wrapper.deviceInfo.id, motionData);
       } else {
         console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] No motion callback set - data will be lost!`);
@@ -1253,15 +1251,11 @@ export class TropXDevice {
 
   // Parse quaternion from binary data
   private parseQuaternionData(data: Buffer): Quaternion {
-    // Read 3 x int16 values (x, y, z components)
     const x = data.readInt16LE(0) * QUATERNION_SCALE;
     const y = data.readInt16LE(2) * QUATERNION_SCALE;
     const z = data.readInt16LE(4) * QUATERNION_SCALE;
-
-    // Compute w component using quaternion unit norm constraint
     const sumSquares = x * x + y * y + z * z;
     const w = Math.sqrt(Math.max(0, 1 - sumSquares));
-
     return { w, x, y, z };
   }
 

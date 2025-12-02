@@ -22,7 +22,10 @@
       "Bash(sudo cat:*)",
       "Bash(xinput:*)",
       "Bash(curl:*)",
-      "Bash(npm run build:renderer:*)"
+      "Bash(npm run build:renderer:*)",
+      "Bash(npm install:*)",
+      "Bash(git apply:*)",
+      "Bash(npx tsc:*)"
     ],
     "deny": [],
     "ask": [],

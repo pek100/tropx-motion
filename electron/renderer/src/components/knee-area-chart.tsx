@@ -6,8 +6,8 @@ import { ComposedChart, Area, XAxis, YAxis, CartesianGrid, ReferenceLine, Respon
 import { ChartContainer } from "@/components/ui/chart"
 import { Check } from "lucide-react"
 
-// Debug trace logging
-const DEBUG_TRACE = true;
+// Debug trace logging (disabled in production)
+const DEBUG_TRACE = false;
 const trace = (component: string, msg: string, data?: any) => {
   if (!DEBUG_TRACE) return;
   if (data !== undefined) {
@@ -137,7 +137,6 @@ interface KneeAreaChartProps {
   recordingStartTime?: Date | null
   useSensorTimestamps?: boolean
   clearTrigger?: number // Added clearTrigger prop to reset chart data
-  modalOpen?: boolean // Track modal state to detect when chart might freeze
 }
 
 const KNEE_CONFIGS = [
@@ -179,7 +178,6 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   recordingStartTime,
   useSensorTimestamps = true,
   clearTrigger = 0, // Added clearTrigger prop
-  modalOpen = false, // Track modal state
 }) => {
   const [kneeVisibility, setKneeVisibility] = useState({
     left: true,
@@ -197,6 +195,17 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   const animationFrameRef = useRef<number>()
   const pendingUpdateRef = useRef(false)
+
+  // Store latest props in refs to avoid recreating updateData callback
+  // This prevents 100 useEffect cleanups per second at 100Hz data rate
+  const leftKneeRef = useRef(leftKnee)
+  const rightKneeRef = useRef(rightKnee)
+
+  // Keep refs in sync with props
+  useEffect(() => {
+    leftKneeRef.current = leftKnee
+    rightKneeRef.current = rightKnee
+  }, [leftKnee, rightKnee])
 
   const toggleKneeVisibility = (kneeKey: string) => {
     setKneeVisibility((prev) => ({
@@ -222,20 +231,25 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   const clampValue = (value: number) => Math.max(ANGLE_CONSTRAINTS.MIN, Math.min(ANGLE_CONSTRAINTS.MAX, value))
 
+  // Use refs in callback to avoid recreating on every prop change
+  // This is critical for high-frequency updates (100Hz)
   const updateData = useCallback(() => {
-    if (!leftKnee && !rightKnee) {
+    const left = leftKneeRef.current
+    const right = rightKneeRef.current
+
+    if (!left && !right) {
       trace('CHART', 'updateData skipped - no knee data');
       return
     }
 
     // Use sensor timestamps for accurate time axis
-    const timestamp = leftKnee?.sensorTimestamp || rightKnee?.sensorTimestamp || Date.now()
+    const timestamp = left?.sensorTimestamp || right?.sensorTimestamp || Date.now()
     updateCounterRef.current++
 
     const newDataPoint: ChartDataPoint = {
       time: timestamp,
-      leftAngle: roundToOneDecimal(clampValue(leftKnee?.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG)),
-      rightAngle: roundToOneDecimal(clampValue(rightKnee?.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG)),
+      leftAngle: roundToOneDecimal(clampValue(left?.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG)),
+      rightAngle: roundToOneDecimal(clampValue(right?.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG)),
       _updateId: updateCounterRef.current,
     }
 
@@ -250,19 +264,28 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
       pendingUpdateRef.current = true
       trace('CHART', 'Scheduling RAF');
       animationFrameRef.current = requestAnimationFrame(() => {
-        pendingUpdateRef.current = false
-        trace('CHART', 'RAF executing');
-        // Use latest timestamp from buffer for window calculation
-        const latestPoint = dataBufferRef.current.toArray().slice(-1)[0]
-        if (latestPoint) {
-          const newChartData = dataBufferRef.current.getChartData(latestPoint.time)
-          setChartData(newChartData)
-          trace('CHART', `Chart data updated: points=${newChartData.length}`);
+        try {
+          trace('CHART', 'RAF executing');
+          // Use latest timestamp from buffer for window calculation
+          const latestPoint = dataBufferRef.current.toArray().slice(-1)[0]
+          if (latestPoint) {
+            const newChartData = dataBufferRef.current.getChartData(latestPoint.time)
+            setChartData(newChartData)
+            trace('CHART', `Chart data updated: points=${newChartData.length}`);
+          }
+        } catch (error) {
+          console.error('[CHART] RAF callback error:', error);
+        } finally {
+          // CRITICAL: Always reset pending flag, even on error
+          // Without this, an error would permanently freeze the chart
+          pendingUpdateRef.current = false
         }
       })
     }
-  }, [leftKnee, rightKnee])
+  }, []) // Empty deps - uses refs for latest values
 
+  // Trigger data update when props change
+  // updateData is stable (empty deps) so this effect only runs when knee data changes
   useEffect(() => {
     if (!leftKnee && !rightKnee) {
       trace('CHART', 'useEffect skipped - no knee data');
@@ -274,13 +297,20 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
     // Update data on every change - RAF batching inside updateData prevents stutter
     updateData()
 
+    // No cleanup needed here - RAF cleanup only on unmount
+    // The RAF batching mechanism handles rapid updates correctly
+  }, [leftKnee, rightKnee, updateData])
+
+  // Cleanup RAF on unmount only (not on every prop change)
+  useEffect(() => {
     return () => {
-      // Cleanup pending RAF on unmount
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = undefined
       }
+      pendingUpdateRef.current = false
     }
-  }, [leftKnee, rightKnee, updateData])
+  }, [])
 
   useEffect(() => {
     if (clearTrigger > 0) {
@@ -299,23 +329,6 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
       setChartKey(prev => prev + 1)
     }
   }, [clearTrigger])
-
-  // Detect modal close and force chart remount to fix frozen Recharts rendering
-  const prevModalOpenRef = useRef(modalOpen)
-  useEffect(() => {
-    if (prevModalOpenRef.current && !modalOpen) {
-      // Modal just closed - force remount to fix any rendering issues
-      trace('CHART', 'Modal closed, forcing chart remount to recover from freeze');
-      // Cancel any pending RAF and reset RAF state
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current)
-        animationFrameRef.current = undefined
-      }
-      pendingUpdateRef.current = false // CRITICAL: Reset pending flag so RAF can be scheduled again
-      setChartKey(prev => prev + 1)
-    }
-    prevModalOpenRef.current = modalOpen
-  }, [modalOpen])
 
   const formatYAxis = (value: number) => `${value}${Labels.ANGLE_UNIT}`
 
