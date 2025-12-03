@@ -1155,7 +1155,7 @@ export class NobleBluetoothService {
     }
   }
 
-  // Subscribe to state changes to clear retry attempts
+  // Subscribe to state changes to clear retry attempts on successful connection
   private subscribeToStateChanges(): void {
     const handler = (change: { deviceId: number; previousState: DeviceState; newState: DeviceState }) => {
       // Get the BLE address for this device ID
@@ -1164,17 +1164,19 @@ export class NobleBluetoothService {
 
       const bleAddress = device.bleAddress;
 
-      // Clear retry attempts on ANY state change
-      // This ensures fresh retry counts when a device reconnects later
-      if (this.reconnectAttempts.has(bleAddress)) {
-        console.log(`🔄 [${device.bleName}] Clearing retry attempts on state change: ${change.previousState} → ${change.newState}`);
+      // ONLY clear retry attempts when successfully connected
+      // This ensures reconnection attempts continue with proper backoff
+      // Previous bug: clearing on any state change reset backoff prematurely
+      if (change.newState === DeviceState.CONNECTED && this.reconnectAttempts.has(bleAddress)) {
+        console.log(`✅ [${device.bleName}] Clearing retry attempts - device connected successfully`);
         this.reconnectAttempts.delete(bleAddress);
       }
 
-      // Also clear any pending reconnect timer if device state changed
+      // Cancel pending reconnect timer if device is no longer in reconnecting flow
+      // (e.g., user manually disconnected, device entered error state, etc.)
       const timer = this.reconnectTimers.get(bleAddress);
       if (timer && change.newState !== DeviceState.RECONNECTING && change.newState !== DeviceState.CONNECTING) {
-        console.log(`⏹️ [${device.bleName}] Cancelling pending reconnect timer on state change`);
+        console.log(`⏹️ [${device.bleName}] Cancelling pending reconnect timer on state change to ${change.newState}`);
         clearTimeout(timer);
         this.reconnectTimers.delete(bleAddress);
       }

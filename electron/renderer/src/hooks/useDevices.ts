@@ -307,6 +307,11 @@ export function useDevices() {
             setLastUpdate(Date.now());
 
             if (status.globalState) {
+              // Reset health check cooldown when transitioning TO IDLE
+              // This ensures each streaming session has its own fresh cooldown
+              if (status.globalState === GlobalState.IDLE) {
+                lastHealthReconnectRef.current = 0;
+              }
               setGlobalState(status.globalState);
             }
             return;
@@ -405,6 +410,8 @@ export function useDevices() {
 
         client.on(EVENT_TYPES.SYNC_COMPLETE, () => {
           setGlobalState(GlobalState.IDLE);
+          // Reset health check cooldown when returning to IDLE
+          lastHealthReconnectRef.current = 0;
         });
 
         // ─── Locate Mode Handler ───────────────────────────────────────
@@ -628,6 +635,8 @@ export function useDevices() {
     const result = await clientRef.current.stopRecording();
     if (result.success) {
       setGlobalState(GlobalState.IDLE);
+      // Reset health check cooldown - new session should have fresh cooldown
+      lastHealthReconnectRef.current = 0;
     }
     return result.success ? { success: true } : { success: false, error: result.error };
   }, []);
