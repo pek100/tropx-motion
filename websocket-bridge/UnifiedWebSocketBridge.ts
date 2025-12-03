@@ -5,7 +5,7 @@ import { BLEDomainProcessor } from './processors/BLEDomainProcessor';
 import { StreamingDomainProcessor } from './processors/StreamingDomainProcessor';
 import { SystemDomainProcessor } from './processors/SystemDomainProcessor';
 import { ClientMetadataProcessor } from './processors/ClientMetadataProcessor';
-import { NobleBLEServiceAdapter } from '../ble-bridge/NobleBLEServiceAdapter';
+import { BLEServiceAdapter } from '../ble-bridge/BLEServiceAdapter';
 import { createBleService } from '../ble-bridge/BleServiceFactory';
 import { MESSAGE_TYPES, DELIVERY_MODES } from './types/MessageTypes';
 
@@ -39,7 +39,7 @@ export class UnifiedWebSocketBridge {
   private clientMetadataProcessor: ClientMetadataProcessor;
 
   // Service adapters (initialized in initialize())
-  private bleServiceAdapter: NobleBLEServiceAdapter | null = null;
+  private bleServiceAdapter: BLEServiceAdapter | null = null;
 
   private config: UnifiedBridgeConfig;
   private isRunning = false;
@@ -68,45 +68,54 @@ export class UnifiedWebSocketBridge {
     console.log('🚀 Initializing Unified WebSocket Bridge...');
 
     try {
-      // Create adapter first so we can reference its event handler
-      this.bleServiceAdapter = new NobleBLEServiceAdapter(null as any); // Temporary, will inject service below
+      // Try to initialize BLE - but don't fail the whole bridge if BLE fails
+      let bleInitialized = false;
+      try {
+        // Create adapter first so we can reference its event handler
+        this.bleServiceAdapter = new BLEServiceAdapter(null as any); // Temporary, will inject service below
 
-      // Create platform-appropriate BLE service using factory with callbacks
-      console.log('🔍 Creating platform-appropriate BLE service...');
-      const bleService = await createBleService(
-        // CRITICAL: Motion callback must be provided to forward streaming data to UI
-        (deviceId: string, motionData: any) => {
-          // Forward motion data to adapter which processes and sends to motion coordinator
-          (this.bleServiceAdapter as any).handleMotionData(deviceId, motionData);
-        },
-        (deviceId: string, event: string, data?: any) => {
-          // Forward device events to adapter's handler
-          this.bleServiceAdapter!.handleDeviceEvent(deviceId, event, data);
+        // Create platform-appropriate BLE service using factory with callbacks
+        console.log('🔍 Creating platform-appropriate BLE service...');
+        const bleService = await createBleService(
+          // CRITICAL: Motion callback must be provided to forward streaming data to UI
+          (deviceId: string, motionData: any) => {
+            // Forward motion data to adapter which processes and sends to motion coordinator
+            (this.bleServiceAdapter as any).handleMotionData(deviceId, motionData);
+          },
+          (deviceId: string, event: string, data?: any) => {
+            // Forward device events to adapter's handler
+            this.bleServiceAdapter!.handleDeviceEvent(deviceId, event, data);
+          }
+        );
+
+        // Inject service into adapter
+        (this.bleServiceAdapter as any).bleService = bleService;
+
+        // Initialize BLE service adapter
+        bleInitialized = await this.bleServiceAdapter.initialize();
+        if (!bleInitialized) {
+          console.warn('⚠️ BLE service failed to initialize - continuing without BLE');
+        } else {
+          console.log('🔄 Enabling initial 10-second burst scan');
+          this.bleServiceAdapter.enableBurstScanningFor(10000);
         }
-      );
 
-      // Inject service into adapter
-      (this.bleServiceAdapter as any).bleService = bleService;
+        // Connect service adapters to existing services
+        this.bleServiceAdapter.connect(services.motionCoordinator);
 
-      // Initialize BLE service adapter
-      const bleInitialized = await this.bleServiceAdapter.initialize();
-      if (!bleInitialized) {
-        console.warn('⚠️ BLE service failed to initialize');
-      } else {
-        console.log('🔄 Enabling initial 10-second burst scan');
-        this.bleServiceAdapter.enableBurstScanningFor(10000);
+        // Setup broadcast function for BLE adapter
+        this.bleServiceAdapter.setBroadcastFunction(async (message, clientIds) => {
+          await this.connectionManager.broadcast(message);
+        });
+      } catch (bleError) {
+        console.error('❌ BLE initialization failed - continuing without BLE:', bleError);
+        this.bleServiceAdapter = null;
       }
 
-      // Connect service adapters to existing services
-      this.bleServiceAdapter.connect(services.motionCoordinator);
-
-      // Setup broadcast function for BLE adapter
-      this.bleServiceAdapter.setBroadcastFunction(async (message, clientIds) => {
-        await this.connectionManager.broadcast(message);
-      });
-
-      // Inject services into domain processors
-      this.bleProcessor.setBLEService(this.bleServiceAdapter);
+      // Inject services into domain processors (BLE may be null)
+      if (this.bleServiceAdapter) {
+        this.bleProcessor.setBLEService(this.bleServiceAdapter);
+      }
       if (services.systemMonitor) {
         this.systemProcessor.setSystemService(services.systemMonitor);
       }
@@ -235,12 +244,9 @@ export class UnifiedWebSocketBridge {
   private setupUnifiedIntegration(): void {
     // Connect connection manager to unified router
     this.connectionManager.onMessage(async (message, clientId) => {
-      console.log(`📨 Unified Bridge: Routing message type ${message.type} (0x${message.type.toString(16)}) from ${clientId}`);
-
       const response = await this.unifiedRouter.route(message, clientId);
 
       if (response) {
-        console.log(`📤 Unified Bridge: Sending response type ${response.type} to ${clientId}`);
         await this.connectionManager.sendToClient(clientId, response);
       }
     });

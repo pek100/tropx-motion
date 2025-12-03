@@ -5,7 +5,7 @@ import { PlatformIndicator } from "@/components/platform-indicator"
 import { useState, useRef, useEffect, useMemo, lazy, Suspense } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { useWebSocket } from "@/hooks/use-websocket"
+import { useDevices, type UIDevice, DeviceId } from "@/hooks/useDevices"
 import { persistence } from "@/lib/persistence"
 
 // Lazy load RPi-specific components only when needed
@@ -20,41 +20,35 @@ export default function Page() {
   const refreshTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const locateDelayTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Use WebSocket hook for REAL data
+  // Unified device state hook - single source of truth
   const {
-    devices: wsDevices,
-    leftKneeData,
-    rightKneeData,
+    // Device state
+    uiDevices,
+    allDevices,
     isConnected,
     isScanning,
     isSyncing,
+    isStreaming: hookIsStreaming,
     syncProgress,
     vibratingDeviceIds,
-    scanDevices,
-    burstScanDevices,
-    connectDevice: wsConnectDevice,
-    disconnectDevice: wsDisconnectDevice,
-    removeDevice: wsRemoveDevice,
+    // Motion data
+    leftKneeData,
+    rightKneeData,
+    // Actions
+    connectDevice,
+    disconnectDevice,
+    removeDevice,
     connectAllDevices,
     syncAllDevices,
     startLocateMode,
     stopLocateMode,
     startBurstScan,
     stopBurstScan,
-    startRecording,
-    stopRecording,
-  } = useWebSocket()
+    startStreaming,
+    stopStreaming,
+  } = useDevices()
 
-  // Local device state for UI management (with connection state transitions)
-  const [devices, setDevices] = useState<Array<{
-    id: string;
-    name: string;
-    signalStrength: 1 | 2 | 3 | 4;
-    batteryPercentage: number | null;
-    connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing" | "reconnecting";
-    isReconnecting?: boolean;
-    reconnectAttempts?: number;
-  }>>([])
+  // UI state (not device state - just UI concerns)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isStreaming, setIsStreaming] = useState(false)
   const [hasStartedStreaming, setHasStartedStreaming] = useState(false)
@@ -71,8 +65,6 @@ export default function Page() {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   // Persist custom device order (array of device IDs)
   const [deviceOrder, setDeviceOrder] = useState<string[]>([])
-  // Track devices manually disconnected by user to prevent auto-reconnect
-  const [userDisconnectedDevices, setUserDisconnectedDevices] = useState<Set<string>>(new Set())
 
   // Small screen detection (< 350px width or height)
   const [isSmallScreen, setIsSmallScreen] = useState(false)
@@ -83,15 +75,9 @@ export default function Page() {
   const [clientLaunched, setClientLaunched] = useState(false)
   const [clientDisplay, setClientDisplay] = useState<ClientDisplayMode>('closed')
 
-  // Auto-start connection logic: run burst scanning + connect attempts for first 10s
+  // Auto-start: run burst scanning for first 10s (user clicks Connect to connect devices)
   const autoStartRef = useRef(false)
   const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const connectAllTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const [showSessionRecovery, setShowSessionRecovery] = useState(false)
-  const [sessionRecoveryData, setSessionRecoveryData] = useState<{
-    deviceIds: string[];
-    sessionId: string | null;
-  } | null>(null)
 
   // Load persisted state on mount
   useEffect(() => {
@@ -115,16 +101,6 @@ export default function Page() {
       setClientLaunched(savedState.clientDisplay !== 'closed')
       console.log('✅ Restored client display:', savedState.clientDisplay)
     }
-
-    // Check for session recovery
-    if (savedState.wasStreaming && savedState.lastConnectedDeviceIds.length >= 2) {
-      setSessionRecoveryData({
-        deviceIds: savedState.lastConnectedDeviceIds,
-        sessionId: savedState.streamingSessionId,
-      })
-      setShowSessionRecovery(true)
-      console.log('🔄 Session recovery available:', savedState.lastConnectedDeviceIds)
-    }
   }, [])
 
   // Save state changes to persistence
@@ -140,35 +116,13 @@ export default function Page() {
     persistence.saveClientDisplay(clientDisplay)
   }, [clientDisplay])
 
-  // Save streaming session state
-  useEffect(() => {
-    const connectedDeviceIds = devices
-      .filter(d => d.connectionStatus === 'connected')
-      .map(d => d.id)
-
-    persistence.saveStreamingSession(
-      isStreaming,
-      connectedDeviceIds,
-      isStreaming ? `session_${Date.now()}` : null,
-      streamStartTime
-    )
-  }, [isStreaming, devices, streamStartTime])
-
   // Save state before page unload
   useEffect(() => {
     const handleBeforeUnload = () => {
-      const connectedDeviceIds = devices
-        .filter(d => d.connectionStatus === 'connected')
-        .map(d => d.id)
-
       persistence.saveStateImmediate({
         deviceOrder,
         smallScreenOverride,
         clientDisplay,
-        wasStreaming: isStreaming,
-        lastConnectedDeviceIds: connectedDeviceIds,
-        streamingSessionId: isStreaming ? `session_${Date.now()}` : null,
-        streamStartTime: isStreaming ? streamStartTime : null,
       })
 
       console.log('💾 Saved state before unload')
@@ -176,7 +130,7 @@ export default function Page() {
 
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [deviceOrder, smallScreenOverride, clientDisplay, isStreaming, devices, streamStartTime])
+  }, [deviceOrder, smallScreenOverride, clientDisplay])
 
   useEffect(() => {
     if (!isConnected || autoStartRef.current) return
@@ -198,19 +152,15 @@ export default function Page() {
     }, 10000)
     scanTimeoutRef.current = scanTimeout
 
-    // Try connecting to any devices after 1 second
-    const connectTimeout = setTimeout(() => {
-      connectAllDevices()
-    }, 1000)
-    connectAllTimeoutRef.current = connectTimeout
+    // NOTE: Removed auto-connect after 1 second
+    // Devices now stay in DISCOVERED state until user explicitly clicks Connect
+    // This prevents devices from showing "connecting" state immediately after being discovered
 
     // Cleanup only runs when component unmounts (not on re-renders)
     return () => {
       console.log('🧹 Auto-start cleanup: Clearing timers')
       clearTimeout(scanTimeout)
-      clearTimeout(connectTimeout)
       scanTimeoutRef.current = null
-      connectAllTimeoutRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected])
@@ -219,9 +169,10 @@ export default function Page() {
   useEffect(() => {
     const checkScreenSize = async () => {
       // Check if running on Raspberry Pi
+      let isRPi = false
       try {
         const platformInfo = await window.electronAPI?.system?.getPlatformInfo()
-        const isRPi = platformInfo?.info?.isRaspberryPi || false
+        isRPi = platformInfo?.info?.isRaspberryPi || false
         setIsRaspberryPi(isRPi)
 
         // Force small screen mode on Raspberry Pi regardless of actual screen size
@@ -302,194 +253,24 @@ export default function Page() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isSmallScreen, toast])
 
-  // Update devices from WebSocket scan results
-  useEffect(() => {
-    setDevices(prev => {
-      if (wsDevices.length === 0) {
-        return prev;
-      }
-
-      const merged = new Map<string, typeof prev[0]>();
-
-      // First, process all WebSocket devices
-      wsDevices.forEach(d => {
-        const existing = prev.find(p => p.id === d.id);
-        const wasUserDisconnected = userDisconnectedDevices.has(d.id);
-
-        // Calculate signal strength from RSSI
-        let signalStrength: 1 | 2 | 3 | 4 = 1;
-        if (d.rssi >= -50) signalStrength = 4;
-        else if (d.rssi >= -65) signalStrength = 3;
-        else if (d.rssi >= -75) signalStrength = 2;
-        else signalStrength = 1;
-
-        if (existing) {
-          console.log(`🔍 Processing existing device ${d.name}: backend state=${d.state}, UI state=${existing.connectionStatus}, isReconnecting=${d.isReconnecting}, wasUserDisconnected=${wasUserDisconnected}`);
-
-          // If device was manually disconnected by user, it should have been removed from backend
-          // If it somehow reconnects, log a warning (shouldn't happen with removeDevice)
-          if (wasUserDisconnected && (d.state === 'connected' || d.state === 'streaming')) {
-            console.warn(`⚠️ User-disconnected device ${d.name} reconnected unexpectedly - this should not happen`);
-            // Device was removed from backend but is reconnecting somehow
-            // Keep it disconnected in UI but don't fight the backend
-            merged.set(d.id, {
-              ...existing,
-              signalStrength,
-              connectionStatus: 'disconnected' as const,
-              isReconnecting: false,
-              reconnectAttempts: 0,
-            });
-            return;
-          }
-
-          // WebSocket confirms connection - override local state
-          if (d.state === 'connected' || d.state === 'streaming') {
-            // IMPORTANT: If device is in 'streaming' state but frontend is NOT streaming,
-            // this is incorrect - backend should only have devices in streaming during active recording
-            if (d.state === 'streaming' && !isStreaming) {
-              console.warn(`⚠️ Device ${d.name} reports 'streaming' state but frontend is NOT streaming - backend sync issue`);
-              // Note: We can't force stop recording here because we don't have stopRecording in scope
-              // The backend should handle this - devices should only be in 'streaming' during active recording session
-            }
-
-            if (existing.connectionStatus !== 'connected') {
-              console.log(`✅ Device ${d.name} confirmed connected (from WebSocket, backend state: ${d.state})`);
-            }
-            const battery = d.batteryLevel !== null && d.batteryLevel !== undefined ? d.batteryLevel : existing.batteryPercentage;
-            console.log(`🔋 Device ${d.name} battery: ${battery}% (from WS: ${d.batteryLevel}, existing: ${existing.batteryPercentage})`);
-            merged.set(d.id, {
-              ...existing,
-              signalStrength,
-              batteryPercentage: battery,
-              connectionStatus: 'connected' as const,
-              isReconnecting: d.isReconnecting ?? false,
-              reconnectAttempts: d.reconnectAttempts ?? 0,
-            });
-            return;
-          }
-
-          // WebSocket says disconnected - but keep local transition states
-          if (d.state === 'discovered' || d.state === 'disconnected') {
-            // Check if device is actively reconnecting
-            const isActivelyReconnecting = d.isReconnecting ?? false;
-
-            // If we're in a connecting transition (and NOT user-disconnected), keep it
-            if (!wasUserDisconnected && (existing.connectionStatus === 'connecting' || existing.connectionStatus === 'synchronizing')) {
-              merged.set(d.id, {
-                ...existing,
-                signalStrength,
-                isReconnecting: isActivelyReconnecting,
-                reconnectAttempts: d.reconnectAttempts ?? 0,
-              });
-              return;
-            }
-
-            // If device is actively reconnecting, set status to "reconnecting"
-            const status = isActivelyReconnecting ? 'reconnecting' as const : 'disconnected' as const;
-
-            if (existing.connectionStatus !== status) {
-              console.log(`🔄 Device ${d.name} status changing: ${existing.connectionStatus} → ${status} (isReconnecting=${isActivelyReconnecting}, attempts=${d.reconnectAttempts ?? 0})`);
-            }
-
-            // Otherwise update to disconnected or reconnecting
-            merged.set(d.id, {
-              ...existing,
-              signalStrength,
-              batteryPercentage: d.batteryLevel !== null && d.batteryLevel !== undefined ? d.batteryLevel : existing.batteryPercentage,
-              connectionStatus: status,
-              isReconnecting: isActivelyReconnecting,
-              reconnectAttempts: d.reconnectAttempts ?? 0,
-            });
-            return;
-          }
-
-          // Error state from backend - reset to disconnected if was connecting
-          if (d.state === 'error') {
-            merged.set(d.id, {
-              ...existing,
-              signalStrength,
-              connectionStatus: existing.connectionStatus === 'connecting' ? 'disconnected' as const : 'disabled' as const,
-              isReconnecting: d.isReconnecting ?? false,
-              reconnectAttempts: d.reconnectAttempts ?? 0,
-            });
-            return;
-          }
-
-          // Default: keep existing with updated data
-          merged.set(d.id, {
-            ...existing,
-            signalStrength,
-            batteryPercentage: d.batteryLevel !== null && d.batteryLevel !== undefined ? d.batteryLevel : existing.batteryPercentage,
-            isReconnecting: d.isReconnecting ?? false,
-            reconnectAttempts: d.reconnectAttempts ?? 0,
-          });
-        } else {
-          // New device - map WebSocket state to UI state
-          let connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing" = 'disconnected';
-          if (d.state === 'connected' || d.state === 'streaming') {
-            // If this is a new device that's already connected, but user previously disconnected it,
-            // it shouldn't be reconnecting (since we used removeDevice)
-            if (wasUserDisconnected) {
-              console.warn(`⚠️ User-disconnected device ${d.name} appeared as connected - this should not happen`);
-              connectionStatus = 'disconnected';
-            } else {
-              connectionStatus = 'connected';
-            }
-          } else if (d.state === 'error') {
-            connectionStatus = 'disabled';
-          } else if (d.state === 'discovered') {
-            connectionStatus = 'disconnected';
-          }
-
-          merged.set(d.id, {
-            id: d.id,
-            name: d.name,
-            signalStrength,
-            batteryPercentage: d.batteryLevel ?? null,
-            connectionStatus,
-            isReconnecting: d.isReconnecting ?? false,
-            reconnectAttempts: d.reconnectAttempts ?? 0,
-          });
-        }
-      });
-
-      // Second, keep any connected/connecting devices not in the scan
-      // (but NOT if they were user-disconnected)
-      prev.forEach(device => {
-        if (!merged.has(device.id) &&
-            (device.connectionStatus === 'connected' ||
-             device.connectionStatus === 'connecting' ||
-             device.connectionStatus === 'synchronizing')) {
-          console.log(`📌 Keeping ${device.name} (${device.connectionStatus}) - not in scan`);
-          merged.set(device.id, device);
-        }
-      });
-
-      return Array.from(merged.values());
-    });
-  }, [wsDevices, userDisconnectedDevices, isStreaming])
-
-  // Initialize device order when new devices are discovered (use ref to track)
+  // Initialize device order when new devices are discovered
   const lastDeviceIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    const currentIds = new Set(devices.map(d => d.id));
+    const currentIds = new Set(uiDevices.map(d => d.id));
     const newDeviceIds = Array.from(currentIds).filter(id => !lastDeviceIdsRef.current.has(id));
 
     if (newDeviceIds.length > 0) {
       setDeviceOrder(prev => {
-        // If no order exists, initialize with all current device IDs
         if (prev.length === 0) {
           return Array.from(currentIds);
         }
-        // Otherwise, just append new device IDs
         return [...prev, ...newDeviceIds];
       });
     }
 
-    // Update the ref
     lastDeviceIdsRef.current = currentIds;
-  }, [devices]);
+  }, [uiDevices]);
 
   useEffect(() => {
     if (!isStreaming || streamStartTime === null) {
@@ -504,30 +285,36 @@ export default function Page() {
     return () => clearInterval(interval)
   }, [isStreaming, streamStartTime])
 
+  // Fix #1: Sync local isStreaming with backend hookIsStreaming
+  // Handles cases where backend stops streaming (device disconnect, error)
+  useEffect(() => {
+    if (!hookIsStreaming && isStreaming) {
+      console.log('⚠️ Backend stopped streaming, syncing UI state')
+      setIsStreaming(false)
+    }
+  }, [hookIsStreaming, isStreaming])
+
   // No mock data - WebSocket hook provides real leftKneeData and rightKneeData
 
   // Sort devices according to custom order for rendering
+  // uiDevices comes from useDevices hook - single source of truth
   const sortedDevices = useMemo(() => {
     if (deviceOrder.length === 0) {
-      return devices;
+      return uiDevices;
     }
 
-    return [...devices].sort((a, b) => {
+    return [...uiDevices].sort((a, b) => {
       const indexA = deviceOrder.indexOf(a.id);
       const indexB = deviceOrder.indexOf(b.id);
 
-      // If both are in order, sort by their position
       if (indexA !== -1 && indexB !== -1) {
         return indexA - indexB;
       }
-      // If only A is in order, it comes first
       if (indexA !== -1) return -1;
-      // If only B is in order, it comes first
       if (indexB !== -1) return 1;
-      // Neither in order, maintain current order
       return 0;
     });
-  }, [devices, deviceOrder]);
+  }, [uiDevices, deviceOrder]);
 
   const allDevicesConnected = sortedDevices.every((device) => device.connectionStatus === "connected")
 
@@ -535,143 +322,70 @@ export default function Page() {
 
   const validateStreaming = () => {
     const connectedDevices = sortedDevices.filter((device) => device.connectionStatus === "connected")
+    const connectedIds = new Set(connectedDevices.map((d) => d.deviceId))
 
-    const leftDevices = connectedDevices.filter((device) => device.name.includes("_ln_"))
-    const rightDevices = connectedDevices.filter((device) => device.name.includes("_rn_"))
+    // Check for left knee pair (LEFT_SHIN + LEFT_THIGH)
+    const hasLeftKnee = connectedIds.has(DeviceId.LEFT_SHIN) && connectedIds.has(DeviceId.LEFT_THIGH)
+    // Check for right knee pair (RIGHT_SHIN + RIGHT_THIGH)
+    const hasRightKnee = connectedIds.has(DeviceId.RIGHT_SHIN) && connectedIds.has(DeviceId.RIGHT_THIGH)
 
-    return leftDevices.length >= 2 || rightDevices.length >= 2
+    return hasLeftKnee || hasRightKnee
   }
 
-  const handleToggleConnection = (index: number) => {
+  // Simplified handler - server owns state, UI just calls actions
+  const handleToggleConnection = async (index: number) => {
     if (isLocating || sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
 
     const device = sortedDevices[index]
     if (!device) return
 
-    // Don't allow re-connecting if already connected or connecting
+    // Handle disconnect/cancel for connected or connecting states
     if (device.connectionStatus === "connected" || device.connectionStatus === "connecting") {
-      if (device.connectionStatus === "connected") {
-        // User manually disconnecting - use removeDevice to stop backend auto-reconnect
-        console.log(`🔴 User manually disconnected device: ${device.name} - removing from managed devices`)
-        setUserDisconnectedDevices((prev) => new Set(prev).add(device.id))
+      console.log(`🔴 ${device.connectionStatus === "connecting" ? "Canceling" : "Disconnecting"} device: ${device.name}`)
 
-        // CRITICAL: If streaming is active, stop the recording session first
-        // Otherwise backend will keep trying to stream from devices
-        if (isStreaming) {
-          console.log(`⚠️ Stopping recording session because user disconnected device during streaming`)
-          stopRecording().then(() => {
-            setIsStreaming(false)
-            console.log(`✅ Recording stopped after user disconnect`)
-          })
-        }
-
-        // Use removeDevice instead of disconnectDevice to stop backend auto-reconnect
-        // Device will still appear in scan results as "discovered"
-        wsRemoveDevice(device.id)
-
-        // Don't remove from local state - just set to disconnected
-        // The device will reappear in wsDevices as "discovered" from scan results
-        setDevices((prevDevices) => {
-          console.log(`🔧 Setting device ${device.id} to disconnected state locally`)
-          return prevDevices.map((d) => {
-            if (d.id === device.id) {
-              console.log(`✏️ Device ${d.name} local state: ${d.connectionStatus} → disconnected`)
-              return {
-                ...d,
-                connectionStatus: "disconnected" as const,
-                isReconnecting: false,
-                reconnectAttempts: 0
-              }
-            }
-            return d
-          })
-        })
+      // Stop streaming if active
+      if (isStreaming) {
+        console.log(`⚠️ Stopping streaming because user disconnected device`)
+        await stopStreaming()
+        setIsStreaming(false)
       }
+
+      // Call server action - state update will come via STATE_UPDATE
+      // disconnectDevice handles both connected and connecting states
+      await disconnectDevice(device.id)
       return
     }
 
-    // Only proceed if disconnected
-    if (device.connectionStatus === "disconnected") {
-      // User manually connecting - remove from userDisconnectedDevices set
-      console.log(`🟢 User manually connected device: ${device.name}`)
-      setUserDisconnectedDevices((prev) => {
-        const next = new Set(prev)
-        next.delete(device.id)
-        return next
-      })
-
-      // Start WebSocket connect in background
-      wsConnectDevice(device.id, device.name)
-
-      // Set to connecting - WebSocket events will update to connected - use device ID
-      setDevices((prevDevices) => {
-        console.log(`🔧 Setting device ${device.id} to connecting state locally`)
-        return prevDevices.map((d) => {
-          if (d.id === device.id) {
-            console.log(`✏️ Device ${d.name} local state: ${d.connectionStatus} → connecting`)
-            return { ...d, connectionStatus: "connecting" as const }
-          }
-          return d
-        })
-      })
+    if (device.connectionStatus === "disconnected" || device.connectionStatus === "reconnecting") {
+      console.log(`🟢 Connecting device: ${device.name} (${device.bleName})`)
+      // Call server action - state update will come via STATE_UPDATE
+      // Use bleName for connection (original BLE name needed by backend)
+      await connectDevice(device.id, device.bleName)
     }
   }
 
-  const handleConnectAll = () => {
+  // Simplified - server owns state
+  const handleConnectAll = async () => {
     if (isLocating || sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
-
-    // User wants to connect all - clear the userDisconnectedDevices set
-    console.log(`🟢 User manually connecting all devices - clearing disconnect list`)
-    setUserDisconnectedDevices(new Set())
-
-    // Call WebSocket connect all in background
-    connectAllDevices()
-
-    // Set disconnected devices to connecting - WebSocket events will update to connected
-    setDevices((prevDevices) =>
-      prevDevices.map((device) =>
-        device.connectionStatus === "disconnected"
-          ? { ...device, connectionStatus: "connecting" as const }
-          : device
-      )
-    )
+    console.log(`🟢 Connecting all devices`)
+    await connectAllDevices()
   }
 
-  const handleDisconnectAll = () => {
+  // Simplified - server owns state
+  const handleDisconnectAll = async () => {
     if (isLocating || sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
+    console.log(`🔴 Disconnecting all devices`)
 
-    // User manually disconnecting all - add all device IDs to userDisconnectedDevices set
-    const allDeviceIds = sortedDevices.map(d => d.id)
-    console.log(`🔴 User manually disconnected all devices: ${allDeviceIds.length} devices - removing from managed devices`)
-    setUserDisconnectedDevices(new Set(allDeviceIds))
-
-    // CRITICAL: If streaming is active, stop the recording session first
-    // Otherwise backend will keep trying to stream from devices
+    // Stop streaming if active
     if (isStreaming) {
-      console.log(`⚠️ Stopping recording session because user disconnected all devices during streaming`)
-      stopRecording().then(() => {
-        setIsStreaming(false)
-        console.log(`✅ Recording stopped after disconnect all`)
-      })
+      console.log(`⚠️ Stopping streaming because user disconnected all devices`)
+      await stopStreaming()
+      setIsStreaming(false)
     }
 
-    // Disconnect all immediately and clear reconnecting states
-    setDevices((prevDevices) =>
-      prevDevices.map((device) => ({
-        ...device,
-        connectionStatus: "disconnected" as const,
-        isReconnecting: false,
-        reconnectAttempts: 0
-      })),
-    )
-
-    // Use removeDevice for all connected devices to stop backend auto-reconnect
-    // Devices will still appear in scan results as "discovered"
-    sortedDevices.forEach(device => {
-      if (device.connectionStatus === "connected") {
-        wsRemoveDevice(device.id)
-      }
-    })
+    // Fix #2: Use disconnectDevice for graceful disconnect (not removeDevice)
+    const connectedDevices = sortedDevices.filter(d => d.connectionStatus === "connected")
+    await Promise.all(connectedDevices.map(device => disconnectDevice(device.id)))
   }
 
   const handleRefresh = async () => {
@@ -723,33 +437,40 @@ export default function Page() {
     }, 10000)
   }
 
+  // Fix #3: Add timeout protection to sync
+  const SYNC_TIMEOUT_MS = 15000
+
   const handleSync = async () => {
     if (isLocating) return
-    await syncAllDevices()
+
+    try {
+      const syncPromise = syncAllDevices()
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Sync timeout')), SYNC_TIMEOUT_MS)
+      })
+
+      await Promise.race([syncPromise, timeoutPromise])
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Sync timeout') {
+        toast({
+          title: "Sync Timeout",
+          description: "Sync took too long. Please try again.",
+          variant: "destructive",
+          duration: 4000,
+        })
+      } else {
+        console.error('Sync error:', error)
+        toast({
+          title: "Sync Failed",
+          description: error instanceof Error ? error.message : "An error occurred during sync",
+          variant: "destructive",
+          duration: 4000,
+        })
+      }
+    }
   }
 
-  // React to isSyncing state from WebSocket events
-  useEffect(() => {
-    if (isSyncing) {
-      // Backend sent SYNC_STARTED - show sync animation on connected devices
-      setDevices((prevDevices) =>
-        prevDevices.map((device) =>
-          device.connectionStatus === "connected"
-            ? { ...device, connectionStatus: "synchronizing" as const }
-            : device
-        )
-      )
-    } else {
-      // Backend sent SYNC_COMPLETE - restore to connected
-      setDevices((prevDevices) =>
-        prevDevices.map((device) =>
-          device.connectionStatus === "synchronizing"
-            ? { ...device, connectionStatus: "connected" as const }
-            : device
-        )
-      )
-    }
-  }, [isSyncing])
+  // Sync state now comes from useDevices hook via STATE_UPDATE - no local management needed
 
 
   const handleLocate = async () => {
@@ -837,7 +558,7 @@ export default function Page() {
       setClearChartTrigger((prev) => prev + 1)
       const sessionId = `session_${Date.now()}`
 
-      const result = await startRecording(sessionId, "test_exercise", 1)
+      const result = await startStreaming(sessionId, "test_exercise", 1)
       setIsValidatingState(false)
 
       if (result.success) {
@@ -847,7 +568,7 @@ export default function Page() {
         setStreamStartTime(null)
 
         // Show error toast with device details if available
-        const errorMsg = (result as any).error || result.message || "Failed to start streaming"
+        const errorMsg = (result as any).error || "Failed to start streaming"
         toast({
           title: "Cannot Start Streaming",
           description: errorMsg,
@@ -856,7 +577,7 @@ export default function Page() {
         })
       }
     } else {
-      await stopRecording()
+      await stopStreaming()
       setIsStreaming(false)
     }
   }
@@ -990,7 +711,7 @@ export default function Page() {
     return {}
   }
 
-  // leftKneeData and rightKneeData come from useWebSocket hook
+  // leftKneeData and rightKneeData come from useDevices hook
 
   return (
     <TooltipProvider delayDuration={1500}>
@@ -1133,7 +854,7 @@ export default function Page() {
                       <TooltipTrigger asChild>
                         <button
                           onClick={handleLocate}
-                          disabled={devices.some((d) => d.connectionStatus === "synchronizing") || isStreaming || isValidatingState || isValidatingLocate}
+                          disabled={sortedDevices.some((d) => d.connectionStatus === "synchronizing") || isStreaming || isValidatingState || isValidatingLocate}
                           className={isSmallScreen ? "px-5 py-3 text-base rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]" : "px-4 py-2 text-sm rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"}
                           style={{
                             backgroundColor: isLocating ? "rgba(75, 175, 39, 0.15)" : "rgba(255, 255, 255, 0.5)",
@@ -1141,13 +862,13 @@ export default function Page() {
                             transition: "all 0.3s ease",
                           }}
                           onMouseEnter={(e) => {
-                            if (!isLocating && !devices.some((d) => d.connectionStatus === "synchronizing")) {
+                            if (!isLocating && !sortedDevices.some((d) => d.connectionStatus === "synchronizing")) {
                               e.currentTarget.style.backgroundColor = "rgba(75, 175, 39, 0.15)"
                               e.currentTarget.style.color = "#4baf27"
                             }
                           }}
                           onMouseLeave={(e) => {
-                            if (!isLocating && !devices.some((d) => d.connectionStatus === "synchronizing")) {
+                            if (!isLocating && !sortedDevices.some((d) => d.connectionStatus === "synchronizing")) {
                               e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.5)"
                               e.currentTarget.style.color = "var(--tropx-shadow)"
                             }
@@ -1231,7 +952,7 @@ export default function Page() {
                         onMouseEnter={(e) => {
                           if (
                             !isLocating &&
-                            !devices.some((d) => d.connectionStatus === "synchronizing") &&
+                            !sortedDevices.some((d) => d.connectionStatus === "synchronizing") &&
                             !isRefreshing
                           ) {
                             e.currentTarget.style.backgroundColor = "rgba(255, 77, 53, 0.15)"
@@ -1242,7 +963,7 @@ export default function Page() {
                         onMouseLeave={(e) => {
                           if (
                             !isLocating &&
-                            !devices.some((d) => d.connectionStatus === "synchronizing") &&
+                            !sortedDevices.some((d) => d.connectionStatus === "synchronizing") &&
                             !isRefreshing
                           ) {
                             e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.5)"
@@ -1317,6 +1038,7 @@ export default function Page() {
                     <DeviceCard
                       key={device.id || device.name}
                       name={device.name}
+                      deviceId={device.deviceId}
                       signalStrength={device.signalStrength}
                       batteryPercentage={device.batteryPercentage}
                       connectionStatus={device.connectionStatus}
@@ -1329,20 +1051,11 @@ export default function Page() {
                       isSmallScreen={isSmallScreen}
                       onToggleConnection={() => handleToggleConnection(index)}
                       onRemove={async () => {
-                        // Call backend to remove device (via WebSocket)
-                        // This will cancel reconnect and remove from registry
+                        // Call server action - state update will come via STATE_UPDATE
                         try {
-                          const result = await wsRemoveDevice(device.id);
+                          const result = await removeDevice(device.id);
                           if (result.success) {
                             console.log(`✅ Device ${device.id} removed successfully`);
-                            // Remove from userDisconnectedDevices set
-                            setUserDisconnectedDevices((prev) => {
-                              const next = new Set(prev)
-                              next.delete(device.id)
-                              return next
-                            })
-                            // Optimistically remove from local state
-                            setDevices(prev => prev.filter(d => d.id !== device.id));
                           } else {
                             console.error(`❌ Failed to remove device: ${result.error}`);
                             toast({

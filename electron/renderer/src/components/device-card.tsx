@@ -7,6 +7,7 @@ import { LegAboveRightKnee } from "./leg-above-right-knee"
 import { LegBelowRightKnee } from "./leg-below-right-knee"
 import { LegAboveLeftKnee } from "./leg-above-left-knee"
 import { LegBelowLeftKnee } from "./leg-below-left-knee"
+import { DeviceId } from "@/hooks/useDevices"
 
 const MsCounter = memo(() => {
   const [msCounter, setMsCounter] = useState(0)
@@ -25,6 +26,7 @@ MsCounter.displayName = "MsCounter"
 
 interface DeviceCardProps {
   name: string
+  deviceId: number // Device ID (0x11=LEFT_SHIN, 0x12=LEFT_THIGH, 0x21=RIGHT_SHIN, 0x22=RIGHT_THIGH)
   batteryPercentage: number | null
   signalStrength: 1 | 2 | 3 | 4 // 1-4 bars
   connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing" | "reconnecting"
@@ -51,6 +53,7 @@ interface DeviceCardProps {
 
 export function DeviceCard({
   name,
+  deviceId,
   batteryPercentage,
   signalStrength,
   connectionStatus,
@@ -73,25 +76,28 @@ export function DeviceCard({
   onDrop,
   onDragEnd,
 }: DeviceCardProps) {
-  const isLn = name.includes("ln")
+  // Determine left/right based on deviceId (left devices: 0x11, 0x12; right devices: 0x21, 0x22)
+  const isLeft = deviceId === DeviceId.LEFT_SHIN || deviceId === DeviceId.LEFT_THIGH
   const bgColor =
-    connectionStatus === "synchronizing" ? "gradient-purple-card" : isLn ? "gradient-blue-card" : "gradient-red-card"
+    connectionStatus === "synchronizing" ? "gradient-purple-card" : isLeft ? "gradient-blue-card" : "gradient-red-card"
 
   const getDeviceSvg = () => {
-    if (name.includes("rn_top")) {
-      return <LegAboveRightKnee />
-    } else if (name.includes("rn_bottom")) {
-      return <LegBelowRightKnee />
-    } else if (name.includes("ln_top")) {
-      return <LegAboveLeftKnee />
-    } else if (name.includes("ln_bottom")) {
-      return <LegBelowLeftKnee />
+    switch (deviceId) {
+      case DeviceId.LEFT_SHIN:    // 0x11 - below left knee
+        return <LegBelowLeftKnee />
+      case DeviceId.LEFT_THIGH:   // 0x12 - above left knee
+        return <LegAboveLeftKnee />
+      case DeviceId.RIGHT_SHIN:   // 0x21 - below right knee
+        return <LegBelowRightKnee />
+      case DeviceId.RIGHT_THIGH:  // 0x22 - above right knee
+        return <LegAboveRightKnee />
+      default:
+        return null
     }
-    return null
   }
 
   const SignalIcon = () => {
-    const barColor = isLn ? "#0080C0" : "#BF0000"
+    const barColor = isLeft ? "#0080C0" : "#BF0000"
     const iconSize = isSmallScreen ? 24 : 20
 
     if (connectionStatus === "synchronizing") {
@@ -125,7 +131,7 @@ export function DeviceCard({
   }
 
   const ConnectionIcon = () => {
-    const iconColor = isLn ? "#0080FF" : "#FF3535"
+    const iconColor = isLeft ? "#0080FF" : "#FF3535"
     const iconClass = isSmallScreen ? "w-6 h-6" : "w-5 h-5"
 
     if (isReconnecting || connectionStatus === "reconnecting") {
@@ -148,14 +154,20 @@ export function DeviceCard({
   }
 
   const getStatusText = () => {
-    if (isReconnecting || connectionStatus === "reconnecting") {
-      return `Unavailable - Searching... (${reconnectAttempts}/5)`
+    // Reconnection flow: show appropriate status based on state
+    if (isReconnecting) {
+      if (connectionStatus === "connecting") {
+        // Actively attempting to reconnect (no "detected" - we can't know until success)
+        return `Reconnecting... (${reconnectAttempts}/5)`
+      }
+      // Waiting for backoff timer before next attempt
+      return `Connection Lost - Retrying... (${reconnectAttempts}/5)`
     } else if (connectionStatus === "connected" && isStreaming) {
       return "Streaming"
     } else if (connectionStatus === "connected") {
       return "Connected"
     } else if (connectionStatus === "connecting") {
-      return "Connecting"
+      return "Connecting..."
     } else if (connectionStatus === "synchronizing") {
       return "Synchronizing Clock"
     } else {
@@ -173,7 +185,7 @@ export function DeviceCard({
     if (connectionStatus === "synchronizing") {
       return "#9333ea" // purple
     }
-    return isLn ? "#0080C0" : "#BF0000"
+    return isLeft ? "#0080C0" : "#BF0000"
   }
 
   return (
@@ -214,14 +226,14 @@ export function DeviceCard({
             {connectionStatus === "connected" && batteryPercentage !== null && (
               <span
                 className={`font-bold flex-shrink-0 ${isSmallScreen ? 'text-base' : 'text-lg'}`}
-                style={{ color: isLn ? "#0080C0" : "#BF0000" }}
+                style={{ color: isLeft ? "#0080C0" : "#BF0000" }}
               >
                 {batteryPercentage}%
               </span>
             )}
 
-            {/* Show REMOVE button when reconnecting */}
-            {(isReconnecting || connectionStatus === "reconnecting") ? (
+            {/* Show CANCEL/REMOVE button when reconnecting */}
+            {isReconnecting ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -235,14 +247,39 @@ export function DeviceCard({
                         <RefreshCw className="w-4 h-4" style={{ color: "#6b7280" }} />
                         <X className="w-5 h-5" style={{ color: "#6b7280" }} />
                         <span className="text-sm font-medium" style={{ color: "#6b7280" }}>
-                          Remove
+                          Cancel
                         </span>
                       </>
                     )}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>Stop reconnecting and remove device</p>
+                  <p>Cancel reconnection</p>
+                </TooltipContent>
+              </Tooltip>
+            ) : connectionStatus === "connecting" ? (
+              /* Show X button to cancel initial connection */
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={onToggleConnection}
+                    className={`cursor-pointer bg-white rounded-full ${isSmallScreen ? 'w-11 h-11' : 'px-3 py-2'} flex items-center justify-center gap-2`}
+                  >
+                    {isSmallScreen ? (
+                      <X className="w-6 h-6" style={{ color: isLeft ? "#0080C0" : "#BF0000" }} />
+                    ) : (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" style={{ color: isLeft ? "#0080C0" : "#BF0000" }} />
+                        <X className="w-5 h-5" style={{ color: isLeft ? "#0080C0" : "#BF0000" }} />
+                        <span className="text-sm font-medium" style={{ color: isLeft ? "#0080C0" : "#BF0000" }}>
+                          Cancel
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Cancel connection</p>
                 </TooltipContent>
               </Tooltip>
             ) : (
@@ -256,13 +293,8 @@ export function DeviceCard({
                     <ConnectionIcon />
                     {/* Show text ONLY on normal screens */}
                     {!isSmallScreen && connectionStatus === "disconnected" && (
-                      <span className="text-sm font-medium" style={{ color: isLn ? "#0080C0" : "#BF0000" }}>
+                      <span className="text-sm font-medium" style={{ color: isLeft ? "#0080C0" : "#BF0000" }}>
                         Connect
-                      </span>
-                    )}
-                    {!isSmallScreen && connectionStatus === "connecting" && (
-                      <span className="text-sm font-medium" style={{ color: isLn ? "#0080C0" : "#BF0000" }}>
-                        Connecting
                       </span>
                     )}
                     {!isSmallScreen && connectionStatus === "synchronizing" && (

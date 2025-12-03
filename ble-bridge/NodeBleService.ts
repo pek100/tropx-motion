@@ -21,7 +21,13 @@ import {
 } from './BleBridgeConstants';
 
 import { TropXDevice } from './TropXDevice';
-import { deviceStateManager, GlobalStreamingState } from './DeviceStateManager';
+// Use UnifiedBLEStateStore as the single source of truth
+import {
+  UnifiedBLEStateStore,
+  DeviceState,
+  GlobalState,
+  DeviceErrorType,
+} from '../ble-management';
 import { bleLogger } from './BleLogger';
 import { NodeBleToNobleAdapter } from './NodeBleToNobleAdapter';
 import { ConnectionQueue } from './ConnectionQueue';
@@ -112,8 +118,8 @@ export class NodeBleService {
       console.log(`✅ Bluetooth adapter ready: ${adapterName} (${adapterAddress})`);
 
       // Clear stale device states
-      deviceStateManager.clearAllDevices();
-      deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
+      UnifiedBLEStateStore.clear();
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       console.log('🧹 Cleared stale device states from previous session');
 
       // CRITICAL: Disconnect any zombie devices left from previous session
@@ -390,21 +396,26 @@ export class NodeBleService {
             lastSeen: new Date()
           };
 
-          // Check if device was previously connected
-          const existingDevice = deviceStateManager.getDevice(address);
-          let targetState: DeviceConnectionState = 'discovered';
-
-          if (existingDevice && (existingDevice.state === 'connected' || existingDevice.state === 'streaming')) {
-            targetState = existingDevice.state;
-            console.log(`🔄 Device ${name} rediscovered - preserving ${targetState} state`);
+          // Register device in UnifiedBLEStateStore
+          let storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(address);
+          if (!storeDeviceId) {
+            storeDeviceId = UnifiedBLEStateStore.registerDevice(address, name);
           }
 
-          // Update device in state manager
-          const managedDevice = deviceStateManager.updateDevice(deviceInfo, targetState);
+          // Update RSSI if registered
+          if (storeDeviceId) {
+            UnifiedBLEStateStore.updateDeviceFields(storeDeviceId, { rssi });
+            const existingDevice = UnifiedBLEStateStore.getDevice(storeDeviceId);
+            if (existingDevice?.state === DeviceState.DISCONNECTED) {
+              try {
+                UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.DISCOVERED);
+              } catch (e) { /* ignore */ }
+            }
+          }
 
           // Notify event callback
           if (this.deviceEventCallback) {
-            this.deviceEventCallback(address, 'discovered', managedDevice);
+            this.deviceEventCallback(address, 'discovered', deviceInfo);
           }
 
         } catch (deviceError) {
@@ -452,7 +463,15 @@ export class NodeBleService {
 
   // Get discovered devices
   getDiscoveredDevices(): TropXDeviceInfo[] {
-    return deviceStateManager.getAllDevices();
+    return UnifiedBLEStateStore.getAllDevices().map(d => ({
+      id: d.bleAddress,
+      name: d.bleName,
+      address: d.bleAddress,
+      rssi: d.rssi ?? -100,
+      state: d.state as unknown as DeviceConnectionState,
+      batteryLevel: d.batteryLevel,
+      lastSeen: new Date(d.lastSeen),
+    }));
   }
 
   // Connect to single device (uses queue system)
@@ -528,9 +547,11 @@ export class NodeBleService {
 
       // Update devices to connecting state
       deviceIds.forEach(deviceId => {
-        const device = this.discoveredDevices.get(deviceId);
-        if (device) {
-          deviceStateManager.setDeviceConnectionState(deviceId, 'connecting');
+        const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+        if (storeDeviceId) {
+          try {
+            UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.CONNECTING);
+          } catch (e) { /* ignore */ }
         }
       });
 
@@ -742,7 +763,10 @@ export class NodeBleService {
       if (!connected) {
         bleLogger.logConnectionError(deviceId, deviceName, 'TROPX_CONNECT_FAILED', new Error('TropXDevice connection failed'));
         console.error(`❌ [${deviceId}] TropXDevice connection failed`);
-        deviceStateManager.setDeviceConnectionState(deviceId, 'error');
+        const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+        if (storeDeviceId) {
+          UnifiedBLEStateStore.transitionToError(storeDeviceId, DeviceErrorType.CONNECTION_FAILED, 'TropXDevice connection failed');
+        }
         return {
           success: false,
           deviceId,
@@ -751,7 +775,12 @@ export class NodeBleService {
       }
 
       this.devices.set(deviceId, tropxDevice);
-      deviceStateManager.setDeviceConnectionState(deviceId, 'connected');
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.CONNECTED);
+        } catch (e) { /* ignore */ }
+      }
 
       console.log(`✅ [${deviceId}] Full connection complete with battery reading`)
 
@@ -770,7 +799,10 @@ export class NodeBleService {
     } catch (error) {
       bleLogger.logConnectionError(deviceId, deviceId, 'SERVICE_CONNECT_EXCEPTION', error);
       console.error(`❌ [${deviceId}] Connection error:`, error);
-      deviceStateManager.setDeviceConnectionState(deviceId, 'error');
+      const storeDeviceIdErr = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceIdErr) {
+        UnifiedBLEStateStore.transitionToError(storeDeviceIdErr, DeviceErrorType.CONNECTION_FAILED, String(error));
+      }
       return {
         success: false,
         deviceId,
@@ -786,7 +818,12 @@ export class NodeBleService {
   async disconnectDevice(deviceId: string): Promise<BleConnectionResult> {
     const device = this.devices.get(deviceId);
     if (!device) {
-      deviceStateManager.setDeviceConnectionState(deviceId, 'disconnected');
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.DISCONNECTED);
+        } catch (e) { /* ignore */ }
+      }
       return {
         success: false,
         deviceId,
@@ -799,7 +836,12 @@ export class NodeBleService {
       await device.disconnect();
 
       this.devices.delete(deviceId);
-      deviceStateManager.setDeviceConnectionState(deviceId, 'disconnected');
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.DISCONNECTED);
+        } catch (e) { /* ignore */ }
+      }
 
       console.log(`✅ [${deviceId}] Disconnected successfully`);
       return {
@@ -810,7 +852,10 @@ export class NodeBleService {
 
     } catch (error) {
       console.error(`❌ [${deviceId}] Disconnect error:`, error);
-      deviceStateManager.setDeviceConnectionState(deviceId, 'error');
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceId) {
+        UnifiedBLEStateStore.transitionToError(storeDeviceId, DeviceErrorType.UNKNOWN, `Disconnect error: ${error}`);
+      }
       return {
         success: false,
         deviceId,
@@ -832,14 +877,14 @@ export class NodeBleService {
 
   // Start global streaming (delegates to existing implementation)
   async startGlobalStreaming(): Promise<{ success: boolean; started: number; total: number; results: any[]; error?: string }> {
-    const connectedDevices = deviceStateManager.getConnectedDevices();
+    const connectedDevices = UnifiedBLEStateStore.getConnectedDevices();
 
     if (connectedDevices.length === 0) {
       return { success: false, started: 0, total: 0, results: [] };
     }
 
     console.log(`🎬 Starting global streaming on ${connectedDevices.length} connected devices...`);
-    deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STARTING);
+    UnifiedBLEStateStore.setGlobalState(GlobalState.SYNCING); // Transitioning to streaming
 
     // Disable burst scanning during streaming
     if (this.burstEnabled) {
@@ -849,16 +894,16 @@ export class NodeBleService {
     }
 
     // Start streaming on all devices in parallel
-    const streamingTasks = connectedDevices.map(device => this.startDeviceStreaming(device.id));
+    const streamingTasks = connectedDevices.map(device => this.startDeviceStreaming(device.bleAddress));
     const results = await Promise.all(streamingTasks);
 
     const successCount = results.filter(result => result.success).length;
 
     if (successCount > 0) {
-      deviceStateManager.setGlobalStreamingState(GlobalStreamingState.ACTIVE);
+      UnifiedBLEStateStore.setGlobalState(GlobalState.STREAMING);
       console.log(`✅ Global streaming started: ${successCount}/${connectedDevices.length} devices streaming`);
     } else {
-      deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       console.log(`❌ Global streaming failed: no devices started streaming`);
     }
 
@@ -871,21 +916,21 @@ export class NodeBleService {
   }
 
   async stopGlobalStreaming(): Promise<{ success: boolean; stopped: number; total: number }> {
-    const streamingDevices = deviceStateManager.getStreamingDevices();
+    const streamingDevices = UnifiedBLEStateStore.getStreamingDevices();
 
     if (streamingDevices.length === 0) {
-      deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       return { success: true, stopped: 0, total: 0 };
     }
 
     console.log(`🛑 Stopping global streaming on ${streamingDevices.length} devices...`);
-    deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPING);
+    UnifiedBLEStateStore.setGlobalState(GlobalState.SYNCING); // Transitioning
 
-    const stoppingTasks = streamingDevices.map(device => this.stopDeviceStreaming(device.id));
+    const stoppingTasks = streamingDevices.map(device => this.stopDeviceStreaming(device.bleAddress));
     const results = await Promise.all(stoppingTasks);
 
     const successCount = results.filter(result => result.success).length;
-    deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
+    UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
 
     console.log(`✅ Global streaming stopped: ${successCount}/${streamingDevices.length} devices stopped`);
 
@@ -922,7 +967,12 @@ export class NodeBleService {
       const success = await device.startStreaming();
 
       if (success) {
-        deviceStateManager.setDeviceConnectionState(deviceId, 'streaming');
+        const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+        if (storeDeviceId) {
+          try {
+            UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.STREAMING);
+          } catch (e) { /* ignore */ }
+        }
         console.log(`✅ [${deviceId}] Streaming started`);
         return {
           success: true,
@@ -960,7 +1010,12 @@ export class NodeBleService {
     try {
       console.log(`🛑 [${deviceId}] Stopping streaming...`);
       await device.stopStreaming();
-      deviceStateManager.setDeviceConnectionState(deviceId, 'connected');
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.CONNECTED);
+        } catch (e) { /* ignore */ }
+      }
 
       console.log(`✅ [${deviceId}] Streaming stopped`);
       return {
@@ -980,12 +1035,17 @@ export class NodeBleService {
 
   // Auto-recovery for newly connected devices
   async recoverStreamingForDevice(deviceId: string): Promise<boolean> {
-    if (!deviceStateManager.isGlobalStreamingActive()) {
+    if (UnifiedBLEStateStore.getGlobalState() !== GlobalState.STREAMING) {
       return false;
     }
 
-    const device = deviceStateManager.getDevice(deviceId);
-    if (!device || device.state !== 'connected') {
+    const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+    if (!storeDeviceId) {
+      return false;
+    }
+
+    const device = UnifiedBLEStateStore.getDevice(storeDeviceId);
+    if (!device || device.state !== DeviceState.CONNECTED) {
       return false;
     }
 
@@ -997,6 +1057,18 @@ export class NodeBleService {
   // Get device instance (for time sync, etc.)
   getDeviceInstance(deviceId: string): TropXDevice | null {
     return this.devices.get(deviceId) || null;
+  }
+
+  /**
+   * Check if a device is actually connected at the BLE level
+   * Used by Watchdog to verify disconnection before triggering reconnect
+   */
+  isDeviceActuallyConnected(bleAddress: string): boolean {
+    const device = this.devices.get(bleAddress);
+    if (!device) {
+      return false;
+    }
+    return device.isConnected;
   }
 
   // Get battery levels
@@ -1040,8 +1112,8 @@ export class NodeBleService {
     if (this.isScanning || this.nextBurstTimer) return;
     if (!this.burstEnabled) return;
 
-    const streamingState = deviceStateManager.getGlobalStreamingState();
-    if (streamingState === GlobalStreamingState.ACTIVE || streamingState === GlobalStreamingState.STARTING) {
+    const globalState = UnifiedBLEStateStore.getGlobalState();
+    if (globalState === GlobalState.STREAMING || globalState === GlobalState.SYNCING) {
       return;
     }
 
@@ -1117,11 +1189,15 @@ export class NodeBleService {
 
   async removeDevice(deviceId: string): Promise<{ success: boolean; message?: string }> {
     this.cancelReconnect(deviceId);
-    const { deviceRegistry } = await import('../registry-management');
-    const removed = deviceRegistry.removeDevice(deviceId);
-    return removed
-      ? { success: true, message: 'Device removed' }
-      : { success: false, message: 'Device not found' };
+    const { UnifiedBLEStateStore, formatDeviceID } = await import('../ble-management');
+    const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+
+    if (storeDeviceId) {
+      UnifiedBLEStateStore.unregisterDevice(storeDeviceId);
+      console.log(`🗑️ Device ${formatDeviceID(storeDeviceId)} removed successfully`);
+      return { success: true, message: 'Device removed' };
+    }
+    return { success: false, message: 'Device not found' };
   }
 
   getDeviceState(deviceId: string): { state: number; stateName: string; lastUpdate: number } | null {

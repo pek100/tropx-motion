@@ -91,8 +91,16 @@ export interface DeviceStatusMessage extends BaseMessage {
   type: typeof MESSAGE_TYPES.DEVICE_STATUS;
   deviceId: string;
   deviceName: string;
-  state: 'discovered' | 'connecting' | 'connected' | 'streaming' | 'disconnected' | 'error';
+  displayName?: string;    // User-friendly name from SensorMap (e.g., "Left Thigh")
+  shortName?: string;      // Compact name for small screens (e.g., "L-Thigh")
+  sensorId?: number;       // Numeric sensor ID (0x11, 0x12, 0x21, 0x22)
+  joint?: string;          // Joint this sensor belongs to (e.g., "left_knee")
+  placement?: string;      // Physical placement (thigh/shin)
+  state: 'discovered' | 'connecting' | 'connected' | 'streaming' | 'disconnected' | 'error' | 'reconnecting';
   batteryLevel?: number;
+  rssi?: number;
+  isReconnecting?: boolean;
+  reconnectAttempts?: number;
 }
 
 // Battery update message
@@ -100,6 +108,8 @@ export interface BatteryUpdateMessage extends BaseMessage {
   type: typeof MESSAGE_TYPES.BATTERY_UPDATE;
   deviceId: string;
   deviceName: string;
+  displayName?: string;    // User-friendly name from SensorMap
+  sensorId?: number;       // Numeric sensor ID
   batteryLevel: number;
 }
 

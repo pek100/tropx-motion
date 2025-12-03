@@ -25,7 +25,12 @@
       "Bash(npm run build:renderer:*)",
       "Bash(npm install:*)",
       "Bash(git apply:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npm run build:*)",
+      "Bash(mv:*)",
+      "Bash(mkdir:*)",
+      "Bash(rm:*)",
+      "Bash(npm run build:main:*)"
     ],
     "deny": [],
     "ask": [],

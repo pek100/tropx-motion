@@ -15,11 +15,16 @@ export const Err = <T>(error: string, code?: string): Result<T> => ({
 export interface DeviceInfo {
   id: string;
   name: string;
+  displayName?: string;    // User-friendly name from SensorMap (e.g., "Left Thigh")
+  shortName?: string;      // Compact name for small screens (e.g., "L-Thigh")
+  sensorId?: number;       // Numeric sensor ID (0x11, 0x12, 0x21, 0x22)
+  joint?: string;          // Joint this sensor belongs to (e.g., "left_knee")
+  placement?: string;      // Physical placement (thigh/shin)
   address: string;
   rssi: number;
-  state: 'discovered' | 'connecting' | 'connected' | 'streaming' | 'disconnected' | 'error';
+  state: 'discovered' | 'connecting' | 'connected' | 'streaming' | 'disconnected' | 'error' | 'reconnecting';
   batteryLevel: number | null;
-  lastSeen: Date;
+  lastSeen: number;
   isReconnecting?: boolean;
   reconnectAttempts?: number;
 }

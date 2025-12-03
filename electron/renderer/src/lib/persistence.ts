@@ -5,12 +5,6 @@ export interface PersistedAppState {
   smallScreenOverride: boolean | null;
   clientDisplay: 'closed' | 'modal' | 'minimized' | 'snapped-left' | 'snapped-right';
 
-  // Session Recovery
-  wasStreaming: boolean;
-  streamingSessionId: string | null;
-  lastConnectedDeviceIds: string[];
-  streamStartTime: number | null;
-
   // Metadata
   lastSavedAt: number;
 }
@@ -20,10 +14,6 @@ const defaultState: PersistedAppState = {
   deviceOrder: [],
   smallScreenOverride: null,
   clientDisplay: 'closed',
-  wasStreaming: false,
-  streamingSessionId: null,
-  lastConnectedDeviceIds: [],
-  streamStartTime: null,
   lastSavedAt: Date.now(),
 };
 
@@ -55,13 +45,9 @@ export class PersistenceManager {
       const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
       if (ageMs > MAX_AGE_MS) {
-        console.log('⏰ Persisted state is stale (>24h), clearing session recovery data');
+        console.log('⏰ Persisted state is stale (>24h), resetting to defaults');
         return {
-          ...state,
-          wasStreaming: false,
-          streamingSessionId: null,
-          lastConnectedDeviceIds: [],
-          streamStartTime: null,
+          ...defaultState,
           lastSavedAt: now,
         };
       }
@@ -149,35 +135,6 @@ export class PersistenceManager {
    */
   saveClientDisplay(mode: 'closed' | 'modal' | 'minimized' | 'snapped-left' | 'snapped-right'): void {
     this.saveState({ clientDisplay: mode });
-  }
-
-  /**
-   * Save streaming session state
-   */
-  saveStreamingSession(
-    isStreaming: boolean,
-    connectedDeviceIds: string[],
-    sessionId: string | null = null,
-    startTime: number | null = null
-  ): void {
-    this.saveStateImmediate({
-      wasStreaming: isStreaming,
-      lastConnectedDeviceIds: isStreaming ? connectedDeviceIds : [],
-      streamingSessionId: sessionId,
-      streamStartTime: startTime,
-    });
-  }
-
-  /**
-   * Clear session recovery data (called after successful recovery or user dismissal)
-   */
-  clearSessionRecovery(): void {
-    this.saveStateImmediate({
-      wasStreaming: false,
-      streamingSessionId: null,
-      lastConnectedDeviceIds: [],
-      streamStartTime: null,
-    });
   }
 
   /**

@@ -157,12 +157,9 @@ export class StreamingDomainProcessor implements DomainProcessor {
     if (this.broadcastFunction) {
       try {
         await this.broadcastFunction(message);
-        console.log(`📊 Motion data broadcast to all clients`);
       } catch (error) {
         console.error('Failed to broadcast motion data:', error);
       }
-    } else {
-      console.warn('⚠️ No broadcast function set for StreamingDomainProcessor');
     }
   }
 
@@ -172,7 +169,6 @@ export class StreamingDomainProcessor implements DomainProcessor {
     if (this.broadcastFunction) {
       try {
         await this.broadcastFunction(message);
-        console.log(`📱 Device status broadcast to all clients`);
       } catch (error) {
         console.error('Failed to broadcast device status:', error);
       }
@@ -185,7 +181,6 @@ export class StreamingDomainProcessor implements DomainProcessor {
     if (this.broadcastFunction) {
       try {
         await this.broadcastFunction(message);
-        console.log(`🔋 Battery update broadcast to all clients`);
       } catch (error) {
         console.error('Failed to broadcast battery update:', error);
       }

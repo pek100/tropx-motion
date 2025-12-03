@@ -1,33 +1,52 @@
 /**
  * BLE Connection Logger
- * Logs all BLE operations to file for debugging connection issues on Raspberry Pi
+ * Logs all BLE operations to file for debugging connection issues
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 
 class BleLogger {
-  private logFilePath: string;
+  private logFilePath: string = '';
   private logStream: fs.WriteStream | null = null;
 
   constructor() {
-    const logDir = path.join(__dirname, '../../logs');
-
-    // Ensure logs directory exists
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
-    }
-
-    // Create log file with timestamp
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    this.logFilePath = path.join(logDir, `ble-connection-${timestamp}.log`);
+    // Use a writable location - NOT inside asar archive
+    // Try electron app path first, fall back to temp directory
+    let logDir: string;
 
     try {
+      // Try to use Electron's app path if available
+      const { app } = require('electron');
+      if (app.isReady()) {
+        logDir = path.join(app.getPath('logs'), 'ble');
+      } else {
+        // App not ready yet, use temp dir
+        logDir = path.join(os.tmpdir(), 'tropx-ble-logs');
+      }
+    } catch {
+      // Not in Electron context or app not available
+      logDir = path.join(os.tmpdir(), 'tropx-ble-logs');
+    }
+
+    try {
+      // Ensure logs directory exists
+      if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true });
+      }
+
+      // Create log file with timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      this.logFilePath = path.join(logDir, `ble-connection-${timestamp}.log`);
+
       this.logStream = fs.createWriteStream(this.logFilePath, { flags: 'a' });
       this.log('INFO', 'BLE Logger initialized');
       this.log('INFO', `Log file: ${this.logFilePath}`);
     } catch (error) {
-      console.error('Failed to create log file:', error);
+      // Log creation failed - continue without file logging
+      console.warn('BLE Logger: File logging disabled -', (error as Error).message);
+      this.logFilePath = '';
     }
   }
 

@@ -77,6 +77,9 @@ export class MessageValidator {
       case MESSAGE_TYPES.BLE_BURST_SCAN_STOP_REQUEST:
         return { valid: true }; // No additional validation needed
 
+      case MESSAGE_TYPES.BLE_DEVICE_REMOVE_REQUEST:
+        return { valid: true }; // deviceId is in payload, validated by processor
+
       case MESSAGE_TYPES.GET_DEVICES_STATE_REQUEST:
         return { valid: true }; // No additional validation needed
 

@@ -242,17 +242,11 @@ export class WebSocketServer {
       }
 
       // Deserialize message
-      console.log(`🔍 Deserializing buffer: length=${buffer.byteLength}, first 16 bytes:`,
-        new Uint8Array(buffer.slice(0, Math.min(16, buffer.byteLength))));
-
       const message = BinaryProtocol.deserialize(buffer);
       if (!message) {
-        console.log(`❌ Deserialization failed for client ${clientId}`);
         this.sendErrorToClient(clientId, { valid: false, error: 'Failed to deserialize message' });
         return;
       }
-
-      console.log(`✅ Deserialized message:`, { type: message.type, requestId: message.requestId });
 
       // Validate message content
       const validation = MessageValidator.validate(message);

@@ -3,7 +3,7 @@ import { DataSyncService } from './DataSyncService';
 import { DEVICE, SYSTEM, BATTERY, CONNECTION_STATE } from '../shared/constants';
 import { QuaternionService } from '../shared/QuaternionService';
 import { PerformanceLogger } from '../shared/PerformanceLogger';
-import { deviceRegistry, DeviceID } from '../../registry-management';
+import { UnifiedBLEStateStore, DeviceID, isValidDeviceID, getJointName } from '../../ble-management';
 
 interface DeviceStatus {
     total: number;
@@ -23,20 +23,17 @@ interface DeviceStatus {
  * 3. Real-time motion capture needs latest data, not smoothed/interpolated data
  * 4. The sensors already provide clean 100Hz data - no interpolation needed
  */
+// Callback signature for per-joint processing
+type JointUpdateCallback = (jointName: string, devices: Map<string, DeviceData>) => void;
+
 export class DeviceProcessor {
     private static instance: DeviceProcessor | null = null;
     private dataSyncService: DataSyncService;
-    private subscribers = new Set<() => void>();
+    private jointUpdateCallback: JointUpdateCallback | null = null;
     private batteryLevels = new Map<string, number>();
     private connectionStates = new Map<string, string>();
     private latestDeviceData = new Map<string, DeviceData>();
     private deviceToJoints = new Map<string, string[]>();
-
-    // Async notification state
-    private pendingNotifications = 0;
-    private readonly MAX_PENDING_NOTIFICATIONS = 5;
-    private lastNotificationTime = 0;
-    private readonly MIN_NOTIFICATION_INTERVAL = 16; // 60fps cap
     private processingCounter = 0;
 
     private constructor(private config: MotionConfig) {
@@ -78,9 +75,6 @@ export class DeviceProcessor {
 
         // Log remaining devices for debugging
         console.log(`📊 [DEVICE_PROCESSOR] Remaining devices: ${Array.from(this.deviceToJoints.keys()).join(', ')}`);
-
-        // Notify subscribers that device state has changed
-        this.notifySubscribers();
     }
 
     /**
@@ -109,31 +103,21 @@ export class DeviceProcessor {
             this.performPeriodicCleanup();
         }
 
-        // Get device from registry using DeviceID (most efficient - O(1) lookup)
-        const device = typeof deviceId === 'number'
-            ? deviceRegistry.getDeviceByID(deviceId)
-            : deviceRegistry.getDeviceByAddress(deviceId);
+        // Resolve DeviceID from input (may be numeric DeviceID or BLE address string)
+        let resolvedDeviceId: DeviceID | null = null;
+        if (typeof deviceId === 'number' && isValidDeviceID(deviceId)) {
+            resolvedDeviceId = deviceId;
+        } else if (typeof deviceId === 'string') {
+            resolvedDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+        }
+
+        // Get joint name from DeviceID
+        const jointName = resolvedDeviceId ? getJointName(resolvedDeviceId) : null;
 
         // TODO: Fix device timestamp offset calculation
         // Currently device timestamps are showing 1975 after sync, causing stuck in loop
-        // Issue: offset is 0ms even though it should be calculated
-        // For now, use performance.now() for reliable timestamps
-        // const deviceTimestamp = imuData.timestamp || 0;
-        // const deviceIdKey = typeof deviceId === 'number' ? `0x${deviceId.toString(16)}` : deviceId;
-        // if (!this.sessionOffsetCalculated) {
-        //     this.sessionOffsetCalculated = new Set();
-        // }
-        // let clockOffset = device?.clockOffset || 0;
-        // if (!this.sessionOffsetCalculated.has(deviceIdKey) && deviceTimestamp > 0 && device) {
-        //     clockOffset = Date.now() - deviceTimestamp;
-        //     device.clockOffset = clockOffset;
-        //     deviceRegistry.setClockOffset(device.deviceID, clockOffset, 'fully_synced');
-        //     this.sessionOffsetCalculated.add(deviceIdKey);
-        //     console.log(`⏱️ [DEVICE_PROCESSOR] First packet - calculated offset for DeviceID 0x${device.deviceID.toString(16)}: ${clockOffset}ms (system: ${Date.now()}ms, device: ${deviceTimestamp}ms)`);
-        // }
-        // const systemTimestamp = deviceTimestamp + clockOffset;
-
-        // Use Date.now() for absolute timestamps until device timestamp offset is fixed
+        // For now, use Date.now() for reliable timestamps
+        // Future: Use UnifiedBLEStateStore.getDevice(deviceId).clockOffset
         const systemTimestamp = Date.now();
 
         const synchronizedIMU = {
@@ -141,20 +125,18 @@ export class DeviceProcessor {
             timestamp: systemTimestamp
         };
 
-        // Legacy software sync (DISABLED - kept for reference):
-        // const synchronizedIMU = this.dataSyncService.createSynchronizedIMUData(deviceId, imuData);
-        // if (!synchronizedIMU) return;
-
-        // Update last seen timestamp in registry
-        deviceRegistry.updateLastSeen(deviceId);
+        // Update last seen timestamp in UnifiedBLEStateStore
+        if (resolvedDeviceId) {
+            UnifiedBLEStateStore.updateLastSeen(resolvedDeviceId);
+        }
 
         // Convert DeviceID to string for legacy data structures
         const deviceIdStr = typeof deviceId === 'number' ? `0x${deviceId.toString(16)}` : deviceId;
 
-        if (device) {
+        if (jointName) {
             // Ensure mapping exists (will be used by getDevicesForJoint)
             if (!this.deviceToJoints.has(deviceIdStr)) {
-                this.deviceToJoints.set(deviceIdStr, [device.joint]);
+                this.deviceToJoints.set(deviceIdStr, [jointName]);
             }
         }
 
@@ -170,7 +152,31 @@ export class DeviceProcessor {
         };
 
         this.updateLatestDeviceData(deviceSample);
-        this.notifySubscribers();
+
+        // Direct per-joint processing - no batching, no subscriber overhead
+        // Only process the joint(s) this device belongs to
+        this.processAffectedJoints(deviceIdStr);
+    }
+
+    /**
+     * Processes joints immediately when new device data arrives.
+     * No sync barrier or interpolation - uses latest available data from each device.
+     */
+    private processAffectedJoints(deviceId: string): void {
+        if (!this.jointUpdateCallback) return;
+
+        const joints = this.deviceToJoints.get(deviceId);
+        if (!joints || joints.length === 0) return;
+
+        for (const jointName of joints) {
+            // Get all devices for this joint with latest data
+            const devices = this.getDevicesForJoint(jointName);
+
+            // Process immediately if we have minimum required devices
+            if (devices.size >= SYSTEM.MINIMUM_DEVICES_FOR_JOINT) {
+                this.jointUpdateCallback(jointName, devices);
+            }
+        }
     }
 
     /**
@@ -230,12 +236,15 @@ export class DeviceProcessor {
     }
 
     /**
-     * Subscribes to device data updates, returns unsubscribe function.
+     * Sets the callback for per-joint updates.
+     * This replaces the old subscriber pattern for more efficient direct processing.
+     *
+     * @param callback - Called with (jointName, devices) when a joint has sufficient data
      */
-    subscribe(callback: () => void): () => void {
-        this.subscribers.add(callback);
-        return () => this.subscribers.delete(callback);
+    setJointUpdateCallback(callback: JointUpdateCallback): void {
+        this.jointUpdateCallback = callback;
     }
+
 
     /**
      * Returns comprehensive device status summary for monitoring.
@@ -271,9 +280,6 @@ export class DeviceProcessor {
      * Performs complete cleanup of all services and internal state.
      */
     cleanup(): void {
-        // Clear subscribers explicitly before cleanup
-        this.subscribers.clear();
-
         this.dataSyncService.reset();
         this.clearAllMaps();
 
@@ -281,10 +287,11 @@ export class DeviceProcessor {
     }
 
     /**
-     * Updates latest device data if new data is more recent than current.
+     * Updates latest device data.
      */
     private updateLatestDeviceData(deviceData: DeviceData): boolean {
         const currentLatest = this.latestDeviceData.get(deviceData.deviceId);
+
         if (!currentLatest || deviceData.timestamp >= currentLatest.timestamp) {
             this.latestDeviceData.set(deviceData.deviceId, deviceData);
             return true;
@@ -293,13 +300,13 @@ export class DeviceProcessor {
     }
 
     /**
-     * DEPRECATED: Replaced by DeviceRegistry
-     * Device-to-joint mapping now happens at connection time via deviceRegistry.registerDevice()
+     * DEPRECATED: Replaced by UnifiedBLEStateStore
+     * Device-to-joint mapping now happens at connection time via UnifiedBLEStateStore.registerDevice()
      * This eliminates on-demand pattern matching during data processing (was called at 100Hz!)
      *
      * The mapping is now:
-     * 1. Set once when device connects (NobleBLEServiceAdapter.connectToDevice)
-     * 2. Stored in deviceToJoints map (populated in processData from registry lookup)
+     * 1. Set once when device connects (BLEServiceAdapter.connectToDevice)
+     * 2. Stored in deviceToJoints map (populated in processData from getJointName() lookup)
      * 3. Never needs pattern matching during runtime
      */
 
@@ -365,26 +372,6 @@ export class DeviceProcessor {
         return (SYSTEM.MILLISECONDS_PER_SECOND / this.config.targetHz) * DEVICE.RECENT_ACTIVITY_MULTIPLIER;
     }
 
-    /**
-     * Notifies all subscribers of data updates.
-     *
-     * ARCHITECTURE NOTE: Throttling was REMOVED because:
-     * 1. At 100Hz × 2 devices, 16ms throttle dropped 75% of updates
-     * 2. Dropped updates caused "out of sync" after chaotic movement
-     * 3. Each notification is only ~0.1ms of work - throttling is counterproductive
-     * 4. Real-time motion capture needs every sample for accurate joint angles
-     */
-    private notifySubscribers(): void {
-        // Notify synchronously for lowest latency - callbacks are fast
-        this.subscribers.forEach(callback => {
-            try {
-                callback();
-            } catch (error) {
-                console.error(`❌ [DEVICE_PROCESSOR] Subscriber callback error:`, error);
-                PerformanceLogger.warn('DEVICE', 'Callback error', error);
-            }
-        });
-    }
 
     /**
      * Allows runtime updates of performance options (bypass/async notify).
@@ -416,7 +403,7 @@ export class DeviceProcessor {
      * Clears all internal maps and collections.
      */
     private clearAllMaps(): void {
-        this.subscribers.clear();
+        this.jointUpdateCallback = null;
         this.deviceToJoints.clear();
         this.latestDeviceData.clear();
         this.batteryLevels.clear();

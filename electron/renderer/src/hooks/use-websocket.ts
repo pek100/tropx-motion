@@ -1,3 +1,16 @@
+/**
+ * @deprecated This hook is deprecated. Use useDevices from '@/hooks/useDevices' instead.
+ * useDevices is the unified single source of truth for device state management.
+ *
+ * Migration guide:
+ * - Replace: import { useWebSocket } from '@/hooks/use-websocket'
+ * - With:    import { useDevices } from '@/hooks/useDevices'
+ *
+ * Key differences:
+ * - useDevices uses Map<number, BLEDevice> internally for O(1) lookups
+ * - uiDevices provides the mapped format for App.tsx (same as old devices array)
+ * - Server owns truth -> broadcasts STATE_UPDATE -> hook reflects -> UI renders
+ */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { TropxWSClient } from '../lib/tropx-ws-client';
 import type { DeviceInfo, Result } from '../lib/tropx-ws-client';
@@ -36,6 +49,7 @@ export interface WebSocketState {
   vibratingDeviceIds: string[];
 }
 
+/** @deprecated Use useDevices from '@/hooks/useDevices' instead */
 export function useWebSocket() {
   const clientRef = useRef<TropxWSClient | null>(null);
   const hasConnectedOnceRef = useRef(false);
@@ -170,10 +184,45 @@ export function useWebSocket() {
           trace('WS', `setState completed: elapsed=${Date.now() - setStateStartTime}ms`);
         });
 
-        // Device status handler
-        client.on(EVENT_TYPES.DEVICE_STATUS, (status) => {
+        // Device status handler - handles both single device (0x31) and STATE_UPDATE (0x40) formats
+        client.on(EVENT_TYPES.DEVICE_STATUS, (status: any) => {
           console.log(`📱 [use-websocket] Device status received:`, JSON.stringify(status, null, 2));
 
+          // Check if this is a STATE_UPDATE (0x40) with devices array
+          if (status.devices && Array.isArray(status.devices)) {
+            console.log(`📱 [use-websocket] STATE_UPDATE format detected: ${status.devices.length} devices`);
+
+            setState(prev => {
+              // Build new devices array from STATE_UPDATE
+              const updatedDevices: DeviceInfo[] = status.devices.map((d: any) => ({
+                id: d.bleAddress || d.id,
+                name: d.bleName || d.displayName || d.name,
+                state: d.state,
+                batteryLevel: d.batteryLevel ?? null,
+                rssi: d.rssi ?? 0,
+                address: d.bleAddress || '',
+                lastSeen: Date.now(),
+                isReconnecting: d.reconnectAttempts > 0,
+                reconnectAttempts: d.reconnectAttempts ?? 0,
+                // Additional fields from STATE_UPDATE
+                deviceId: d.deviceId,
+                displayName: d.displayName,
+                shortName: d.shortName,
+                joint: d.joint,
+                placement: d.placement,
+                syncState: d.syncState,
+                clockOffset: d.clockOffset,
+              }));
+
+              return {
+                ...prev,
+                devices: updatedDevices,
+              };
+            });
+            return;
+          }
+
+          // Handle single device status (legacy 0x31 format)
           setState(prev => {
             const existingDevice = prev.devices.find(d => d.id === status.deviceId);
 

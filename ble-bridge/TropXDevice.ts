@@ -25,7 +25,6 @@ import {
 } from './BleBridgeConstants';
 import { TropXCommands } from './TropXCommands';
 import { TimeSyncEstimator } from './TimeSyncEstimator';
-import { deviceRegistry } from '../registry-management/DeviceRegistry';
 import { bleLogger } from './BleLogger';
 
 export class TropXDevice {
@@ -35,6 +34,7 @@ export class TropXDevice {
   private streamingTimer: NodeJS.Timeout | null = null;
   private batteryTimer: NodeJS.Timeout | null = null;
   private hasLoggedFirstPacket: boolean = false;
+  private userInitiatedDisconnect: boolean = false;
 
   // Static tracking for first packet timestamps across all devices
   private static firstPacketTimestamps = new Map<string, number>();
@@ -296,6 +296,9 @@ export class TropXDevice {
   async disconnect(): Promise<void> {
     try {
       console.log(`🔌 Disconnecting from device: ${this.wrapper.deviceInfo.name}`);
+
+      // Mark as user-initiated to prevent auto-reconnect
+      this.userInitiatedDisconnect = true;
 
       if (this.wrapper.isStreaming) {
         await this.stopStreaming();
@@ -1261,16 +1264,22 @@ export class TropXDevice {
 
   // Handle device disconnect
   private handleDisconnect(): void {
-    console.log(`🔌 Device disconnected: ${this.wrapper.deviceInfo.name}`);
+    console.log(`🔌 Device disconnected: ${this.wrapper.deviceInfo.name} (user-initiated: ${this.userInitiatedDisconnect})`);
     this.cleanup();
     this.wrapper.deviceInfo.state = 'disconnected';
     this.notifyEvent('disconnected');
 
-    // Notify with auto_reconnect flag so service can trigger reconnection
-    this.notifyEvent('auto_reconnect', {
-      deviceId: this.wrapper.deviceInfo.id,
-      deviceName: this.wrapper.deviceInfo.name
-    });
+    // Only trigger auto-reconnect for unexpected disconnects (not user-initiated)
+    if (!this.userInitiatedDisconnect) {
+      this.notifyEvent('auto_reconnect', {
+        deviceId: this.wrapper.deviceInfo.id,
+        deviceName: this.wrapper.deviceInfo.name
+      });
+    } else {
+      console.log(`🔌 [${this.wrapper.deviceInfo.name}] Skipping auto-reconnect (user-initiated disconnect)`);
+      // Reset flag for next connection
+      this.userInitiatedDisconnect = false;
+    }
   }
 
   // Start battery monitoring (periodic updates only, initial read done during connect)

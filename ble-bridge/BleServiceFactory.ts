@@ -35,6 +35,7 @@ export interface IBleService {
   // Connected devices
   getConnectedDevices(): TropXDeviceInfo[];
   getDeviceInstance(deviceId: string): TropXDevice | null;
+  isDeviceActuallyConnected(bleAddress: string): boolean;
 
   // Streaming
   startGlobalStreaming(): Promise<{

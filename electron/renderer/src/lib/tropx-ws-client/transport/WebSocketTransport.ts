@@ -183,6 +183,11 @@ export class WebSocketTransport extends TypedEventEmitter {
       case 0x36:
         this.emit(EVENT_TYPES.DEVICE_VIBRATING, message as any);
         break;
+      case 0x40:
+        // STATE_UPDATE - broadcast as DEVICE_STATUS for UI updates
+        console.log('📡 Received STATE_UPDATE (0x40), emitting as DEVICE_STATUS');
+        this.emit(EVENT_TYPES.DEVICE_STATUS, message as any);
+        break;
       case 0x02:
         this.emit(EVENT_TYPES.MESSAGE, message as any);
         break;

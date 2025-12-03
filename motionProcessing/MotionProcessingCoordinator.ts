@@ -4,11 +4,11 @@ import { AsyncDataParser } from './dataProcessing/AsyncDataParser';
 import { UIProcessor } from './uiProcessing/UIProcessor';
 import { ServerService } from './dataProcessing/ServerService';
 import { ChunkingService } from './dataProcessing/ChunkingService';
-import { MotionConfig, IMUData, SessionContext, JointAngleData } from './shared/types';
+import { MotionConfig, IMUData, SessionContext, JointAngleData, DeviceData } from './shared/types';
 import {createMotionConfig, PerformanceProfile} from './shared/config';
 import { CHUNKING, SAMPLE_RATES } from './shared/constants';
 import { PerformanceLogger } from './shared/PerformanceLogger';
-import { DeviceID } from '../registry-management';
+import { DeviceID } from '../ble-management';
 
 interface RecordingStatus {
     isRecording: boolean;
@@ -107,7 +107,7 @@ export class MotionProcessingCoordinator {
     }
 
     /**
-     * Processes new IMU data from a specific device.
+     * Processes new IMU data from a specific sensor.
      * @param deviceId - DeviceID (0x11, 0x12, 0x21, 0x22) for efficient processing
      */
     processNewData(deviceId: DeviceID | string, imuData: IMUData): void {
@@ -148,8 +148,8 @@ export class MotionProcessingCoordinator {
     }
 
     /**
-     * Removes device from motion processing when it disconnects.
-     * CRITICAL: Must be called on device disconnect to prevent stale data affecting joint processing.
+     * Removes sensor from motion processing when it disconnects.
+     * CRITICAL: Must be called on sensor disconnect to prevent stale data affecting joint processing.
      * @param deviceId - DeviceID (0x11, 0x12, 0x21, 0x22) or device address
      */
     removeDevice(deviceId: DeviceID | string): void {
@@ -522,42 +522,35 @@ export class MotionProcessingCoordinator {
 
     /**
      * Establishes data flow pipeline from device processor to joint calculations.
+     * Uses direct per-joint callback for maximum efficiency - no subscriber overhead.
      */
     private setupDataFlow(): void {
-        console.log('🔗 [MOTION_COORDINATOR] Setting up data flow subscription...');
-        this.deviceProcessor.subscribe(() => {
-            // DISABLED for performance (called at 100Hz)
-            // console.log('📡 [MOTION_COORDINATOR] DeviceProcessor subscriber callback triggered');
-            try {
-                this.processJoints();
-            } catch (error) {
-                console.error('❌ [MOTION_COORDINATOR] Error in processJoints callback:', error);
-            }
+        console.log('🔗 [MOTION_COORDINATOR] Setting up per-joint data flow...');
+
+        // Direct callback for per-joint processing
+        // This is called immediately when a device updates, only for the affected joint
+        this.deviceProcessor.setJointUpdateCallback((jointName, devices) => {
+            this.processSingleJoint(jointName, devices);
         });
-        console.log('✅ [MOTION_COORDINATOR] Data flow pipeline established');
+
+        console.log('✅ [MOTION_COORDINATOR] Per-joint data flow established');
     }
 
     /**
-     * Processes joint calculations for all joints that have sufficient device data.
+     * Processes a single joint's angle calculation.
+     * Called directly from DeviceProcessor when a joint has sufficient device data.
+     * This is the most efficient path - no iteration over all joints.
      */
-    private processJoints(): void {
-        // DISABLED for performance (called at 100Hz)
-        // console.log(`🦴 [MOTION_COORDINATOR] processJoints called:`, {
-        //     jointProcessorCount: this.jointProcessors.size,
-        //     jointNames: Array.from(this.jointProcessors.keys())
-        // });
+    private processSingleJoint(jointName: string, devices: Map<string, DeviceData>): void {
+        const jointProcessor = this.jointProcessors.get(jointName);
+        if (!jointProcessor) {
+            return;
+        }
 
-        // PERFORMANCE: Use for...of instead of forEach (faster in hot path at 100Hz)
-        for (const [jointName, jointProcessor] of this.jointProcessors) {
-            const jointDevices = this.deviceProcessor.getDevicesForJoint(jointName);
-
-            if (jointDevices.size >= 2) {
-                jointProcessor.processDevices(jointDevices);
-            }
-            // DISABLED: No need to warn about missing devices at 100Hz - wasteful
-            // else {
-            //     console.warn(`⚠️ [MOTION_COORDINATOR] Insufficient devices for ${jointName}: ${jointDevices.size}/2 available`);
-            // }
+        try {
+            jointProcessor.processDevices(devices);
+        } catch (error) {
+            console.error(`❌ [MOTION_COORDINATOR] Error processing ${jointName}:`, error);
         }
     }
 

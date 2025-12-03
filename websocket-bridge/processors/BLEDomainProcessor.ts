@@ -60,21 +60,15 @@ export class BLEDomainProcessor implements DomainProcessor {
 
   // Process BLE domain message with reliability
   async process(message: BaseMessage, clientId: string): Promise<BaseMessage | void> {
-    console.log(`🔧 [BLE_PROCESSOR] Processing message type ${message.type} (0x${message.type.toString(16)})`);
-
     if (!this.bleService) {
-      console.error('❌ [BLE_PROCESSOR] BLE service unavailable');
       return this.createErrorResponse(message, 'BLE_SERVICE_UNAVAILABLE');
     }
 
     const handler = this.operationHandlers.get(message.type);
     if (!handler) {
-      console.error(`❌ [BLE_PROCESSOR] No handler for message type ${message.type} (0x${message.type.toString(16)})`);
-      console.log(`🔍 [BLE_PROCESSOR] Available handlers:`, Array.from(this.operationHandlers.keys()).map(k => `0x${k.toString(16)}`));
       return this.createErrorResponse(message, 'UNSUPPORTED_BLE_OPERATION');
     }
 
-    console.log(`✅ [BLE_PROCESSOR] Found handler for message type ${message.type}`);
     return this.executeWithRetry(message, handler);
   }
 
@@ -262,8 +256,19 @@ export class BLEDomainProcessor implements DomainProcessor {
 
   // Record start operation handler
   private handleRecordStartRequest = async (message: BaseMessage, service: BLEService): Promise<BaseMessage> => {
+    const request = message as any;
+
+    // Idempotent: if already recording, return success
     if (service.isRecording()) {
-      return this.createErrorResponse(message, 'RECORDING_ALREADY_ACTIVE');
+      console.log('🎬 Recording already active - returning success (idempotent)');
+      return {
+        type: MESSAGE_TYPES.RECORD_START_RESPONSE,
+        requestId: message.requestId,
+        timestamp: Date.now(),
+        success: true,
+        sessionId: request.sessionId,
+        message: 'Recording already active'
+      } as RecordStartResponse;
     }
 
     const connectedDevices = service.getConnectedDevices();
@@ -271,7 +276,6 @@ export class BLEDomainProcessor implements DomainProcessor {
       return this.createErrorResponse(message, 'NO_DEVICES_CONNECTED');
     }
 
-    const request = message as any;
     const result = await service.startRecording(request.sessionId, request.exerciseId, request.setNumber);
 
     return {

@@ -30,7 +30,7 @@ rsync -avz \
     --include 'websocket-bridge/***' \
     --include 'motionProcessing/***' \
     --include 'shared/***' \
-    --include 'registry-management/***' \
+    --include 'ble-management/***' \
     --include 'scripts/***' \
     --include '*.json' \
     --include '*.ts' \

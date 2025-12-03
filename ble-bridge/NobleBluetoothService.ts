@@ -21,7 +21,14 @@ import {
 } from './BleBridgeConstants';
 
 import { TropXDevice } from './TropXDevice';
-import { deviceStateManager, GlobalStreamingState } from './DeviceStateManager';
+// Use UnifiedBLEStateStore as the single source of truth
+import {
+  UnifiedBLEStateStore,
+  DeviceState,
+  GlobalState,
+  DeviceErrorType,
+  identifyDevice,
+} from '../ble-management';
 
 // Noble import - will be dynamically loaded
 let noble: any = null;
@@ -47,8 +54,9 @@ export class NobleBluetoothService {
   private reconnectTimers = new Map<string, NodeJS.Timeout>();
   private reconnectAttempts = new Map<string, number>();
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
-  private readonly BASE_RECONNECT_DELAY = 2000; // 2 seconds
-  private readonly MAX_RECONNECT_DELAY = 60000; // 60 seconds
+  private readonly BASE_RECONNECT_DELAY = 500; // 0.5 second - aggressive
+  private readonly MAX_RECONNECT_DELAY = 15000; // 15 seconds max
+  private stateChangeUnsubscribe: (() => void) | null = null;
 
   // Expose scanning state (for snapshot-based burst scanning)
   public isScanningActive(): boolean {
@@ -71,83 +79,16 @@ export class NobleBluetoothService {
   async initialize(): Promise<boolean> {
     try {
       console.log('🔍 Initializing Noble BLE service...');
-      console.log('🔍 Initial isInitialized state:', this.isInitialized);
 
-      // Dynamically import Noble to handle missing dependencies gracefully
+      // Load Noble - fail fast if not available
       try {
-        console.log('🔍 Attempting to require Noble...');
         noble = require('@abandonware/noble');
-        console.log('🔍 Noble imported successfully:', !!noble);
-
-        console.log('✅ Noble BLE library loaded, proceeding with real Noble implementation');
-
+        console.log('✅ Noble BLE library loaded');
       } catch (nobleError) {
-        console.log('🔍 Noble import failed, using mock service. Error:', (nobleError as Error).message);
-        console.warn('⚠️ Noble not available, falling back to mock service');
-        console.warn('💡 To use real BLE: npm install @abandonware/noble');
-        console.warn('💡 Windows: Requires Visual Studio Build Tools');
-
-        // Try to use mock service as fallback
-        try {
-          console.log('🔍 Loading MockNobleService...');
-          const { MockNobleService } = require('./MockNobleService');
-          console.log('🔍 MockNobleService loaded successfully');
-
-          console.log('🔍 Creating MockNobleService instance...');
-          const mockService = new MockNobleService(this.motionDataCallback, this.deviceEventCallback);
-          console.log('🔍 MockNobleService instance created');
-
-          console.log('🔍 Initializing MockNobleService...');
-          await mockService.initialize();
-          console.log('🔍 MockNobleService initialized successfully');
-
-          console.log('🔍 Replacing service methods with mock implementations...');
-          // Replace this service methods with mock service methods
-          this.startScanning = async () => {
-            console.log('🧪 Mock service startScanning method called');
-            const result = await mockService.startScanning();
-            console.log('🧪 Mock service scan result:', result);
-            // Update discovered devices for getDiscoveredDevices method
-            if (result.success && result.devices) {
-              this.discoveredPeripherals.clear();
-              result.devices.forEach((device: any) => {
-                this.discoveredPeripherals.set(device.id, {
-                  id: device.id,
-                  advertisement: { localName: device.name },
-                  rssi: device.rssi,
-                  address: device.address
-                });
-              });
-              console.log(`🧪 Added ${result.devices.length} mock devices to discoveredPeripherals`);
-            }
-            return result;
-          };
-          this.stopScanning = mockService.cleanup.bind(mockService);
-          this.connectToDevice = mockService.connectToDevice.bind(mockService);
-          this.disconnectDevice = mockService.disconnectDevice.bind(mockService);
-          this.startStreamingAll = mockService.startStreamingAll.bind(mockService);
-          this.stopStreamingAll = mockService.stopStreamingAll.bind(mockService);
-          this.getConnectedDevices = mockService.getConnectedDevices.bind(mockService);
-          this.getAllBatteryLevels = mockService.getAllBatteryLevels.bind(mockService);
-          this.cleanup = mockService.cleanup.bind(mockService);
-
-          console.log('✅ Mock Noble service initialized (for testing)');
-
-          // Clear stale device states from previous session
-          const { deviceStateManager: dsm, GlobalStreamingState: gss } = await import('./DeviceStateManager');
-          dsm.clearAllDevices();
-          dsm.setGlobalStreamingState(gss.STOPPED);
-          console.log('🧹 Cleared stale device states from previous session');
-
-          console.log('🔍 Setting isInitialized to true...');
-          this.isInitialized = true;
-          console.log('🔍 isInitialized is now:', this.isInitialized);
-          console.log('🔍 Returning true from initialization');
-          return true;
-        } catch (mockError) {
-          console.error('❌ Failed to initialize mock service:', mockError);
-          return false;
-        }
+        console.error('❌ Noble not available:', (nobleError as Error).message);
+        console.error('💡 To use BLE: npm install @abandonware/noble');
+        console.error('💡 Windows: Requires Visual Studio Build Tools');
+        return false;
       }
 
       // Setup Noble event handlers
@@ -158,63 +99,19 @@ export class NobleBluetoothService {
         await this.waitForBluetoothReady();
 
         // Clear stale device states from previous session
-        const { deviceStateManager, GlobalStreamingState } = await import('./DeviceStateManager');
-        deviceStateManager.clearAllDevices();
-        deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
+        UnifiedBLEStateStore.clear();
+        UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
         console.log('🧹 Cleared stale device states from previous session');
+
+        // Subscribe to state changes to clear retry attempts
+        this.subscribeToStateChanges();
 
         this.isInitialized = true;
         console.log('✅ Noble BLE service initialized');
         return true;
       } catch (bluetoothError) {
-        console.warn('⚠️ Bluetooth not available, falling back to mock service');
-        console.warn('💡 Bluetooth error:', bluetoothError);
-
-        // Fallback to mock service when Bluetooth is not available
-        try {
-          const { MockNobleService } = require('./MockNobleService');
-          const mockService = new MockNobleService(this.motionDataCallback, this.deviceEventCallback);
-          await mockService.initialize();
-
-          // Replace this service methods with mock service methods
-          this.startScanning = async () => {
-            const result = await mockService.startScanning();
-            // Update discovered devices for getDiscoveredDevices method
-            if (result.success && result.devices) {
-              this.discoveredPeripherals.clear();
-              result.devices.forEach((device: any) => {
-                this.discoveredPeripherals.set(device.id, {
-                  id: device.id,
-                  advertisement: { localName: device.name },
-                  rssi: device.rssi,
-                  address: device.address
-                });
-              });
-            }
-            return result;
-          };
-          this.stopScanning = mockService.cleanup.bind(mockService);
-          this.connectToDevice = mockService.connectToDevice.bind(mockService);
-          this.disconnectDevice = mockService.disconnectDevice.bind(mockService);
-          this.startStreamingAll = mockService.startStreamingAll.bind(mockService);
-          this.stopStreamingAll = mockService.stopStreamingAll.bind(mockService);
-          this.getConnectedDevices = mockService.getConnectedDevices.bind(mockService);
-          this.getAllBatteryLevels = mockService.getAllBatteryLevels.bind(mockService);
-          this.cleanup = mockService.cleanup.bind(mockService);
-
-          // Clear stale device states from previous session
-          const { deviceStateManager: dsm2, GlobalStreamingState: gss2 } = await import('./DeviceStateManager');
-          dsm2.clearAllDevices();
-          dsm2.setGlobalStreamingState(gss2.STOPPED);
-          console.log('🧹 Cleared stale device states from previous session');
-
-          console.log('✅ Mock Noble service initialized (Bluetooth fallback)');
-          this.isInitialized = true;
-          return true;
-        } catch (mockError) {
-          console.error('❌ Failed to initialize mock service:', mockError);
-          return false;
-        }
+        console.error('❌ Bluetooth adapter not available:', bluetoothError);
+        return false;
       }
 
     } catch (error) {
@@ -225,19 +122,9 @@ export class NobleBluetoothService {
 
   // Start scanning for TropX devices
   async startScanning(): Promise<BleScanResult> {
-    console.log('🔍 NobleBluetoothService.startScanning called');
-    console.log('🔍 isInitialized:', this.isInitialized);
-    console.log('🔍 noble:', !!noble);
-
-    if (!this.isInitialized) {
-      console.log('❌ Service not initialized, returning error');
+    if (!this.isInitialized || !noble) {
+      console.error('❌ BLE service not initialized');
       return { success: false, devices: [], message: 'BLE service not initialized' };
-    }
-
-    if (!noble) {
-      console.log('🧪 Using mock service for scanning (noble is null)');
-      console.log('❌ This should not happen - mock service should have replaced this method');
-      return { success: false, devices: [], message: 'Mock service not properly initialized' };
     }
 
     if (this.isScanning) {
@@ -311,8 +198,16 @@ export class NobleBluetoothService {
 
   // Get discovered devices from centralized state manager
   getDiscoveredDevices(): TropXDeviceInfo[] {
-    // Use state manager as single source of truth
-    return deviceStateManager.getAllDevices();
+    // Use UnifiedBLEStateStore as single source of truth
+    return UnifiedBLEStateStore.getAllDevices().map(d => ({
+      id: d.bleAddress,
+      name: d.bleName,
+      address: d.bleAddress,
+      rssi: d.rssi ?? -100,
+      state: d.state as unknown as DeviceConnectionState,
+      batteryLevel: d.batteryLevel,
+      lastSeen: new Date(d.lastSeen),
+    }));
   }
 
   // Connect to device
@@ -336,10 +231,11 @@ export class NobleBluetoothService {
 
     // Update all devices to connecting state immediately
     deviceIds.forEach(deviceId => {
-      const peripheral = this.discoveredPeripherals.get(deviceId);
-      if (peripheral) {
-        const deviceInfo = this.createDeviceInfo(peripheral);
-        deviceStateManager.updateDevice(deviceInfo, 'connecting');
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.CONNECTING);
+        } catch (e) { /* ignore transition error */ }
       }
     });
 
@@ -364,7 +260,10 @@ export class NobleBluetoothService {
         deviceId,
         message: 'Device not found - start scanning first'
       };
-      deviceStateManager.setDeviceConnectionState(deviceId, 'error');
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceId) {
+        UnifiedBLEStateStore.transitionToError(storeDeviceId, DeviceErrorType.CONNECTION_FAILED, 'Device not found');
+      }
       return result;
     }
 
@@ -373,7 +272,12 @@ export class NobleBluetoothService {
 
       // Create device wrapper with state management
       const deviceInfo = this.createDeviceInfo(peripheral);
-      deviceStateManager.updateDevice(deviceInfo, 'connecting');
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.CONNECTING);
+        } catch (e) { /* ignore transition error */ }
+      }
 
       const tropxDevice = new TropXDevice(
         peripheral,
@@ -386,9 +290,19 @@ export class NobleBluetoothService {
       const connected = await tropxDevice.connect();
       if (connected) {
         this.devices.set(deviceId, tropxDevice);
-        deviceStateManager.setDeviceConnectionState(deviceId, 'connected');
+        if (storeDeviceId) {
+          try {
+            UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.CONNECTED);
+          } catch (e) { /* ignore transition error */ }
+        }
 
         console.log(`✅ [${deviceId}] Connected successfully`);
+
+        // Check if app is IDLE but device might be streaming (reconnect after disconnect during streaming)
+        // If so, stop streaming on the device to ensure it's in a clean state
+        if (UnifiedBLEStateStore.getGlobalState() !== GlobalState.STREAMING) {
+          await this.ensureDeviceNotStreaming(tropxDevice, deviceId);
+        }
 
         // Auto-recovery: start streaming if global streaming is active
         const streamingRecovered = await this.recoverStreamingForDevice(deviceId);
@@ -402,7 +316,9 @@ export class NobleBluetoothService {
           message: finalMessage
         };
       } else {
-        deviceStateManager.setDeviceConnectionState(deviceId, 'error');
+        if (storeDeviceId) {
+          UnifiedBLEStateStore.transitionToError(storeDeviceId, DeviceErrorType.CONNECTION_FAILED, 'Connection failed');
+        }
         return {
           success: false,
           deviceId,
@@ -412,7 +328,10 @@ export class NobleBluetoothService {
 
     } catch (error) {
       console.error(`❌ [${deviceId}] Connection error:`, error);
-      deviceStateManager.setDeviceConnectionState(deviceId, 'error');
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceId) {
+        UnifiedBLEStateStore.transitionToError(storeDeviceId, DeviceErrorType.CONNECTION_FAILED, String(error));
+      }
       return {
         success: false,
         deviceId,
@@ -423,7 +342,10 @@ export class NobleBluetoothService {
 
   // Global streaming management with per-device control and state validation
   async startGlobalStreaming(): Promise<{ success: boolean; started: number; total: number; results: any[]; error?: string }> {
-    const connectedDevices = deviceStateManager.getConnectedDevices();
+    const connectedDevices = UnifiedBLEStateStore.getConnectedDevices().map(d => ({
+      id: d.bleAddress,
+      name: d.bleName,
+    }));
 
     if (connectedDevices.length === 0) {
       return { success: false, started: 0, total: 0, results: [] };
@@ -431,7 +353,7 @@ export class NobleBluetoothService {
 
     const globalStreamingStartTime = Date.now();
     console.log(`🎬 Starting global streaming on ${connectedDevices.length} connected devices...`);
-    deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STARTING);
+    UnifiedBLEStateStore.setGlobalState(GlobalState.STREAMING);
 
     // CRITICAL: Disable burst scanning to prevent interference with active notifications
     // Noble scan state changes can disrupt GATT notification subscriptions
@@ -444,7 +366,7 @@ export class NobleBluetoothService {
     // STEP 1: Validate and reset device states (up to 2 attempts)
     const resetResult = await this.validateAndResetDeviceStates(connectedDevices, 2);
     if (!resetResult.success) {
-      deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       return {
         success: false,
         started: 0,
@@ -462,10 +384,10 @@ export class NobleBluetoothService {
     const globalStreamingTime = Date.now() - globalStreamingStartTime;
 
     if (successCount > 0) {
-      deviceStateManager.setGlobalStreamingState(GlobalStreamingState.ACTIVE);
+      UnifiedBLEStateStore.setGlobalState(GlobalState.STREAMING);
       console.log(`✅ Global streaming started: ${successCount}/${connectedDevices.length} devices streaming (${globalStreamingTime}ms total)`);
     } else {
-      deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       console.log(`❌ Global streaming failed: no devices started streaming (${globalStreamingTime}ms total)`);
     }
 
@@ -548,22 +470,25 @@ export class NobleBluetoothService {
   }
 
   async stopGlobalStreaming(): Promise<{ success: boolean; stopped: number; total: number }> {
-    const streamingDevices = deviceStateManager.getStreamingDevices();
+    const streamingDevices = UnifiedBLEStateStore.getStreamingDevices().map(d => ({
+      id: d.bleAddress,
+      name: d.bleName,
+    }));
 
     if (streamingDevices.length === 0) {
-      deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       return { success: true, stopped: 0, total: 0 };
     }
 
     console.log(`🛑 Stopping global streaming on ${streamingDevices.length} devices...`);
-    deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPING);
+    // Note: No "STOPPING" state in new GlobalState, just set to IDLE after
 
     // Stop streaming on all streaming devices in parallel
     const stoppingTasks = streamingDevices.map(device => this.stopDeviceStreaming(device.id));
     const results = await Promise.all(stoppingTasks);
 
     const successCount = results.filter(result => result.success).length;
-    deviceStateManager.setGlobalStreamingState(GlobalStreamingState.STOPPED);
+    UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
 
     console.log(`✅ Global streaming stopped: ${successCount}/${streamingDevices.length} devices stopped`);
 
@@ -596,7 +521,12 @@ export class NobleBluetoothService {
       const success = await device.startStreaming();
 
       if (success) {
-        deviceStateManager.setDeviceConnectionState(deviceId, 'streaming');
+        const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+        if (storeDeviceId) {
+          try {
+            UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.STREAMING);
+          } catch (e) { /* ignore transition error */ }
+        }
         console.log(`✅ [${deviceId}] Streaming started`);
         return {
           success: true,
@@ -633,7 +563,12 @@ export class NobleBluetoothService {
     try {
       console.log(`🛑 [${deviceId}] Stopping streaming...`);
       await device.stopStreaming();
-      deviceStateManager.setDeviceConnectionState(deviceId, 'connected');
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.CONNECTED);
+        } catch (e) { /* ignore transition error */ }
+      }
 
       console.log(`✅ [${deviceId}] Streaming stopped`);
       return {
@@ -653,12 +588,14 @@ export class NobleBluetoothService {
 
   // Auto-recovery for newly connected devices when global streaming is active
   async recoverStreamingForDevice(deviceId: string): Promise<boolean> {
-    if (!deviceStateManager.isGlobalStreamingActive()) {
+    if (UnifiedBLEStateStore.getGlobalState() !== GlobalState.STREAMING) {
       return false;
     }
 
-    const device = deviceStateManager.getDevice(deviceId);
-    if (!device || device.state !== 'connected') {
+    const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+    if (!storeDeviceId) return false;
+    const device = UnifiedBLEStateStore.getDevice(storeDeviceId);
+    if (!device || device.state !== DeviceState.CONNECTED) {
       return false;
     }
 
@@ -667,12 +604,48 @@ export class NobleBluetoothService {
     return result.success;
   }
 
+  /**
+   * Ensure device is not streaming (for reconnect during IDLE state)
+   * Device may have been streaming when it disconnected and still be in streaming state
+   */
+  private async ensureDeviceNotStreaming(tropxDevice: TropXDevice, deviceId: string): Promise<void> {
+    try {
+      const { TropXCommands } = await import('./TropXCommands');
+      const { TROPX_STATES } = await import('./BleBridgeConstants');
+
+      const deviceState = await tropxDevice.getSystemState();
+      const stateName = TropXCommands.getStateName(deviceState);
+
+      // Check if device is in a streaming state
+      if (deviceState === TROPX_STATES.TX_DIRECT || deviceState === TROPX_STATES.TX_BUFFERED) {
+        console.log(`⚠️ [${deviceId}] Device is streaming (state: ${stateName}) but app is IDLE - stopping...`);
+        const resetSuccess = await tropxDevice.resetToIdle();
+        if (resetSuccess) {
+          console.log(`✅ [${deviceId}] Device reset to IDLE - ready for clean state`);
+        } else {
+          console.warn(`⚠️ [${deviceId}] Could not reset device to IDLE`);
+        }
+      } else {
+        console.log(`✅ [${deviceId}] Device not streaming (state: ${stateName}) - no reset needed`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ [${deviceId}] Could not check/reset device streaming state:`, error);
+      // Don't fail connection - device might still work
+    }
+  }
+
   // Disconnect device with state management
   async disconnectDevice(deviceId: string): Promise<BleConnectionResult> {
     const device = this.devices.get(deviceId);
+    const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+
     if (!device) {
       // Update state manager even if device not found locally
-      deviceStateManager.setDeviceConnectionState(deviceId, 'disconnected');
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.DISCONNECTED);
+        } catch (e) { /* ignore transition error */ }
+      }
       return {
         success: false,
         deviceId,
@@ -686,7 +659,11 @@ export class NobleBluetoothService {
 
       // Clean up local reference and update state
       this.devices.delete(deviceId);
-      deviceStateManager.setDeviceConnectionState(deviceId, 'disconnected');
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.DISCONNECTED);
+        } catch (e) { /* ignore transition error */ }
+      }
 
       console.log(`✅ [${deviceId}] Disconnected successfully`);
       return {
@@ -697,7 +674,9 @@ export class NobleBluetoothService {
 
     } catch (error) {
       console.error(`❌ [${deviceId}] Disconnect error:`, error);
-      deviceStateManager.setDeviceConnectionState(deviceId, 'error');
+      if (storeDeviceId) {
+        UnifiedBLEStateStore.transitionToError(storeDeviceId, DeviceErrorType.UNKNOWN, String(error));
+      }
       return {
         success: false,
         deviceId,
@@ -782,6 +761,19 @@ export class NobleBluetoothService {
     return this.devices.get(deviceId) || null;
   }
 
+  /**
+   * Check if a device is actually connected at the BLE level
+   * This checks the Noble peripheral state, not the application state
+   * Used by Watchdog to verify disconnection before triggering reconnect
+   */
+  isDeviceActuallyConnected(bleAddress: string): boolean {
+    const device = this.devices.get(bleAddress);
+    if (!device) {
+      return false;
+    }
+    return device.isConnected;
+  }
+
   // Get device battery levels
   async getAllBatteryLevels(): Promise<Map<string, number>> {
     const batteryLevels = new Map<string, number>();
@@ -831,14 +823,16 @@ export class NobleBluetoothService {
     if (!this.isStatePollingEnabled) return;
 
     // Don't poll during streaming - BLE is busy
-    const isStreaming = deviceStateManager.getGlobalStreamingState() === GlobalStreamingState.ACTIVE;
-    if (isStreaming) {
+    if (UnifiedBLEStateStore.getGlobalState() === GlobalState.STREAMING) {
       // Schedule next poll
       this.statePollingTimer = setTimeout(() => this.pollDeviceStates(), 5000);
       return;
     }
 
-    const connectedDevices = deviceStateManager.getConnectedDevices();
+    const connectedDevices = UnifiedBLEStateStore.getConnectedDevices().map(d => ({
+      id: d.bleAddress,
+      name: d.bleName,
+    }));
     if (connectedDevices.length === 0) {
       // No devices to poll, schedule next check
       this.statePollingTimer = setTimeout(() => this.pollDeviceStates(), 5000);
@@ -847,7 +841,6 @@ export class NobleBluetoothService {
 
     // Poll all devices in parallel
     const { TropXCommands } = await import('./TropXCommands');
-    const { deviceRegistry } = await import('../registry-management');
 
     await Promise.all(connectedDevices.map(async (deviceInfo) => {
       const device = this.devices.get(deviceInfo.id);
@@ -865,8 +858,13 @@ export class NobleBluetoothService {
           lastUpdate: Date.now()
         });
 
-        // Update registry (single source of truth) - registry will notify UI
-        deviceRegistry.setDeviceState(deviceInfo.id, stateName, state);
+        // Update UnifiedBLEStateStore (single source of truth)
+        const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceInfo.id);
+        if (storeDeviceId) {
+          // Device operational state is separate from connection status
+          // Just update lastSeen for now
+          UnifiedBLEStateStore.updateLastSeen(storeDeviceId);
+        }
 
         // Notify via event callback (for backwards compatibility)
         if (!previousState || previousState.state !== state) {
@@ -888,6 +886,8 @@ export class NobleBluetoothService {
   }
 
   // Auto-reconnect with exponential backoff
+  // NOTE: State transition to RECONNECTING is handled by BLEServiceAdapter.handleDeviceEvent()
+  // This method just schedules the timer and updates reconnect metadata
   scheduleReconnect(deviceId: string, deviceName: string): void {
     // Clear any existing timer
     const existingTimer = this.reconnectTimers.get(deviceId);
@@ -902,26 +902,25 @@ export class NobleBluetoothService {
       this.reconnectAttempts.delete(deviceId);
       this.reconnectTimers.delete(deviceId);
 
-      // Auto-remove device from registry
-      (async () => {
-        const { deviceRegistry } = await import('../registry-management');
-        deviceRegistry.clearReconnecting(deviceId);
-        deviceRegistry.removeDevice(deviceId);
-      })();
+      // Auto-remove device from state store (synchronously)
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+      if (storeDeviceId) {
+        UnifiedBLEStateStore.unregisterDevice(storeDeviceId);
+      }
       return;
     }
-
-    // Set reconnecting state in registry
-    (async () => {
-      const { deviceRegistry } = await import('../registry-management');
-      deviceRegistry.setReconnecting(deviceId, attempts + 1);
-    })();
 
     // Exponential backoff: 2s, 4s, 8s, 16s, 32s (capped at 60s)
     const delay = Math.min(
       this.BASE_RECONNECT_DELAY * Math.pow(2, attempts),
       this.MAX_RECONNECT_DELAY
     );
+
+    // Update reconnect metadata (state transition already done by BLEServiceAdapter)
+    const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+    if (storeDeviceId) {
+      UnifiedBLEStateStore.setReconnectState(storeDeviceId, attempts + 1, Date.now() + delay);
+    }
 
     console.log(`🔄 [${deviceName}] Scheduling reconnect attempt ${attempts + 1}/${this.MAX_RECONNECT_ATTEMPTS} in ${delay}ms`);
 
@@ -940,6 +939,68 @@ export class NobleBluetoothService {
     const attempts = this.reconnectAttempts.get(deviceId) || 0;
     console.log(`🔌 [${deviceName}] Reconnect attempt ${attempts}/${this.MAX_RECONNECT_ATTEMPTS}...`);
 
+    // CRITICAL: Clean up old TropXDevice AND peripheral handlers
+    const oldDevice = this.devices.get(deviceId);
+    if (oldDevice) {
+      console.log(`🧹 [${deviceName}] Cleaning up old device instance before reconnect`);
+      this.devices.delete(deviceId);
+    }
+
+    // CRITICAL: Remove ALL listeners from peripheral to prevent handler accumulation
+    // Each failed reconnection attempt adds handlers that interfere with subsequent attempts
+    const peripheral = this.discoveredPeripherals.get(deviceId);
+    if (peripheral) {
+      console.log(`🧹 [${deviceName}] Removing stale handlers from peripheral`);
+      peripheral.removeAllListeners('disconnect');
+      peripheral.removeAllListeners('connect');
+      peripheral.removeAllListeners('servicesDiscover');
+    }
+
+    // Transition to CONNECTING before attempting
+    const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+    if (storeDeviceId) {
+      try {
+        UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.CONNECTING);
+      } catch (e) { /* ignore invalid transition */ }
+    }
+
+    // FAST PATH: Try existing peripheral first (no scan delay)
+    const existingPeripheral = this.discoveredPeripherals.get(deviceId);
+    if (existingPeripheral) {
+      console.log(`⚡ [${deviceName}] Fast path: trying existing peripheral...`);
+      const result = await this.connectToDevice(deviceId);
+
+      if (result.success) {
+        console.log(`✅ [${deviceName}] Reconnected via fast path!`);
+        this.reconnectAttempts.delete(deviceId);
+        this.reconnectTimers.delete(deviceId);
+        if (storeDeviceId) {
+          // Clear reconnect state AND force immediate broadcast
+          UnifiedBLEStateStore.setReconnectState(storeDeviceId, 0, null);
+          UnifiedBLEStateStore.clearReconnectState(storeDeviceId);
+        }
+        return;
+      }
+
+      console.log(`⚠️ [${deviceName}] Fast path failed, trying rescan...`);
+    }
+
+    // SLOW PATH: Rescan to get fresh peripheral (2 second timeout)
+    console.log(`🔍 [${deviceName}] Scanning for fresh peripheral...`);
+    const freshPeripheral = await this.scanForDevice(deviceId, deviceName, 2000);
+
+    if (!freshPeripheral) {
+      console.log(`⚠️ [${deviceName}] Device not found - will retry later`);
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.RECONNECTING);
+        } catch (e) { /* ignore invalid transition */ }
+      }
+      this.scheduleReconnect(deviceId, deviceName);
+      return;
+    }
+
+    console.log(`✅ [${deviceName}] Fresh peripheral found, connecting...`);
     const result = await this.connectToDevice(deviceId);
 
     if (result.success) {
@@ -947,14 +1008,108 @@ export class NobleBluetoothService {
       this.reconnectAttempts.delete(deviceId);
       this.reconnectTimers.delete(deviceId);
 
-      // Clear reconnecting state in registry
-      const { deviceRegistry } = await import('../registry-management');
-      deviceRegistry.clearReconnecting(deviceId);
+      // Clear reconnecting state AND force immediate broadcast
+      if (storeDeviceId) {
+        UnifiedBLEStateStore.setReconnectState(storeDeviceId, 0, null);
+        UnifiedBLEStateStore.clearReconnectState(storeDeviceId);
+      }
     } else {
       console.log(`❌ [${deviceName}] Reconnect failed: ${result.message}`);
+      // Transition back to RECONNECTING before scheduling next attempt
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.RECONNECTING);
+        } catch (e) { /* ignore invalid transition */ }
+      }
       // Schedule next attempt
       this.scheduleReconnect(deviceId, deviceName);
     }
+  }
+
+  /**
+   * Scan for a specific device by ID
+   * Used before reconnection to get a fresh peripheral object
+   * @returns The peripheral if found, null if not found within timeout
+   */
+  private async scanForDevice(deviceId: string, deviceName: string, timeoutMs: number): Promise<any | null> {
+    return new Promise(async (resolve) => {
+      let found = false;
+      let scanStarted = false;
+
+      // Set up timeout
+      const timeout = setTimeout(() => {
+        if (!found) {
+          console.log(`⏱️ [${deviceName}] Scan timeout after ${timeoutMs}ms`);
+          if (scanStarted && this.isScanning) {
+            this.stopScanning(true).catch(() => {});
+          }
+          resolve(null);
+        }
+      }, timeoutMs);
+
+      // Check if device is already in discovered peripherals and still valid
+      const existingPeripheral = this.discoveredPeripherals.get(deviceId);
+      if (existingPeripheral) {
+        // Check if peripheral is still usable (Noble peripheral state check)
+        const peripheralState = existingPeripheral.state;
+        if (peripheralState === 'disconnected') {
+          // Peripheral exists and is in disconnected state - might be usable
+          // But let's still try a quick scan to refresh it
+          console.log(`📋 [${deviceName}] Found cached peripheral (state: ${peripheralState}), refreshing...`);
+        }
+      }
+
+      // Set up a listener for this specific device
+      const discoverHandler = (peripheral: any) => {
+        const name = peripheral.advertisement?.localName || '';
+        if (peripheral.id === deviceId || name === deviceName) {
+          found = true;
+          clearTimeout(timeout);
+
+          // Update the cached peripheral with fresh reference
+          this.discoveredPeripherals.set(peripheral.id, peripheral);
+          console.log(`✅ [${deviceName}] Device rediscovered during reconnect scan`);
+
+          // Stop scanning
+          if (this.isScanning) {
+            this.stopScanning(true).catch(() => {});
+          }
+
+          // Remove listener
+          if (noble) {
+            noble.removeListener('discover', discoverHandler);
+          }
+
+          resolve(peripheral);
+        }
+      };
+
+      // Add discover listener
+      if (noble) {
+        noble.on('discover', discoverHandler);
+      }
+
+      // Start scanning
+      try {
+        // Only start if not already scanning
+        if (!this.isScanning) {
+          scanStarted = true;
+          await noble.startScanningAsync([], false);
+          this.isScanning = true;
+        } else {
+          // Already scanning, just wait
+          console.log(`📡 [${deviceName}] Scan already in progress, waiting for device...`);
+        }
+      } catch (error) {
+        console.warn(`⚠️ [${deviceName}] Failed to start reconnect scan:`, error);
+        clearTimeout(timeout);
+        if (noble) {
+          noble.removeListener('discover', discoverHandler);
+        }
+        // Even if scan fails, try with existing peripheral
+        resolve(existingPeripheral || null);
+      }
+    });
   }
 
   cancelReconnect(deviceId: string): void {
@@ -965,11 +1120,15 @@ export class NobleBluetoothService {
     }
     this.reconnectAttempts.delete(deviceId);
 
-    // Clear reconnecting state in registry
-    (async () => {
-      const { deviceRegistry } = await import('../registry-management');
-      deviceRegistry.clearReconnecting(deviceId);
-    })();
+    // Clear reconnecting state in UnifiedBLEStateStore (synchronous)
+    const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+    if (storeDeviceId) {
+      // Transition back to DISCONNECTED and clear reconnect state
+      try {
+        UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.DISCONNECTED);
+      } catch (e) { /* ignore invalid transition */ }
+      UnifiedBLEStateStore.setReconnectState(storeDeviceId, 0, null);
+    }
   }
 
   async removeDevice(deviceId: string): Promise<{ success: boolean; message?: string }> {
@@ -977,12 +1136,12 @@ export class NobleBluetoothService {
       // Cancel any ongoing reconnect
       this.cancelReconnect(deviceId);
 
-      // Remove from registry
-      const { deviceRegistry } = await import('../registry-management');
-      const removed = deviceRegistry.removeDevice(deviceId);
+      // Remove from UnifiedBLEStateStore (using already imported module)
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
 
-      if (removed) {
-        console.log(`🗑️ Device ${deviceId} removed successfully`);
+      if (storeDeviceId) {
+        UnifiedBLEStateStore.unregisterDevice(storeDeviceId);
+        console.log(`🗑️ Device 0x${storeDeviceId.toString(16)} removed successfully`);
         return { success: true, message: 'Device removed' };
       } else {
         return { success: false, message: 'Device not found' };
@@ -996,10 +1155,49 @@ export class NobleBluetoothService {
     }
   }
 
+  // Subscribe to state changes to clear retry attempts
+  private subscribeToStateChanges(): void {
+    const handler = (change: { deviceId: number; previousState: DeviceState; newState: DeviceState }) => {
+      // Get the BLE address for this device ID
+      const device = UnifiedBLEStateStore.getDevice(change.deviceId);
+      if (!device) return;
+
+      const bleAddress = device.bleAddress;
+
+      // Clear retry attempts on ANY state change
+      // This ensures fresh retry counts when a device reconnects later
+      if (this.reconnectAttempts.has(bleAddress)) {
+        console.log(`🔄 [${device.bleName}] Clearing retry attempts on state change: ${change.previousState} → ${change.newState}`);
+        this.reconnectAttempts.delete(bleAddress);
+      }
+
+      // Also clear any pending reconnect timer if device state changed
+      const timer = this.reconnectTimers.get(bleAddress);
+      if (timer && change.newState !== DeviceState.RECONNECTING && change.newState !== DeviceState.CONNECTING) {
+        console.log(`⏹️ [${device.bleName}] Cancelling pending reconnect timer on state change`);
+        clearTimeout(timer);
+        this.reconnectTimers.delete(bleAddress);
+      }
+    };
+
+    UnifiedBLEStateStore.on('deviceStateChanged', handler);
+
+    // Store unsubscribe function for cleanup
+    this.stateChangeUnsubscribe = () => {
+      UnifiedBLEStateStore.removeListener('deviceStateChanged', handler);
+    };
+  }
+
   // Cleanup and disconnect all
   async cleanup(): Promise<void> {
     console.log('🧹 Cleaning up Noble BLE service...');
     this.isCleaningUp = true;
+
+    // Unsubscribe from state changes
+    if (this.stateChangeUnsubscribe) {
+      this.stateChangeUnsubscribe();
+      this.stateChangeUnsubscribe = null;
+    }
 
     // Stop state polling
     this.stopStatePolling();
@@ -1049,8 +1247,7 @@ export class NobleBluetoothService {
       } else {
         // Adapter came back - resume burst scanning if enabled
         // BUT: Don't resume if we're currently streaming (prevents interference)
-        const isCurrentlyStreaming = deviceStateManager.getGlobalStreamingState() === GlobalStreamingState.ACTIVE
-          || deviceStateManager.getGlobalStreamingState() === GlobalStreamingState.STARTING;
+        const isCurrentlyStreaming = UnifiedBLEStateStore.getGlobalState() === GlobalState.STREAMING;
 
         if (this.burstEnabled && !this.isScanning && !this.nextBurstTimer && !isCurrentlyStreaming) {
           this.scheduleNextBurst();
@@ -1097,28 +1294,46 @@ export class NobleBluetoothService {
     console.log(`✅ Discovered device: ${deviceName} (${peripheral.id}, RSSI: ${peripheral.rssi})`);
     this.discoveredPeripherals.set(peripheral.id, peripheral);
 
-    // Create device info and update state manager with state preservation
-    const deviceInfo = this.createDeviceInfo(peripheral);
+    // Register device in UnifiedBLEStateStore (single source of truth)
+    const bleAddress = peripheral.id;
 
-    // Check if device was previously connected - preserve connection state during rescan
-    const existingDevice = deviceStateManager.getDevice(peripheral.id);
-    let targetState: DeviceConnectionState = 'discovered';
+    // Check if device was previously registered
+    let storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(bleAddress);
 
-    if (existingDevice) {
-      // Preserve connected/streaming states during rescan, update discovery info
-      if (existingDevice.state === 'connected' || existingDevice.state === 'streaming') {
-        targetState = existingDevice.state;
-        console.log(`🔄 Device ${deviceName} rediscovered - preserving ${targetState} state`);
+    if (!storeDeviceId) {
+      // Register new device - this identifies it from the name pattern
+      storeDeviceId = UnifiedBLEStateStore.registerDevice(bleAddress, deviceName);
+      if (!storeDeviceId) {
+        console.warn(`⚠️ Could not register device: ${deviceName} - unknown pattern`);
+        return;
       }
     }
 
-    // Update device in state manager (this provides centralized state)
-    const managedDevice = deviceStateManager.updateDevice(deviceInfo, targetState);
+    // Update RSSI
+    UnifiedBLEStateStore.updateDeviceFields(storeDeviceId, {
+      rssi: peripheral.rssi,
+    });
 
-    // Notify event callback with managed device
+    // Get current state to check if we need to transition
+    const existingDevice = UnifiedBLEStateStore.getDevice(storeDeviceId);
+    if (existingDevice) {
+      // Only transition to DISCOVERED if currently DISCONNECTED
+      if (existingDevice.state === DeviceState.DISCONNECTED) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.DISCOVERED);
+        } catch (e) { /* ignore transition error */ }
+      } else if (existingDevice.state === DeviceState.CONNECTED || existingDevice.state === DeviceState.STREAMING) {
+        console.log(`🔄 Device ${deviceName} rediscovered - preserving ${existingDevice.state} state`);
+      }
+    }
+
+    // Create device info for event callback
+    const deviceInfo = this.createDeviceInfo(peripheral);
+
+    // Notify event callback
     if (this.deviceEventCallback) {
-      console.log(`📱 Device event: ${peripheral.id} - discovered`, managedDevice);
-      this.deviceEventCallback(peripheral.id, 'discovered', managedDevice);
+      console.log(`📱 Device event: ${peripheral.id} - discovered`, deviceInfo);
+      this.deviceEventCallback(peripheral.id, 'discovered', deviceInfo);
     }
   }
 
@@ -1239,8 +1454,7 @@ export class NobleBluetoothService {
     if (!this.burstEnabled) return;
 
     // GUARD: Never schedule bursts during streaming
-    const streamingState = deviceStateManager.getGlobalStreamingState();
-    if (streamingState === GlobalStreamingState.ACTIVE || streamingState === GlobalStreamingState.STARTING) {
+    if (UnifiedBLEStateStore.getGlobalState() === GlobalState.STREAMING) {
       console.log('⏸️ Skipping burst schedule - streaming is active');
       return;
     }
