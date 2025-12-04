@@ -1,11 +1,11 @@
 // Message type constants for WebSocket communication
 export const MESSAGE_TYPES = {
-  // System messages
+  // System messages (0x01-0x0F)
   HEARTBEAT: 0x01,
   ERROR: 0x02,
   STATUS: 0x03,
 
-  // BLE operations (reliable delivery required)
+  // BLE operations (0x10-0x1F, reliable delivery required)
   BLE_SCAN_REQUEST: 0x10,
   BLE_SCAN_RESPONSE: 0x11,
   BLE_CONNECT_REQUEST: 0x12,
@@ -23,37 +23,38 @@ export const MESSAGE_TYPES = {
   BLE_DEVICE_REMOVE_REQUEST: 0x1E,
   BLE_DEVICE_REMOVE_RESPONSE: 0x1F,
 
-  // Broadcast messages (from original WebSocket service)
-  SCAN_REQUEST: 0x40,
-
-  // Recording operations (reliable delivery required)
+  // Recording operations (0x20-0x2F, reliable delivery required)
   RECORD_START_REQUEST: 0x20,
   RECORD_START_RESPONSE: 0x21,
   RECORD_STOP_REQUEST: 0x22,
   RECORD_STOP_RESPONSE: 0x23,
 
-  // Streaming data (fire-and-forget by default)
+  // Streaming data (0x30-0x3F, fire-and-forget)
   MOTION_DATA: 0x30,
   DEVICE_STATUS: 0x31,
   BATTERY_UPDATE: 0x32,
   SYNC_STARTED: 0x33,
   SYNC_PROGRESS: 0x34,
   SYNC_COMPLETE: 0x35,
-  DEVICE_VIBRATING: 0x36,  // Locate mode: array of device IDs currently being shaken
+  DEVICE_VIBRATING: 0x36,
 
-  // Client metadata protocol
-  CLIENT_REGISTER: 0x40,
-  CLIENT_METADATA_UPDATE: 0x41,
-  CLIENT_ACTION_REGISTER: 0x42,
-  CLIENT_ACTION_TRIGGER: 0x43,
-  CLIENT_ACTION_RESULT: 0x44,
-  CLIENT_LIST_UPDATE: 0x45,
+  // STATE_UPDATE (0x40) - Server→Client broadcast of full device state
+  // Used by UnifiedBLEStateStore for single-source-of-truth broadcasts
+  STATE_UPDATE: 0x40,
 
-  // Device state query (for persistence/reconnect)
+  // Device state query (0x50-0x5F, for persistence/reconnect)
   GET_DEVICES_STATE_REQUEST: 0x50,
   GET_DEVICES_STATE_RESPONSE: 0x51,
 
-  // Internal protocol
+  // Client metadata protocol (0x60-0x6F)
+  CLIENT_REGISTER: 0x60,
+  CLIENT_METADATA_UPDATE: 0x61,
+  CLIENT_ACTION_REGISTER: 0x62,
+  CLIENT_ACTION_TRIGGER: 0x63,
+  CLIENT_ACTION_RESULT: 0x64,
+  CLIENT_LIST_UPDATE: 0x65,
+
+  // Internal protocol (0xF0-0xFF)
   ACK: 0xF0,
   PING: 0xF1,
   PONG: 0xF2,

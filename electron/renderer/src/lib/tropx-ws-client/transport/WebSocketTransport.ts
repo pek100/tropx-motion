@@ -1,6 +1,6 @@
 import { TypedEventEmitter } from '../handlers/TypedEventEmitter';
 import { BinaryProtocol } from '../protocol/BinaryProtocol';
-import { BaseMessage, EVENT_TYPES } from '../types';
+import { BaseMessage, EVENT_TYPES, MESSAGE_TYPES } from '../types';
 import { CONNECTION, calculateBackoff } from '../utils';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -162,33 +162,35 @@ export class WebSocketTransport extends TypedEventEmitter {
 
   private emitMessageEvent(message: BaseMessage): void {
     switch (message.type) {
-      case 0x30:
+      case MESSAGE_TYPES.MOTION_DATA:
         this.emit(EVENT_TYPES.MOTION_DATA, message as any);
         break;
-      case 0x31:
+      case MESSAGE_TYPES.DEVICE_STATUS:
         this.emit(EVENT_TYPES.DEVICE_STATUS, message as any);
         break;
-      case 0x32:
+      case MESSAGE_TYPES.BATTERY_UPDATE:
         this.emit(EVENT_TYPES.BATTERY_UPDATE, message as any);
         break;
-      case 0x33:
+      case MESSAGE_TYPES.SYNC_STARTED:
         this.emit(EVENT_TYPES.SYNC_STARTED, message as any);
         break;
-      case 0x34:
+      case MESSAGE_TYPES.SYNC_PROGRESS:
         this.emit(EVENT_TYPES.SYNC_PROGRESS, message as any);
         break;
-      case 0x35:
+      case MESSAGE_TYPES.SYNC_COMPLETE:
         this.emit(EVENT_TYPES.SYNC_COMPLETE, message as any);
         break;
-      case 0x36:
+      case MESSAGE_TYPES.DEVICE_VIBRATING:
         this.emit(EVENT_TYPES.DEVICE_VIBRATING, message as any);
         break;
-      case 0x40:
+      case MESSAGE_TYPES.STATE_UPDATE:
         // STATE_UPDATE - broadcast as DEVICE_STATUS for UI updates
-        console.log('📡 Received STATE_UPDATE (0x40), emitting as DEVICE_STATUS');
         this.emit(EVENT_TYPES.DEVICE_STATUS, message as any);
         break;
-      case 0x02:
+      case MESSAGE_TYPES.CLIENT_LIST_UPDATE:
+        this.emit(EVENT_TYPES.CLIENT_LIST_UPDATE, message as any);
+        break;
+      case MESSAGE_TYPES.ERROR:
         this.emit(EVENT_TYPES.MESSAGE, message as any);
         break;
     }

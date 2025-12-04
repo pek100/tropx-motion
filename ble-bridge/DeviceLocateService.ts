@@ -9,6 +9,7 @@
 import { EventEmitter } from 'events';
 import { TropXDevice } from './TropXDevice';
 import { DATA_MODES, DATA_FREQUENCIES, PACKET_SIZES } from './BleBridgeConstants';
+import { UnifiedBLEStateStore } from '../ble-management/UnifiedBLEStateStore';
 
 // Threshold for detecting device shake (in g-force)
 // Very sensitive - even gentle taps should be detected
@@ -29,9 +30,13 @@ export class DeviceLocateService extends EventEmitter {
   private accelerometerData: Map<string, AccelerometerData[]> = new Map();
   private lastShakeDetection: Map<string, number> = new Map();
   private lastDataReceived: Map<string, number> = new Map();
+  private lastRecoveryAttempt: Map<string, number> = new Map();
   private isActive: boolean = false;
   private dataHandlers: Map<string, (data: Buffer) => void> = new Map();
   private healthCheckInterval: NodeJS.Timeout | null = null;
+  private vibrationClearTimers: Map<string, NodeJS.Timeout> = new Map();
+
+  private static readonly RECOVERY_COOLDOWN_MS = 5000; // 5 seconds between recovery attempts
 
   /**
    * Start locate mode on all connected devices
@@ -72,6 +77,7 @@ export class DeviceLocateService extends EventEmitter {
     this.accelerometerData.clear();
     this.lastShakeDetection.clear();
     this.lastDataReceived.clear();
+    this.lastRecoveryAttempt.clear();
 
     // Start accelerometer streaming on all devices in parallel (asynchronously)
     await Promise.all(devices.map(async (device) => {
@@ -135,11 +141,11 @@ export class DeviceLocateService extends EventEmitter {
   }
 
   /**
-   * Monitor data flow and detect stalls
+   * Monitor data flow and detect stalls, with auto-recovery
    */
   private startHealthCheck(): void {
     // Check every 2 seconds if devices are still sending data
-    this.healthCheckInterval = setInterval(() => {
+    this.healthCheckInterval = setInterval(async () => {
       if (!this.isActive) return;
 
       const now = Date.now();
@@ -149,11 +155,80 @@ export class DeviceLocateService extends EventEmitter {
         const lastReceived = this.lastDataReceived.get(deviceId);
         if (lastReceived && (now - lastReceived) > stallTimeout) {
           const wrapper = device.getWrapper();
+
+          // Check recovery cooldown to prevent rapid attempts
+          const lastRecovery = this.lastRecoveryAttempt.get(deviceId) || 0;
+          if (now - lastRecovery < DeviceLocateService.RECOVERY_COOLDOWN_MS) {
+            console.warn(`⏳ [${wrapper.deviceInfo.name}] Stall detected but recovery on cooldown (${Math.round((DeviceLocateService.RECOVERY_COOLDOWN_MS - (now - lastRecovery)) / 1000)}s remaining)`);
+            continue;
+          }
+
           console.error(`❌ [${wrapper.deviceInfo.name}] Data stall detected! Last data: ${now - lastReceived}ms ago`);
-          console.error(`   This indicates BLE notification subscription may have died`);
+          console.log(`🔄 [${wrapper.deviceInfo.name}] Attempting auto-recovery...`);
+
+          this.lastRecoveryAttempt.set(deviceId, now);
+
+          // Try to recover by restarting accelerometer streaming
+          await this.recoverDevice(deviceId, device);
         }
       }
     }, 2000);
+  }
+
+  /**
+   * Attempt to recover a stalled device by restarting accelerometer streaming
+   */
+  private async recoverDevice(deviceId: string, device: TropXDevice): Promise<void> {
+    try {
+      const wrapper = device.getWrapper();
+
+      // Step 1: Remove old handlers
+      wrapper.dataCharacteristic.removeAllListeners('data');
+      wrapper.dataCharacteristic.removeAllListeners('error');
+
+      // Step 2: Try to unsubscribe (ignore errors)
+      try {
+        await wrapper.dataCharacteristic.unsubscribeAsync();
+      } catch (e) {
+        // Ignore - may already be unsubscribed
+      }
+
+      // Step 3: Wait a bit for BLE stack to settle
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Step 4: Re-subscribe
+      try {
+        await wrapper.dataCharacteristic.subscribeAsync();
+      } catch (subError: any) {
+        if (!subError.message?.includes('already')) {
+          throw subError;
+        }
+      }
+
+      // Step 5: Re-attach handler
+      const handler = (data: Buffer) => {
+        try {
+          this.handleAccelerometerData(deviceId, data);
+        } catch (error) {
+          console.error(`❌ [${wrapper.deviceInfo.name}] Accelerometer handler error:`, error);
+        }
+      };
+      this.dataHandlers.set(deviceId, handler);
+      wrapper.dataCharacteristic.on('data', handler);
+
+      // Step 6: Re-send streaming command
+      const streamCommand = this.createAccelerometerStreamCommand();
+      await device.writeCommand(Buffer.from(streamCommand));
+
+      // Reset last data received to prevent immediate re-trigger
+      this.lastDataReceived.set(deviceId, Date.now());
+
+      console.log(`✅ [${wrapper.deviceInfo.name}] Recovery complete - accelerometer streaming restarted`);
+
+    } catch (error) {
+      const wrapper = device.getWrapper();
+      console.error(`❌ [${wrapper.deviceInfo.name}] Recovery failed:`, error);
+    }
   }
 
   /**
@@ -211,11 +286,23 @@ export class DeviceLocateService extends EventEmitter {
       }
     }
 
+    // Clear all vibration timers
+    for (const timer of this.vibrationClearTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.vibrationClearTimers.clear();
+
+    // Clear all vibrating states in store
+    for (const deviceId of this.devices.keys()) {
+      UnifiedBLEStateStore.setVibratingByAddress(deviceId, false);
+    }
+
     this.devices.clear();
     this.accelerometerData.clear();
     this.dataHandlers.clear();
     this.lastDataReceived.clear();
     this.lastShakeDetection.clear();
+    this.lastRecoveryAttempt.clear();
   }
 
   /**
@@ -331,27 +418,22 @@ export class DeviceLocateService extends EventEmitter {
       // Update debounce timer
       this.lastShakeDetection.set(deviceId, Date.now());
 
-      // Emit shake detection event
-      this.emit('device_shaken', deviceId);
-    }
-  }
+      // Set vibrating state in store (will trigger STATE_UPDATE broadcast)
+      UnifiedBLEStateStore.setVibratingByAddress(deviceId, true);
 
-  /**
-   * Get currently shaking devices (for WebSocket broadcast)
-   */
-  getShakingDevices(): string[] {
-    const now = Date.now();
-    const shakingDevices: string[] = [];
-
-    for (const [deviceId, lastShake] of this.lastShakeDetection) {
-      // Device is considered "shaking" for 300ms after detection
-      // This is slightly longer than the debounce time (200ms) to show the vibration,
-      // but short enough to not get stuck in a loop
-      if (now - lastShake < 300) {
-        shakingDevices.push(deviceId);
+      // Clear any existing timer for this device
+      const existingTimer = this.vibrationClearTimers.get(deviceId);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
       }
-    }
 
-    return shakingDevices;
+      // Schedule vibration state clear after 300ms
+      const clearTimer = setTimeout(() => {
+        UnifiedBLEStateStore.setVibratingByAddress(deviceId, false);
+        this.vibrationClearTimers.delete(deviceId);
+      }, 300);
+      this.vibrationClearTimers.set(deviceId, clearTimer);
+    }
   }
+
 }

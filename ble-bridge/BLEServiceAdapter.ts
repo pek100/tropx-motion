@@ -16,6 +16,7 @@ import {
   DeviceState,
   GlobalState,
   SyncState,
+  DisconnectReason,
   UnifiedBLEStateStore,
   StreamingHook,
   MotionData as HookMotionData,
@@ -54,7 +55,6 @@ export class BLEServiceAdapter implements BLEService {
   private isCurrentlyRecording = false;
   private timeSyncManager = new TimeSyncManager();
   private deviceLocateService = new DeviceLocateService();
-  private locateBroadcastInterval: NodeJS.Timeout | null = null;
   private static scanSequence = 0;
   private lastScanStart = 0;
   private readonly MIN_RESTART_INTERVAL_MS = 700;
@@ -72,6 +72,36 @@ export class BLEServiceAdapter implements BLEService {
       if (initialized) {
         console.log('✅ BLE Service Adapter ready');
         this.bleService.startStatePolling();
+
+        // Register connect function with ReconnectionManager
+        // This allows unified reconnection logic for all platforms
+        ReconnectionManager.setConnectFunction(async (bleAddress: string) => {
+          try {
+            const result = await this.bleService.connectToDevice(bleAddress);
+            return result.success;
+          } catch (error) {
+            console.error(`[ReconnectionManager] Connect failed for ${bleAddress}:`, error);
+            return false;
+          }
+        });
+
+        // Register streaming function for auto-recovery during active streaming
+        ReconnectionManager.setStartStreamingFunction(async (deviceId: DeviceID) => {
+          try {
+            const device = UnifiedBLEStateStore.getDevice(deviceId);
+            if (!device) return false;
+
+            const tropxDevice = this.bleService.getDeviceInstance(device.bleAddress);
+            if (!tropxDevice) return false;
+
+            return await tropxDevice.startStreaming();
+          } catch (error) {
+            console.error(`[ReconnectionManager] Start streaming failed for ${formatDeviceID(deviceId)}:`, error);
+            return false;
+          }
+        });
+
+        console.log('🔄 ReconnectionManager configured with connect and streaming functions');
       } else {
         console.error('❌ Failed to initialize BLE Service Adapter');
       }
@@ -164,6 +194,9 @@ export class BLEServiceAdapter implements BLEService {
     try {
       console.log(`🔗 BLE: Connecting to device ${deviceName} (${deviceId})`);
 
+      // Set global state to CONNECTING (blocks polling during connection)
+      UnifiedBLEStateStore.setGlobalState(GlobalState.CONNECTING);
+
       const result = await this.bleService.connectToDevice(deviceId);
 
       if (result.success) {
@@ -173,6 +206,8 @@ export class BLEServiceAdapter implements BLEService {
         const registeredDeviceId = UnifiedBLEStateStore.registerDevice(deviceId, deviceName);
         if (!registeredDeviceId) {
           console.error(`❌ Failed to register device "${deviceName}" - unknown device pattern`);
+          // Reset global state on registration failure
+          UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
           return {
             success: false,
             message: `Device "${deviceName}" doesn't match any known patterns. Please check device naming.`
@@ -255,8 +290,14 @@ export class BLEServiceAdapter implements BLEService {
         }
 
         // Auto-sync disabled - will be handled in batch after all connections complete
+
+        // Reset global state to IDLE after successful connection
+        UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       } else {
         console.error(`❌ BLE: Connection failed for ${deviceName}: ${result.message}`);
+
+        // Reset global state to IDLE on failure
+        UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
 
         // Broadcast device status update on failure (to update UI)
         try {
@@ -270,6 +311,8 @@ export class BLEServiceAdapter implements BLEService {
 
     } catch (error) {
       console.error(`❌ BLE connection failed for ${deviceId}:`, error);
+      // Reset global state on error
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       return {
         success: false,
         message: `Connection failed: ${error instanceof Error ? error.message : String(error)}`
@@ -314,23 +357,48 @@ export class BLEServiceAdapter implements BLEService {
         return { success: false, results: [] };
       }
 
+      // Set global state to SYNCING (blocks polling, shows UI indicator)
+      UnifiedBLEStateStore.setGlobalState(GlobalState.SYNCING);
+
+      // Clear syncProgress from previous sync session (start fresh)
+      for (const deviceInfo of connectedDevices) {
+        const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceInfo.id);
+        if (storeDeviceId) {
+          UnifiedBLEStateStore.setSyncProgress(storeDeviceId, null);
+        }
+      }
+
       // CRITICAL: Transition all devices to SYNCING state BEFORE starting sync
       // This ensures UI shows purple "synchronizing" state
       for (const deviceInfo of connectedDevices) {
         const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceInfo.id);
         if (storeDeviceId) {
+          const device = UnifiedBLEStateStore.getDevice(storeDeviceId);
+          const currentState = device?.state;
+
+          // DEBUG: Log device state before sync attempt
+          console.log(`🔍 [SYNC] Device ${deviceInfo.name}: currentState=${currentState}, storeDeviceId=0x${storeDeviceId.toString(16)}`);
+
+          // ALWAYS set syncProgress to 0 BEFORE transition attempt
+          // This ensures UI shows sync progress even if transition fails
+          UnifiedBLEStateStore.setSyncProgress(storeDeviceId, 0);
+
           try {
             // Transition CONNECTED -> SYNCING (also valid from SYNCED -> SYNCING for re-sync)
             UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.SYNCING);
-            console.log(`🔄 [SYNC] Device ${deviceInfo.name} → SYNCING state`);
+            console.log(`🔄 [SYNC] Device ${deviceInfo.name} → SYNCING state (progress: 0%)`);
           } catch (e) {
-            console.warn(`⚠️ [SYNC] Could not transition ${deviceInfo.name} to SYNCING:`, e);
+            // Log detailed error for diagnosis
+            console.warn(`⚠️ [SYNC] Could not transition ${deviceInfo.name} from ${currentState} to SYNCING:`, e);
+            // syncProgress is already set to 0, so UI will still show progress
           }
+        } else {
+          console.error(`❌ [SYNC] Device ${deviceInfo.name} (${deviceInfo.id}) not found in store - address lookup failed`);
         }
       }
 
-      // Broadcast STATE_UPDATE immediately to show syncing state in UI
-      await this.broadcastDeviceStatus();
+      // Broadcast STATE_UPDATE immediately to show syncing state in UI (force bypasses throttle)
+      await this.broadcastDeviceStatus(true);
 
       // Broadcast SYNC_STARTED
       if (this.broadcastFunction) {
@@ -343,7 +411,22 @@ export class BLEServiceAdapter implements BLEService {
       }
 
       // Set live sample callback to broadcast device timestamps during sync
-      this.timeSyncManager.setOnSampleCallback((deviceId: string, deviceName: string, deviceTimestampMs: number) => {
+      this.timeSyncManager.setOnSampleCallback((
+        deviceId: string,
+        deviceName: string,
+        deviceTimestampMs: number,
+        sampleIndex: number,
+        totalSamples: number
+      ) => {
+        // Calculate progress percentage (0-99, reserve 100 for completion)
+        const progress = Math.round(((sampleIndex + 1) / totalSamples) * 99);
+
+        // Update syncProgress in store
+        const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
+        if (storeDeviceId) {
+          UnifiedBLEStateStore.setSyncProgress(storeDeviceId, progress);
+        }
+
         if (this.broadcastFunction) {
           this.broadcastFunction({
             type: 0x34, // SYNC_PROGRESS - reuse for live updates
@@ -354,7 +437,7 @@ export class BLEServiceAdapter implements BLEService {
             clockOffsetMs: 0, // Not calculated yet during sampling
             deviceTimestampMs,
             success: true,
-            message: 'Sampling...'
+            message: `Sampling... ${sampleIndex + 1}/${totalSamples}`
           }, []).catch(err => console.error('Failed to broadcast sync sample:', err));
         }
       });
@@ -408,14 +491,17 @@ export class BLEServiceAdapter implements BLEService {
           if (storeDeviceId) {
             // Set sync state and clock offset
             UnifiedBLEStateStore.setSyncState(storeDeviceId, SyncState.SYNCED, result.finalOffset);
+            // Mark sync as complete (100%)
+            UnifiedBLEStateStore.setSyncProgress(storeDeviceId, 100);
             console.log(`⏱️ [SYNC] Stored clock offset for ${deviceInfo.name} (${formatDeviceID(storeDeviceId)}): ${result.finalOffset}ms`);
 
             // CRITICAL: Transition from SYNCING -> SYNCED
             try {
               UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.SYNCED);
-              console.log(`✅ [SYNC] Device ${deviceInfo.name} → SYNCED state`);
-              // Immediately broadcast so UI updates per-device
-              await this.broadcastDeviceStatus();
+              // Keep syncProgress at 100 - will be cleared at next sync start
+              console.log(`✅ [SYNC] Device ${deviceInfo.name} → SYNCED state (offset: ${result.finalOffset.toFixed(2)}ms)`);
+              // Immediately broadcast so UI updates per-device (force bypasses throttle)
+              await this.broadcastDeviceStatus(true);
             } catch (e) {
               console.warn(`⚠️ [SYNC] Could not transition ${deviceInfo.name} to SYNCED:`, e);
             }
@@ -427,11 +513,13 @@ export class BLEServiceAdapter implements BLEService {
 
           // Transition back to CONNECTED if sync failed
           if (storeDeviceId) {
+            // Clear sync progress on failure
+            UnifiedBLEStateStore.setSyncProgress(storeDeviceId, null);
             try {
               UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.CONNECTED);
               console.log(`⚠️ [SYNC] Device ${deviceInfo.name} → CONNECTED state (sync failed)`);
-              // Immediately broadcast so UI updates per-device
-              await this.broadcastDeviceStatus();
+              // Immediately broadcast so UI updates per-device (force bypasses throttle)
+              await this.broadcastDeviceStatus(true);
             } catch (e) {
               console.warn(`⚠️ [SYNC] Could not transition ${deviceInfo.name} to CONNECTED:`, e);
             }
@@ -466,14 +554,19 @@ export class BLEServiceAdapter implements BLEService {
         }, []);
       }
 
-      // Broadcast status update
-      await this.broadcastDeviceStatus();
+      // Reset global state to IDLE
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
+
+      // Broadcast final status update (force bypasses throttle)
+      await this.broadcastDeviceStatus(true);
 
       console.log(`✅ Manual sync complete: ${successCount}/${results.length} devices synced`);
 
       return { success: true, results };
     } catch (error) {
       console.error('❌ Manual sync failed:', error);
+      // Ensure global state is reset even on error
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       return { success: false, results: [] };
     }
   }
@@ -632,7 +725,9 @@ export class BLEServiceAdapter implements BLEService {
   // Start recording (streaming quaternion data)
   async startRecording(sessionId: string, exerciseId: string, setNumber: number): Promise<{ success: boolean; message?: string; recordingId?: string }> {
     if (this.isCurrentlyRecording) {
-      return { success: false, message: 'Recording already in progress' };
+      // Idempotent: if already recording, return success
+      console.log('🎬 Recording already active - returning success (idempotent)');
+      return { success: true, message: 'Recording already active', recordingId: sessionId };
     }
 
     try {
@@ -708,6 +803,10 @@ export class BLEServiceAdapter implements BLEService {
           recordingId: sessionId
         };
       } else {
+        // Streaming failed - reset global state
+        UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
+        PollingManager.unblock();
+
         // Return detailed error if devices couldn't be reset
         return {
           success: false,
@@ -718,6 +817,9 @@ export class BLEServiceAdapter implements BLEService {
 
     } catch (error) {
       console.error('❌ BLE recording start failed:', error);
+      // Reset global state on error
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
+      PollingManager.unblock();
       return {
         success: false,
         message: `Recording start failed: ${error instanceof Error ? error.message : String(error)}`
@@ -728,42 +830,62 @@ export class BLEServiceAdapter implements BLEService {
   // Stop recording
   async stopRecording(): Promise<{ success: boolean; message?: string; recordingId?: string }> {
     if (!this.isCurrentlyRecording) {
-      return { success: false, message: 'No recording in progress' };
+      // Idempotent: return success if not recording
+      return { success: true, message: 'No recording in progress' };
     }
+
+    let stopError: Error | null = null;
 
     try {
       console.log('🛑 BLE: Stopping recording session');
 
-      // Stop watchdog monitoring
+      // Stop watchdog monitoring FIRST (always)
       Watchdog.stop();
       console.log('🐕 Watchdog stopped');
 
-      // Stop streaming on all devices
-      await this.bleService.stopStreamingAll();
+      // Try to stop streaming on all devices (may timeout on disconnected devices)
+      try {
+        await this.bleService.stopStreamingAll();
+      } catch (streamingError) {
+        console.warn('⚠️ stopStreamingAll failed (device may be disconnected):', streamingError);
+        stopError = streamingError as Error;
+        // Continue with cleanup - don't throw
+      }
 
-      // Motion processing stop will be handled in WebSocket bridge (main process)
+    } catch (error) {
+      console.error('❌ BLE recording stop failed:', error);
+      stopError = error as Error;
+    } finally {
+      // CRITICAL: Always reset state regardless of success/failure
+      // This ensures the system can recover from failed stops
+      console.log('🧹 Resetting recording state (finally block)');
+
+      this.isCurrentlyRecording = false;
 
       // Reset global state and resume polling
       UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       PollingManager.unblock();
 
-      this.isCurrentlyRecording = false;
+      // Broadcast recording state and device status
+      try {
+        await this.broadcastRecordingState(false);
+        await this.broadcastDeviceStatus();
+      } catch (broadcastError) {
+        console.warn('⚠️ Failed to broadcast state after stop:', broadcastError);
+      }
+    }
 
-      // Broadcast recording state
-      await this.broadcastRecordingState(false);
-
-      return {
-        success: true,
-        message: 'Recording stopped successfully'
-      };
-
-    } catch (error) {
-      console.error('❌ BLE recording stop failed:', error);
+    if (stopError) {
       return {
         success: false,
-        message: `Recording stop failed: ${error instanceof Error ? error.message : String(error)}`
+        message: `Recording stop had errors: ${stopError.message}`
       };
     }
+
+    return {
+      success: true,
+      message: 'Recording stopped successfully'
+    };
   }
 
   // Get connected devices
@@ -859,27 +981,23 @@ export class BLEServiceAdapter implements BLEService {
 
     // Handle auto-reconnect trigger
     // CRITICAL: This handles the 'disconnected' → RECONNECTING transition
-    // We update store FIRST, then broadcast, to ensure UI gets correct state
+    // Uses unified ReconnectionManager for cross-platform support
     if (event === 'auto_reconnect' && data) {
       console.log(`🔄 Auto-reconnect triggered for ${data.deviceName}`);
 
-      // Transition to RECONNECTING state BEFORE scheduling (synchronous)
+      // Get DeviceID from BLE address
       const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(data.deviceId);
-      if (storeDeviceId) {
-        try {
-          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.RECONNECTING);
-          console.log(`🔄 [${data.deviceName}] Transitioned to RECONNECTING state`);
-        } catch (e) {
-          // If transition fails (e.g., already in RECONNECTING), that's OK
-          console.warn(`⚠️ Could not transition to RECONNECTING:`, e);
-        }
+      if (!storeDeviceId) {
+        console.error(`❌ [${data.deviceName}] Cannot reconnect - device not found in store`);
+        return;
       }
 
-      // Broadcast IMMEDIATELY after state update (before scheduling timer)
-      await this.broadcastDeviceStatus();
+      // ReconnectionManager handles state transition and scheduling
+      // It will transition to RECONNECTING and schedule with exponential backoff
+      ReconnectionManager.scheduleReconnect(storeDeviceId, DisconnectReason.CONNECTION_LOST);
 
-      // Now schedule the reconnection attempt
-      this.bleService.scheduleReconnect(data.deviceId, data.deviceName);
+      // Broadcast IMMEDIATELY after state update
+      await this.broadcastDeviceStatus();
     }
 
     // Handle explicit disconnect (user-requested, not auto-reconnect)
@@ -898,47 +1016,18 @@ export class BLEServiceAdapter implements BLEService {
     }
   }
 
-  // Broadcast device status update
-  // PERFORMANCE FIX: Throttle broadcasts to prevent event loop blocking
-  private lastBroadcastTime = 0;
-  private readonly BROADCAST_THROTTLE_MS = 100; // Max 10 broadcasts/sec
-  private pendingBroadcast = false;
-
-  private async broadcastDeviceStatus(): Promise<void> {
-    if (!this.broadcastFunction) return;
-
-    // Throttle: Schedule broadcast if too soon since last one
-    const now = Date.now();
-    if (now - this.lastBroadcastTime < this.BROADCAST_THROTTLE_MS) {
-      if (!this.pendingBroadcast) {
-        this.pendingBroadcast = true;
-        setTimeout(() => {
-          this.pendingBroadcast = false;
-          this.flushDeviceStatusBroadcast();
-        }, this.BROADCAST_THROTTLE_MS);
-      }
-      return;
-    }
-
-    this.flushDeviceStatusBroadcast();
-  }
-
-  private async flushDeviceStatusBroadcast(): Promise<void> {
-    if (!this.broadcastFunction) return;
-
-    this.lastBroadcastTime = Date.now();
-
-    try {
-      // Use new STATE_UPDATE message (0x40) - single batched update
-      const stateUpdate = UnifiedBLEStateStore.serializeStateUpdate();
-
-      console.log(`📡 Broadcasting STATE_UPDATE for ${stateUpdate.devices.length} devices`);
-
-      // Send single batched STATE_UPDATE message
-      await this.broadcastFunction(stateUpdate, []);
-
-    } catch (error) {
-      console.error('Error broadcasting device status:', error);
+  /**
+   * Broadcast device status update
+   * Delegates to UnifiedBLEStateStore's single broadcast path
+   * @param force - If true, bypass debounce for immediate broadcast
+   */
+  private async broadcastDeviceStatus(force = false): Promise<void> {
+    if (force) {
+      // Immediate broadcast for important state changes (sync, locate, etc.)
+      UnifiedBLEStateStore.forceBroadcast();
+    } else {
+      // Debounced broadcast via store (50ms debounce)
+      UnifiedBLEStateStore.queueBroadcast();
     }
   }
 
@@ -1021,7 +1110,10 @@ export class BLEServiceAdapter implements BLEService {
     // Set up broadcast function for store
     UnifiedBLEStateStore.setBroadcastFunction(async (message) => {
       if (this.broadcastFunction) {
+        console.log(`📡 [STORE→WS] Broadcasting STATE_UPDATE: globalState=${message.globalState}, devices=${message.devices?.length || 0}`);
         await this.broadcastFunction(message, []);
+      } else {
+        console.warn('⚠️ [STORE→WS] Broadcast SKIPPED - WebSocket broadcast function not yet configured');
       }
     });
   }
@@ -1032,11 +1124,16 @@ export class BLEServiceAdapter implements BLEService {
   }
 
   // Get all devices (for state query on reconnect)
-  getAllDevices(): { success: boolean; devices: any[] } {
+  // CRITICAL: Also returns globalState and isRecording for full state recovery
+  getAllDevices(): { success: boolean; devices: any[]; globalState: string; isRecording: boolean } {
     try {
       const allDevices = UnifiedBLEStateStore.getAllDevices();
+      const globalState = UnifiedBLEStateStore.getGlobalState();
+
       return {
         success: true,
+        globalState: globalState,
+        isRecording: this.isCurrentlyRecording,
         devices: allDevices.map(d => ({
           id: d.bleAddress,
           name: d.bleName,
@@ -1044,12 +1141,24 @@ export class BLEServiceAdapter implements BLEService {
           rssi: d.rssi,
           state: d.state,
           batteryLevel: d.batteryLevel,
-          deviceId: d.deviceId
+          deviceId: d.deviceId,
+          // Include all state fields for full recovery
+          syncState: d.syncState,
+          clockOffset: d.clockOffset,
+          syncProgress: d.syncProgress,
+          isVibrating: d.isVibrating,
+          reconnectAttempts: d.reconnectAttempts,
+          nextReconnectAt: d.nextReconnectAt,
+          lastError: d.lastError,
+          displayName: getDeviceDisplayName(d.deviceId),
+          shortName: d.deviceId ? formatDeviceID(d.deviceId).split(' ')[0] : '',
+          joint: getJointDisplayName(d.deviceId),
+          placement: isShin(d.deviceId) ? 'shin' : 'thigh',
         }))
       };
     } catch (error) {
       console.error('Error getting all devices:', error);
-      return { success: false, devices: [] };
+      return { success: false, devices: [], globalState: 'idle', isRecording: false };
     }
   }
 
@@ -1094,54 +1203,20 @@ export class BLEServiceAdapter implements BLEService {
         return { success: false, message: 'No device instances available' };
       }
 
+      // Set global state to LOCATING (blocks polling, shows UI indicator)
+      UnifiedBLEStateStore.setGlobalState(GlobalState.LOCATING);
+
       // Start accelerometer streaming on all devices
+      // isVibrating state is now part of STATE_UPDATE, broadcast automatically via store
       await this.deviceLocateService.startLocateMode(deviceInstances);
-
-      // Set up periodic broadcast of vibrating devices
-      // PERFORMANCE FIX: Only broadcast when the list CHANGES (not every interval)
-      let broadcastInProgress = false;
-      let lastBroadcastedIds: string[] = [];
-
-      this.locateBroadcastInterval = setInterval(() => {
-        // Skip if previous broadcast still in progress (prevents event loop overflow)
-        if (broadcastInProgress) {
-          return;
-        }
-
-        const vibratingDeviceIds = this.deviceLocateService.getShakingDevices();
-
-        // Only broadcast if the list has changed
-        const idsChanged = vibratingDeviceIds.length !== lastBroadcastedIds.length ||
-          vibratingDeviceIds.some(id => !lastBroadcastedIds.includes(id)) ||
-          lastBroadcastedIds.some(id => !vibratingDeviceIds.includes(id));
-
-        if (!idsChanged) {
-          return; // No change, skip broadcast
-        }
-
-        broadcastInProgress = true;
-        lastBroadcastedIds = [...vibratingDeviceIds];
-
-        if (this.broadcastFunction) {
-          // Fire-and-forget (no await) to prevent interval pileup
-          this.broadcastFunction({
-            type: 0x36, // DEVICE_VIBRATING
-            requestId: 0,
-            timestamp: Date.now(),
-            vibratingDeviceIds
-          }, []).finally(() => {
-            broadcastInProgress = false;
-          });
-        } else {
-          broadcastInProgress = false;
-        }
-      }, 150); // 150ms = ~6.6 Hz - responsive enough for vibration feedback
 
       console.log(`✅ Locate mode started for ${deviceInstances.length} devices`);
       return { success: true };
 
     } catch (error) {
       console.error('❌ Failed to start locate mode:', error);
+      // Reset global state on error
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
@@ -1151,20 +1226,19 @@ export class BLEServiceAdapter implements BLEService {
     try {
       console.log('🛑 Stopping locate mode...');
 
-      // Clear broadcast interval
-      if (this.locateBroadcastInterval) {
-        clearInterval(this.locateBroadcastInterval);
-        this.locateBroadcastInterval = null;
-      }
-
-      // Stop accelerometer streaming
+      // Stop accelerometer streaming (also clears isVibrating state in store)
       await this.deviceLocateService.stopLocateMode();
+
+      // Reset global state to IDLE
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
 
       console.log('✅ Locate mode stopped');
       return { success: true };
 
     } catch (error) {
       console.error('❌ Failed to stop locate mode:', error);
+      // Reset global state even on error to prevent stuck state
+      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
@@ -1186,9 +1260,7 @@ export class BLEServiceAdapter implements BLEService {
     }
 
     // Stop locate mode if active
-    if (this.locateBroadcastInterval) {
-      await this.stopLocateMode();
-    }
+    await this.deviceLocateService.stopLocateMode();
 
     // Clear all device state and hooks
     UnifiedBLEStateStore.clear();

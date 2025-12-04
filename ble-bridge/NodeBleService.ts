@@ -66,12 +66,8 @@ export class NodeBleService {
   private isStatePollingEnabled = false;
   private deviceStates = new Map<string, { state: number; stateName: string; lastUpdate: number }>();
 
-  // Auto-reconnect support
-  private reconnectTimers = new Map<string, NodeJS.Timeout>();
-  private reconnectAttempts = new Map<string, number>();
-  private readonly MAX_RECONNECT_ATTEMPTS = 5;
-  private readonly BASE_RECONNECT_DELAY = 2000;
-  private readonly MAX_RECONNECT_DELAY = 60000;
+  // NOTE: Auto-reconnect is now handled by ReconnectionManager singleton
+  // See: ble-management/ReconnectionManager.ts
 
   // Callbacks
   private motionDataCallback: MotionDataCallback | null = null;
@@ -884,7 +880,7 @@ export class NodeBleService {
     }
 
     console.log(`🎬 Starting global streaming on ${connectedDevices.length} connected devices...`);
-    UnifiedBLEStateStore.setGlobalState(GlobalState.SYNCING); // Transitioning to streaming
+    // NOTE: GlobalState is managed by BLEServiceAdapter - do not set here
 
     // Disable burst scanning during streaming
     if (this.burstEnabled) {
@@ -899,11 +895,10 @@ export class NodeBleService {
 
     const successCount = results.filter(result => result.success).length;
 
+    // NOTE: GlobalState is managed by BLEServiceAdapter based on return value
     if (successCount > 0) {
-      UnifiedBLEStateStore.setGlobalState(GlobalState.STREAMING);
       console.log(`✅ Global streaming started: ${successCount}/${connectedDevices.length} devices streaming`);
     } else {
-      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       console.log(`❌ Global streaming failed: no devices started streaming`);
     }
 
@@ -919,18 +914,18 @@ export class NodeBleService {
     const streamingDevices = UnifiedBLEStateStore.getStreamingDevices();
 
     if (streamingDevices.length === 0) {
-      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
+      // NOTE: GlobalState managed by BLEServiceAdapter
       return { success: true, stopped: 0, total: 0 };
     }
 
     console.log(`🛑 Stopping global streaming on ${streamingDevices.length} devices...`);
-    UnifiedBLEStateStore.setGlobalState(GlobalState.SYNCING); // Transitioning
+    // NOTE: GlobalState managed by BLEServiceAdapter
 
     const stoppingTasks = streamingDevices.map(device => this.stopDeviceStreaming(device.bleAddress));
     const results = await Promise.all(stoppingTasks);
 
     const successCount = results.filter(result => result.success).length;
-    UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
+    // NOTE: GlobalState managed by BLEServiceAdapter
 
     console.log(`✅ Global streaming stopped: ${successCount}/${streamingDevices.length} devices stopped`);
 
@@ -1112,8 +1107,10 @@ export class NodeBleService {
     if (this.isScanning || this.nextBurstTimer) return;
     if (!this.burstEnabled) return;
 
+    // Don't schedule burst scans during any BLE-intensive operation
     const globalState = UnifiedBLEStateStore.getGlobalState();
-    if (globalState === GlobalState.STREAMING || globalState === GlobalState.SYNCING) {
+    const blockedStates = [GlobalState.STREAMING, GlobalState.SYNCING, GlobalState.LOCATING, GlobalState.CONNECTING];
+    if (blockedStates.includes(globalState)) {
       return;
     }
 
@@ -1179,16 +1176,10 @@ export class NodeBleService {
     console.log('ℹ️  State polling not yet implemented for node-ble');
   }
 
-  scheduleReconnect(deviceId: string, deviceName: string): void {
-    console.log(`ℹ️  Auto-reconnect not yet implemented for node-ble: ${deviceName}`);
-  }
-
-  cancelReconnect(deviceId: string): void {
-    console.log(`ℹ️  Cancel reconnect not yet implemented for node-ble`);
-  }
+  // NOTE: Reconnection is now handled by ReconnectionManager singleton
+  // See: ble-management/ReconnectionManager.ts
 
   async removeDevice(deviceId: string): Promise<{ success: boolean; message?: string }> {
-    this.cancelReconnect(deviceId);
     const { UnifiedBLEStateStore, formatDeviceID } = await import('../ble-management');
     const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
 

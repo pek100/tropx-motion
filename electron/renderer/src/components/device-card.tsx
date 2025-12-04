@@ -34,12 +34,13 @@ interface DeviceCardProps {
   isLocating?: boolean
   isLocatingTarget?: boolean
   isReconnecting?: boolean
+  isDisconnecting?: boolean // Optimistic UI: show "Disconnecting..." before backend confirms
   reconnectAttempts?: number
   disabled?: boolean
   onToggleConnection?: () => void
   onRemove?: () => void
   syncOffsetMs?: number
-  syncDeviceTimestampMs?: number
+  syncProgressPercent?: number | null
   isSmallScreen?: boolean
   // Drag & drop (optional)
   draggable?: boolean
@@ -61,12 +62,13 @@ export function DeviceCard({
   isLocating = false,
   isLocatingTarget = false,
   isReconnecting = false,
+  isDisconnecting = false,
   reconnectAttempts = 0,
   disabled = false,
   onToggleConnection,
   onRemove,
   syncOffsetMs,
-  syncDeviceTimestampMs,
+  syncProgressPercent,
   isSmallScreen = false,
   draggable = false,
   isDragging = false,
@@ -96,6 +98,12 @@ export function DeviceCard({
     }
   }
 
+  // Format sync offset for display (e.g., "+15.2ms" or "-8.5ms")
+  const formatSyncOffset = (offsetMs: number): string => {
+    const sign = offsetMs >= 0 ? '+' : ''
+    return `${sign}${offsetMs.toFixed(1)}ms`
+  }
+
   const SignalIcon = () => {
     const barColor = isLeft ? "#0080C0" : "#BF0000"
     const iconSize = isSmallScreen ? 24 : 20
@@ -103,13 +111,10 @@ export function DeviceCard({
     if (connectionStatus === "synchronizing") {
       return (
         <div className="flex flex-col items-center justify-center w-full h-full">
-          {syncDeviceTimestampMs !== undefined && syncDeviceTimestampMs !== null ? (
+          {syncProgressPercent !== undefined && syncProgressPercent !== null ? (
             <>
               <span className={isSmallScreen ? "text-sm font-bold text-purple-600 leading-tight" : "text-xs font-bold text-purple-600 leading-tight"}>
-                {String(Math.floor(syncDeviceTimestampMs)).slice(-4)}
-              </span>
-              <span className={isSmallScreen ? "text-[10px] font-medium text-purple-500 leading-tight" : "text-[8px] font-medium text-purple-500 leading-tight"}>
-                ms
+                {syncProgressPercent}%
               </span>
             </>
           ) : (
@@ -120,7 +125,7 @@ export function DeviceCard({
     }
 
     // Show signal strength for all devices (not just connected)
-    return (
+    const signalSvg = (
       <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="2" y="14" width="3" height="8" rx="1" fill={signalStrength >= 1 ? barColor : "#D1D5DB"} />
         <rect x="7" y="10" width="3" height="12" rx="1" fill={signalStrength >= 2 ? barColor : "#D1D5DB"} />
@@ -128,13 +133,32 @@ export function DeviceCard({
         <rect x="17" y="2" width="3" height="20" rx="1" fill={signalStrength >= 4 ? barColor : "#D1D5DB"} />
       </svg>
     )
+
+    // Show tooltip with sync offset when connected and synced
+    if (connectionStatus === "connected" && syncOffsetMs !== undefined) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="cursor-help">{signalSvg}</div>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Clock offset: {formatSyncOffset(syncOffsetMs)}</p>
+          </TooltipContent>
+        </Tooltip>
+      )
+    }
+
+    return signalSvg
   }
 
   const ConnectionIcon = () => {
     const iconColor = isLeft ? "#0080FF" : "#FF3535"
     const iconClass = isSmallScreen ? "w-6 h-6" : "w-5 h-5"
 
-    if (isReconnecting || connectionStatus === "reconnecting") {
+    if (isDisconnecting) {
+      // Disconnecting: Show spinning loader
+      return <div className="animate-spin"><Loader2 className={iconClass} style={{ color: iconColor }} /></div>
+    } else if (isReconnecting || connectionStatus === "reconnecting") {
       // Reconnecting: Show spinning refresh icon
       return <div className="animate-spin"><RefreshCw className={iconClass} style={{ color: "#ef4444" }} /></div>
     } else if (connectionStatus === "connected") {
@@ -154,6 +178,10 @@ export function DeviceCard({
   }
 
   const getStatusText = () => {
+    // Optimistic UI: show "Disconnecting..." when pending disconnect
+    if (isDisconnecting) {
+      return "Disconnecting..."
+    }
     // Reconnection flow: show appropriate status based on state
     if (isReconnecting) {
       if (connectionStatus === "connecting") {
@@ -280,6 +308,26 @@ export function DeviceCard({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p>Cancel connection</p>
+                </TooltipContent>
+              </Tooltip>
+            ) : isDisconnecting ? (
+              /* Show disabled button with spinner during disconnect */
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    disabled
+                    className={`cursor-not-allowed bg-white rounded-full ${isSmallScreen ? 'w-11 h-11' : 'px-3 py-2'} flex items-center justify-center gap-2 opacity-50`}
+                  >
+                    <ConnectionIcon />
+                    {!isSmallScreen && (
+                      <span className="text-sm font-medium" style={{ color: isLeft ? "#0080C0" : "#BF0000" }}>
+                        Disconnecting
+                      </span>
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Disconnecting device...</p>
                 </TooltipContent>
               </Tooltip>
             ) : (

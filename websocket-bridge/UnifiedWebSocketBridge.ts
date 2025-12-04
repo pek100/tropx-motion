@@ -256,6 +256,21 @@ export class UnifiedWebSocketBridge {
       return await this.connectionManager.sendToClient(clientId, message);
     });
 
+    // CRITICAL: Push full state to new clients immediately on connection
+    // This ensures immediate state sync on page refresh/reconnect without waiting for client query
+    this.connectionManager.onNewClientConnect(async (clientId) => {
+      console.log(`📡 [BRIDGE] New client connected: ${clientId} - pushing current state...`);
+
+      // Import UnifiedBLEStateStore to get current state
+      const { UnifiedBLEStateStore } = await import('../ble-management');
+
+      // Serialize and send STATE_UPDATE directly to the new client
+      const stateMessage = UnifiedBLEStateStore.serializeStateUpdate();
+      await this.connectionManager.sendToClient(clientId, stateMessage);
+
+      console.log(`✅ [BRIDGE] Pushed STATE_UPDATE to ${clientId}: globalState=${stateMessage.globalState}, devices=${stateMessage.devices.length}`);
+    });
+
     // Update client lists when connections change
     this.connectionManager.onHealthChange((health) => {
       const clientIds = health.clients.filter(c => c.connected).map(c => c.clientId);

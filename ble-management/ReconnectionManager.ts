@@ -73,9 +73,12 @@ class ReconnectionManagerImpl {
    * Schedule a reconnection attempt for a device
    */
   scheduleReconnect(deviceId: DeviceID, reason: DisconnectReason): void {
+    const device = UnifiedBLEStateStore.getDevice(deviceId);
+    const deviceName = device?.bleName ?? formatDeviceID(deviceId);
+
     // Don't reconnect if user requested disconnect
     if (reason === DisconnectReason.USER_REQUESTED) {
-      console.log(`[ReconnectManager] ${formatDeviceID(deviceId)} - user disconnect, not reconnecting`);
+      console.log(`🛑 [${deviceName}] User disconnect - not reconnecting`);
       return;
     }
 
@@ -83,11 +86,11 @@ class ReconnectionManagerImpl {
     this.cancelReconnect(deviceId);
 
     const currentAttempts = this.attempts.get(deviceId) ?? 0;
-    const { maxAttempts, baseDelayMs, maxDelayMs, backoffMultiplier } = BLE_CONFIG.reconnect;
+    const { maxAttempts } = BLE_CONFIG.reconnect;
 
     // Check max attempts
     if (currentAttempts >= maxAttempts) {
-      console.log(`[ReconnectManager] ${formatDeviceID(deviceId)} - max attempts (${maxAttempts}) reached`);
+      console.log(`❌ [${deviceName}] Max reconnect attempts (${maxAttempts}) reached`);
       this.handleMaxAttemptsExceeded(deviceId);
       return;
     }
@@ -100,9 +103,11 @@ class ReconnectionManagerImpl {
     this.attempts.set(deviceId, currentAttempts + 1);
     this.reasons.set(deviceId, reason);
 
-    // Update store
+    // Update store - transition to RECONNECTING if not already
     try {
-      UnifiedBLEStateStore.transition(deviceId, DeviceState.RECONNECTING);
+      if (device?.state !== DeviceState.RECONNECTING) {
+        UnifiedBLEStateStore.transition(deviceId, DeviceState.RECONNECTING);
+      }
       UnifiedBLEStateStore.setReconnectState(
         deviceId,
         currentAttempts + 1,
@@ -110,11 +115,11 @@ class ReconnectionManagerImpl {
         reason
       );
     } catch (error) {
-      console.error(`[ReconnectManager] Failed to update state for ${formatDeviceID(deviceId)}:`, error);
+      console.warn(`⚠️ [${deviceName}] Could not update reconnect state:`, error);
     }
 
     console.log(
-      `[ReconnectManager] ${formatDeviceID(deviceId)} - attempt ${currentAttempts + 1}/${maxAttempts} in ${delay}ms`
+      `🔄 [${deviceName}] Scheduling reconnect attempt ${currentAttempts + 1}/${maxAttempts} in ${delay}ms`
     );
 
     // Schedule attempt
@@ -140,49 +145,68 @@ class ReconnectionManagerImpl {
    */
   private async attemptReconnect(deviceId: DeviceID): Promise<void> {
     if (!this.connectFn) {
-      console.error('[ReconnectManager] No connect function registered');
+      console.error('[ReconnectManager] No connect function registered - cannot reconnect');
       return;
     }
 
     const device = UnifiedBLEStateStore.getDevice(deviceId);
     if (!device) {
-      console.error(`[ReconnectManager] Device ${formatDeviceID(deviceId)} not found`);
+      console.error(`[ReconnectManager] ${formatDeviceID(deviceId)} - device not found in store, aborting`);
       this.cleanup(deviceId);
       return;
     }
+
+    const deviceName = device.bleName;
 
     // Check if still in RECONNECTING state
     if (device.state !== DeviceState.RECONNECTING) {
-      console.log(`[ReconnectManager] ${formatDeviceID(deviceId)} - no longer reconnecting (${device.state})`);
+      console.log(`[ReconnectManager] ${deviceName} - no longer reconnecting (state: ${device.state})`);
       this.cleanup(deviceId);
       return;
     }
 
-    console.log(`[ReconnectManager] ${formatDeviceID(deviceId)} - attempting reconnect...`);
+    const attempts = this.attempts.get(deviceId) ?? 0;
+    console.log(`🔌 [${deviceName}] Reconnect attempt ${attempts}/${BLE_CONFIG.reconnect.maxAttempts}...`);
 
     try {
       // Transition to CONNECTING
-      UnifiedBLEStateStore.transition(deviceId, DeviceState.CONNECTING);
+      try {
+        UnifiedBLEStateStore.transition(deviceId, DeviceState.CONNECTING);
+      } catch (e) {
+        console.warn(`⚠️ [${deviceName}] Could not transition to CONNECTING:`, e);
+      }
 
-      // Attempt connection
+      // Attempt connection using injected function
       const success = await this.connectFn(device.bleAddress);
 
       if (success) {
-        console.log(`[ReconnectManager] ${formatDeviceID(deviceId)} - reconnected successfully`);
+        console.log(`✅ [${deviceName}] Reconnected successfully!`);
         this.cleanup(deviceId);
 
         // Transition to CONNECTED
-        UnifiedBLEStateStore.transition(deviceId, DeviceState.CONNECTED);
+        try {
+          UnifiedBLEStateStore.transition(deviceId, DeviceState.CONNECTED);
+        } catch (e) {
+          console.warn(`⚠️ [${deviceName}] Could not transition to CONNECTED:`, e);
+        }
+
+        // Clear reconnect state in store
+        UnifiedBLEStateStore.clearReconnectState(deviceId);
+
+        // CRITICAL: Force immediate broadcast to update UI
+        // Debounced broadcasts can miss the state change
+        UnifiedBLEStateStore.forceBroadcast();
+        console.log(`📡 [${deviceName}] Forced broadcast after reconnection`);
 
         // Auto-recover streaming if global streaming is active
         await this.recoverStreamingIfActive(deviceId);
       } else {
-        console.log(`[ReconnectManager] ${formatDeviceID(deviceId)} - reconnect failed`);
+        console.log(`❌ [${deviceName}] Reconnect failed, will retry...`);
         const reason = this.reasons.get(deviceId) ?? DisconnectReason.CONNECTION_LOST;
         this.scheduleReconnect(deviceId, reason);
       }
     } catch (error) {
-      console.error(`[ReconnectManager] ${formatDeviceID(deviceId)} - reconnect error:`, error);
+      console.error(`❌ [${deviceName}] Reconnect error:`, error);
       const reason = this.reasons.get(deviceId) ?? DisconnectReason.BLE_ERROR;
       this.scheduleReconnect(deviceId, reason);
     }

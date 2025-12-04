@@ -53,7 +53,9 @@ export enum DeviceState {
 export enum GlobalState {
   IDLE = 'idle',
   SCANNING = 'scanning',
+  CONNECTING = 'connecting',
   SYNCING = 'syncing',
+  LOCATING = 'locating',
   STREAMING = 'streaming',
 }
 
@@ -135,6 +137,7 @@ export const TRANSITION_RULES: Record<DeviceState, DeviceState[]> = {
   ],
   [DeviceState.STREAMING]: [
     DeviceState.SYNCED,
+    DeviceState.SYNCING,  // Allow re-sync from streaming state
     DeviceState.CONNECTED,
     DeviceState.RECONNECTING,
     DeviceState.ERROR,
@@ -196,7 +199,9 @@ export const POLLING_ALLOWED_STATES: DeviceState[] = [
  * Global states that block polling
  */
 export const POLLING_BLOCKED_GLOBAL_STATES: GlobalState[] = [
+  GlobalState.CONNECTING,
   GlobalState.SYNCING,
+  GlobalState.LOCATING,
   GlobalState.STREAMING,
 ];
 
@@ -245,6 +250,12 @@ export interface UnifiedDeviceState {
 
   // Error tracking
   lastError: DeviceError | null;
+
+  // Sync progress (0-100 during sync, null when not syncing)
+  syncProgress: number | null;
+
+  // Locate mode (true when device is vibrating/shaking)
+  isVibrating: boolean;
 }
 
 /**
@@ -275,6 +286,8 @@ export const DEFAULT_DEVICE_STATE: Omit<UnifiedDeviceState, 'deviceId' | 'bleAdd
   nextReconnectAt: null,
   disconnectReason: null,
   lastError: null,
+  syncProgress: null,
+  isVibrating: false,
 };
 
 /**
@@ -363,22 +376,7 @@ export interface StateUpdateDevice {
   reconnectAttempts: number;
   nextReconnectAt: number | null;
   lastError: DeviceError | null;
+  syncProgress: number | null;
+  isVibrating: boolean;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Legacy Compatibility (deprecated, will be removed)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** @deprecated Use DeviceState enum instead */
-export type DeviceStatus = DeviceState;
-
-/** @deprecated Use StateChange interface instead */
-export interface StateChange {
-  deviceId: DeviceID;
-  previousState: UnifiedDeviceState;
-  newState: UnifiedDeviceState;
-  changedFields: (keyof UnifiedDeviceState)[];
-}
-
-/** @deprecated Use DeviceStateChangeCallback instead */
-export type StateChangeCallback = (change: StateChange) => void;

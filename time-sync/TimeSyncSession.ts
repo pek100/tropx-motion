@@ -65,9 +65,9 @@ export class TimeSyncSession {
 
       this.estimator.addSample(T1, deviceCounter, T4);
 
-      // Broadcast live device timestamp for UI display
+      // Broadcast live device timestamp and progress for UI display
       if (this.onSample) {
-        this.onSample(this.device.deviceId, this.device.deviceName, deviceCounter);
+        this.onSample(this.device.deviceId, this.device.deviceName, deviceCounter, i, this.sampleCount);
       }
 
       if (i < this.sampleCount - 1) {

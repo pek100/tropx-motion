@@ -37,10 +37,14 @@ export class NodeBleToNobleAdapter extends EventEmitter {
 
   // Set up disconnect event forwarding from node-ble to Noble-style events
   private setupDisconnectHandler(): void {
-    // Note: node-ble devices don't have built-in disconnect events
-    // We need to monitor the connection status or handle it at the service level
-    // For now, we'll emit disconnect when disconnectAsync() is called
-    console.log(`🔌 [NodeBleAdapter] Disconnect handler setup for ${this.advertisement.localName}`);
+    // CRITICAL: node-ble Device extends EventEmitter and emits 'disconnect' event
+    // Forward this to match Noble's 'disconnect' event that TropXDevice expects
+    this.nodeBleDevice.on('disconnect', () => {
+      console.log(`🔌 [NodeBleAdapter] Disconnect event received from node-ble for ${this.advertisement.localName}`);
+      this.state = 'disconnected';
+      this.emit('disconnect');
+    });
+    console.log(`🔌 [NodeBleAdapter] Disconnect handler registered for ${this.advertisement.localName}`);
   }
 
   // Noble-compatible connect method (callback-based)

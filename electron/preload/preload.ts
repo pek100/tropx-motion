@@ -11,6 +11,13 @@ export interface ElectronAPI {
         close: () => Promise<void>;
     };
 
+    zoom: {
+        in: () => Promise<void>;
+        out: () => Promise<void>;
+        reset: () => Promise<void>;
+        get: () => Promise<number>;
+    };
+
     motion: {
         getStatus: () => Promise<unknown>;
         connectDevices: () => Promise<ApiResponse>;
@@ -55,6 +62,13 @@ const electronAPI: ElectronAPI = {
         minimize: () => ipcRenderer.invoke('window:minimize'),
         maximize: () => ipcRenderer.invoke('window:maximize'),
         close: () => ipcRenderer.invoke('window:close'),
+    },
+
+    zoom: {
+        in: () => ipcRenderer.invoke('zoom:in'),
+        out: () => ipcRenderer.invoke('zoom:out'),
+        reset: () => ipcRenderer.invoke('zoom:reset'),
+        get: () => ipcRenderer.invoke('zoom:get'),
     },
 
     motion: {

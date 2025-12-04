@@ -13,9 +13,9 @@ export type MessageDomain = typeof MESSAGE_DOMAINS[keyof typeof MESSAGE_DOMAINS]
 
 // Domain ranges for message classification
 const DOMAIN_RANGES = {
-  [MESSAGE_DOMAINS.BLE]: { min: 0x10, max: 0x2F }, // Includes scan/connect (0x10-0x1F), recording (0x20-0x2F)
-  [MESSAGE_DOMAINS.STREAMING]: { min: 0x30, max: 0x3F }, // Motion (0x30), device status (0x31), battery (0x32), sync events (0x33-0x36)
-  [MESSAGE_DOMAINS.CLIENT_METADATA]: { min: 0x40, max: 0x45 }, // Client registration and actions (0x40-0x45)
+  [MESSAGE_DOMAINS.BLE]: { min: 0x10, max: 0x2F }, // scan/connect (0x10-0x1F), recording (0x20-0x2F)
+  [MESSAGE_DOMAINS.STREAMING]: { min: 0x30, max: 0x3F }, // motion (0x30), status (0x31), battery (0x32), sync (0x33-0x36)
+  [MESSAGE_DOMAINS.CLIENT_METADATA]: { min: 0x60, max: 0x6F }, // client registration/actions (0x60-0x6F)
   [MESSAGE_DOMAINS.SYSTEM]: [0x01, 0x02, 0x03, 0x50, 0x51, 0x52, 0xF0, 0xF1, 0xF2]
 } as const;
 
@@ -68,19 +68,25 @@ export class UnifiedMessageRouter {
 
   // Classify message type into domain
   private classifyMessage(messageType: MessageType): MessageDomain | null {
-    // Check BLE domain
+    // Check BLE domain (0x10-0x2F)
     const bleRange = DOMAIN_RANGES[MESSAGE_DOMAINS.BLE];
     if (messageType >= bleRange.min && messageType <= bleRange.max) {
       return MESSAGE_DOMAINS.BLE;
     }
 
-    // Check Streaming domain
+    // Check Streaming domain (0x30-0x3F)
     const streamingRange = DOMAIN_RANGES[MESSAGE_DOMAINS.STREAMING];
     if (messageType >= streamingRange.min && messageType <= streamingRange.max) {
       return MESSAGE_DOMAINS.STREAMING;
     }
 
-    // Check System domain
+    // Check Client Metadata domain (0x60-0x6F)
+    const clientMetadataRange = DOMAIN_RANGES[MESSAGE_DOMAINS.CLIENT_METADATA];
+    if (messageType >= clientMetadataRange.min && messageType <= clientMetadataRange.max) {
+      return MESSAGE_DOMAINS.CLIENT_METADATA;
+    }
+
+    // Check System domain (specific types)
     const systemTypes = DOMAIN_RANGES[MESSAGE_DOMAINS.SYSTEM] as readonly number[];
     if (systemTypes.includes(messageType as number)) {
       return MESSAGE_DOMAINS.SYSTEM;

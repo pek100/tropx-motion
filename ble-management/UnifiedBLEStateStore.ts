@@ -429,6 +429,47 @@ class UnifiedBLEStateStoreImpl extends EventEmitter {
     this.queueBroadcast(deviceId);
   }
 
+  /**
+   * Set sync progress (0-100 during sync, null when not syncing)
+   */
+  setSyncProgress(deviceId: DeviceID, progress: number | null): void {
+    const device = this.devices.get(deviceId);
+    if (!device) {
+      throw new DeviceNotFoundError(deviceId);
+    }
+
+    device.syncProgress = progress;
+    this.queueBroadcast(deviceId);
+  }
+
+  /**
+   * Set vibrating/shaking state (for locate mode)
+   * Uses forceBroadcast for immediate UI feedback
+   */
+  setVibrating(deviceId: DeviceID, isVibrating: boolean): void {
+    const device = this.devices.get(deviceId);
+    if (!device) {
+      throw new DeviceNotFoundError(deviceId);
+    }
+
+    // Only update and broadcast if state changed
+    if (device.isVibrating !== isVibrating) {
+      device.isVibrating = isVibrating;
+      // Use immediate broadcast for responsive locate mode UI
+      this.forceBroadcast();
+    }
+  }
+
+  /**
+   * Set vibrating state by BLE address (convenience for DeviceLocateService)
+   */
+  setVibratingByAddress(bleAddress: string, isVibrating: boolean): void {
+    const deviceId = this.addressToDeviceId.get(bleAddress);
+    if (deviceId === undefined) return;
+
+    this.setVibrating(deviceId, isVibrating);
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Global State Management
   // ───────────────────────────────────────────────────────────────────────────
@@ -599,10 +640,14 @@ class UnifiedBLEStateStoreImpl extends EventEmitter {
   private flushBroadcast(): void {
     this.broadcastTimer = null;
 
-    if (!this.broadcastFunction) return;
+    if (!this.broadcastFunction) {
+      console.warn('[Store] flushBroadcast called but broadcastFunction is null - broadcast skipped');
+      return;
+    }
 
     // Serialize state
     const message = this.serializeStateUpdate();
+    console.log(`[Store] Flushing broadcast: globalState=${message.globalState}, devices=${message.devices.length}`);
 
     // Send
     this.broadcastFunction(message).catch(error => {
@@ -636,6 +681,8 @@ class UnifiedBLEStateStoreImpl extends EventEmitter {
       reconnectAttempts: device.reconnectAttempts,
       nextReconnectAt: device.nextReconnectAt,
       lastError: device.lastError,
+      syncProgress: device.syncProgress,
+      isVibrating: device.isVibrating,
     }));
 
     return {
@@ -650,6 +697,7 @@ class UnifiedBLEStateStoreImpl extends EventEmitter {
    * Force immediate broadcast (bypasses debounce)
    */
   forceBroadcast(): void {
+    console.log('[Store] forceBroadcast called');
     if (this.broadcastTimer) {
       clearTimeout(this.broadcastTimer);
       this.broadcastTimer = null;

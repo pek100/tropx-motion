@@ -51,11 +51,6 @@ export type {
   // WebSocket Messages
   StateUpdateMessage,
   StateUpdateDevice,
-
-  // Legacy (deprecated)
-  DeviceStatus,
-  StateChange,
-  StateChangeCallback,
 } from './types';
 
 // ─────────────────────────────────────────────────────────────────

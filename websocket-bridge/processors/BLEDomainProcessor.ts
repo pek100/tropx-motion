@@ -27,7 +27,7 @@ interface BLEService {
   startRecording(sessionId: string, exerciseId: string, setNumber: number): Promise<{ success: boolean; message?: string; recordingId?: string }>;
   stopRecording(): Promise<{ success: boolean; message?: string; recordingId?: string }>;
   getConnectedDevices(): any[];
-  getAllDevices(): { success: boolean; devices: any[] };
+  getAllDevices(): { success: boolean; devices: any[]; globalState: string; isRecording: boolean };
   isRecording(): boolean;
   enableBurstScanningFor(durationMs: number): void;
   disableBurstScanning(): void;
@@ -258,18 +258,7 @@ export class BLEDomainProcessor implements DomainProcessor {
   private handleRecordStartRequest = async (message: BaseMessage, service: BLEService): Promise<BaseMessage> => {
     const request = message as any;
 
-    // Idempotent: if already recording, return success
-    if (service.isRecording()) {
-      console.log('🎬 Recording already active - returning success (idempotent)');
-      return {
-        type: MESSAGE_TYPES.RECORD_START_RESPONSE,
-        requestId: message.requestId,
-        timestamp: Date.now(),
-        success: true,
-        sessionId: request.sessionId,
-        message: 'Recording already active'
-      } as RecordStartResponse;
-    }
+    // Idempotent check moved to BLEServiceAdapter.startRecording
 
     const connectedDevices = service.getConnectedDevices();
     if (connectedDevices.length === 0) {
@@ -309,15 +298,20 @@ export class BLEDomainProcessor implements DomainProcessor {
   };
 
   // Get devices state operation handler (for persistence/reconnect)
+  // CRITICAL: Also returns globalState and isRecording for full state recovery on page refresh
   private handleGetDevicesStateRequest = async (message: BaseMessage, service: BLEService): Promise<BaseMessage> => {
     console.log('📋 [BLE_PROCESSOR] Get devices state requested');
     const result = service.getAllDevices();
+
+    console.log(`📋 [BLE_PROCESSOR] Returning state: globalState=${result.globalState}, isRecording=${result.isRecording}, devices=${result.devices.length}`);
 
     return {
       type: MESSAGE_TYPES.GET_DEVICES_STATE_RESPONSE,
       requestId: message.requestId,
       timestamp: Date.now(),
-      devices: result.devices
+      devices: result.devices,
+      globalState: result.globalState,
+      isRecording: result.isRecording,
     } as BaseMessage;
   };
 

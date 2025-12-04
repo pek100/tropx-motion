@@ -64,9 +64,8 @@ export interface IBleService {
   startStatePolling(): void;
   stopStatePolling(): void;
 
-  // Auto-reconnect
-  scheduleReconnect(deviceId: string, deviceName: string): void;
-  cancelReconnect(deviceId: string): void;
+  // Auto-reconnect handled by ReconnectionManager singleton
+  // See: ble-management/ReconnectionManager.ts
 
   // Burst scanning
   enableBurstScanningFor(durationMs: number): void;

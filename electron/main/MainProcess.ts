@@ -257,7 +257,11 @@ export class MainProcess {
       this.mainWindow.webContents.openDevTools({ mode: 'detach' });
     }
 
-    this.mainWindow.once('ready-to-show', () => this.mainWindow?.show());
+    this.mainWindow.once('ready-to-show', () => {
+      // Reset zoom to default (prevents persisted zoom from previous sessions)
+      this.mainWindow?.webContents.setZoomLevel(0);
+      this.mainWindow?.show();
+    });
 
     // Capture renderer console logs using electron-log
     this.mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
@@ -383,6 +387,24 @@ export class MainProcess {
       }
     });
     ipcMain.handle('window:close', () => this.mainWindow?.close());
+
+    // Zoom controls (since we have no menu bar with frame: false)
+    ipcMain.handle('zoom:in', () => {
+      if (!this.mainWindow) return;
+      const currentZoom = this.mainWindow.webContents.getZoomLevel();
+      this.mainWindow.webContents.setZoomLevel(Math.min(currentZoom + 0.5, 3));
+    });
+    ipcMain.handle('zoom:out', () => {
+      if (!this.mainWindow) return;
+      const currentZoom = this.mainWindow.webContents.getZoomLevel();
+      this.mainWindow.webContents.setZoomLevel(Math.max(currentZoom - 0.5, -3));
+    });
+    ipcMain.handle('zoom:reset', () => {
+      this.mainWindow?.webContents.setZoomLevel(0);
+    });
+    ipcMain.handle('zoom:get', () => {
+      return this.mainWindow?.webContents.getZoomLevel() ?? 0;
+    });
 
     // System info handler (keep this for diagnostics)
     ipcMain.handle('bluetooth:getSystemInfo', () => ({

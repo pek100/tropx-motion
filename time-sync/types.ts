@@ -43,7 +43,15 @@ export enum DeviceSystemState {
 }
 
 // Callback for live sync updates during sampling
-export type SyncSampleCallback = (deviceId: string, deviceName: string, deviceTimestampMs: number) => void;
+// sampleIndex: 0-based index of current sample
+// totalSamples: total number of samples to collect
+export type SyncSampleCallback = (
+  deviceId: string,
+  deviceName: string,
+  deviceTimestampMs: number,
+  sampleIndex: number,
+  totalSamples: number
+) => void;
 
 // Device interface for BLE time sync operations
 export interface TimeSyncDevice {

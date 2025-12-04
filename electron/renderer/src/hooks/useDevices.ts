@@ -31,7 +31,9 @@ export enum DeviceState {
 export enum GlobalState {
   IDLE = 'idle',
   SCANNING = 'scanning',
+  CONNECTING = 'connecting',
   SYNCING = 'syncing',
+  LOCATING = 'locating',
   STREAMING = 'streaming',
 }
 
@@ -58,6 +60,10 @@ export interface BLEDevice {
   reconnectAttempts: number;
   nextReconnectAt: number | null;
   lastError: { type: string; message: string; timestamp: number } | null;
+  // Sync progress (0-100 during sync, null when not syncing)
+  syncProgress: number | null;
+  // Locate mode (true when device is vibrating/shaking)
+  isVibrating: boolean;
 }
 
 export interface KneeData {
@@ -66,12 +72,6 @@ export interface KneeData {
   velocity: number;
   acceleration: number;
   quality: number;
-}
-
-export interface SyncProgress {
-  deviceName: string;
-  offsetMs: number;
-  deviceTimestampMs?: number;
 }
 
 /**
@@ -167,6 +167,8 @@ function convertRawToDevice(raw: any): BLEDevice {
     reconnectAttempts: raw.reconnectAttempts ?? 0,
     nextReconnectAt: raw.nextReconnectAt ?? null,
     lastError: raw.lastError ?? null,
+    syncProgress: raw.syncProgress ?? null,
+    isVibrating: raw.isVibrating ?? false,
   };
 }
 
@@ -226,11 +228,6 @@ export function useDevices() {
     quality: 100,
   });
 
-  // ─── Locate Mode ──────────────────────────────────────────────────────
-  const [vibratingDeviceIds, setVibratingDeviceIds] = useState<string[]>([]);
-
-  // ─── Sync Progress ────────────────────────────────────────────────────
-  const [syncProgress, setSyncProgress] = useState<Record<string, SyncProgress>>({});
 
   // ─── Connected Clients ────────────────────────────────────────────────
   const [connectedClients, setConnectedClients] = useState<ClientMetadata[]>([]);
@@ -258,16 +255,29 @@ export function useDevices() {
             console.log('🔄 Reconnection detected - re-querying backend state...');
             try {
               const stateResult = await client.getDevicesState();
-              if (stateResult.success && stateResult.data.length > 0) {
-                console.log(`✅ Re-synced ${stateResult.data.length} devices from backend`);
-                const newDevices = new Map<number, BLEDevice>();
-                for (const raw of stateResult.data) {
-                  const device = convertRawToDevice(raw);
-                  if (device.deviceId) {
-                    newDevices.set(device.deviceId, device);
+              if (stateResult.success) {
+                const responseData = stateResult.data as any;
+                const devices = Array.isArray(responseData) ? responseData : responseData.devices || [];
+                const serverGlobalState = responseData.globalState;
+
+                console.log(`✅ Re-synced state: globalState=${serverGlobalState}, devices=${devices.length}`);
+
+                if (devices.length > 0) {
+                  const newDevices = new Map<number, BLEDevice>();
+                  for (const raw of devices) {
+                    const device = convertRawToDevice(raw);
+                    if (device.deviceId) {
+                      newDevices.set(device.deviceId, device);
+                    }
                   }
+                  setDevices(newDevices);
                 }
-                setDevices(newDevices);
+
+                // CRITICAL: Restore globalState from backend on reconnection
+                if (serverGlobalState) {
+                  setGlobalState(serverGlobalState as GlobalState);
+                }
+
                 setLastUpdate(Date.now());
               }
             } catch (error) {
@@ -378,47 +388,6 @@ export function useDevices() {
           });
         });
 
-        // ─── Battery Update Handler ────────────────────────────────────
-        client.on(EVENT_TYPES.BATTERY_UPDATE, (battery: any) => {
-          setDevices(prev => {
-            const newMap = new Map(prev);
-            for (const [id, device] of newMap) {
-              if (device.bleAddress === battery.deviceId) {
-                newMap.set(id, { ...device, batteryLevel: battery.batteryLevel });
-                break;
-              }
-            }
-            return newMap;
-          });
-        });
-
-        // ─── Sync Event Handlers ───────────────────────────────────────
-        client.on(EVENT_TYPES.SYNC_STARTED, () => {
-          setGlobalState(GlobalState.SYNCING);
-        });
-
-        client.on(EVENT_TYPES.SYNC_PROGRESS, (progress: any) => {
-          setSyncProgress(prev => ({
-            ...prev,
-            [progress.deviceId]: {
-              deviceName: progress.deviceName,
-              offsetMs: progress.clockOffsetMs,
-              deviceTimestampMs: progress.deviceTimestampMs,
-            },
-          }));
-        });
-
-        client.on(EVENT_TYPES.SYNC_COMPLETE, () => {
-          setGlobalState(GlobalState.IDLE);
-          // Reset health check cooldown when returning to IDLE
-          lastHealthReconnectRef.current = 0;
-        });
-
-        // ─── Locate Mode Handler ───────────────────────────────────────
-        client.on(EVENT_TYPES.DEVICE_VIBRATING, (vibrating: any) => {
-          setVibratingDeviceIds(vibrating.vibratingDeviceIds || []);
-        });
-
         // ─── Client List Handler ───────────────────────────────────────
         client.on(EVENT_TYPES.CLIENT_LIST_UPDATE, (update: any) => {
           setConnectedClients(update.clients || []);
@@ -434,18 +403,33 @@ export function useDevices() {
           return;
         }
 
-        // Query initial state
+        // Query initial state (includes globalState and isRecording for full recovery)
         const stateResult = await client.getDevicesState();
-        if (stateResult.success && stateResult.data.length > 0) {
-          console.log(`✅ Restored ${stateResult.data.length} devices from backend`);
-          const newDevices = new Map<number, BLEDevice>();
-          for (const raw of stateResult.data) {
-            const device = convertRawToDevice(raw);
-            if (device.deviceId) {
-              newDevices.set(device.deviceId, device);
+        if (stateResult.success) {
+          const responseData = stateResult.data as any;
+          const devices = Array.isArray(responseData) ? responseData : responseData.devices || [];
+          const serverGlobalState = responseData.globalState;
+          const serverIsRecording = responseData.isRecording;
+
+          console.log(`✅ Restored state from backend: globalState=${serverGlobalState}, isRecording=${serverIsRecording}, devices=${devices.length}`);
+
+          if (devices.length > 0) {
+            const newDevices = new Map<number, BLEDevice>();
+            for (const raw of devices) {
+              const device = convertRawToDevice(raw);
+              if (device.deviceId) {
+                newDevices.set(device.deviceId, device);
+              }
             }
+            setDevices(newDevices);
           }
-          setDevices(newDevices);
+
+          // CRITICAL: Restore globalState from backend (fixes page refresh during recording)
+          if (serverGlobalState) {
+            console.log(`🔄 Restoring globalState: ${serverGlobalState}`);
+            setGlobalState(serverGlobalState as GlobalState);
+          }
+
           setLastUpdate(Date.now());
         }
 
@@ -564,6 +548,33 @@ export function useDevices() {
   const isScanning = globalState === GlobalState.SCANNING;
   const isSyncing = globalState === GlobalState.SYNCING;
   const isStreaming = globalState === GlobalState.STREAMING;
+  const isLocating = globalState === GlobalState.LOCATING;
+
+  // Derived from device state - replaces useState
+  const vibratingDeviceIds = useMemo(
+    () => allDevices.filter(d => d.isVibrating).map(d => d.bleAddress),
+    [allDevices]
+  );
+
+  // Derived sync progress map - keyed by bleAddress
+  // Provides: offsetMs (from clockOffset), progress (0-100)
+  const syncProgress = useMemo(
+    () => {
+      const progress: Record<string, { deviceName: string; offsetMs: number; progress: number | null }> = {};
+      for (const device of allDevices) {
+        // Include device if syncing or synced (has clockOffset)
+        if (device.syncProgress !== null || device.clockOffset !== 0) {
+          progress[device.bleAddress] = {
+            deviceName: device.displayName,
+            offsetMs: device.clockOffset,
+            progress: device.syncProgress,
+          };
+        }
+      }
+      return progress;
+    },
+    [allDevices]
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // Actions
@@ -624,7 +635,7 @@ export function useDevices() {
     if (!clientRef.current) return { success: false, error: 'Not connected' };
     const result = await clientRef.current.startRecording(sessionId, exerciseId, setNumber);
     if (result.success) {
-      setGlobalState(GlobalState.STREAMING);
+      // globalState update comes via STATE_UPDATE from backend
       return { success: true, data: result.data.recordingId };
     }
     return { success: false, error: (result as any).error || 'Failed to start streaming' };
@@ -633,9 +644,9 @@ export function useDevices() {
   const stopStreaming = useCallback(async (): Promise<Result<void>> => {
     if (!clientRef.current) return { success: false, error: 'Not connected' };
     const result = await clientRef.current.stopRecording();
+    // globalState update comes via STATE_UPDATE from backend
+    // Reset health check cooldown on success - new session should have fresh cooldown
     if (result.success) {
-      setGlobalState(GlobalState.IDLE);
-      // Reset health check cooldown - new session should have fresh cooldown
       lastHealthReconnectRef.current = 0;
     }
     return result.success ? { success: true } : { success: false, error: result.error };
@@ -649,7 +660,7 @@ export function useDevices() {
 
   const stopLocateMode = useCallback(async (): Promise<Result<void>> => {
     if (!clientRef.current) return { success: false, error: 'Not connected' };
-    setVibratingDeviceIds([]);
+    // isVibrating state reset comes via STATE_UPDATE from backend
     const result = await clientRef.current.stopLocateMode();
     return result.success ? { success: true } : { success: false, error: result.error };
   }, []);
@@ -684,6 +695,7 @@ export function useDevices() {
     isScanning,
     isSyncing,
     isStreaming,
+    isLocating,
 
     // Motion Data
     leftKneeData,

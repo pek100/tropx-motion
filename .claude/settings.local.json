@@ -30,7 +30,10 @@
       "Bash(mv:*)",
       "Bash(mkdir:*)",
       "Bash(rm:*)",
-      "Bash(npm run build:main:*)"
+      "Bash(npm run build:main:*)",
+      "WebFetch(domain:tkdodo.eu)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": [],
     "ask": [],

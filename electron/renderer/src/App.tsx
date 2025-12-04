@@ -2,11 +2,27 @@ import { DeviceCard } from "@/components/device-card"
 import { ChartSvg } from "@/components/chart-svg"
 import KneeAreaChart from "@/components/knee-area-chart"
 import { PlatformIndicator } from "@/components/platform-indicator"
-import { useState, useRef, useEffect, useMemo, lazy, Suspense } from "react"
+import { useState, useRef, useEffect, useMemo, useCallback, lazy, Suspense } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useDevices, type UIDevice, DeviceId } from "@/hooks/useDevices"
 import { persistence } from "@/lib/persistence"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pending Operations - Optimistic UI State
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum PendingOp {
+  STOP_LOCATE = 'stop_locate',
+  STOP_STREAMING = 'stop_streaming',
+}
+
+interface PendingState {
+  operations: Set<PendingOp>;
+  disconnecting: Set<string>; // device IDs being disconnected
+}
+
+const PENDING_TIMEOUT_MS = 10000; // 10s fallback timeout
 
 // Lazy load RPi-specific components only when needed
 const DynamicIsland = lazy(() => import("@/components/DynamicIsland").then(m => ({ default: m.DynamicIsland })))
@@ -28,7 +44,8 @@ export default function Page() {
     isConnected,
     isScanning,
     isSyncing,
-    isStreaming: hookIsStreaming,
+    isStreaming,  // Backend source of truth
+    isLocating,   // Backend source of truth
     syncProgress,
     vibratingDeviceIds,
     // Motion data
@@ -50,10 +67,8 @@ export default function Page() {
 
   // UI state (not device state - just UI concerns)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [isStreaming, setIsStreaming] = useState(false)
   const [hasStartedStreaming, setHasStartedStreaming] = useState(false)
   const [isFlashing, setIsFlashing] = useState(false)
-  const [isLocating, setIsLocating] = useState(false)
   const [isValidatingState, setIsValidatingState] = useState(false)
   const [isValidatingLocate, setIsValidatingLocate] = useState(false)
   const [streamStartTime, setStreamStartTime] = useState<number | null>(null)
@@ -65,6 +80,13 @@ export default function Page() {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   // Persist custom device order (array of device IDs)
   const [deviceOrder, setDeviceOrder] = useState<string[]>([])
+
+  // Pending operations for optimistic UI updates
+  const [pending, setPendingState] = useState<PendingState>({
+    operations: new Set(),
+    disconnecting: new Set(),
+  })
+  const pendingTimeoutRefs = useRef<Map<string, NodeJS.Timeout>>(new Map())
 
   // Small screen detection (< 350px width or height)
   const [isSmallScreen, setIsSmallScreen] = useState(false)
@@ -272,6 +294,15 @@ export default function Page() {
     lastDeviceIdsRef.current = currentIds;
   }, [uiDevices]);
 
+  // Initialize UI state from backend on mount/reconnect (for page refresh during recording)
+  useEffect(() => {
+    if (isStreaming && !hasStartedStreaming) {
+      console.log('🔄 Restoring hasStartedStreaming from backend isStreaming state')
+      setHasStartedStreaming(true)
+      setStreamStartTime(Date.now())
+    }
+  }, [isStreaming, hasStartedStreaming])
+
   useEffect(() => {
     if (!isStreaming || streamStartTime === null) {
       return
@@ -284,15 +315,6 @@ export default function Page() {
 
     return () => clearInterval(interval)
   }, [isStreaming, streamStartTime])
-
-  // Fix #1: Sync local isStreaming with backend hookIsStreaming
-  // Handles cases where backend stops streaming (device disconnect, error)
-  useEffect(() => {
-    if (!hookIsStreaming && isStreaming) {
-      console.log('⚠️ Backend stopped streaming, syncing UI state')
-      setIsStreaming(false)
-    }
-  }, [hookIsStreaming, isStreaming])
 
   // No mock data - WebSocket hook provides real leftKneeData and rightKneeData
 
@@ -346,12 +368,12 @@ export default function Page() {
       // Stop streaming if active
       if (isStreaming) {
         console.log(`⚠️ Stopping streaming because user disconnected device`)
+        setPendingOp(PendingOp.STOP_STREAMING)
         await stopStreaming()
-        setIsStreaming(false)
       }
 
-      // Call server action - state update will come via STATE_UPDATE
-      // disconnectDevice handles both connected and connecting states
+      // Optimistic: show "Disconnecting..." immediately
+      setPendingDisconnect(device.id)
       await disconnectDevice(device.id)
       return
     }
@@ -376,15 +398,18 @@ export default function Page() {
     if (isLocating || sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
     console.log(`🔴 Disconnecting all devices`)
 
+    const connectedDevices = sortedDevices.filter(d => d.connectionStatus === "connected")
+    if (connectedDevices.length === 0) return
+
     // Stop streaming if active
     if (isStreaming) {
       console.log(`⚠️ Stopping streaming because user disconnected all devices`)
+      setPendingOp(PendingOp.STOP_STREAMING)
       await stopStreaming()
-      setIsStreaming(false)
     }
 
-    // Fix #2: Use disconnectDevice for graceful disconnect (not removeDevice)
-    const connectedDevices = sortedDevices.filter(d => d.connectionStatus === "connected")
+    // Optimistic: show "Disconnecting..." for all devices immediately
+    connectedDevices.forEach(device => setPendingDisconnect(device.id))
     await Promise.all(connectedDevices.map(device => disconnectDevice(device.id)))
   }
 
@@ -473,16 +498,17 @@ export default function Page() {
   // Sync state now comes from useDevices hook via STATE_UPDATE - no local management needed
 
 
+  // Locate mode - backend owns isLocating state via GlobalState.LOCATING
   const handleLocate = async () => {
     if (sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
 
-    // If already locating, stop it
+    // If already locating, stop it with optimistic UI update
     if (isLocating) {
       if (locateDelayTimeoutRef.current) {
         clearTimeout(locateDelayTimeoutRef.current)
         locateDelayTimeoutRef.current = null
       }
-      setIsLocating(false)
+      setPendingOp(PendingOp.STOP_LOCATE) // Optimistic: show "Stopping..." immediately
       await stopLocateMode()
       return
     }
@@ -511,15 +537,13 @@ export default function Page() {
     }
 
     setIsValidatingLocate(true)
-    setIsLocating(true)
 
-    // Start accelerometer-based locate mode on backend
+    // Start accelerometer-based locate mode on backend (isLocating will update via STATE_UPDATE)
     const result = await startLocateMode()
     setIsValidatingLocate(false)
 
     if (!result.success) {
       console.error('Failed to start locate mode:', result.error)
-      setIsLocating(false)
       toast({
         title: "Locate Mode Failed",
         description: result.error || "Failed to start locate mode",
@@ -527,11 +551,11 @@ export default function Page() {
         duration: 4000,
       })
     }
-
     // Backend will now handle accelerometer detection and send vibrating device IDs
-    // vibratingDeviceIds will be updated in real-time via WebSocket events
+    // vibratingDeviceIds and isLocating will be updated in real-time via STATE_UPDATE
   }
 
+  // Streaming - backend owns isStreaming state via GlobalState.STREAMING
   const handleToggleStreaming = async () => {
     if (isLocating || isSyncing) return
 
@@ -543,14 +567,13 @@ export default function Page() {
         variant: "destructive",
         duration: 4000,
       })
-
       setIsFlashing(true)
       setTimeout(() => setIsFlashing(false), 1000)
-
       return
     }
 
     if (!isStreaming) {
+      // Start streaming
       setIsValidatingState(true)
       setHasStartedStreaming(true)
       setStreamStartTime(Date.now())
@@ -561,13 +584,10 @@ export default function Page() {
       const result = await startStreaming(sessionId, "test_exercise", 1)
       setIsValidatingState(false)
 
-      if (result.success) {
-        setIsStreaming(true)
-      } else {
+      // Backend will update isStreaming via STATE_UPDATE on success
+      if (!result.success) {
         setHasStartedStreaming(false)
         setStreamStartTime(null)
-
-        // Show error toast with device details if available
         const errorMsg = (result as any).error || "Failed to start streaming"
         toast({
           title: "Cannot Start Streaming",
@@ -577,8 +597,9 @@ export default function Page() {
         })
       }
     } else {
+      // Stop streaming with optimistic UI update
+      setPendingOp(PendingOp.STOP_STREAMING)
       await stopStreaming()
-      setIsStreaming(false)
     }
   }
 
@@ -675,6 +696,94 @@ export default function Page() {
     const secs = seconds % 60
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
   }
+
+  // ─── Pending State Helpers (Optimistic UI) ─────────────────────────────────
+  const clearPendingTimeout = useCallback((key: string) => {
+    const timeout = pendingTimeoutRefs.current.get(key)
+    if (timeout) {
+      clearTimeout(timeout)
+      pendingTimeoutRefs.current.delete(key)
+    }
+  }, [])
+
+  const setPendingOp = useCallback((op: PendingOp) => {
+    clearPendingTimeout(op)
+    setPendingState(prev => ({
+      ...prev,
+      operations: new Set(prev.operations).add(op),
+    }))
+    // Fallback timeout to clear pending state
+    const timeout = setTimeout(() => {
+      setPendingState(prev => {
+        const next = new Set(prev.operations)
+        next.delete(op)
+        return { ...prev, operations: next }
+      })
+      pendingTimeoutRefs.current.delete(op)
+    }, PENDING_TIMEOUT_MS)
+    pendingTimeoutRefs.current.set(op, timeout)
+  }, [clearPendingTimeout])
+
+  const clearPendingOp = useCallback((op: PendingOp) => {
+    clearPendingTimeout(op)
+    setPendingState(prev => {
+      const next = new Set(prev.operations)
+      next.delete(op)
+      return { ...prev, operations: next }
+    })
+  }, [clearPendingTimeout])
+
+  const setPendingDisconnect = useCallback((deviceId: string) => {
+    const key = `disconnect_${deviceId}`
+    clearPendingTimeout(key)
+    setPendingState(prev => ({
+      ...prev,
+      disconnecting: new Set(prev.disconnecting).add(deviceId),
+    }))
+    // Fallback timeout
+    const timeout = setTimeout(() => {
+      setPendingState(prev => {
+        const next = new Set(prev.disconnecting)
+        next.delete(deviceId)
+        return { ...prev, disconnecting: next }
+      })
+      pendingTimeoutRefs.current.delete(key)
+    }, PENDING_TIMEOUT_MS)
+    pendingTimeoutRefs.current.set(key, timeout)
+  }, [clearPendingTimeout])
+
+  const clearPendingDisconnect = useCallback((deviceId: string) => {
+    const key = `disconnect_${deviceId}`
+    clearPendingTimeout(key)
+    setPendingState(prev => {
+      const next = new Set(prev.disconnecting)
+      next.delete(deviceId)
+      return { ...prev, disconnecting: next }
+    })
+  }, [clearPendingTimeout])
+
+  // Auto-clear pending states when backend confirms state change
+  useEffect(() => {
+    if (!isLocating) clearPendingOp(PendingOp.STOP_LOCATE)
+  }, [isLocating, clearPendingOp])
+
+  useEffect(() => {
+    if (!isStreaming) clearPendingOp(PendingOp.STOP_STREAMING)
+  }, [isStreaming, clearPendingOp])
+
+  // Clear pending disconnect when device state changes to disconnected
+  useEffect(() => {
+    pending.disconnecting.forEach(deviceId => {
+      const device = uiDevices.find(d => d.id === deviceId)
+      if (device && device.connectionStatus === 'disconnected') {
+        clearPendingDisconnect(deviceId)
+      }
+    })
+  }, [uiDevices, pending.disconnecting, clearPendingDisconnect])
+
+  // Derived pending flags for UI
+  const isStoppingLocate = pending.operations.has(PendingOp.STOP_LOCATE)
+  const isStoppingStreaming = pending.operations.has(PendingOp.STOP_STREAMING)
 
   const getFillStyle = () => {
     if (connectedDevicesCount === 0) {
@@ -854,11 +963,11 @@ export default function Page() {
                       <TooltipTrigger asChild>
                         <button
                           onClick={handleLocate}
-                          disabled={sortedDevices.some((d) => d.connectionStatus === "synchronizing") || isStreaming || isValidatingState || isValidatingLocate}
+                          disabled={sortedDevices.some((d) => d.connectionStatus === "synchronizing") || isStreaming || isValidatingState || isValidatingLocate || isStoppingLocate}
                           className={isSmallScreen ? "px-5 py-3 text-base rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]" : "px-4 py-2 text-sm rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"}
                           style={{
-                            backgroundColor: isLocating ? "rgba(75, 175, 39, 0.15)" : "rgba(255, 255, 255, 0.5)",
-                            color: isLocating ? "#4baf27" : "var(--tropx-shadow)",
+                            backgroundColor: (isLocating || isStoppingLocate) ? "rgba(75, 175, 39, 0.15)" : "rgba(255, 255, 255, 0.5)",
+                            color: (isLocating || isStoppingLocate) ? "#4baf27" : "var(--tropx-shadow)",
                             transition: "all 0.3s ease",
                           }}
                           onMouseEnter={(e) => {
@@ -875,7 +984,7 @@ export default function Page() {
                           }}
                           aria-label="Locate"
                         >
-                          {isValidatingLocate ? (
+                          {(isValidatingLocate || isStoppingLocate) ? (
                             <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -891,7 +1000,7 @@ export default function Page() {
                               />
                             </svg>
                           )}
-                          {isSmallScreen ? "" : (isValidatingLocate ? "Connecting..." : isLocating ? "Stop Locating" : "Locate")}
+                          {isSmallScreen ? "" : (isValidatingLocate ? "Connecting..." : isStoppingLocate ? "Stopping..." : isLocating ? "Stop Locating" : "Locate")}
                         </button>
                       </TooltipTrigger>
                       <TooltipContent>
@@ -1046,6 +1155,7 @@ export default function Page() {
                       isLocating={isLocating}
                       isLocatingTarget={isLocating && vibratingDeviceIds.includes(device.id)}
                       isReconnecting={device.isReconnecting}
+                      isDisconnecting={pending.disconnecting.has(device.id)}
                       reconnectAttempts={device.reconnectAttempts}
                       disabled={isLocating || isSyncing}
                       isSmallScreen={isSmallScreen}
@@ -1074,7 +1184,7 @@ export default function Page() {
                         }
                       }}
                       syncOffsetMs={syncProgress[device.id]?.offsetMs}
-                      syncDeviceTimestampMs={syncProgress[device.id]?.deviceTimestampMs}
+                      syncProgressPercent={syncProgress[device.id]?.progress}
                       draggable={!isLocating && !isSyncing}
                       isDragging={draggingIndex === index}
                       isDragOver={dragOverIndex === index && draggingIndex !== index}
@@ -1169,7 +1279,7 @@ export default function Page() {
                     <TooltipTrigger asChild>
                       <button
                         onClick={handleToggleStreaming}
-                        disabled={isLocating || isSyncing || isValidatingState || isValidatingLocate}
+                        disabled={isLocating || isSyncing || isValidatingState || isValidatingLocate || isStoppingStreaming}
                         className={isSmallScreen ? "px-7 py-4 text-lg rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md border border-white/50 hover:border-white/60 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]" : "px-6 py-3 text-base rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md border border-white/50 hover:border-white/60 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"}
                         style={getFillStyle()}
                       >
@@ -1180,6 +1290,14 @@ export default function Page() {
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                             </svg>
                             {!isSmallScreen && "Connecting..."}
+                          </>
+                        ) : isStoppingStreaming ? (
+                          <>
+                            <svg className={isSmallScreen ? "animate-spin h-6 w-6" : "animate-spin h-5 w-5"} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            {!isSmallScreen && "Stopping..."}
                           </>
                         ) : isStreaming ? (
                           <>

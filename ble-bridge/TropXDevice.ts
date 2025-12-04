@@ -316,7 +316,11 @@ export class TropXDevice {
   }
 
   // Ensure characteristics are discovered (used for both battery and streaming)
-  private async ensureCharacteristics(): Promise<boolean> {
+  // Includes retry logic for BLE stack recovery after intensive operations (like sync)
+  private async ensureCharacteristics(retryCount = 0): Promise<boolean> {
+    const MAX_RETRIES = 2;
+    const RETRY_DELAY_MS = 500;
+
     if (this.wrapper.commandCharacteristic && this.wrapper.dataCharacteristic) {
       return true; // Already discovered
     }
@@ -326,7 +330,7 @@ export class TropXDevice {
       return false;
     }
 
-    console.log(`🔍 [${this.wrapper.deviceInfo.name}] Discovering characteristics...`);
+    console.log(`🔍 [${this.wrapper.deviceInfo.name}] Discovering characteristics...${retryCount > 0 ? ` (retry ${retryCount}/${MAX_RETRIES})` : ''}`);
     try {
       // Fix EventEmitter memory leak warning
       if (this.wrapper.service.setMaxListeners) {
@@ -395,6 +399,14 @@ export class TropXDevice {
       return true;
     } catch (error) {
       console.error(`❌ [${this.wrapper.deviceInfo.name}] Failed to discover characteristics:`, error);
+
+      // Retry logic for BLE stack recovery
+      if (retryCount < MAX_RETRIES) {
+        console.log(`🔄 [${this.wrapper.deviceInfo.name}] Waiting ${RETRY_DELAY_MS}ms before retry...`);
+        await this.delay(RETRY_DELAY_MS);
+        return this.ensureCharacteristics(retryCount + 1);
+      }
+
       return false;
     }
   }
@@ -1064,13 +1076,26 @@ export class TropXDevice {
     console.log(`🔋 [${this.wrapper.deviceInfo.name}] 📤 Sending battery command...`);
 
     try {
+      // CRITICAL FIX: Flush stale data from command buffer BEFORE sending battery command
+      // After operations like locate mode or sync, there may be leftover response data
+      // that would corrupt the battery read if not cleared first
+      try {
+        const staleData = await this.wrapper.commandCharacteristic.readAsync();
+        if (staleData && staleData.length > 0) {
+          const staleBytes = Array.from(staleData as Uint8Array) as number[];
+          console.log(`🔋 [${this.wrapper.deviceInfo.name}] 🧹 Flushed stale buffer: [${staleBytes.map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+        }
+      } catch (flushError) {
+        // Ignore flush errors - buffer may already be empty
+      }
+
       const batteryCommand = TropXCommands.Cmd_GetBatteryCharge();
       // Battery command needs response (false) because we read the value back
       await this.wrapper.commandCharacteristic.writeAsync(Buffer.from(batteryCommand), false);
       console.log(`🔋 [${this.wrapper.deviceInfo.name}] ✅ Battery command sent, waiting for response...`);
 
       // Wait for device to process command (TropX devices need ~100ms to prepare response)
-      await this.delay(100);
+      await this.delay(150); // Increased from 100ms for more reliable response
 
       // Read response - battery level is at byte index 4 (not 0!)
       console.log(`🔋 [${this.wrapper.deviceInfo.name}] 📥 Reading battery response...`);
@@ -1082,7 +1107,26 @@ export class TropXDevice {
         console.log(`🔋 [${this.wrapper.deviceInfo.name}] 📊 Response buffer: length=${response.length}, bytes=[${bytes.map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
 
         if (response.length > 4) {
+          // VALIDATION: Check if response is actually a battery response
+          // Expected format: [TYPE=0x00, LENGTH, CMD=0x87, ERROR_CODE, BATTERY_LEVEL]
+          // Battery response command = BATTERY (0x07) | READ_MASK (0x80) = 0x87
+          const expectedCmd = 0x87; // BATTERY | READ_MASK
+          const responseCmd = response[2];
+
+          if (responseCmd !== expectedCmd) {
+            console.warn(`🔋 [${this.wrapper.deviceInfo.name}] ⚠️ Response is NOT battery data (cmd=0x${responseCmd.toString(16)}, expected=0x${expectedCmd.toString(16)})`);
+            console.warn(`🔋 [${this.wrapper.deviceInfo.name}]    This is stale data from a previous operation - discarding`);
+            return null;
+          }
+
           const batteryLevel = response[4]; // Battery at byte 4, not 0!
+
+          // Sanity check: battery should be 0-100%
+          if (batteryLevel > 100) {
+            console.warn(`🔋 [${this.wrapper.deviceInfo.name}] ⚠️ Invalid battery level: ${batteryLevel}% (> 100) - corrupted response`);
+            return null;
+          }
+
           this.wrapper.deviceInfo.batteryLevel = batteryLevel;
           console.log(`🔋 [${this.wrapper.deviceInfo.name}] ✅ Battery level: ${batteryLevel}% (from response[4])`);
 

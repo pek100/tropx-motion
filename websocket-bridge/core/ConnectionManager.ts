@@ -65,10 +65,16 @@ export class ConnectionManager {
 
   private healthChangeHandler: ((health: SystemHealth) => void) | null = null;
   private clientListChangeHandler: ((clients: ClientMetadata[]) => void) | null = null;
+  private newClientConnectHandler: ((clientId: string) => Promise<void>) | null = null;
 
   constructor() {
     this.server = new WebSocketServer();
     this.setupEventHandlers();
+  }
+
+  // Set handler for new client connections (used to push initial state)
+  onNewClientConnect(handler: (clientId: string) => Promise<void>): void {
+    this.newClientConnectHandler = handler;
   }
 
   // Start connection manager
@@ -316,6 +322,17 @@ export class ConnectionManager {
       if (connected) {
         this.clientMetrics.set(clientId, this.createDefaultMetrics());
         console.log(`Client metrics initialized: ${clientId}`);
+
+        // CRITICAL: Notify handler to push initial state to new client
+        // This ensures immediate state sync without waiting for client to query
+        if (this.newClientConnectHandler) {
+          // Small delay to ensure client is ready to receive messages
+          setTimeout(() => {
+            this.newClientConnectHandler?.(clientId).catch(err => {
+              console.error(`Failed to send initial state to ${clientId}:`, err);
+            });
+          }, 100);
+        }
       } else {
         this.clientMetrics.delete(clientId);
         this.unregisterClient(clientId);

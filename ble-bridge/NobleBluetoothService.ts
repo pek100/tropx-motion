@@ -50,12 +50,7 @@ export class NobleBluetoothService {
   private isStatePollingEnabled = false;
   private deviceStates = new Map<string, { state: number; stateName: string; lastUpdate: number }>();
 
-  // Auto-reconnect support
-  private reconnectTimers = new Map<string, NodeJS.Timeout>();
-  private reconnectAttempts = new Map<string, number>();
-  private readonly MAX_RECONNECT_ATTEMPTS = 5;
-  private readonly BASE_RECONNECT_DELAY = 500; // 0.5 second - aggressive
-  private readonly MAX_RECONNECT_DELAY = 15000; // 15 seconds max
+  // State change subscription for cleanup
   private stateChangeUnsubscribe: (() => void) | null = null;
 
   // Expose scanning state (for snapshot-based burst scanning)
@@ -353,7 +348,7 @@ export class NobleBluetoothService {
 
     const globalStreamingStartTime = Date.now();
     console.log(`🎬 Starting global streaming on ${connectedDevices.length} connected devices...`);
-    UnifiedBLEStateStore.setGlobalState(GlobalState.STREAMING);
+    // NOTE: GlobalState is managed by BLEServiceAdapter - do not set here
 
     // CRITICAL: Disable burst scanning to prevent interference with active notifications
     // Noble scan state changes can disrupt GATT notification subscriptions
@@ -366,7 +361,7 @@ export class NobleBluetoothService {
     // STEP 1: Validate and reset device states (up to 2 attempts)
     const resetResult = await this.validateAndResetDeviceStates(connectedDevices, 2);
     if (!resetResult.success) {
-      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
+      // NOTE: GlobalState reset handled by BLEServiceAdapter
       return {
         success: false,
         started: 0,
@@ -383,11 +378,10 @@ export class NobleBluetoothService {
     const successCount = results.filter(result => result.success).length;
     const globalStreamingTime = Date.now() - globalStreamingStartTime;
 
+    // NOTE: GlobalState is managed by BLEServiceAdapter based on return value
     if (successCount > 0) {
-      UnifiedBLEStateStore.setGlobalState(GlobalState.STREAMING);
       console.log(`✅ Global streaming started: ${successCount}/${connectedDevices.length} devices streaming (${globalStreamingTime}ms total)`);
     } else {
-      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
       console.log(`❌ Global streaming failed: no devices started streaming (${globalStreamingTime}ms total)`);
     }
 
@@ -476,7 +470,7 @@ export class NobleBluetoothService {
     }));
 
     if (streamingDevices.length === 0) {
-      UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
+      // NOTE: GlobalState managed by BLEServiceAdapter
       return { success: true, stopped: 0, total: 0 };
     }
 
@@ -488,7 +482,7 @@ export class NobleBluetoothService {
     const results = await Promise.all(stoppingTasks);
 
     const successCount = results.filter(result => result.success).length;
-    UnifiedBLEStateStore.setGlobalState(GlobalState.IDLE);
+    // NOTE: GlobalState managed by BLEServiceAdapter
 
     console.log(`✅ Global streaming stopped: ${successCount}/${streamingDevices.length} devices stopped`);
 
@@ -822,8 +816,10 @@ export class NobleBluetoothService {
   private async pollDeviceStates(): Promise<void> {
     if (!this.isStatePollingEnabled) return;
 
-    // Don't poll during streaming - BLE is busy
-    if (UnifiedBLEStateStore.getGlobalState() === GlobalState.STREAMING) {
+    // Don't poll during streaming, syncing, locating, or connecting - BLE is busy
+    const currentGlobalState = UnifiedBLEStateStore.getGlobalState();
+    const blockedStates = [GlobalState.STREAMING, GlobalState.SYNCING, GlobalState.LOCATING, GlobalState.CONNECTING];
+    if (blockedStates.includes(currentGlobalState)) {
       // Schedule next poll
       this.statePollingTimer = setTimeout(() => this.pollDeviceStates(), 5000);
       return;
@@ -885,257 +881,11 @@ export class NobleBluetoothService {
     return this.deviceStates.get(deviceId) || null;
   }
 
-  // Auto-reconnect with exponential backoff
-  // NOTE: State transition to RECONNECTING is handled by BLEServiceAdapter.handleDeviceEvent()
-  // This method just schedules the timer and updates reconnect metadata
-  scheduleReconnect(deviceId: string, deviceName: string): void {
-    // Clear any existing timer
-    const existingTimer = this.reconnectTimers.get(deviceId);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-    }
-
-    const attempts = this.reconnectAttempts.get(deviceId) || 0;
-
-    if (attempts >= this.MAX_RECONNECT_ATTEMPTS) {
-      console.log(`❌ [${deviceName}] Max reconnect attempts (${this.MAX_RECONNECT_ATTEMPTS}) reached. Auto-removing device.`);
-      this.reconnectAttempts.delete(deviceId);
-      this.reconnectTimers.delete(deviceId);
-
-      // Auto-remove device from state store (synchronously)
-      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
-      if (storeDeviceId) {
-        UnifiedBLEStateStore.unregisterDevice(storeDeviceId);
-      }
-      return;
-    }
-
-    // Exponential backoff: 2s, 4s, 8s, 16s, 32s (capped at 60s)
-    const delay = Math.min(
-      this.BASE_RECONNECT_DELAY * Math.pow(2, attempts),
-      this.MAX_RECONNECT_DELAY
-    );
-
-    // Update reconnect metadata (state transition already done by BLEServiceAdapter)
-    const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
-    if (storeDeviceId) {
-      UnifiedBLEStateStore.setReconnectState(storeDeviceId, attempts + 1, Date.now() + delay);
-    }
-
-    console.log(`🔄 [${deviceName}] Scheduling reconnect attempt ${attempts + 1}/${this.MAX_RECONNECT_ATTEMPTS} in ${delay}ms`);
-
-    const timer = setTimeout(async () => {
-      this.reconnectTimers.delete(deviceId);
-      await this.attemptReconnect(deviceId, deviceName);
-    }, delay);
-
-    this.reconnectTimers.set(deviceId, timer);
-    this.reconnectAttempts.set(deviceId, attempts + 1);
-  }
-
-  private async attemptReconnect(deviceId: string, deviceName: string): Promise<void> {
-    if (this.isCleaningUp) return;
-
-    const attempts = this.reconnectAttempts.get(deviceId) || 0;
-    console.log(`🔌 [${deviceName}] Reconnect attempt ${attempts}/${this.MAX_RECONNECT_ATTEMPTS}...`);
-
-    // CRITICAL: Clean up old TropXDevice AND peripheral handlers
-    const oldDevice = this.devices.get(deviceId);
-    if (oldDevice) {
-      console.log(`🧹 [${deviceName}] Cleaning up old device instance before reconnect`);
-      this.devices.delete(deviceId);
-    }
-
-    // CRITICAL: Remove ALL listeners from peripheral to prevent handler accumulation
-    // Each failed reconnection attempt adds handlers that interfere with subsequent attempts
-    const peripheral = this.discoveredPeripherals.get(deviceId);
-    if (peripheral) {
-      console.log(`🧹 [${deviceName}] Removing stale handlers from peripheral`);
-      peripheral.removeAllListeners('disconnect');
-      peripheral.removeAllListeners('connect');
-      peripheral.removeAllListeners('servicesDiscover');
-    }
-
-    // Transition to CONNECTING before attempting
-    const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
-    if (storeDeviceId) {
-      try {
-        UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.CONNECTING);
-      } catch (e) { /* ignore invalid transition */ }
-    }
-
-    // FAST PATH: Try existing peripheral first (no scan delay)
-    const existingPeripheral = this.discoveredPeripherals.get(deviceId);
-    if (existingPeripheral) {
-      console.log(`⚡ [${deviceName}] Fast path: trying existing peripheral...`);
-      const result = await this.connectToDevice(deviceId);
-
-      if (result.success) {
-        console.log(`✅ [${deviceName}] Reconnected via fast path!`);
-        this.reconnectAttempts.delete(deviceId);
-        this.reconnectTimers.delete(deviceId);
-        if (storeDeviceId) {
-          // Clear reconnect state AND force immediate broadcast
-          UnifiedBLEStateStore.setReconnectState(storeDeviceId, 0, null);
-          UnifiedBLEStateStore.clearReconnectState(storeDeviceId);
-        }
-        return;
-      }
-
-      console.log(`⚠️ [${deviceName}] Fast path failed, trying rescan...`);
-    }
-
-    // SLOW PATH: Rescan to get fresh peripheral (2 second timeout)
-    console.log(`🔍 [${deviceName}] Scanning for fresh peripheral...`);
-    const freshPeripheral = await this.scanForDevice(deviceId, deviceName, 2000);
-
-    if (!freshPeripheral) {
-      console.log(`⚠️ [${deviceName}] Device not found - will retry later`);
-      if (storeDeviceId) {
-        try {
-          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.RECONNECTING);
-        } catch (e) { /* ignore invalid transition */ }
-      }
-      this.scheduleReconnect(deviceId, deviceName);
-      return;
-    }
-
-    console.log(`✅ [${deviceName}] Fresh peripheral found, connecting...`);
-    const result = await this.connectToDevice(deviceId);
-
-    if (result.success) {
-      console.log(`✅ [${deviceName}] Reconnected successfully!`);
-      this.reconnectAttempts.delete(deviceId);
-      this.reconnectTimers.delete(deviceId);
-
-      // Clear reconnecting state AND force immediate broadcast
-      if (storeDeviceId) {
-        UnifiedBLEStateStore.setReconnectState(storeDeviceId, 0, null);
-        UnifiedBLEStateStore.clearReconnectState(storeDeviceId);
-      }
-    } else {
-      console.log(`❌ [${deviceName}] Reconnect failed: ${result.message}`);
-      // Transition back to RECONNECTING before scheduling next attempt
-      if (storeDeviceId) {
-        try {
-          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.RECONNECTING);
-        } catch (e) { /* ignore invalid transition */ }
-      }
-      // Schedule next attempt
-      this.scheduleReconnect(deviceId, deviceName);
-    }
-  }
-
-  /**
-   * Scan for a specific device by ID
-   * Used before reconnection to get a fresh peripheral object
-   * @returns The peripheral if found, null if not found within timeout
-   */
-  private async scanForDevice(deviceId: string, deviceName: string, timeoutMs: number): Promise<any | null> {
-    return new Promise(async (resolve) => {
-      let found = false;
-      let scanStarted = false;
-
-      // Set up timeout
-      const timeout = setTimeout(() => {
-        if (!found) {
-          console.log(`⏱️ [${deviceName}] Scan timeout after ${timeoutMs}ms`);
-          if (scanStarted && this.isScanning) {
-            this.stopScanning(true).catch(() => {});
-          }
-          resolve(null);
-        }
-      }, timeoutMs);
-
-      // Check if device is already in discovered peripherals and still valid
-      const existingPeripheral = this.discoveredPeripherals.get(deviceId);
-      if (existingPeripheral) {
-        // Check if peripheral is still usable (Noble peripheral state check)
-        const peripheralState = existingPeripheral.state;
-        if (peripheralState === 'disconnected') {
-          // Peripheral exists and is in disconnected state - might be usable
-          // But let's still try a quick scan to refresh it
-          console.log(`📋 [${deviceName}] Found cached peripheral (state: ${peripheralState}), refreshing...`);
-        }
-      }
-
-      // Set up a listener for this specific device
-      const discoverHandler = (peripheral: any) => {
-        const name = peripheral.advertisement?.localName || '';
-        if (peripheral.id === deviceId || name === deviceName) {
-          found = true;
-          clearTimeout(timeout);
-
-          // Update the cached peripheral with fresh reference
-          this.discoveredPeripherals.set(peripheral.id, peripheral);
-          console.log(`✅ [${deviceName}] Device rediscovered during reconnect scan`);
-
-          // Stop scanning
-          if (this.isScanning) {
-            this.stopScanning(true).catch(() => {});
-          }
-
-          // Remove listener
-          if (noble) {
-            noble.removeListener('discover', discoverHandler);
-          }
-
-          resolve(peripheral);
-        }
-      };
-
-      // Add discover listener
-      if (noble) {
-        noble.on('discover', discoverHandler);
-      }
-
-      // Start scanning
-      try {
-        // Only start if not already scanning
-        if (!this.isScanning) {
-          scanStarted = true;
-          await noble.startScanningAsync([], false);
-          this.isScanning = true;
-        } else {
-          // Already scanning, just wait
-          console.log(`📡 [${deviceName}] Scan already in progress, waiting for device...`);
-        }
-      } catch (error) {
-        console.warn(`⚠️ [${deviceName}] Failed to start reconnect scan:`, error);
-        clearTimeout(timeout);
-        if (noble) {
-          noble.removeListener('discover', discoverHandler);
-        }
-        // Even if scan fails, try with existing peripheral
-        resolve(existingPeripheral || null);
-      }
-    });
-  }
-
-  cancelReconnect(deviceId: string): void {
-    const timer = this.reconnectTimers.get(deviceId);
-    if (timer) {
-      clearTimeout(timer);
-      this.reconnectTimers.delete(deviceId);
-    }
-    this.reconnectAttempts.delete(deviceId);
-
-    // Clear reconnecting state in UnifiedBLEStateStore (synchronous)
-    const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
-    if (storeDeviceId) {
-      // Transition back to DISCONNECTED and clear reconnect state
-      try {
-        UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.DISCONNECTED);
-      } catch (e) { /* ignore invalid transition */ }
-      UnifiedBLEStateStore.setReconnectState(storeDeviceId, 0, null);
-    }
-  }
+  // NOTE: Reconnection is now handled by ReconnectionManager singleton
+  // See: ble-management/ReconnectionManager.ts
 
   async removeDevice(deviceId: string): Promise<{ success: boolean; message?: string }> {
     try {
-      // Cancel any ongoing reconnect
-      this.cancelReconnect(deviceId);
-
       // Remove from UnifiedBLEStateStore (using already imported module)
       const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
 
@@ -1155,30 +905,16 @@ export class NobleBluetoothService {
     }
   }
 
-  // Subscribe to state changes to clear retry attempts on successful connection
+  // Subscribe to state changes for logging/debugging
+  // NOTE: Reconnection state changes are now handled by ReconnectionManager
   private subscribeToStateChanges(): void {
     const handler = (change: { deviceId: number; previousState: DeviceState; newState: DeviceState }) => {
-      // Get the BLE address for this device ID
       const device = UnifiedBLEStateStore.getDevice(change.deviceId);
       if (!device) return;
 
-      const bleAddress = device.bleAddress;
-
-      // ONLY clear retry attempts when successfully connected
-      // This ensures reconnection attempts continue with proper backoff
-      // Previous bug: clearing on any state change reset backoff prematurely
-      if (change.newState === DeviceState.CONNECTED && this.reconnectAttempts.has(bleAddress)) {
-        console.log(`✅ [${device.bleName}] Clearing retry attempts - device connected successfully`);
-        this.reconnectAttempts.delete(bleAddress);
-      }
-
-      // Cancel pending reconnect timer if device is no longer in reconnecting flow
-      // (e.g., user manually disconnected, device entered error state, etc.)
-      const timer = this.reconnectTimers.get(bleAddress);
-      if (timer && change.newState !== DeviceState.RECONNECTING && change.newState !== DeviceState.CONNECTING) {
-        console.log(`⏹️ [${device.bleName}] Cancelling pending reconnect timer on state change to ${change.newState}`);
-        clearTimeout(timer);
-        this.reconnectTimers.delete(bleAddress);
+      // Log successful connections
+      if (change.newState === DeviceState.CONNECTED) {
+        console.log(`✅ [${device.bleName}] Device connected successfully`);
       }
     };
 
@@ -1203,13 +939,6 @@ export class NobleBluetoothService {
 
     // Stop state polling
     this.stopStatePolling();
-
-    // Clear all reconnect timers
-    for (const timer of this.reconnectTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.reconnectTimers.clear();
-    this.reconnectAttempts.clear();
 
     if (this.isScanning) {
       await this.stopScanning(true); // suppress next burst during cleanup
