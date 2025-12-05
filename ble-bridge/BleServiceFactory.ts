@@ -1,11 +1,10 @@
 /**
  * BLE Service Factory - Platform-aware BLE implementation selector
  *
- * Windows/Mac: Uses @abandonware/noble (HCI socket)
- * Linux/Raspberry Pi: Uses node-ble (BlueZ via DBus)
+ * Windows/Mac: Uses @abandonware/noble (HCI socket) with ParallelStrategy
+ * Linux/Raspberry Pi: Uses node-ble (BlueZ via DBus) with SequentialStrategy
  */
 
-import os from 'os';
 import {
   MotionDataCallback,
   DeviceEventCallback,
@@ -14,6 +13,8 @@ import {
   TropXDeviceInfo
 } from './BleBridgeTypes';
 import { TropXDevice } from './TropXDevice';
+import { getPlatformConfig, isNobleAvailable, isNodeBleAvailable } from './PlatformConfig';
+import { ConnectionStrategyType } from './interfaces/IConnectionStrategy';
 
 export interface IBleService {
   // Core lifecycle
@@ -77,24 +78,63 @@ export interface IBleService {
 
 /**
  * Factory function to create appropriate BLE service based on platform
+ * Uses UnifiedBLEService with platform-specific transport and strategy
  */
 export async function createBleService(
   motionCallback?: MotionDataCallback,
   eventCallback?: DeviceEventCallback
 ): Promise<IBleService> {
-  const platform = os.platform();
+  const config = getPlatformConfig();
 
-  console.log(`🔍 Detecting platform: ${platform}`);
+  console.log(`[BleServiceFactory] Platform: ${config.platform}`);
+  console.log(`[BleServiceFactory] Transport: ${config.transportType}`);
+  console.log(`[BleServiceFactory] Strategy: ${config.strategyType}`);
 
-  if (platform === 'linux') {
-    console.log('✅ Linux detected - using node-ble (BlueZ via DBus)');
-    const { NodeBleService } = await import('./NodeBleService');
-    return new NodeBleService(motionCallback, eventCallback);
-  } else if (platform === 'darwin' || platform === 'win32') {
-    console.log(`✅ ${platform === 'darwin' ? 'macOS' : 'Windows'} detected - using @abandonware/noble (HCI)`);
-    const { NobleBluetoothService } = await import('./NobleBluetoothService');
-    return new NobleBluetoothService(motionCallback, eventCallback);
+  // Import UnifiedBLEService (always needed)
+  const { UnifiedBLEService } = await import('./UnifiedBLEService');
+
+  // Create transport based on platform config
+  let transport;
+  if (config.transportType === 'noble') {
+    if (!isNobleAvailable()) {
+      throw new Error('Noble is not available on this system');
+    }
+    console.log('[BleServiceFactory] Loading NobleTransport...');
+    const { NobleTransport } = await import('./transports/NobleTransport');
+    transport = new NobleTransport();
   } else {
-    throw new Error(`Unsupported platform: ${platform}`);
+    if (!isNodeBleAvailable()) {
+      throw new Error('node-ble is not available on this system');
+    }
+    console.log('[BleServiceFactory] Loading NodeBleTransport...');
+    const { NodeBleTransport } = await import('./transports/NodeBleTransport');
+    transport = new NodeBleTransport();
   }
+
+  // Create strategy based on platform config
+  let strategy;
+  if (config.strategyType === ConnectionStrategyType.PARALLEL) {
+    console.log('[BleServiceFactory] Using ParallelStrategy');
+    const { ParallelStrategy } = await import('./strategies/ParallelStrategy');
+    strategy = new ParallelStrategy({
+      maxRetries: config.timing.gattRetryAttempts,
+      retryDelayMs: config.timing.gattRetryDelayMs,
+      connectionTimeoutMs: config.timing.connectionTimeoutMs,
+      stateVerificationTimeoutMs: config.timing.stateVerificationTimeoutMs,
+      interConnectionDelayMs: config.timing.interConnectionDelayMs,
+    });
+  } else {
+    console.log('[BleServiceFactory] Using SequentialStrategy');
+    const { SequentialStrategy } = await import('./strategies/SequentialStrategy');
+    strategy = new SequentialStrategy({
+      maxRetries: config.timing.gattRetryAttempts,
+      retryDelayMs: config.timing.gattRetryDelayMs,
+      connectionTimeoutMs: config.timing.connectionTimeoutMs,
+      stateVerificationTimeoutMs: config.timing.stateVerificationTimeoutMs,
+      interConnectionDelayMs: config.timing.interConnectionDelayMs,
+    });
+  }
+
+  console.log('[BleServiceFactory] Creating UnifiedBLEService...');
+  return new UnifiedBLEService(transport, strategy, motionCallback, eventCallback);
 }

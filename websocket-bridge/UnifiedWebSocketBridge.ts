@@ -96,8 +96,8 @@ export class UnifiedWebSocketBridge {
         if (!bleInitialized) {
           console.warn('⚠️ BLE service failed to initialize - continuing without BLE');
         } else {
-          console.log('🔄 Enabling initial 10-second burst scan');
-          this.bleServiceAdapter.enableBurstScanningFor(10000);
+          console.log('🔄 Enabling initial 25-second burst scan');
+          this.bleServiceAdapter.enableBurstScanningFor(25000);
         }
 
         // Connect service adapters to existing services

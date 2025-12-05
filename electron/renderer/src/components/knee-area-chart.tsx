@@ -334,6 +334,9 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   const renderToggleButton = (config: (typeof KNEE_CONFIGS)[0]) => {
     const isVisible = kneeVisibility[config.key as keyof typeof kneeVisibility]
+    const currentAngle = config.key === "left" ? leftKnee?.current : rightKnee?.current
+    const angleDisplay = currentAngle !== undefined ? `${Math.round(currentAngle)}°` : "--°"
+
     return (
       <button
         key={config.key}
@@ -342,6 +345,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
       >
         {isVisible && <Check className="w-4 h-4" />}
         {config.label}
+        <span className="font-mono font-bold ml-1">{angleDisplay}</span>
       </button>
     )
   }
@@ -457,7 +461,6 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
                 stroke="var(--tropx-shadow)"
                 style={{ fontSize: CHART_LAYOUT.FONT_SIZE }}
                 tick={{ fill: "var(--tropx-shadow)" }}
-                label={{ value: "Angle (°)", angle: -90, position: "insideLeft", fill: "var(--tropx-shadow)" }}
               />
 
               <Tooltip content={<CustomTooltip />} />

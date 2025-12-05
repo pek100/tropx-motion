@@ -587,7 +587,7 @@ export default function Page() {
               </div>
 
               {/* Scrollable Container for Device Cards */}
-              <div className="overflow-y-auto overflow-x-hidden flex flex-col items-center gap-4 p-3 min-h-0 relative">
+              <div className="overflow-y-auto overflow-x-hidden flex flex-col items-center gap-4 py-3 px-8 min-h-0 relative">
                 {isRefreshing && (
                   <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
                     <div className="visor-scan" />

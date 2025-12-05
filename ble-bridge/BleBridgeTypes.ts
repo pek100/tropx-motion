@@ -67,12 +67,25 @@ export type MotionDataCallback = (deviceId: string, data: MotionData) => void;
 // Device event callback
 export type DeviceEventCallback = (deviceId: string, event: string, data?: any) => void;
 
-// Noble peripheral wrapper
+// Noble peripheral wrapper (legacy - for backwards compatibility)
 export interface NoblePeripheralWrapper {
   peripheral: any; // Noble.Peripheral
   deviceInfo: TropXDeviceInfo;
   service: any | null; // Service reference
   commandCharacteristic: any | null;
   dataCharacteristic: any | null;
+  isStreaming: boolean;
+}
+
+// Import interface types for the unified wrapper
+import { IPeripheral, IService, ICharacteristic } from './interfaces/ITransport';
+
+// Unified peripheral wrapper (uses IPeripheral interface)
+export interface UnifiedPeripheralWrapper {
+  peripheral: IPeripheral;
+  deviceInfo: TropXDeviceInfo;
+  service: IService | null;
+  commandCharacteristic: ICharacteristic | null;
+  dataCharacteristic: ICharacteristic | null;
   isStreaming: boolean;
 }

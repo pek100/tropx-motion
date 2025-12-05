@@ -146,6 +146,11 @@
   background: linear-gradient(135deg, #e9d5ff 0%, #d8b4fe 100%);
 }
 
+/* Adding gray gradient for unavailable state */
+.gradient-gray-card {
+  background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%);
+}
+
 /* Adding flash animation for left pane validation feedback */
 @keyframes flash-border {
   0%,

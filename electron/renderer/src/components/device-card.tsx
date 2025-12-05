@@ -1,6 +1,6 @@
 "use client"
 
-import { Link, Link2Off as LinkOff, Loader2, RefreshCw, X } from "lucide-react"
+import { Link, Link2Off as LinkOff, Loader2, RefreshCw, X, Trash2 } from "lucide-react"
 import { useEffect, useState, memo } from "react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { LegAboveRightKnee } from "./leg-above-right-knee"
@@ -29,7 +29,7 @@ interface DeviceCardProps {
   deviceId: number // Device ID (0x11=LEFT_SHIN, 0x12=LEFT_THIGH, 0x21=RIGHT_SHIN, 0x22=RIGHT_THIGH)
   batteryPercentage: number | null
   signalStrength: 1 | 2 | 3 | 4 // 1-4 bars
-  connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing" | "reconnecting"
+  connectionStatus: "connected" | "disconnected" | "unavailable" | "connecting" | "synchronizing" | "reconnecting"
   isStreaming?: boolean
   isLocating?: boolean
   isLocatingTarget?: boolean
@@ -39,6 +39,7 @@ interface DeviceCardProps {
   disabled?: boolean
   onToggleConnection?: () => void
   onRemove?: () => void
+  errorMessage?: string | null // Error message for unavailable state
   syncOffsetMs?: number
   syncProgressPercent?: number | null
   isSmallScreen?: boolean
@@ -50,6 +51,10 @@ interface DeviceCardProps {
   onDragOver?: (e: React.DragEvent) => void
   onDrop?: (e: React.DragEvent) => void
   onDragEnd?: (e: React.DragEvent) => void
+  // Touch drag (for touchscreens like Pi)
+  onTouchStart?: (e: React.TouchEvent) => void
+  onTouchMove?: (e: React.TouchEvent) => void
+  onTouchEnd?: (e: React.TouchEvent) => void
 }
 
 export function DeviceCard({
@@ -67,6 +72,7 @@ export function DeviceCard({
   disabled = false,
   onToggleConnection,
   onRemove,
+  errorMessage,
   syncOffsetMs,
   syncProgressPercent,
   isSmallScreen = false,
@@ -77,11 +83,16 @@ export function DeviceCard({
   onDragOver,
   onDrop,
   onDragEnd,
+  onTouchStart,
+  onTouchMove,
+  onTouchEnd,
 }: DeviceCardProps) {
   // Determine left/right based on deviceId (left devices: 0x11, 0x12; right devices: 0x21, 0x22)
   const isLeft = deviceId === DeviceId.LEFT_SHIN || deviceId === DeviceId.LEFT_THIGH
   const bgColor =
-    connectionStatus === "synchronizing" ? "gradient-purple-card" : isLeft ? "gradient-blue-card" : "gradient-red-card"
+    connectionStatus === "unavailable" ? "gradient-gray-card" :
+    connectionStatus === "synchronizing" ? "gradient-purple-card" :
+    isLeft ? "gradient-blue-card" : "gradient-red-card"
 
   const getDeviceSvg = () => {
     switch (deviceId) {
@@ -121,6 +132,18 @@ export function DeviceCard({
             <MsCounter />
           )}
         </div>
+      )
+    }
+
+    // For unavailable devices, show all grey bars (no signal)
+    if (connectionStatus === "unavailable") {
+      return (
+        <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="14" width="3" height="8" rx="1" fill="#D1D5DB" />
+          <rect x="7" y="10" width="3" height="12" rx="1" fill="#D1D5DB" />
+          <rect x="12" y="6" width="3" height="16" rx="1" fill="#D1D5DB" />
+          <rect x="17" y="2" width="3" height="20" rx="1" fill="#D1D5DB" />
+        </svg>
       )
     }
 
@@ -171,8 +194,10 @@ export function DeviceCard({
       return <div className="animate-spin"><RefreshCw className={iconClass} style={{ color: "#9333ea" }} /></div>
     } else if (connectionStatus === "connecting") {
       return <div className="animate-spin"><Loader2 className={iconClass} style={{ color: iconColor }} /></div>
+    } else if (connectionStatus === "unavailable") {
+      // Unavailable: Show disconnected link icon (no connectivity) in grey
+      return <LinkOff className={iconClass} style={{ color: "#9CA3AF" }} />
     } else {
-      // Disabled
       return <LinkOff className={`${iconClass} opacity-30`} style={{ color: iconColor }} />
     }
   }
@@ -198,6 +223,8 @@ export function DeviceCard({
       return "Connecting..."
     } else if (connectionStatus === "synchronizing") {
       return "Synchronizing Clock"
+    } else if (connectionStatus === "unavailable") {
+      return "Unavailable"
     } else {
       return "Available"
     }
@@ -209,6 +236,9 @@ export function DeviceCard({
     }
     if (connectionStatus === "disconnected") {
       return "#9CA3AF" // gray
+    }
+    if (connectionStatus === "unavailable") {
+      return "#9CA3AF" // gray for unavailable
     }
     if (connectionStatus === "synchronizing") {
       return "#9333ea" // purple
@@ -227,6 +257,9 @@ export function DeviceCard({
         onDragOver={onDragOver}
         onDrop={onDrop}
         onDragEnd={onDragEnd}
+        onTouchStart={draggable && !disabled ? onTouchStart : undefined}
+        onTouchMove={draggable && !disabled ? onTouchMove : undefined}
+        onTouchEnd={draggable && !disabled ? onTouchEnd : undefined}
         aria-grabbed={isDragging}
         data-dragging={isDragging ? 'true' : 'false'}
         data-dragover={isDragOver ? 'true' : 'false'}
@@ -286,15 +319,18 @@ export function DeviceCard({
                 </TooltipContent>
               </Tooltip>
             ) : connectionStatus === "connecting" ? (
-              /* Show X button to cancel initial connection */
+              /* Show spinner + X button to cancel initial connection */
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     onClick={onToggleConnection}
-                    className={`cursor-pointer bg-white rounded-full ${isSmallScreen ? 'w-11 h-11' : 'px-3 py-2'} flex items-center justify-center gap-2`}
+                    className={`cursor-pointer bg-white rounded-full ${isSmallScreen ? 'px-2 py-2' : 'px-3 py-2'} flex items-center justify-center gap-1`}
                   >
                     {isSmallScreen ? (
-                      <X className="w-6 h-6" style={{ color: isLeft ? "#0080C0" : "#BF0000" }} />
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" style={{ color: isLeft ? "#0080C0" : "#BF0000" }} />
+                        <X className="w-5 h-5" style={{ color: isLeft ? "#0080C0" : "#BF0000" }} />
+                      </>
                     ) : (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" style={{ color: isLeft ? "#0080C0" : "#BF0000" }} />
@@ -330,12 +366,53 @@ export function DeviceCard({
                   <p>Disconnecting device...</p>
                 </TooltipContent>
               </Tooltip>
+            ) : connectionStatus === "unavailable" ? (
+              /* Show Retry and Clear buttons for unavailable devices */
+              <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={onToggleConnection}
+                      disabled={disabled}
+                      className={`cursor-pointer bg-white rounded-full ${isSmallScreen ? 'w-10 h-10' : 'px-3 py-2'} flex items-center justify-center gap-1 hover:bg-gray-50 disabled:opacity-50`}
+                    >
+                      <RefreshCw className={isSmallScreen ? "w-5 h-5" : "w-4 h-4"} style={{ color: "#6b7280" }} />
+                      {!isSmallScreen && (
+                        <span className="text-sm font-medium" style={{ color: "#6b7280" }}>
+                          Retry
+                        </span>
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{errorMessage || "Retry connection"}</p>
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={onRemove}
+                      className={`cursor-pointer bg-white rounded-full ${isSmallScreen ? 'w-10 h-10' : 'px-3 py-2'} flex items-center justify-center gap-1 hover:bg-red-50`}
+                    >
+                      <Trash2 className={isSmallScreen ? "w-5 h-5" : "w-4 h-4"} style={{ color: "#ef4444" }} />
+                      {!isSmallScreen && (
+                        <span className="text-sm font-medium" style={{ color: "#ef4444" }}>
+                          Clear
+                        </span>
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Remove device from list</p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
             ) : (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     onClick={onToggleConnection}
-                    disabled={connectionStatus === "disabled" || disabled}
+                    disabled={disabled}
                     className={`disabled:cursor-not-allowed cursor-pointer bg-white rounded-full ${isSmallScreen ? 'w-11 h-11' : 'px-3 py-2'} flex items-center justify-center gap-2 disabled:opacity-50`}
                   >
                     <ConnectionIcon />
@@ -362,7 +439,7 @@ export function DeviceCard({
 
         {/* ALWAYS show device SVG - scaled for small screens */}
         <div
-          className={`cursor-pointer group ${isSmallScreen ? '-ml-3 -mr-2' : ''} ${
+          className={`cursor-pointer group ${isSmallScreen ? 'mx-2' : 'mx-3'} ${
             isLocating && !isLocatingTarget ? 'grayscale' : ''
           } ${isLocatingTarget ? 'animate-vibrate' : ''} ${isSmallScreen ? 'scale-130' : 'scale-100'}`}
         >

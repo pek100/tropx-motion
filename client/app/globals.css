@@ -199,6 +199,11 @@
   background: linear-gradient(135deg, #e9d5ff 0%, #d8b4fe 100%);
 }
 
+/* Adding orange gradient for reconnecting state */
+.gradient-orange-card {
+  background: linear-gradient(135deg, #fed7aa 0%, #fdba74 100%);
+}
+
 /* Adding flash animation for left pane validation feedback */
 @keyframes flash-border {
   0%,

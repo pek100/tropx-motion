@@ -107,6 +107,10 @@ class ReconnectionManagerImpl {
     try {
       if (device?.state !== DeviceState.RECONNECTING) {
         UnifiedBLEStateStore.transition(deviceId, DeviceState.RECONNECTING);
+        // CRITICAL: Force immediate broadcast when device enters RECONNECTING state
+        // This ensures UI shows "Reconnecting..." immediately after disconnect
+        UnifiedBLEStateStore.forceBroadcast();
+        console.log(`📡 [${deviceName}] Forced broadcast for → RECONNECTING`);
       }
       UnifiedBLEStateStore.setReconnectState(
         deviceId,
@@ -172,6 +176,10 @@ class ReconnectionManagerImpl {
       // Transition to CONNECTING
       try {
         UnifiedBLEStateStore.transition(deviceId, DeviceState.CONNECTING);
+        // CRITICAL: Force immediate broadcast for RECONNECTING → CONNECTING
+        // This ensures UI shows "Connecting..." instead of stale "Reconnecting..." state
+        UnifiedBLEStateStore.forceBroadcast();
+        console.log(`📡 [${deviceName}] Forced broadcast for RECONNECTING → CONNECTING`);
       } catch (e) {
         console.warn(`⚠️ [${deviceName}] Could not transition to CONNECTING:`, e);
       }

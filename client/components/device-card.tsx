@@ -1,6 +1,6 @@
 "use client"
 
-import { Link, Link2Off as LinkOff, Loader2, RefreshCw } from "lucide-react"
+import { Link, Link2Off as LinkOff, Loader2, RefreshCw, X } from "lucide-react"
 import { useEffect, useState, memo } from "react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { LegAboveRightKnee } from "./leg-above-right-knee"
@@ -27,12 +27,16 @@ interface DeviceCardProps {
   name: string
   batteryPercentage: number
   signalStrength: 1 | 2 | 3 | 4 // 1-4 bars
-  connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing"
+  connectionStatus: "connected" | "disconnected" | "disabled" | "connecting" | "synchronizing" | "reconnecting"
   isStreaming?: boolean
   isLocating?: boolean
   isLocatingTarget?: boolean
+  isReconnecting?: boolean
+  isDisconnecting?: boolean
+  reconnectAttempts?: number
   disabled?: boolean
   onToggleConnection?: () => void
+  onCancelReconnect?: () => void
 }
 
 export function DeviceCard({
@@ -43,12 +47,21 @@ export function DeviceCard({
   isStreaming = false,
   isLocating = false,
   isLocatingTarget = false,
+  isReconnecting = false,
+  isDisconnecting = false,
+  reconnectAttempts = 0,
   disabled = false,
   onToggleConnection,
+  onCancelReconnect,
 }: DeviceCardProps) {
   const isLn = name.includes("ln")
-  const bgColor =
-    connectionStatus === "synchronizing" ? "gradient-purple-card" : isLn ? "gradient-blue-card" : "gradient-red-card"
+
+  // Background color based on state
+  const getBgColor = () => {
+    if (connectionStatus === "synchronizing") return "gradient-purple-card"
+    if (connectionStatus === "reconnecting" || isReconnecting) return "gradient-orange-card"
+    return isLn ? "gradient-blue-card" : "gradient-red-card"
+  }
 
   const getDeviceSvg = () => {
     if (name.includes("rn_top")) {
@@ -86,32 +99,81 @@ export function DeviceCard({
 
   const ConnectionIcon = () => {
     const iconColor = isLn ? "#0080FF" : "#FF3535"
+    const iconClass = "w-5 h-5"
 
-    if (connectionStatus === "connected") {
-      return <LinkOff className="w-5 h-5" style={{ color: iconColor }} />
-    } else if (connectionStatus === "disconnected") {
-      return <Link className="w-5 h-5" style={{ color: iconColor }} />
-    } else if (connectionStatus === "synchronizing") {
-      return <RefreshCw className="w-5 h-5 animate-smooth-spin transform-gpu" style={{ color: "#9333ea" }} />
-    } else if (connectionStatus === "connecting") {
-      return <Loader2 className="w-5 h-5 animate-spin" style={{ color: iconColor }} />
-    } else {
-      return <LinkOff className="w-5 h-5 opacity-30" style={{ color: iconColor }} />
+    // Disconnecting in progress
+    if (isDisconnecting) {
+      return (
+        <div className="animate-spin">
+          <Loader2 className={iconClass} style={{ color: iconColor }} />
+        </div>
+      )
     }
+
+    // Reconnecting state - RED spinner
+    if (isReconnecting || connectionStatus === "reconnecting") {
+      return (
+        <div className="animate-spin">
+          <RefreshCw className={iconClass} style={{ color: "#ef4444" }} />
+        </div>
+      )
+    }
+
+    // Connected
+    if (connectionStatus === "connected") {
+      return <LinkOff className={iconClass} style={{ color: iconColor }} />
+    }
+
+    // Disconnected
+    if (connectionStatus === "disconnected") {
+      return <Link className={iconClass} style={{ color: iconColor }} />
+    }
+
+    // Synchronizing - purple spinner
+    if (connectionStatus === "synchronizing") {
+      return (
+        <div className="animate-spin">
+          <RefreshCw className={iconClass} style={{ color: "#9333ea" }} />
+        </div>
+      )
+    }
+
+    // Connecting - spinner
+    if (connectionStatus === "connecting") {
+      return (
+        <div className="animate-spin">
+          <Loader2 className={iconClass} style={{ color: iconColor }} />
+        </div>
+      )
+    }
+
+    // Disabled
+    return <LinkOff className={`${iconClass} opacity-30`} style={{ color: iconColor }} />
   }
 
   const getStatusText = () => {
+    if (isDisconnecting) {
+      return "Disconnecting..."
+    }
+    if (isReconnecting || connectionStatus === "reconnecting") {
+      if (connectionStatus === "connecting") {
+        return `Reconnecting... (${reconnectAttempts}/5)`
+      }
+      return `Connection Lost (${reconnectAttempts}/5)`
+    }
     if (connectionStatus === "connected" && isStreaming) {
       return "Streaming"
-    } else if (connectionStatus === "connected") {
-      return "Connected"
-    } else if (connectionStatus === "connecting") {
-      return "Connecting"
-    } else if (connectionStatus === "synchronizing") {
-      return "Synchronizing Clock"
-    } else {
-      return "Available"
     }
+    if (connectionStatus === "connected") {
+      return "Connected"
+    }
+    if (connectionStatus === "connecting") {
+      return "Connecting..."
+    }
+    if (connectionStatus === "synchronizing") {
+      return "Synchronizing Clock"
+    }
+    return "Available"
   }
 
   const getStatusColor = () => {
@@ -121,14 +183,108 @@ export function DeviceCard({
     if (connectionStatus === "synchronizing") {
       return "#9333ea" // purple
     }
+    if (isReconnecting || connectionStatus === "reconnecting") {
+      return "#ef4444" // red for reconnecting
+    }
+    if (connectionStatus === "connecting") {
+      return isLn ? "#0080C0" : "#BF0000"
+    }
     return isLn ? "#0080C0" : "#BF0000"
+  }
+
+  // Determine button content and action
+  const renderButton = () => {
+    const baseButtonClass = "hover:scale-110 active:scale-95 transition-transform cursor-pointer bg-white rounded-full px-3 py-2 flex items-center gap-2"
+    const textColor = isLn ? "#0080C0" : "#BF0000"
+
+    // Reconnecting - show cancel button
+    if (isReconnecting || connectionStatus === "reconnecting") {
+      return (
+        <button
+          onClick={onCancelReconnect || onToggleConnection}
+          className={`${baseButtonClass} border-2 border-red-400`}
+        >
+          <div className="animate-spin">
+            <RefreshCw className="w-5 h-5" style={{ color: "#ef4444" }} />
+          </div>
+          <X className="w-4 h-4" style={{ color: "#ef4444" }} />
+          <span className="text-sm font-medium" style={{ color: "#ef4444" }}>
+            Cancel
+          </span>
+        </button>
+      )
+    }
+
+    // Connecting - show cancel button
+    if (connectionStatus === "connecting") {
+      return (
+        <button
+          onClick={onToggleConnection}
+          className={baseButtonClass}
+        >
+          <div className="animate-spin">
+            <Loader2 className="w-5 h-5" style={{ color: textColor }} />
+          </div>
+          <X className="w-4 h-4" style={{ color: textColor }} />
+          <span className="text-sm font-medium" style={{ color: textColor }}>
+            Cancel
+          </span>
+        </button>
+      )
+    }
+
+    // Disconnecting - disabled button
+    if (isDisconnecting) {
+      return (
+        <button
+          disabled
+          className={`${baseButtonClass} opacity-50 cursor-not-allowed`}
+        >
+          <ConnectionIcon />
+          <span className="text-sm font-medium" style={{ color: textColor }}>
+            Disconnecting
+          </span>
+        </button>
+      )
+    }
+
+    // Synchronizing
+    if (connectionStatus === "synchronizing") {
+      return (
+        <button
+          disabled
+          className={`${baseButtonClass} opacity-70 cursor-not-allowed`}
+        >
+          <ConnectionIcon />
+          <span className="text-sm font-medium" style={{ color: "#9333ea" }}>
+            Syncing
+          </span>
+        </button>
+      )
+    }
+
+    // Default - connect/disconnect button
+    return (
+      <button
+        onClick={onToggleConnection}
+        disabled={connectionStatus === "disabled" || disabled}
+        className={`${baseButtonClass} disabled:cursor-not-allowed disabled:opacity-50`}
+      >
+        <ConnectionIcon />
+        {connectionStatus === "disconnected" && (
+          <span className="text-sm font-medium" style={{ color: textColor }}>
+            Connect
+          </span>
+        )}
+      </button>
+    )
   }
 
   return (
     <TooltipProvider>
       <div className="flex items-center gap-3">
         <div
-          className={`${bgColor} rounded-full px-4 py-2.5 flex items-center gap-3 w-[340px] transition-all ${
+          className={`${getBgColor()} rounded-full px-4 py-2.5 flex items-center gap-3 w-[340px] transition-all ${
             isLocating && !isLocatingTarget ? "grayscale" : ""
           } ${isLocatingTarget ? "animate-vibrate" : ""}`}
         >
@@ -152,31 +308,18 @@ export function DeviceCard({
 
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
-                  onClick={onToggleConnection}
-                  disabled={connectionStatus === "disabled" || disabled}
-                  className="hover:scale-110 active:scale-95 transition-transform disabled:cursor-not-allowed cursor-pointer bg-white rounded-full px-3 py-2 flex items-center gap-2 disabled:opacity-50"
-                >
-                  <ConnectionIcon />
-                  {connectionStatus === "disconnected" && (
-                    <span className="text-sm font-medium" style={{ color: isLn ? "#0080C0" : "#BF0000" }}>
-                      Connect
-                    </span>
-                  )}
-                  {connectionStatus === "connecting" && (
-                    <span className="text-sm font-medium" style={{ color: isLn ? "#0080C0" : "#BF0000" }}>
-                      Connecting
-                    </span>
-                  )}
-                  {connectionStatus === "synchronizing" && (
-                    <span className="text-sm font-medium" style={{ color: "#9333ea" }}>
-                      Syncing
-                    </span>
-                  )}
-                </button>
+                {renderButton()}
               </TooltipTrigger>
               <TooltipContent>
-                <p>{connectionStatus === "connected" ? "Disconnect device" : "Connect device"}</p>
+                <p>
+                  {isReconnecting || connectionStatus === "reconnecting"
+                    ? "Cancel reconnection"
+                    : connectionStatus === "connecting"
+                    ? "Cancel connection"
+                    : connectionStatus === "connected"
+                    ? "Disconnect device"
+                    : "Connect device"}
+                </p>
               </TooltipContent>
             </Tooltip>
           </div>

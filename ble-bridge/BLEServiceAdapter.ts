@@ -754,7 +754,9 @@ export class BLEServiceAdapter implements BLEService {
       // Motion processing will be handled in WebSocket bridge (main process)
 
       // Start streaming on all connected devices with state validation
+      console.log(`🎬 [BLEServiceAdapter] About to call startGlobalStreaming, connectedDevices.length=${connectedDevices.length}`);
       const streamingResult = await this.bleService.startGlobalStreaming();
+      console.log(`🎬 [BLEServiceAdapter] startGlobalStreaming returned:`, JSON.stringify(streamingResult, null, 2));
 
       if (streamingResult.success && streamingResult.started > 0) {
         this.isCurrentlyRecording = true;

@@ -104,10 +104,12 @@ export const TRANSITION_RULES: Record<DeviceState, DeviceState[]> = {
   [DeviceState.DISCONNECTED]: [
     DeviceState.DISCOVERED,
     DeviceState.CONNECTING,
+    DeviceState.ERROR,  // For unavailable device detection
   ],
   [DeviceState.DISCOVERED]: [
     DeviceState.CONNECTING,
     DeviceState.DISCONNECTED,
+    DeviceState.ERROR,  // For device not found during connection attempt
   ],
   [DeviceState.CONNECTING]: [
     DeviceState.CONNECTED,
@@ -149,6 +151,7 @@ export const TRANSITION_RULES: Record<DeviceState, DeviceState[]> = {
     DeviceState.ERROR,
   ],
   [DeviceState.ERROR]: [
+    DeviceState.DISCOVERED,  // Recovery when device is rediscovered during scan
     DeviceState.DISCONNECTED,
     DeviceState.CONNECTING,
   ],

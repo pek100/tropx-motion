@@ -1307,8 +1307,35 @@ export class TropXDevice {
   }
 
   // Handle device disconnect
+  // CRITICAL: Must update UnifiedBLEStateStore so UI reflects the state change
   private handleDisconnect(): void {
     console.log(`🔌 Device disconnected: ${this.wrapper.deviceInfo.name} (user-initiated: ${this.userInitiatedDisconnect})`);
+
+    // Import state store dynamically to update state
+    // This is critical for UI to show correct disconnect/reconnect state
+    try {
+      const { UnifiedBLEStateStore, DeviceState } = require('../ble-management');
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(this.wrapper.deviceInfo.id);
+
+      if (storeDeviceId) {
+        // For user-initiated disconnect, transition to DISCONNECTED immediately
+        // For unexpected disconnect, the auto_reconnect event handler will transition to RECONNECTING
+        if (this.userInitiatedDisconnect) {
+          try {
+            UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.DISCONNECTED);
+            UnifiedBLEStateStore.forceBroadcast(); // Immediate UI update
+            console.log(`📡 [${this.wrapper.deviceInfo.name}] State store updated to DISCONNECTED`);
+          } catch (e) {
+            console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Could not transition to DISCONNECTED:`, e);
+          }
+        }
+        // Note: For unexpected disconnects, BLEServiceAdapter.handleDeviceEvent('auto_reconnect')
+        // handles the transition to RECONNECTING state via ReconnectionManager
+      }
+    } catch (importError) {
+      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Could not import state store:`, importError);
+    }
+
     this.cleanup();
     this.wrapper.deviceInfo.state = 'disconnected';
     this.notifyEvent('disconnected');
@@ -1389,15 +1416,33 @@ export class TropXDevice {
     }
 
     // Check if characteristic supports writeWithoutResponse for faster writes
+    // Handle both Noble-style (array) and ICharacteristic-style (object) properties
     const props = this.wrapper.commandCharacteristic.properties;
-    const supportsWriteWithoutResponse = props && (props.includes('writeWithoutResponse') || props.writeWithoutResponse === true);
+    let supportsWriteWithoutResponse = false;
 
-    if (supportsWriteWithoutResponse) {
-      // Fast write - no ACK needed
-      await this.wrapper.commandCharacteristic.writeAsync(buffer, true);
-    } else {
-      // Fallback to write with response (slower but more reliable)
-      await this.wrapper.commandCharacteristic.writeAsync(buffer, false);
+    if (Array.isArray(props)) {
+      // Noble-style: properties is an array of strings like ['read', 'write', 'notify']
+      supportsWriteWithoutResponse = props.includes('writeWithoutResponse');
+    } else if (props && typeof props === 'object') {
+      // ICharacteristic-style: properties is an object like { read: true, write: true, writeWithoutResponse: true }
+      supportsWriteWithoutResponse = props.writeWithoutResponse === true;
+    }
+
+    console.log(`📤 [${this.wrapper.deviceInfo.name}] writeCommand: ${buffer.length} bytes, props=${JSON.stringify(props)}, useWriteWithoutResponse=${supportsWriteWithoutResponse}`);
+    console.log(`📤 [${this.wrapper.deviceInfo.name}] Command bytes: [${Array.from(buffer).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
+
+    try {
+      if (supportsWriteWithoutResponse) {
+        // Fast write - no ACK needed
+        await this.wrapper.commandCharacteristic.writeAsync(buffer, true);
+      } else {
+        // Fallback to write with response (slower but more reliable)
+        await this.wrapper.commandCharacteristic.writeAsync(buffer, false);
+      }
+      console.log(`✅ [${this.wrapper.deviceInfo.name}] writeCommand completed successfully`);
+    } catch (writeError) {
+      console.error(`❌ [${this.wrapper.deviceInfo.name}] writeCommand failed:`, writeError);
+      throw writeError;
     }
   }
 

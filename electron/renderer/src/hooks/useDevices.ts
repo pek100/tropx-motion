@@ -96,9 +96,10 @@ export interface UIDevice {
   placement: string;      // "shin" | "thigh"
   signalStrength: 1 | 2 | 3 | 4;
   batteryPercentage: number | null;
-  connectionStatus: 'connected' | 'disconnected' | 'disabled' | 'connecting' | 'synchronizing' | 'reconnecting';
+  connectionStatus: 'connected' | 'disconnected' | 'unavailable' | 'connecting' | 'synchronizing' | 'reconnecting';
   isReconnecting: boolean;
   reconnectAttempts: number;
+  errorMessage: string | null;  // Error message for unavailable state
 }
 
 export interface DeviceCounts {
@@ -144,7 +145,7 @@ function mapStateToConnectionStatus(state: DeviceState): UIDevice['connectionSta
     case DeviceState.RECONNECTING:
       return 'reconnecting';
     case DeviceState.ERROR:
-      return 'disabled';
+      return 'unavailable';
     default:
       return 'disconnected';
   }
@@ -191,6 +192,7 @@ export function mapToUIDevice(device: BLEDevice): UIDevice {
     connectionStatus: mapStateToConnectionStatus(device.state),
     isReconnecting: isInReconnectionFlow,
     reconnectAttempts: device.reconnectAttempts,
+    errorMessage: device.lastError?.message ?? null,
   };
 }
 

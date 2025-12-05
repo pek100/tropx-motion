@@ -78,6 +78,9 @@ export default function Page() {
   // Drag & Drop state for device reordering
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  // Touch drag state (for Pi touchscreen)
+  const touchStartY = useRef<number | null>(null)
+  const touchStartIndex = useRef<number | null>(null)
   // Persist custom device order (array of device IDs)
   const [deviceOrder, setDeviceOrder] = useState<string[]>([])
 
@@ -97,9 +100,14 @@ export default function Page() {
   const [clientLaunched, setClientLaunched] = useState(false)
   const [clientDisplay, setClientDisplay] = useState<ClientDisplayMode>('closed')
 
-  // Auto-start: run burst scanning for first 10s (user clicks Connect to connect devices)
+  // Auto-start: run burst scanning on startup (backend controls duration)
   const autoStartRef = useRef(false)
-  const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Sync isRefreshing with backend's isScanning state
+  // Backend controls scan duration (can extend if devices not found)
+  useEffect(() => {
+    setIsRefreshing(isScanning)
+  }, [isScanning])
 
   // Load persisted state on mount
   useEffect(() => {
@@ -158,32 +166,15 @@ export default function Page() {
     if (!isConnected || autoStartRef.current) return
     autoStartRef.current = true
 
-    console.log('🔄 Auto-start: Setting isRefreshing=true for 10 seconds')
+    console.log('🔄 Auto-start: Starting burst scan (backend controls duration)')
 
-    // Start UI scanning state for 10 seconds
-    setIsRefreshing(true)
-
-    // Start backend burst scanning (10 seconds)
+    // Start backend burst scanning - backend will control duration
+    // isRefreshing will sync automatically via the useEffect above
     startBurstScan()
-
-    // UI will automatically stop after 10 seconds
-    const scanTimeout = setTimeout(() => {
-      console.log('✅ Auto-start: 10 seconds elapsed, setting isRefreshing=false')
-      setIsRefreshing(false)
-      scanTimeoutRef.current = null
-    }, 10000)
-    scanTimeoutRef.current = scanTimeout
 
     // NOTE: Removed auto-connect after 1 second
     // Devices now stay in DISCOVERED state until user explicitly clicks Connect
     // This prevents devices from showing "connecting" state immediately after being discovered
-
-    // Cleanup only runs when component unmounts (not on re-renders)
-    return () => {
-      console.log('🧹 Auto-start cleanup: Clearing timers')
-      clearTimeout(scanTimeout)
-      scanTimeoutRef.current = null
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected])
 
@@ -378,8 +369,8 @@ export default function Page() {
       return
     }
 
-    if (device.connectionStatus === "disconnected" || device.connectionStatus === "reconnecting") {
-      console.log(`🟢 Connecting device: ${device.name} (${device.bleName})`)
+    if (device.connectionStatus === "disconnected" || device.connectionStatus === "reconnecting" || device.connectionStatus === "unavailable") {
+      console.log(`🟢 ${device.connectionStatus === "unavailable" ? "Retrying" : "Connecting"} device: ${device.name} (${device.bleName})`)
       // Call server action - state update will come via STATE_UPDATE
       // Use bleName for connection (original BLE name needed by backend)
       await connectDevice(device.id, device.bleName)
@@ -435,31 +426,17 @@ export default function Page() {
       return
     }
 
-    if (isSyncing || isScanning) return
+    if (isSyncing) return
 
-    if (isRefreshing) {
-      // Stop scanning - clear UI state and stop backend burst scan
-      setIsRefreshing(false)
-      if (scanTimeoutRef.current) {
-        clearTimeout(scanTimeoutRef.current)
-        scanTimeoutRef.current = null
-      }
-      // Stop backend burst scanning
+    if (isRefreshing || isScanning) {
+      // Stop scanning - backend will update isScanning, which syncs to isRefreshing
       await stopBurstScan()
       return
     }
 
-    // Start scanning - set UI state for 10 seconds
-    setIsRefreshing(true)
-
-    // Start backend burst scanning (10 seconds)
+    // Start scanning - backend controls duration
+    // isRefreshing will sync automatically via the useEffect that watches isScanning
     await startBurstScan()
-
-    // UI will automatically stop after 10 seconds
-    scanTimeoutRef.current = setTimeout(() => {
-      setIsRefreshing(false)
-      scanTimeoutRef.current = null
-    }, 10000)
   }
 
   // Fix #3: Add timeout protection to sync
@@ -529,11 +506,9 @@ export default function Page() {
     }
 
     // Stop any ongoing scans to free BLE resources for locate mode
-    if (scanTimeoutRef.current) {
+    if (isRefreshing || isScanning) {
       console.log('🛑 Stopping scan for locate mode')
-      clearTimeout(scanTimeoutRef.current)
-      scanTimeoutRef.current = null
-      setIsRefreshing(false)
+      await stopBurstScan()
     }
 
     setIsValidatingLocate(true)
@@ -687,6 +662,52 @@ export default function Page() {
     setDragOverIndex(null)
   }
   const handleDragEnd = () => {
+    setDraggingIndex(null)
+    setDragOverIndex(null)
+  }
+
+  // Touch drag handlers (for Pi touchscreen)
+  const handleTouchStart = (index: number) => (e: React.TouchEvent) => {
+    if (isLocating || isSyncing) return
+    // Don't interfere with button taps - check if touch started on a button
+    const target = e.target as HTMLElement
+    if (target.closest('button')) return
+
+    touchStartY.current = e.touches[0].clientY
+    touchStartIndex.current = index
+    setDraggingIndex(index)
+  }
+
+  const handleTouchMove = (index: number) => (e: React.TouchEvent) => {
+    if (isLocating || isSyncing) return
+    if (touchStartIndex.current === null || touchStartY.current === null) return
+
+    const currentY = e.touches[0].clientY
+    const deltaY = currentY - touchStartY.current
+    const cardHeight = 80 // Approximate height of a device card
+
+    // Calculate which card we're now over
+    const moveSteps = Math.round(deltaY / cardHeight)
+    const newIndex = Math.max(0, Math.min(sortedDevices.length - 1, touchStartIndex.current + moveSteps))
+
+    if (newIndex !== draggingIndex) {
+      // Perform the swap
+      setDeviceOrder(prev => {
+        const from = draggingIndex
+        if (from === null || from === newIndex) return prev
+        const next = [...prev]
+        const [moved] = next.splice(from, 1)
+        next.splice(newIndex, 0, moved)
+        return next
+      })
+      setDraggingIndex(newIndex)
+      setDragOverIndex(newIndex)
+    }
+  }
+
+  const handleTouchEnd = () => {
+    touchStartY.current = null
+    touchStartIndex.current = null
     setDraggingIndex(null)
     setDragOverIndex(null)
   }
@@ -1151,6 +1172,7 @@ export default function Page() {
                       signalStrength={device.signalStrength}
                       batteryPercentage={device.batteryPercentage}
                       connectionStatus={device.connectionStatus}
+                      errorMessage={device.errorMessage}
                       isStreaming={isStreaming}
                       isLocating={isLocating}
                       isLocatingTarget={isLocating && vibratingDeviceIds.includes(device.id)}
@@ -1192,6 +1214,9 @@ export default function Page() {
                       onDragOver={handleDragOver(index)}
                       onDrop={handleDrop(index)}
                       onDragEnd={handleDragEnd}
+                      onTouchStart={handleTouchStart(index)}
+                      onTouchMove={handleTouchMove(index)}
+                      onTouchEnd={handleTouchEnd}
                     />
                   ))}
                 </div>
@@ -1203,8 +1228,12 @@ export default function Page() {
                       <button
                         onClick={handleDisconnectAll}
                         disabled={isLocating || isSyncing}
-                        className={isSmallScreen ? "flex-1 py-3 px-5 text-base rounded-full border-2 border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]" : "flex-1 py-2 px-4 text-sm rounded-full border-2 border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]"}
+                        className={isSmallScreen ? "flex-1 py-3 px-5 text-base rounded-full border-2 border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] flex items-center justify-center gap-2" : "flex-1 py-2 px-4 text-sm rounded-full border-2 border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] flex items-center justify-center gap-2"}
                       >
+                        <svg width={isSmallScreen ? "18" : "14"} height={isSmallScreen ? "18" : "14"} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2" />
+                          <line x1="2" y1="2" x2="22" y2="22" />
+                        </svg>
                         {isSmallScreen ? "Disconnect" : "Disconnect All"}
                       </button>
                     </TooltipTrigger>
@@ -1218,7 +1247,7 @@ export default function Page() {
                       <button
                         onClick={handleConnectAll}
                         disabled={isLocating || isSyncing}
-                        className={`flex-1 ${isSmallScreen ? "py-3 px-5 text-base" : "py-2 px-4 text-sm"} rounded-full font-medium transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] ${
+                        className={`flex-1 ${isSmallScreen ? "py-3 px-5 text-base" : "py-2 px-4 text-sm"} rounded-full font-medium transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] flex items-center justify-center gap-2 ${
                           allDevicesConnected
                             ? "border-2 bg-transparent hover:bg-white/50"
                             : "text-white hover:opacity-90"
@@ -1229,6 +1258,10 @@ export default function Page() {
                             : { backgroundColor: "var(--tropx-vibrant)" }
                         }
                       >
+                        <svg width={isSmallScreen ? "18" : "14"} height={isSmallScreen ? "18" : "14"} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2" />
+                          <line x1="8" y1="12" x2="16" y2="12" />
+                        </svg>
                         {isSmallScreen ? "Connect" : "Connect All"}
                       </button>
                     </TooltipTrigger>
@@ -1239,7 +1272,7 @@ export default function Page() {
                 </div>
 
                 {/* Dynamic Island - Launch Client - Only on Raspberry Pi */}
-                {isRaspberryPi && !clientLaunched && (
+                {isRaspberryPi && (
                   <Suspense fallback={null}>
                     <DynamicIsland
                       expanded={false}
