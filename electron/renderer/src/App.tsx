@@ -126,11 +126,8 @@ export default function Page() {
       console.log('✅ Restored screen preference:', savedState.smallScreenOverride)
     }
 
-    if (savedState.clientDisplay !== 'closed') {
-      setClientDisplay(savedState.clientDisplay)
-      setClientLaunched(savedState.clientDisplay !== 'closed')
-      console.log('✅ Restored client display:', savedState.clientDisplay)
-    }
+    // Don't restore client display state - always start fresh with 'closed'
+    // Client launcher is session-specific and shouldn't persist across restarts
   }, [])
 
   // Save state changes to persistence
@@ -608,15 +605,21 @@ export default function Page() {
   }
 
   const handleSnapClientLeft = () => {
+    console.log('🔵 [SNAP] Snap LEFT clicked, current display:', clientDisplay);
     setClientDisplay('snapped-left')
+    console.log('🔵 [SNAP] Set clientDisplay to: snapped-left');
   }
 
   const handleSnapClientRight = () => {
+    console.log('🟠 [SNAP] Snap RIGHT clicked, current display:', clientDisplay);
     setClientDisplay('snapped-right')
+    console.log('🟠 [SNAP] Set clientDisplay to: snapped-right');
   }
 
   const handleClientBackToModal = () => {
+    console.log('🟣 [SNAP] Back to modal clicked, current display:', clientDisplay);
     setClientDisplay('modal')
+    console.log('🟣 [SNAP] Set clientDisplay to: modal');
   }
 
   // Drag & Drop handlers for device reordering
@@ -972,6 +975,10 @@ export default function Page() {
                         isLeft={true}
                         onClose={handleCloseClient}
                         onBackToModal={handleClientBackToModal}
+                        isStreaming={isStreaming}
+                        onToggleStreaming={handleToggleStreaming}
+                        isValidatingState={isValidatingState}
+                        isStoppingStreaming={isStoppingStreaming}
                       />
                     </>
                   </Suspense>
@@ -1291,21 +1298,46 @@ export default function Page() {
 
               {/* Right Pane */}
               <div
-                className={`bg-white gradient-diagonal flex flex-col items-center justify-center pointer-events-auto ${
+                className={`bg-white gradient-diagonal flex flex-col pointer-events-auto ${
+                  clientDisplay === 'snapped-right' ? '' : 'items-center justify-center'
+                } ${
                   isSmallScreen ? "w-1/2 h-full flex-1 p-4" : "flex-1 p-6"
                 }`}
                 style={{
                   border: isSmallScreen ? "none" : "1px solid #e5e5e5",
                   borderRadius: isSmallScreen ? "0" : "36px",
                   height: isSmallScreen ? "100%" : "500px",
-                  WebkitAppRegion: 'no-drag'
+                  WebkitAppRegion: 'no-drag',
+                  position: 'relative',
+                  padding: clientDisplay === 'snapped-right' ? '0' : undefined,
                 } as any}
               >
-                {isStreaming || hasStartedStreaming ? (
-                  <KneeAreaChart leftKnee={leftKneeData} rightKnee={rightKneeData} clearTrigger={clearChartTrigger} />
+                {(() => {
+                  console.log('🟠 [RENDER] Right Pane render - isRaspberryPi:', isRaspberryPi, 'clientDisplay:', clientDisplay, 'condition result:', isRaspberryPi && clientDisplay === 'snapped-right');
+                  return null;
+                })()}
+                {isRaspberryPi && clientDisplay === 'snapped-right' ? (
+                  <Suspense fallback={null}>
+                    <>
+                      <ClientIframe className="client-iframe" />
+                      <ClientSnappedIsland
+                        isLeft={false}
+                        onClose={handleCloseClient}
+                        onBackToModal={handleClientBackToModal}
+                        isStreaming={isStreaming}
+                        onToggleStreaming={handleToggleStreaming}
+                        isValidatingState={isValidatingState}
+                        isStoppingStreaming={isStoppingStreaming}
+                      />
+                    </>
+                  </Suspense>
                 ) : (
-                  <ChartSvg />
-                )}
+                  <>
+                    {isStreaming || hasStartedStreaming ? (
+                      <KneeAreaChart leftKnee={leftKneeData} rightKnee={rightKneeData} clearTrigger={clearChartTrigger} />
+                    ) : (
+                      <ChartSvg />
+                    )}
 
                 <div className={isSmallScreen ? "mt-4 flex items-center gap-2" : "mt-8 flex items-center gap-3"}>
                   <Tooltip>
@@ -1399,6 +1431,8 @@ export default function Page() {
                     </Tooltip>
                   )}
                 </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -1416,6 +1450,10 @@ export default function Page() {
               onSnapLeft={handleSnapClientLeft}
               onSnapRight={handleSnapClientRight}
               onBackToModal={handleClientBackToModal}
+              isStreaming={isStreaming}
+              onToggleStreaming={handleToggleStreaming}
+              isValidatingState={isValidatingState}
+              isStoppingStreaming={isStoppingStreaming}
             />
           </Suspense>
         )}
