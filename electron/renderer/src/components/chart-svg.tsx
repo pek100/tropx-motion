@@ -1,23 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useUIProfile } from '@/lib/ui-profiles'
 
 export function ChartSvg() {
-  const [isRaspberryPi, setIsRaspberryPi] = useState(false)
+  const { profile } = useUIProfile()
 
-  useEffect(() => {
-    // Detect platform on mount
-    const detectPlatform = async () => {
-      try {
-        const platformInfo = await window.electronAPI?.system?.getPlatformInfo()
-        setIsRaspberryPi(platformInfo?.info?.isRaspberryPi || false)
-      } catch (err) {
-        setIsRaspberryPi(false)
-      }
-    }
-    detectPlatform()
-  }, [])
-
-  // RPi version: responsive with aspect ratio wrapper for small screens
-  if (isRaspberryPi) {
+  // Compact layouts (split mode): responsive with aspect ratio wrapper
+  if (profile.layout.mode === 'split') {
     return (
       <div className="w-full flex items-center justify-center" style={{ aspectRatio: '423/287' }}>
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 423 287" fill="none" className="w-full h-full" preserveAspectRatio="xMidYMid meet"><path fill="url(#a)" d="M20 42c15 16 29 28 41 19 12-10 28 19 42 36 14 16 25-19 36-38 12-18 28 24 43 41 14 16 24-20 35-47 11-26 26-10 40 6 14 17 28 33 40 6 11-27 27 15 41 32 14 16 23-45 30-63v145L20 234V42Z" opacity=".9"/><path stroke="#F66" strokeWidth="3" d="M20 42c15 16 29 28 41 19 12-10 28 19 42 36 14 16 25-19 36-38 12-18 28 24 43 41 14 16 24-20 35-47 11-26 26-10 40 6 14 17 28 33 40 6 11-27 27 15 41 32 14 16 23-45 30-63"/><path fill="url(#b)" d="M40 75c15 25 30 50 42 32 12-19 26-2 42 31 15 34 27 16 37-20 11-36 25-19 42 32s28 24 38-12c11-35 25-19 40 15 16 33 27 6 38-29 10-36 24-19 40 14 15 34 25-10 32-37v111L40 267V75Z" opacity=".8"/><path fill="#F66" d="M21 45a3 3 0 1 0-1-6 3 3 0 0 0 1 6Zm40 19a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm42 36a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm37-37a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm42 40a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm36-46a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm39 6a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm40 5a3 3 0 1 0-1-6 3 3 0 0 0 1 6Zm41 32a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm31-63a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Z"/><path fill="#66F" d="M200 142a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path stroke="#66F" strokeWidth="3" d="M42 76c14 25 29 50 41 31 12-18 26-2 42 32 15 34 27 15 37-20 11-36 25-19 42 32s28 24 38-12c11-36 25-19 41 14 15 34 26 7 37-28 10-36 24-20 40 14 15 34 25-11 32-37"/><path fill="#66F" d="M42 79a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm41 32a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm42 32a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm38-21a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm80 20a3 3 0 0 0 2-4.6 3 3 0 0 0-3-1.4 3 3 0 0 0 1 6Zm41 19a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm36-33a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm50 26a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm22-49a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><defs><linearGradient id="a" x1="124" x2="228.6" y1="74.2" y2="203" gradientUnits="userSpaceOnUse"><stop stopColor="#FF4D4D" stopOpacity=".8"/><stop offset="1" stopColor="#FF4D4D" stopOpacity=".1"/></linearGradient><linearGradient id="b" x1="48" x2="220.2" y1="94.7" y2="235.8" gradientUnits="userSpaceOnUse"><stop stopColor="#4D79FF" stopOpacity=".8"/><stop offset="1" stopColor="#4D79FF" stopOpacity=".1"/></linearGradient></defs></svg>
@@ -25,7 +12,7 @@ export function ChartSvg() {
     )
   }
 
-  // PC/Mac version: fixed size (performance-optimization branch)
+  // Desktop/centered layouts: fixed size
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="423" height="287" fill="none"><path fill="url(#a)" d="M20 42c15 16 29 28 41 19 12-10 28 19 42 36 14 16 25-19 36-38 12-18 28 24 43 41 14 16 24-20 35-47 11-26 26-10 40 6 14 17 28 33 40 6 11-27 27 15 41 32 14 16 23-45 30-63v145L20 234V42Z" opacity=".9"/><path stroke="#F66" strokeWidth="3" d="M20 42c15 16 29 28 41 19 12-10 28 19 42 36 14 16 25-19 36-38 12-18 28 24 43 41 14 16 24-20 35-47 11-26 26-10 40 6 14 17 28 33 40 6 11-27 27 15 41 32 14 16 23-45 30-63"/><path fill="url(#b)" d="M40 75c15 25 30 50 42 32 12-19 26-2 42 31 15 34 27 16 37-20 11-36 25-19 42 32s28 24 38-12c11-35 25-19 40 15 16 33 27 6 38-29 10-36 24-19 40 14 15 34 25-10 32-37v111L40 267V75Z" opacity=".8"/><path fill="#F66" d="M21 45a3 3 0 1 0-1-6 3 3 0 0 0 1 6Zm40 19a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm42 36a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm37-37a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm42 40a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm36-46a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm39 6a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm40 5a3 3 0 1 0-1-6 3 3 0 0 0 1 6Zm41 32a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm31-63a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Z"/><path fill="#66F" d="M200 142a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path stroke="#66F" strokeWidth="3" d="M42 76c14 25 29 50 41 31 12-18 26-2 42 32 15 34 27 15 37-20 11-36 25-19 42 32s28 24 38-12c11-36 25-19 41 14 15 34 26 7 37-28 10-36 24-20 40 14 15 34 25-11 32-37"/><path fill="#66F" d="M42 79a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm41 32a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm42 32a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm38-21a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm80 20a3 3 0 0 0 2-4.6 3 3 0 0 0-3-1.4 3 3 0 0 0 1 6Zm41 19a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm36-33a3.5 3.5 0 1 0-1-7 3.5 3.5 0 0 0 1 7Zm50 26a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm22-49a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><defs><linearGradient id="a" x1="124" x2="228.6" y1="74.2" y2="203" gradientUnits="userSpaceOnUse"><stop stopColor="#FF4D4D" stopOpacity=".8"/><stop offset="1" stopColor="#FF4D4D" stopOpacity=".1"/></linearGradient><linearGradient id="b" x1="48" x2="220.2" y1="94.7" y2="235.8" gradientUnits="userSpaceOnUse"><stop stopColor="#4D79FF" stopOpacity=".8"/><stop offset="1" stopColor="#4D79FF" stopOpacity=".1"/></linearGradient></defs></svg>
   )

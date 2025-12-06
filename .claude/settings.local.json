@@ -33,7 +33,10 @@
       "Bash(npm run build:main:*)",
       "WebFetch(domain:tkdodo.eu)",
       "WebFetch(domain:www.npmjs.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:the-expert-developer.medium.com)",
+      "WebFetch(domain:mui.com)",
+      "WebFetch(domain:m2.material.io)"
     ],
     "deny": [],
     "ask": [],
