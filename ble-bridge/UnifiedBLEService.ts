@@ -239,9 +239,9 @@ export class UnifiedBLEService {
       if (device && device.state === DeviceState.ERROR) {
         console.log(`[UnifiedBLEService] Device ${device.bleName} is in ERROR state - clearing stale peripheral`);
 
-        // Clear the stale peripheral from transport cache
+        // Clear the stale peripheral from transport cache (includes disconnect on Noble)
         // This allows the device to be rediscovered during next scan
-        this.transport.forgetPeripheral(deviceId);
+        await this.transport.forgetPeripheral(deviceId);
 
         // Keep device in ERROR state - it will transition to DISCOVERED when
         // rediscovered during scan (handleDeviceDiscovered handles ERROR → DISCOVERED)
@@ -893,8 +893,8 @@ export class UnifiedBLEService {
         // First, remove from TropXDevice map if present
         this.devices.delete(deviceId);
 
-        // Clear from transport cache so device can be rediscovered
-        this.transport.forgetPeripheral(deviceId);
+        // Clear from transport cache so device can be rediscovered (includes disconnect on Noble)
+        await this.transport.forgetPeripheral(deviceId);
 
         // Finally, unregister from state store
         UnifiedBLEStateStore.unregisterDevice(storeDeviceId);
@@ -1098,20 +1098,40 @@ export class UnifiedBLEService {
     }
 
     if (undetectedDevices.length > 0 && this.isExtendedScan) {
-      // Extended scan completed, still some devices not found - mark as unavailable
-      console.log(`[UnifiedBLEService] Extended scan completed. Marking ${undetectedDevices.length} undetected device(s) as unavailable:`);
+      // Extended scan completed, still some devices not found
+      // BUT: On Windows/macOS (Noble), devices aren't re-reported during scan if already known
+      // Only mark unavailable if peripheral is ALSO missing from transport cache
+      console.log(`[UnifiedBLEService] Extended scan completed. Checking ${undetectedDevices.length} undetected device(s):`);
 
+      let markedUnavailable = 0;
       for (const { deviceId, bleName } of undetectedDevices) {
-        console.log(`[UnifiedBLEService]   - Marking ${bleName} (0x${deviceId.toString(16)}) as unavailable`);
-        try {
-          UnifiedBLEStateStore.transitionToError(deviceId, DeviceErrorType.CONNECTION_FAILED, 'Device not found during scan - may be powered off or out of range');
-        } catch (error) {
-          console.error(`[UnifiedBLEService] Failed to mark device ${bleName} as unavailable:`, error);
+        const device = UnifiedBLEStateStore.getDevice(deviceId);
+        const bleAddress = device?.bleAddress;
+
+        // Check if peripheral still exists in transport cache
+        // If it does, the device is still "known" and reachable - just not actively advertising
+        const peripheralExists = bleAddress ? !!this.transport.getPeripheral(bleAddress) : false;
+
+        if (peripheralExists) {
+          // Device is still in transport cache - don't mark as unavailable
+          // This is the expected behavior on Windows where Noble doesn't re-report known devices
+          console.log(`[UnifiedBLEService]   - ${bleName}: Still in transport cache, keeping DISCOVERED state`);
+        } else {
+          // Device truly not found - mark as unavailable
+          console.log(`[UnifiedBLEService]   - Marking ${bleName} (0x${deviceId.toString(16)}) as unavailable (not in transport cache)`);
+          try {
+            UnifiedBLEStateStore.transitionToError(deviceId, DeviceErrorType.CONNECTION_FAILED, 'Device not found during scan - may be powered off or out of range');
+            markedUnavailable++;
+          } catch (error) {
+            console.error(`[UnifiedBLEService] Failed to mark device ${bleName} as unavailable:`, error);
+          }
         }
       }
 
-      // Force broadcast to update UI
-      UnifiedBLEStateStore.forceBroadcast();
+      // Force broadcast to update UI only if we actually marked something unavailable
+      if (markedUnavailable > 0) {
+        UnifiedBLEStateStore.forceBroadcast();
+      }
     } else if (this.devicesToVerify.size > 0) {
       console.log(`[UnifiedBLEService] All ${this.devicesToVerify.size} tracked device(s) re-discovered successfully`);
     }

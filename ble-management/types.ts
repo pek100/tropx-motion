@@ -169,11 +169,11 @@ export const BLE_CONFIG = {
     firmwareState: 5000,
   },
 
-  // Reconnection settings (aggressive speed)
+  // Reconnection settings (reduced for faster failure detection on Windows)
   reconnect: {
     baseDelayMs: 500,       // 0.5 second - very fast first retry
-    maxDelayMs: 15000,      // 15 seconds max
-    maxAttempts: 5,
+    maxDelayMs: 5000,       // 5 seconds max (reduced from 15s)
+    maxAttempts: 2,         // 2 attempts (reduced from 5 - strategy has its own retries)
     backoffMultiplier: 1.5,
   },
 

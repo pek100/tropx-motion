@@ -1,6 +1,26 @@
 /**
  * Noble Transport Implementation
  * Wraps @abandonware/noble for Windows/macOS BLE operations
+ *
+ * ARCHITECTURE NOTE:
+ * This file contains Noble API adapters that follow the same pattern as
+ * NodeBleToNobleAdapter.ts. Both transports expose a Noble-compatible API
+ * that TropXDevice expects:
+ *
+ * - NodeBleToNobleAdapter: Adapts node-ble (Linux/Pi) → Noble API
+ * - NobleTransport wrappers: Wrap native Noble with unified interface
+ *
+ * TropXDevice uses Noble's native patterns:
+ * - Callback-style methods: connect(callback), discoverServices([], callback)
+ * - Async methods: discoverServicesAsync(), writeAsync(), readAsync()
+ * - EventEmitter: on('data'), on('disconnect')
+ *
+ * The wrapper classes (NoblePeripheral, NobleService, NobleCharacteristic)
+ * implement IPeripheral/IService/ICharacteristic for internal transport
+ * abstraction while also exposing Noble-compatible methods for TropXDevice.
+ *
+ * @see NodeBleToNobleAdapter.ts for the equivalent node-ble adapter
+ * @see TropXDevice.ts for the consumer of these Noble-compatible APIs
  */
 
 import { EventEmitter } from 'events';
@@ -20,9 +40,19 @@ import { BLE_CONFIG } from '../BleBridgeConstants';
 let noble: any = null;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Noble Characteristic Wrapper
+// Noble Characteristic Adapter
+// Wraps native Noble characteristic with unified interface + Noble API compat
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Wraps a native Noble characteristic to implement ICharacteristic interface
+ * while maintaining Noble API compatibility for TropXDevice.
+ *
+ * Provides:
+ * - ICharacteristic interface (Promise-based): read(), write(), subscribe()
+ * - Noble API compat (TropXDevice expects): readAsync(), writeAsync(), subscribeAsync()
+ * - EventEmitter: forwards 'data' and 'error' events from native characteristic
+ */
 class NobleCharacteristic extends EventEmitter implements ICharacteristic {
   readonly uuid: string;
   readonly properties: CharacteristicProperties;
@@ -38,9 +68,14 @@ class NobleCharacteristic extends EventEmitter implements ICharacteristic {
       indicate: nobleChar.properties?.includes('indicate') ?? false,
     };
 
-    // Forward data events
+    // Forward data events from native Noble characteristic
     this.nobleChar.on('data', (data: Buffer) => {
       this.emit('data', data);
+    });
+
+    // Forward error events
+    this.nobleChar.on('error', (error: Error) => {
+      this.emit('error', error);
     });
   }
 
@@ -79,12 +114,44 @@ class NobleCharacteristic extends EventEmitter implements ICharacteristic {
       });
     });
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Noble API compatibility methods (TropXDevice expects these)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async readAsync(): Promise<Buffer> {
+    return this.read();
+  }
+
+  async writeAsync(data: Buffer, withoutResponse: boolean): Promise<void> {
+    // Note: Noble's write() takes withoutResponse as second param
+    // withResponse = !withoutResponse
+    return this.write(data, !withoutResponse);
+  }
+
+  async subscribeAsync(): Promise<void> {
+    return this.subscribe();
+  }
+
+  async unsubscribeAsync(): Promise<void> {
+    return this.unsubscribe();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Noble Service Wrapper
+// Noble Service Adapter
+// Wraps native Noble service with unified interface + Noble API compat
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Wraps a native Noble service to implement IService interface
+ * while maintaining Noble API compatibility for TropXDevice.
+ *
+ * Provides:
+ * - IService interface (Promise-based): discoverCharacteristics(), getCharacteristic()
+ * - Noble API compat: discoverCharacteristics([], callback), discoverCharacteristicsAsync()
+ * - Caches discovered characteristics for reuse
+ */
 class NobleService implements IService {
   readonly uuid: string;
   private characteristics: Map<string, NobleCharacteristic> = new Map();
@@ -93,15 +160,26 @@ class NobleService implements IService {
     this.uuid = nobleService.uuid;
   }
 
-  async discoverCharacteristics(): Promise<ICharacteristic[]> {
-    return new Promise((resolve, reject) => {
-      this.nobleService.discoverCharacteristics([], (error: Error | null, chars: any[]) => {
+  /**
+   * Discover characteristics on the service.
+   * Supports both callback-style (for TropXDevice compatibility) and Promise-style.
+   * Always returns a Promise to satisfy IService interface, but also calls callback if provided.
+   */
+  discoverCharacteristics(uuids?: string[], callback?: (error: Error | null, chars: ICharacteristic[]) => void): Promise<ICharacteristic[]> {
+    // Handle overloaded signatures
+    if (typeof uuids === 'function') {
+      callback = uuids as unknown as (error: Error | null, chars: ICharacteristic[]) => void;
+      uuids = [];
+    }
+
+    const promise = new Promise<ICharacteristic[]>((resolve, reject) => {
+      this.nobleService.discoverCharacteristics(uuids || [], (error: Error | null, chars: any[]) => {
         if (error) {
           reject(error);
           return;
         }
 
-        const wrapped = (chars || []).map(c => {
+        const wrapped = (chars || []).map((c: any) => {
           const wrapper = new NobleCharacteristic(c);
           this.characteristics.set(c.uuid, wrapper);
           return wrapper;
@@ -109,6 +187,16 @@ class NobleService implements IService {
         resolve(wrapped);
       });
     });
+
+    // If callback provided, also call it
+    if (callback) {
+      const cb = callback;
+      promise
+        .then(chars => cb(null, chars))
+        .catch(error => cb(error, []));
+    }
+
+    return promise;
   }
 
   async getCharacteristic(uuid: string): Promise<ICharacteristic | null> {
@@ -124,18 +212,45 @@ class NobleService implements IService {
     await this.discoverCharacteristics();
     return this.characteristics.get(normalizedUuid) || null;
   }
+
+  /**
+   * Async version of discoverCharacteristics for Noble API compatibility.
+   * TropXDevice expects this method signature.
+   */
+  async discoverCharacteristicsAsync(uuids: string[]): Promise<{ characteristics: ICharacteristic[] }> {
+    console.log(`[NobleService] ${this.uuid}: discoverCharacteristicsAsync called`);
+    const characteristics = await this.discoverCharacteristics();
+    return { characteristics };
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Noble Peripheral Wrapper
+// Noble Peripheral Adapter
+// Wraps native Noble peripheral with unified interface + Noble API compat
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Wraps a native Noble peripheral to implement IPeripheral interface
+ * while maintaining Noble API compatibility for TropXDevice.
+ *
+ * Provides:
+ * - IPeripheral interface (Promise-based): connect(), disconnect(), discoverServices()
+ * - Noble API compat: connect(callback), discoverServices([], callback)
+ * - Noble async API: discoverServicesAsync(), disconnectAsync()
+ * - EventEmitter: forwards 'disconnect' and 'rssiUpdate' events
+ * - Caches discovered services for reuse
+ *
+ * This is analogous to NodeBleToNobleAdapter but for native Noble peripherals.
+ * While NodeBleToNobleAdapter converts node-ble's API to Noble's API,
+ * this class wraps Noble's API to satisfy both IPeripheral and Noble patterns.
+ */
 class NoblePeripheral extends EventEmitter implements IPeripheral {
   readonly id: string;
   readonly name: string;
   readonly address: string;
   private _rssi: number;
   private services: Map<string, NobleService> = new Map();
+  private connectionAttemptCount = 0;
 
   constructor(private noblePeripheral: any) {
     super();
@@ -146,6 +261,7 @@ class NoblePeripheral extends EventEmitter implements IPeripheral {
 
     // Forward disconnect events
     this.noblePeripheral.on('disconnect', () => {
+      console.log(`[NoblePeripheral] ${this.name}: disconnect event received`);
       this.emit('disconnect');
     });
 
@@ -154,6 +270,9 @@ class NoblePeripheral extends EventEmitter implements IPeripheral {
       this._rssi = rssi;
       this.emit('rssiUpdate', rssi);
     });
+
+    // Log initial state for debugging
+    console.log(`[NoblePeripheral] Created wrapper for ${this.name} (${this.id}), initial state: ${this.noblePeripheral.state}`);
   }
 
   get rssi(): number {
@@ -164,20 +283,67 @@ class NoblePeripheral extends EventEmitter implements IPeripheral {
     return this.noblePeripheral.state as PeripheralState;
   }
 
-  async connect(): Promise<void> {
-    if (this.state === 'connected') return;
+  /** Get underlying Noble peripheral state for debugging */
+  getDebugInfo(): { state: string; connectable: boolean; addressType: string } {
+    return {
+      state: this.noblePeripheral.state,
+      connectable: this.noblePeripheral.connectable ?? true,
+      addressType: this.noblePeripheral.addressType || 'unknown',
+    };
+  }
 
-    return new Promise((resolve, reject) => {
+  /**
+   * Connect to the peripheral.
+   * Supports both callback-style (for TropXDevice compatibility) and Promise-style.
+   * Always returns a Promise to satisfy IPeripheral interface, but also calls callback if provided.
+   */
+  connect(callback?: (error?: Error) => void): Promise<void> {
+    this.connectionAttemptCount++;
+    const attemptNum = this.connectionAttemptCount;
+
+    console.log(`[NoblePeripheral] ${this.name}: connect() attempt #${attemptNum}, current state: ${this.state}, hasCallback: ${!!callback}`);
+
+    if (this.state === 'connected') {
+      console.log(`[NoblePeripheral] ${this.name}: already connected, skipping`);
+      if (callback) {
+        callback();
+      }
+      return Promise.resolve();
+    }
+
+    // Log if peripheral is in an unexpected state
+    if (this.state !== 'disconnected') {
+      console.warn(`[NoblePeripheral] ${this.name}: unexpected state before connect: ${this.state}`);
+    }
+
+    const promise = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error('Connection timeout (60s)'));
-      }, 60000);
+        console.error(`[NoblePeripheral] ${this.name}: connection timeout (30s) on attempt #${attemptNum}, state: ${this.state}`);
+        reject(new Error(`Connection timeout (30s), state: ${this.state}`));
+      }, 30000);
+
+      console.log(`[NoblePeripheral] ${this.name}: calling noble.connect()...`);
 
       this.noblePeripheral.connect((error?: Error) => {
         clearTimeout(timeout);
-        if (error) reject(error);
-        else resolve();
+        if (error) {
+          console.error(`[NoblePeripheral] ${this.name}: connect callback error on attempt #${attemptNum}:`, error.message);
+          reject(error);
+        } else {
+          console.log(`[NoblePeripheral] ${this.name}: connect callback success, new state: ${this.state}`);
+          resolve();
+        }
       });
     });
+
+    // If callback provided, also call it
+    if (callback) {
+      promise
+        .then(() => callback())
+        .catch(err => callback(err));
+    }
+
+    return promise;
   }
 
   async disconnect(): Promise<void> {
@@ -191,15 +357,35 @@ class NoblePeripheral extends EventEmitter implements IPeripheral {
     });
   }
 
-  async discoverServices(): Promise<IService[]> {
-    return new Promise((resolve, reject) => {
-      this.noblePeripheral.discoverServices([], (error: Error | null, services: any[]) => {
+  /**
+   * Async version of disconnect for Noble API compatibility.
+   * TropXDevice expects this method signature.
+   */
+  async disconnectAsync(): Promise<void> {
+    console.log(`[NoblePeripheral] ${this.name}: disconnectAsync called, state: ${this.state}`);
+    return this.disconnect();
+  }
+
+  /**
+   * Discover services on the peripheral.
+   * Supports both callback-style (for TropXDevice compatibility) and Promise-style.
+   * Always returns a Promise to satisfy IPeripheral interface, but also calls callback if provided.
+   */
+  discoverServices(uuids?: string[], callback?: (error: Error | null, services: IService[]) => void): Promise<IService[]> {
+    // Handle overloaded signatures
+    if (typeof uuids === 'function') {
+      callback = uuids as unknown as (error: Error | null, services: IService[]) => void;
+      uuids = [];
+    }
+
+    const promise = new Promise<IService[]>((resolve, reject) => {
+      this.noblePeripheral.discoverServices(uuids || [], (error: Error | null, services: any[]) => {
         if (error) {
           reject(error);
           return;
         }
 
-        const wrapped = (services || []).map(s => {
+        const wrapped = (services || []).map((s: any) => {
           const wrapper = new NobleService(s);
           this.services.set(s.uuid, wrapper);
           return wrapper;
@@ -207,6 +393,16 @@ class NoblePeripheral extends EventEmitter implements IPeripheral {
         resolve(wrapped);
       });
     });
+
+    // If callback provided, also call it
+    if (callback) {
+      const cb = callback;
+      promise
+        .then(services => cb(null, services))
+        .catch(error => cb(error, []));
+    }
+
+    return promise;
   }
 
   async getService(uuid: string): Promise<IService | null> {
@@ -221,6 +417,16 @@ class NoblePeripheral extends EventEmitter implements IPeripheral {
     // Discover if not cached
     await this.discoverServices();
     return this.services.get(normalizedUuid) || null;
+  }
+
+  /**
+   * Async version of discoverServices for Noble API compatibility.
+   * TropXDevice expects this method signature.
+   */
+  async discoverServicesAsync(uuids: string[]): Promise<{ services: IService[] }> {
+    console.log(`[NoblePeripheral] ${this.name}: discoverServicesAsync called`);
+    const services = await this.discoverServices();
+    return { services };
   }
 }
 
@@ -360,12 +566,35 @@ export class NobleTransport extends EventEmitter implements ITransport {
     return this.discoveredPeripherals.get(deviceId) || null;
   }
 
-  forgetPeripheral(deviceId: string): void {
+  /**
+   * Forget a peripheral - attempts clean disconnect before removing from cache.
+   * This helps prevent stale Noble peripheral state on Windows.
+   */
+  async forgetPeripheral(deviceId: string): Promise<void> {
     const peripheral = this.discoveredPeripherals.get(deviceId);
-    if (peripheral) {
-      console.log(`[NobleTransport] Forgetting peripheral: ${peripheral.name} (${deviceId})`);
-      this.discoveredPeripherals.delete(deviceId);
+    if (!peripheral) {
+      console.log(`[NobleTransport] forgetPeripheral: ${deviceId} not in cache`);
+      return;
     }
+
+    const debugInfo = (peripheral as any).getDebugInfo?.() || { state: peripheral.state };
+    console.log(`[NobleTransport] Forgetting peripheral: ${peripheral.name} (${deviceId}), state: ${debugInfo.state}`);
+
+    // Try to disconnect if not already disconnected
+    // This helps clean up Noble's internal state
+    if (peripheral.state !== 'disconnected') {
+      try {
+        console.log(`[NobleTransport] ${peripheral.name}: disconnecting before forget (state: ${peripheral.state})`);
+        await peripheral.disconnect();
+        console.log(`[NobleTransport] ${peripheral.name}: disconnect complete`);
+      } catch (error) {
+        console.warn(`[NobleTransport] ${peripheral.name}: disconnect before forget failed:`, error);
+        // Continue with removal even if disconnect fails
+      }
+    }
+
+    this.discoveredPeripherals.delete(deviceId);
+    console.log(`[NobleTransport] ${peripheral.name}: removed from cache`);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -411,13 +640,21 @@ export class NobleTransport extends EventEmitter implements ITransport {
       return;
     }
 
+    // Check if device is already discovered (Noble fires discover for every advertisement)
+    const existingPeripheral = this.discoveredPeripherals.get(noblePeripheral.id);
+    if (existingPeripheral) {
+      // Already known - just update RSSI, don't re-emit deviceDiscovered
+      // This prevents the ERROR → DISCOVERED loop on Windows
+      return;
+    }
+
     console.log(`[NobleTransport] Discovered: ${deviceName} (${noblePeripheral.id}, RSSI: ${noblePeripheral.rssi})`);
 
     // Wrap and store
     const wrapped = new NoblePeripheral(noblePeripheral);
     this.discoveredPeripherals.set(noblePeripheral.id, wrapped);
 
-    // Emit event
+    // Emit event only for NEW discoveries
     this.emit('deviceDiscovered', {
       id: wrapped.id,
       name: wrapped.name,

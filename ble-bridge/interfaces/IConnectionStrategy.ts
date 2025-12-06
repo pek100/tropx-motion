@@ -31,9 +31,9 @@ export interface StrategyConfig {
 
 export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   interConnectionDelayMs: 200,
-  stateVerificationTimeoutMs: 10000,
-  connectionTimeoutMs: 30000,
-  maxRetries: 3,
+  stateVerificationTimeoutMs: 5000,   // Reduced from 10s for faster failure
+  connectionTimeoutMs: 20000,          // Reduced from 30s
+  maxRetries: 2,                       // Reduced from 3 for faster failure on Windows
   retryDelayMs: 500,
 };
 

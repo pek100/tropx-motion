@@ -97,7 +97,7 @@ export interface ITransport extends EventEmitter {
   // Device access
   getDiscoveredDevices(): DiscoveredDevice[];
   getPeripheral(deviceId: string): IPeripheral | null;
-  forgetPeripheral(deviceId: string): void;
+  forgetPeripheral(deviceId: string): void | Promise<void>;
 
   // Events:
   // 'deviceDiscovered' (DiscoveredDevice)
