@@ -1,6 +1,6 @@
 {
   "name": "motion-capture-electron",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Motion Capture Application with Real-time WebSocket Streaming",
   "main": "dist/main/electron/main/main.js",
   "scripts": {
