@@ -69,9 +69,6 @@ export interface BLEDevice {
 export interface KneeData {
   current: number;
   sensorTimestamp: number;
-  velocity: number;
-  acceleration: number;
-  quality: number;
 }
 
 /**
@@ -219,16 +216,10 @@ export function useDevices() {
   const [leftKneeData, setLeftKneeData] = useState<KneeData>({
     current: 0,
     sensorTimestamp: Date.now(),
-    velocity: 0,
-    acceleration: 0,
-    quality: 100,
   });
   const [rightKneeData, setRightKneeData] = useState<KneeData>({
     current: 0,
     sensorTimestamp: Date.now(),
-    velocity: 0,
-    acceleration: 0,
-    quality: 100,
   });
 
 
@@ -353,7 +344,7 @@ export function useDevices() {
           }
         });
 
-        // ─── Motion Data Handler (OPTIMIZED for 100Hz) ────────────────
+        // ─── Motion Data Handler (OPTIMIZED for 60Hz) ────────────────
         client.on(EVENT_TYPES.MOTION_DATA, (message: any) => {
           lastMotionDataTimeRef.current = Date.now();
 
@@ -366,22 +357,9 @@ export function useDevices() {
           const data = message.data;
           const timestamp = message.timestamp || Date.now();
 
-          // Separate setState calls - React 18 batches automatically in event handlers
-          // This is faster than creating new object every time (preserves referential equality)
-          setLeftKneeData({
-            current: data[0],
-            sensorTimestamp: timestamp,
-            velocity: 0,
-            acceleration: 0,
-            quality: 100,
-          });
-          setRightKneeData({
-            current: data[1],
-            sensorTimestamp: timestamp,
-            velocity: 0,
-            acceleration: 0,
-            quality: 100,
-          });
+          // Minimal object creation - only essential fields
+          setLeftKneeData({ current: data[0], sensorTimestamp: timestamp });
+          setRightKneeData({ current: data[1], sensorTimestamp: timestamp });
         });
 
         // ─── Client List Handler ───────────────────────────────────────
