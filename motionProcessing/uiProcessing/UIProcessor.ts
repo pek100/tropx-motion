@@ -19,9 +19,10 @@ export class UIProcessor {
     // WebSocket broadcast function for sending processed joint angles to UI
     private webSocketBroadcast: ((message: any, clientIds: string[]) => Promise<void>) | null = null;
 
-    // Throttle WebSocket broadcasts to prevent overwhelming the UI with duplicate messages
+    // SMART THROTTLING: Match screen refresh rate for optimal performance
+    // All data captured in jointDataMap, but broadcast at 60Hz to match rendering
     private lastBroadcastTime = 0;
-    private readonly MIN_BROADCAST_INTERVAL = 10; // Max 100 broadcasts/sec (one per joint update cycle)
+    private readonly MIN_BROADCAST_INTERVAL = 16; // 60Hz (~16.67ms) matches screen refresh
     private pendingBroadcast = false;
 
     private constructor() {
@@ -237,9 +238,11 @@ export class UIProcessor {
     /**
      * Broadcast processed joint angle data via WebSocket to UI.
      *
-     * ARCHITECTURE NOTE: Throttling kept minimal (10ms = 100 broadcasts/sec max)
-     * but pending broadcasts now use CURRENT joint data, not stale parameter.
-     * This prevents "out of sync" where old angles would be broadcast.
+     * ARCHITECTURE NOTE: Smart throttling at 60Hz (16ms) matches screen refresh rate.
+     * - ALL data captured in jointDataMap for 100% calculation accuracy
+     * - Latest state broadcast at 60Hz to match RAF rendering
+     * - Prevents overwhelming React with 200 updates/sec (100Hz × 2 knees)
+     * - Result: Smooth visualization, no data loss in backend calculations
      */
     private async broadcastJointAngleData(angleData: JointAngleData): Promise<void> {
         if (!this.webSocketBroadcast) {
@@ -248,12 +251,10 @@ export class UIProcessor {
         }
 
         const now = Date.now();
-        const timeSinceLastBroadcast = now - this.lastBroadcastTime;
 
-        // Throttle broadcast if called too frequently
-        if (timeSinceLastBroadcast < this.MIN_BROADCAST_INTERVAL) {
-            this.pendingBroadcast = true;
-            return;
+        // Throttle to 60Hz to match screen refresh rate
+        if (now - this.lastBroadcastTime < this.MIN_BROADCAST_INTERVAL) {
+            return; // Skip broadcast, but data already captured in jointDataMap
         }
 
         try {

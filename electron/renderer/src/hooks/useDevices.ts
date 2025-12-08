@@ -215,6 +215,7 @@ export function useDevices() {
   const [lastUpdate, setLastUpdate] = useState<number>(0);
 
   // ─── Motion Data ──────────────────────────────────────────────────────
+  // Separate state for left/right - React 18 batches automatically
   const [leftKneeData, setLeftKneeData] = useState<KneeData>({
     current: 0,
     sensorTimestamp: Date.now(),
@@ -352,37 +353,30 @@ export function useDevices() {
           }
         });
 
-        // ─── Motion Data Handler ───────────────────────────────────────
+        // ─── Motion Data Handler (OPTIMIZED for 100Hz) ────────────────
         client.on(EVENT_TYPES.MOTION_DATA, (message: any) => {
           lastMotionDataTimeRef.current = Date.now();
 
-          const raw = message?.data;
-          let leftCurrent = 0;
-          let rightCurrent = 0;
-
-          if (raw instanceof Float32Array) {
-            leftCurrent = raw[0] || 0;
-            rightCurrent = raw[1] || 0;
-          } else if (Array.isArray(raw)) {
-            leftCurrent = raw[0] || 0;
-            rightCurrent = raw[1] || 0;
-          } else if (raw && typeof raw === 'object' && 'left' in raw && 'right' in raw) {
-            leftCurrent = raw.left?.current ?? 0;
-            rightCurrent = raw.right?.current ?? 0;
+          // HOT PATH: Backend always sends Float32Array during streaming
+          // Add minimal safety check for connection phase
+          if (!(message.data instanceof Float32Array) || message.data.length < 2) {
+            return; // Silently ignore invalid data during connection phase
           }
 
-          const timestamp = message?.timestamp || Date.now();
+          const data = message.data;
+          const timestamp = message.timestamp || Date.now();
 
+          // Separate setState calls - React 18 batches automatically in event handlers
+          // This is faster than creating new object every time (preserves referential equality)
           setLeftKneeData({
-            current: leftCurrent,
+            current: data[0],
             sensorTimestamp: timestamp,
             velocity: 0,
             acceleration: 0,
             quality: 100,
           });
-
           setRightKneeData({
-            current: rightCurrent,
+            current: data[1],
             sensorTimestamp: timestamp,
             velocity: 0,
             acceleration: 0,

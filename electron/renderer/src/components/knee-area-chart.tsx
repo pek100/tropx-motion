@@ -195,6 +195,8 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   const animationFrameRef = useRef<number>()
   const pendingUpdateRef = useRef(false)
+  const lastRenderTimeRef = useRef(0)
+  const RENDER_INTERVAL_MS = 22 // 45fps throttle for Recharts performance
 
   // Store latest props in refs to avoid recreating updateData callback
   // This prevents 100 useEffect cleanups per second at 100Hz data rate
@@ -231,8 +233,10 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   const clampValue = (value: number) => Math.max(ANGLE_CONSTRAINTS.MIN, Math.min(ANGLE_CONSTRAINTS.MAX, value))
 
-  // Use refs in callback to avoid recreating on every prop change
-  // This is critical for high-frequency updates (100Hz)
+  // ARCHITECTURE: Data capture vs. rendering are decoupled for smooth visualization
+  // - ALL data (100% of samples) is captured immediately in circular buffer
+  // - Rendering is throttled to 45fps (22ms) - Recharts SVG is too slow for 60fps
+  // - Result: No stuttering, no data loss, smooth animation
   const updateData = useCallback(() => {
     const left = leftKneeRef.current
     const right = rightKneeRef.current
@@ -255,18 +259,27 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
     trace('CHART', `updateData: left=${newDataPoint.leftAngle}, right=${newDataPoint.rightAngle}, ts=${timestamp}, updateId=${updateCounterRef.current}`);
 
-    // Add to buffer immediately for data integrity
+    // CRITICAL: Capture data IMMEDIATELY (100% capture rate, no throttling)
     dataBufferRef.current.push(newDataPoint)
     trace('CHART', `Buffer push: bufferSize=${dataBufferRef.current.getSize()}`);
 
-    // Schedule chart update using RAF to batch multiple updates per frame
+    // Throttle chart RE-RENDER to 30fps for Recharts performance
+    // Recharts SVG rendering is expensive - 30fps is smooth enough for visualization
+    // All data is still captured in buffer, just rendered less frequently
+    const now = Date.now()
+    if (now - lastRenderTimeRef.current < RENDER_INTERVAL_MS) {
+      return // Skip render, but data is already in buffer
+    }
+
+    // Schedule chart RE-RENDER using RAF
     if (!pendingUpdateRef.current) {
       pendingUpdateRef.current = true
       trace('CHART', 'Scheduling RAF');
       animationFrameRef.current = requestAnimationFrame(() => {
         try {
           trace('CHART', 'RAF executing');
-          // Use latest timestamp from buffer for window calculation
+          lastRenderTimeRef.current = Date.now()
+          // Render with latest data from buffer (all samples preserved)
           const latestPoint = dataBufferRef.current.toArray().slice(-1)[0]
           if (latestPoint) {
             const newChartData = dataBufferRef.current.getChartData(latestPoint.time)

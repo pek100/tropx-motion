@@ -20,6 +20,7 @@ import { formatDeviceID } from './display';
 
 export type ConnectFunction = (bleAddress: string) => Promise<boolean>;
 export type StartStreamingFunction = (deviceId: DeviceID) => Promise<boolean>;
+export type ClearCacheFunction = (bleAddress: string) => Promise<boolean>;
 
 export interface ReconnectState {
   deviceId: DeviceID;
@@ -46,6 +47,10 @@ class ReconnectionManagerImpl {
   // Injected functions
   private connectFn: ConnectFunction | null = null;
   private startStreamingFn: StartStreamingFunction | null = null;
+  private clearCacheFn: ClearCacheFunction | null = null;
+
+  // Track disconnect timestamps for cache clearing decision
+  private disconnectTimestamps: Map<DeviceID, number> = new Map();
 
   // ───────────────────────────────────────────────────────────────────────────
   // Configuration
@@ -63,6 +68,13 @@ class ReconnectionManagerImpl {
    */
   setStartStreamingFunction(fn: StartStreamingFunction): void {
     this.startStreamingFn = fn;
+  }
+
+  /**
+   * Set the cache clearing function (injected by BLE layer)
+   */
+  setClearCacheFunction(fn: ClearCacheFunction): void {
+    this.clearCacheFn = fn;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -102,6 +114,11 @@ class ReconnectionManagerImpl {
     // Update state
     this.attempts.set(deviceId, currentAttempts + 1);
     this.reasons.set(deviceId, reason);
+
+    // Track disconnect timestamp for cache clearing decision
+    if (!this.disconnectTimestamps.has(deviceId)) {
+      this.disconnectTimestamps.set(deviceId, Date.now());
+    }
 
     // Update store - transition to RECONNECTING if not already
     try {
@@ -173,6 +190,39 @@ class ReconnectionManagerImpl {
     console.log(`🔌 [${deviceName}] Reconnect attempt ${attempts}/${BLE_CONFIG.reconnect.maxAttempts}...`);
 
     try {
+      // CRITICAL: Clear stale GATT cache decision based on streaming state
+      // During streaming: KEEP cache for fast reconnection (prioritize speed)
+      // Not streaming: Clear cache after 10s disconnect (prioritize reliability)
+      const globalState = UnifiedBLEStateStore.getGlobalState();
+      const isStreaming = globalState === GlobalState.STREAMING;
+
+      if (isStreaming) {
+        // During streaming: skip cache clearing for faster reconnection
+        console.log(`⚡ [${deviceName}] Streaming active - keeping GATT cache for fast reconnection`);
+      } else {
+        // Not streaming: clear stale cache if device has been gone >10s
+        const disconnectTimestamp = this.disconnectTimestamps.get(deviceId);
+        const reason = this.reasons.get(deviceId);
+
+        // Only clear cache for automatic reconnection after connection loss
+        const isConnectionLoss = reason !== DisconnectReason.USER_REQUESTED;
+
+        if (disconnectTimestamp && isConnectionLoss) {
+          const timeSinceDisconnect = Date.now() - disconnectTimestamp;
+          const CACHE_CLEAR_THRESHOLD = 10000; // 10 seconds
+
+          if (timeSinceDisconnect > CACHE_CLEAR_THRESHOLD && this.clearCacheFn) {
+            console.log(`🧹 [${deviceName}] Connection lost for ${Math.round(timeSinceDisconnect / 1000)}s - clearing stale cache...`);
+            const cacheCleared = await this.clearCacheFn(device.bleAddress);
+            if (cacheCleared) {
+              console.log(`✅ [${deviceName}] Cache cleared, ready for fresh connection`);
+            } else {
+              console.warn(`⚠️ [${deviceName}] Cache clear failed, attempting connection anyway`);
+            }
+          }
+        }
+      }
+
       // Transition to CONNECTING
       try {
         UnifiedBLEStateStore.transition(deviceId, DeviceState.CONNECTING);
@@ -190,6 +240,9 @@ class ReconnectionManagerImpl {
       if (success) {
         console.log(`✅ [${deviceName}] Reconnected successfully!`);
         this.cleanup(deviceId);
+
+        // Clear disconnect timestamp on successful reconnection
+        this.disconnectTimestamps.delete(deviceId);
 
         // Transition to CONNECTED
         try {
@@ -289,6 +342,7 @@ class ReconnectionManagerImpl {
     this.cancelReconnect(deviceId);
     this.attempts.delete(deviceId);
     this.reasons.delete(deviceId);
+    this.disconnectTimestamps.delete(deviceId);
   }
 
   /**
@@ -337,11 +391,12 @@ class ReconnectionManagerImpl {
     }
 
     // Reset attempts for user-triggered retry
+    // IMPORTANT: Clear disconnectTimestamp to prevent cache clearing on manual retry
     this.cleanup(deviceId);
 
-    console.log(`[ReconnectManager] ${formatDeviceID(deviceId)} - user retry requested`);
+    console.log(`[ReconnectManager] ${formatDeviceID(deviceId)} - user retry requested (cache NOT cleared)`);
 
-    // Schedule immediate reconnect
+    // Schedule immediate reconnect (will set new timestamp without cache clear)
     this.scheduleReconnect(deviceId, DisconnectReason.CONNECTION_LOST);
   }
 
@@ -359,6 +414,7 @@ class ReconnectionManagerImpl {
     this.timers.clear();
     this.attempts.clear();
     this.reasons.clear();
+    this.disconnectTimestamps.clear();
   }
 }
 

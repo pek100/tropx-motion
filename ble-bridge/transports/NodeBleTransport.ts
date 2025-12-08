@@ -617,6 +617,84 @@ export class NodeBleTransport extends EventEmitter implements ITransport {
     }
   }
 
+  /**
+   * Clear GATT cache for a device (Linux/Pi implementation)
+   * Removes device from BlueZ adapter to force cache clear on next connection
+   */
+  async clearDeviceCache(bleAddress: string): Promise<boolean> {
+    if (!this.adapter) {
+      console.warn('[NodeBleTransport] clearDeviceCache: Adapter not initialized');
+      return false;
+    }
+
+    try {
+      console.log(`[NodeBleTransport] Clearing GATT cache for ${bleAddress}...`);
+
+      // Get device object from BlueZ
+      const device = this.nodeBleDevices.get(bleAddress) || await this.adapter.getDevice(bleAddress);
+      if (!device) {
+        console.warn(`[NodeBleTransport] Device ${bleAddress} not found in BlueZ`);
+        return false;
+      }
+
+      // Get device name for logging
+      let deviceName = bleAddress;
+      try {
+        deviceName = await device.getName();
+      } catch (e) {
+        try {
+          deviceName = await device.getAlias();
+        } catch (e2) {
+          // Use address
+        }
+      }
+
+      // Check if connected
+      let isConnected = false;
+      try {
+        isConnected = await device.getProperty('Connected');
+      } catch (e) {
+        // Assume not connected
+      }
+
+      // Disconnect if connected
+      if (isConnected) {
+        console.log(`[NodeBleTransport] Disconnecting ${deviceName} before cache clear...`);
+        try {
+          await device.disconnect();
+          await this.delay(500); // Wait for clean disconnect
+        } catch (error: any) {
+          // Ignore "Not Connected" errors
+          if (!error.type?.includes('NotConnected') && !error.text?.includes('Not Connected')) {
+            console.warn(`[NodeBleTransport] Disconnect failed for ${deviceName}:`, error);
+          }
+        }
+      }
+
+      // CRITICAL: Remove device from BlueZ adapter
+      // This forces BlueZ to clear all cached GATT data (services, characteristics, connection params)
+      try {
+        console.log(`[NodeBleTransport] Removing ${deviceName} from BlueZ adapter (forces cache clear)...`);
+        await this.adapter.removeDevice(device);
+        console.log(`[NodeBleTransport] ✅ Device ${deviceName} removed from adapter - cache cleared`);
+      } catch (error: any) {
+        console.error(`[NodeBleTransport] Failed to remove device ${deviceName} from adapter:`, error);
+        return false;
+      }
+
+      // Remove from internal caches
+      this.discoveredPeripherals.delete(bleAddress);
+      this.nodeBleDevices.delete(bleAddress);
+
+      console.log(`[NodeBleTransport] Cache cleared successfully for ${deviceName}`);
+      return true;
+
+    } catch (error) {
+      console.error(`[NodeBleTransport] clearDeviceCache failed for ${bleAddress}:`, error);
+      return false;
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Private Methods
   // ─────────────────────────────────────────────────────────────────────────

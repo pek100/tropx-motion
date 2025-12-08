@@ -597,6 +597,51 @@ export class NobleTransport extends EventEmitter implements ITransport {
     console.log(`[NobleTransport] ${peripheral.name}: removed from cache`);
   }
 
+  /**
+   * Clear GATT cache for a device (Noble implementation)
+   * Note: Noble doesn't expose direct cache clearing like BlueZ
+   * This disconnects and forgets the peripheral, forcing rediscovery
+   */
+  async clearDeviceCache(bleAddress: string): Promise<boolean> {
+    try {
+      console.log(`[NobleTransport] Clearing cache for ${bleAddress}...`);
+
+      const peripheral = this.discoveredPeripherals.get(bleAddress);
+      if (!peripheral) {
+        console.log(`[NobleTransport] Device ${bleAddress} not found in cache - nothing to clear`);
+        return true; // Not an error - already cleared
+      }
+
+      const deviceName = peripheral.name;
+
+      // Disconnect if connected
+      if (peripheral.state === 'connected') {
+        console.log(`[NobleTransport] Disconnecting ${deviceName} before cache clear...`);
+        try {
+          await peripheral.disconnect();
+          await this.delay(500); // Wait for clean disconnect
+          console.log(`[NobleTransport] ${deviceName} disconnected`);
+        } catch (error) {
+          console.warn(`[NobleTransport] Disconnect failed for ${deviceName}:`, error);
+          // Continue with cache clear anyway
+        }
+      }
+
+      // Remove from internal cache
+      // NOTE: Noble doesn't provide OS-level cache clearing like BlueZ
+      // The next connection will rediscover the device and reconnect
+      this.discoveredPeripherals.delete(bleAddress);
+
+      console.log(`[NobleTransport] Cache cleared for ${deviceName} (peripheral forgotten)`);
+      console.log(`[NobleTransport] ℹ️  Note: Noble uses OS BLE stack - cache clearing is limited`);
+      return true;
+
+    } catch (error) {
+      console.error(`[NobleTransport] clearDeviceCache failed for ${bleAddress}:`, error);
+      return false;
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Private Methods
   // ─────────────────────────────────────────────────────────────────────────
@@ -685,5 +730,9 @@ export class NobleTransport extends EventEmitter implements ITransport {
 
       noble.on('stateChange', stateChangeHandler);
     });
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
