@@ -53,6 +53,14 @@ export interface ElectronAPI {
     testClient: {
         discoverPort: () => Promise<{ success: boolean; port?: number; url?: string; error?: string }>;
     };
+
+    file: {
+        writeCSV: (filePath: string, content: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
+        openFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+        openFolder: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+        selectFolder: () => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>;
+        importCSV: () => Promise<{ success: boolean; content?: string; filePath?: string; fileName?: string; canceled?: boolean; error?: string }>;
+    };
 }
 
 const electronAPI: ElectronAPI = {
@@ -104,6 +112,14 @@ const electronAPI: ElectronAPI = {
 
     testClient: {
         discoverPort: () => ipcRenderer.invoke('testClient:discoverPort'),
+    },
+
+    file: {
+        writeCSV: (filePath: string, content: string) => ipcRenderer.invoke('file:writeCSV', filePath, content),
+        openFile: (filePath: string) => ipcRenderer.invoke('file:openFile', filePath),
+        openFolder: (filePath: string) => ipcRenderer.invoke('file:openFolder', filePath),
+        selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
+        importCSV: () => ipcRenderer.invoke('file:importCSV'),
     },
 };
 

@@ -15,7 +15,7 @@
       }
 
       // Otherwise use default
-      return { width: 1600, height: 800, small: false };
+      return { width: 1700, height: 800, small: false };
     } catch (e) {
       console.error('Screen detection failed:', e);
       return { width: 480, height: 320, small: true }; // Assume small if detection fails

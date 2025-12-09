@@ -177,10 +177,10 @@ export const BLE_CONFIG = {
     backoffMultiplier: 1.5,
   },
 
-  // Watchdog settings (fast detection - verifies BLE state before disconnect)
+  // Watchdog settings (balanced detection - verifies BLE state before disconnect)
   watchdog: {
     checkIntervalMs: 1000,       // Check every 1 second
-    timeoutMs: 4000,             // 4 second timeout - only triggers if BLE also disconnected
+    timeoutMs: 10000,            // 10 second timeout - only triggers if BLE also disconnected
     streamingRecoveryMs: 3000,   // Try streaming recovery after 3 seconds of no data
   },
 

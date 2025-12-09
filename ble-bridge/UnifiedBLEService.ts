@@ -231,63 +231,27 @@ export class UnifiedBLEService {
   // ─────────────────────────────────────────────────────────────────────────────
 
   async connectToDevice(deviceId: string): Promise<BleConnectionResult> {
-    // Check if device is in ERROR state - handle based on global state
+    // Check if device is in ERROR state - if so, need to clear stale peripheral
+    // User must scan first to rediscover the device (no scanning during connection)
     const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
     if (storeDeviceId) {
       const device = UnifiedBLEStateStore.getDevice(storeDeviceId);
       if (device && device.state === DeviceState.ERROR) {
-        const globalState = UnifiedBLEStateStore.getGlobalState();
+        console.log(`[UnifiedBLEService] Device ${device.bleName} is in ERROR state - clearing stale peripheral`);
 
-        // During streaming: can't scan, inform user to stop streaming first
-        if (globalState === GlobalState.STREAMING) {
-          console.log(`[UnifiedBLEService] Device ${device.bleName} is in ERROR state but streaming is active - cannot auto-scan`);
-          return {
-            success: false,
-            deviceId,
-            message: 'Device unavailable. Stop streaming first, then scan to rediscover.'
-          };
-        }
-
-        // Not streaming: auto-scan to rediscover the device
-        console.log(`[UnifiedBLEService] Device ${device.bleName} is in ERROR state - auto-scanning to rediscover...`);
-
-        // Clear the stale peripheral from transport cache first
+        // Clear the stale peripheral from transport cache (includes disconnect on Noble)
+        // This allows the device to be rediscovered during next scan
         await this.transport.forgetPeripheral(deviceId);
 
-        // Start a short scan to rediscover the device
-        const SCAN_TIMEOUT_MS = 8000; // 8 seconds to find the device
-        const scanStartTime = Date.now();
-
-        // Start scanning
-        await this.startScanning();
-
-        // Wait for device to be rediscovered (poll state store)
-        let rediscovered = false;
-        while (Date.now() - scanStartTime < SCAN_TIMEOUT_MS) {
-          await this.delay(500); // Check every 500ms
-
-          const updatedDevice = UnifiedBLEStateStore.getDevice(storeDeviceId);
-          if (updatedDevice && updatedDevice.state === DeviceState.DISCOVERED) {
-            rediscovered = true;
-            console.log(`[UnifiedBLEService] Device ${device.bleName} rediscovered after ${Date.now() - scanStartTime}ms`);
-            break;
-          }
-        }
-
-        // Stop scanning
-        await this.stopScanning(true);
-
-        if (!rediscovered) {
-          console.log(`[UnifiedBLEService] Device ${device.bleName} not found after ${SCAN_TIMEOUT_MS}ms scan`);
-          return {
-            success: false,
-            deviceId,
-            message: 'Device not found. It may be powered off or out of range.'
-          };
-        }
-
-        // Device rediscovered - fall through to normal connection flow
-        console.log(`[UnifiedBLEService] Proceeding with connection to rediscovered device ${device.bleName}`);
+        // Keep device in ERROR state - it will transition to DISCOVERED when
+        // rediscovered during scan (handleDeviceDiscovered handles ERROR → DISCOVERED)
+        // Do NOT scan during connection - just inform user to scan first
+        console.log(`[UnifiedBLEService] Device ${device.bleName} needs to be rediscovered - user should scan first`);
+        return {
+          success: false,
+          deviceId,
+          message: 'Please scan to rediscover device'
+        };
       }
     }
 
@@ -946,33 +910,6 @@ export class UnifiedBLEService {
         success: false,
         message: `Failed to remove: ${error instanceof Error ? error.message : String(error)}`
       };
-    }
-  }
-
-  /**
-   * Clear GATT cache for a device
-   * This is useful for reconnecting to devices after they've been gone for a while
-   * Platform-specific implementation:
-   * - Linux/Pi (BlueZ): Removes device from adapter (forces complete cache clear)
-   * - Windows/Mac (Noble): Disconnects and forgets peripheral (limited cache clearing)
-   */
-  async clearDeviceCache(bleAddress: string): Promise<boolean> {
-    console.log(`[UnifiedBLEService] clearDeviceCache called for ${bleAddress}`);
-
-    try {
-      // Delegate to transport implementation
-      const result = await this.transport.clearDeviceCache(bleAddress);
-
-      if (result) {
-        console.log(`[UnifiedBLEService] Cache cleared successfully for ${bleAddress}`);
-      } else {
-        console.warn(`[UnifiedBLEService] Cache clear failed for ${bleAddress}`);
-      }
-
-      return result;
-    } catch (error) {
-      console.error(`[UnifiedBLEService] clearDeviceCache error for ${bleAddress}:`, error);
-      return false;
     }
   }
 

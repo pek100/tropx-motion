@@ -1,7 +1,7 @@
 "use client"
 
 import React from "react"
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { ComposedChart, Area, XAxis, YAxis, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip } from "recharts"
 import { ChartContainer } from "@/components/ui/chart"
 import { Check } from "lucide-react"
@@ -130,6 +130,13 @@ interface KneeData {
   lastUpdate?: number
 }
 
+interface ImportedDataPoint {
+  t: number;        // timestamp (ms)
+  relative: number; // relative seconds
+  l: number;        // left knee angle
+  r: number;        // right knee angle
+}
+
 interface KneeAreaChartProps {
   leftKnee?: KneeData
   rightKnee?: KneeData
@@ -137,6 +144,7 @@ interface KneeAreaChartProps {
   recordingStartTime?: Date | null
   useSensorTimestamps?: boolean
   clearTrigger?: number // Added clearTrigger prop to reset chart data
+  importedData?: ImportedDataPoint[] // Static imported data to display
 }
 
 const KNEE_CONFIGS = [
@@ -178,6 +186,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   recordingStartTime,
   useSensorTimestamps = true,
   clearTrigger = 0, // Added clearTrigger prop
+  importedData, // Static imported data
 }) => {
   const [kneeVisibility, setKneeVisibility] = useState({
     left: true,
@@ -195,8 +204,6 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   const animationFrameRef = useRef<number>()
   const pendingUpdateRef = useRef(false)
-  const lastRenderTimeRef = useRef(0)
-  const RENDER_INTERVAL_MS = 22 // 45fps throttle for Recharts performance
 
   // Store latest props in refs to avoid recreating updateData callback
   // This prevents 100 useEffect cleanups per second at 100Hz data rate
@@ -233,10 +240,35 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   const clampValue = (value: number) => Math.max(ANGLE_CONSTRAINTS.MIN, Math.min(ANGLE_CONSTRAINTS.MAX, value))
 
-  // ARCHITECTURE: Data capture vs. rendering are decoupled for smooth visualization
-  // - ALL data (100% of samples) is captured immediately in circular buffer
-  // - Rendering is throttled to 45fps (22ms) - Recharts SVG is too slow for 60fps
-  // - Result: No stuttering, no data loss, smooth animation
+  // Convert imported data to chart format when provided
+  // Limit to prevent performance issues with large datasets
+  const MAX_IMPORTED_POINTS = 5000;
+  const importedChartData = useMemo(() => {
+    if (!importedData || importedData.length === 0) return null;
+    try {
+      // Downsample if too many points
+      let dataToProcess = importedData;
+      if (importedData.length > MAX_IMPORTED_POINTS) {
+        const step = Math.ceil(importedData.length / MAX_IMPORTED_POINTS);
+        dataToProcess = importedData.filter((_, idx) => idx % step === 0);
+      }
+      return dataToProcess.map((point, idx) => ({
+        time: point.t || idx * 10, // Use timestamp or generate from index
+        leftAngle: roundToOneDecimal(clampValue(point.l ?? 0)),
+        rightAngle: roundToOneDecimal(clampValue(point.r ?? 0)),
+        _updateId: idx,
+      }));
+    } catch (err) {
+      console.error('Failed to process imported data:', err);
+      return null;
+    }
+  }, [importedData]);
+
+  // Use imported data if available, otherwise use streaming data
+  const displayData = importedChartData || chartData;
+
+  // Use refs in callback to avoid recreating on every prop change
+  // This is critical for high-frequency updates (100Hz)
   const updateData = useCallback(() => {
     const left = leftKneeRef.current
     const right = rightKneeRef.current
@@ -259,27 +291,18 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
     trace('CHART', `updateData: left=${newDataPoint.leftAngle}, right=${newDataPoint.rightAngle}, ts=${timestamp}, updateId=${updateCounterRef.current}`);
 
-    // CRITICAL: Capture data IMMEDIATELY (100% capture rate, no throttling)
+    // Add to buffer immediately for data integrity
     dataBufferRef.current.push(newDataPoint)
     trace('CHART', `Buffer push: bufferSize=${dataBufferRef.current.getSize()}`);
 
-    // Throttle chart RE-RENDER to 30fps for Recharts performance
-    // Recharts SVG rendering is expensive - 30fps is smooth enough for visualization
-    // All data is still captured in buffer, just rendered less frequently
-    const now = Date.now()
-    if (now - lastRenderTimeRef.current < RENDER_INTERVAL_MS) {
-      return // Skip render, but data is already in buffer
-    }
-
-    // Schedule chart RE-RENDER using RAF
+    // Schedule chart update using RAF to batch multiple updates per frame
     if (!pendingUpdateRef.current) {
       pendingUpdateRef.current = true
       trace('CHART', 'Scheduling RAF');
       animationFrameRef.current = requestAnimationFrame(() => {
         try {
           trace('CHART', 'RAF executing');
-          lastRenderTimeRef.current = Date.now()
-          // Render with latest data from buffer (all samples preserved)
+          // Use latest timestamp from buffer for window calculation
           const latestPoint = dataBufferRef.current.toArray().slice(-1)[0]
           if (latestPoint) {
             const newChartData = dataBufferRef.current.getChartData(latestPoint.time)
@@ -439,7 +462,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               key={chartKey}
-              data={chartData}
+              data={displayData}
               margin={CHART_LAYOUT.MARGINS}
             >
               <defs>

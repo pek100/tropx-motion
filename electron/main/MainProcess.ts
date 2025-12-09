@@ -1,4 +1,6 @@
-import { app, BrowserWindow, ipcMain, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol, shell, dialog } from 'electron';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
 import log from 'electron-log';
@@ -499,6 +501,87 @@ export class MainProcess {
         return { ok: true };
       } catch (err) {
         return { error: String(err) };
+      }
+    });
+
+    // File operations for CSV export
+    ipcMain.handle('file:writeCSV', async (_e, filePath: string, content: string) => {
+      try {
+        // Resolve ~ to home directory
+        const resolvedPath = filePath.replace(/^~/, os.homedir());
+        const dir = path.dirname(resolvedPath);
+
+        // Ensure directory exists
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+
+        fs.writeFileSync(resolvedPath, content, 'utf-8');
+        return { success: true, filePath: resolvedPath };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
+    });
+
+    ipcMain.handle('file:openFile', async (_e, filePath: string) => {
+      try {
+        const resolvedPath = filePath.replace(/^~/, os.homedir());
+        await shell.openPath(resolvedPath);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
+    });
+
+    ipcMain.handle('file:openFolder', async (_e, filePath: string) => {
+      try {
+        const resolvedPath = filePath.replace(/^~/, os.homedir());
+        shell.showItemInFolder(resolvedPath);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
+    });
+
+    ipcMain.handle('dialog:selectFolder', async () => {
+      if (!this.mainWindow) return { success: false, error: 'No window' };
+
+      const result = await dialog.showOpenDialog(this.mainWindow, {
+        properties: ['openDirectory', 'createDirectory'],
+        title: 'Select Export Folder'
+      });
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+      }
+
+      return { success: true, path: result.filePaths[0] };
+    });
+
+    // Import CSV file
+    ipcMain.handle('file:importCSV', async () => {
+      if (!this.mainWindow) return { success: false, error: 'No window' };
+
+      const result = await dialog.showOpenDialog(this.mainWindow, {
+        properties: ['openFile'],
+        title: 'Import Recording',
+        filters: [
+          { name: 'CSV Files', extensions: ['csv'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
+      });
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+      }
+
+      try {
+        const filePath = result.filePaths[0];
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const fileName = path.basename(filePath);
+        return { success: true, content, filePath, fileName };
+      } catch (err) {
+        return { success: false, error: String(err) };
       }
     });
   }

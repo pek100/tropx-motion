@@ -227,7 +227,7 @@ export function DeviceCard({
   return (
     <TooltipProvider>
       <div
-        className={`device-card flex items-center ${isCompact ? 'gap-0 w-full' : 'gap-3'} cursor-${draggable ? 'grab active:cursor-grabbing' : 'default'} transition-all duration-200 ease-out ${
+        className={`device-card flex items-center w-full ${isCompact ? 'gap-0' : 'gap-3'} cursor-${draggable ? 'grab active:cursor-grabbing' : 'default'} transition-all duration-200 ease-out ${
           isDragging ? 'opacity-30 scale-95' : 'opacity-100 scale-100'
         }`}
         draggable={draggable && !disabled}
@@ -243,7 +243,7 @@ export function DeviceCard({
         data-dragover={isDragOver ? 'true' : 'false'}
       >
         <div
-          className={`${bgColor} rounded-full ${isCompact ? 'px-2 py-2' : 'px-4 py-2.5'} flex items-center ${isCompact ? 'gap-2' : 'gap-3'} ${isCompact ? 'flex-1 min-w-0' : 'w-[340px]'} transition-all duration-200 ${
+          className={`${bgColor} rounded-full ${isCompact ? 'px-2 py-2' : 'px-4 py-2.5'} flex items-center ${isCompact ? 'gap-2' : 'gap-3'} flex-1 min-w-0 transition-all duration-200 ${
             isLocating && !isLocatingTarget ? 'grayscale' : ''
           } ${isLocatingTarget ? 'animate-vibrate' : ''} ${
             isDragOver ? 'ring-2 ring-offset-2 ring-purple-500 scale-[1.02]' : ''

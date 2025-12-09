@@ -34,12 +34,12 @@
       "WebFetch(domain:tkdodo.eu)",
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:github.com)",
-      "Read(//home/pek/**)",
-      "Bash(systemctl status:*)",
-      "Read(//etc/systemd/system/bluetooth.service.d/**)",
-      "Read(//etc/bluetooth/**)",
-      "Bash(vcgencmd measure_temp:*)",
-      "Bash(vcgencmd get_throttled:*)"
+      "WebFetch(domain:the-expert-developer.medium.com)",
+      "WebFetch(domain:mui.com)",
+      "WebFetch(domain:m2.material.io)",
+      "Read(//mnt/f/NeuraWeave/Apps/NeuraWeaveApp/**)",
+      "Bash(awk:*)",
+      "Bash(git diff:*)"
     ],
     "deny": [],
     "ask": [],

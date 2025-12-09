@@ -20,12 +20,18 @@ const buttonVariants = cva(
         ghost:
           'hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50',
         link: 'text-primary underline-offset-4 hover:underline',
+        'ghost-nav':
+          'bg-transparent text-[var(--tropx-shadow)] hover:text-[var(--tropx-vibrant)] transition-colors data-[active=true]:text-[var(--tropx-vibrant)]',
+        island:
+          'bg-white text-[var(--tropx-shadow)] island-shadow rounded-full hover:bg-gray-50 transition-colors data-[highlighted=true]:text-[var(--tropx-vibrant)]',
       },
       size: {
         default: 'h-9 px-4 py-2 has-[>svg]:px-3',
         sm: 'h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5',
         lg: 'h-10 rounded-md px-6 has-[>svg]:px-4',
         icon: 'size-9',
+        nav: 'h-auto px-3 py-1.5 text-sm',
+        'island-item': 'h-auto px-4 py-3 text-sm rounded-none first:rounded-l-full last:rounded-r-full',
       },
     },
     defaultVariants: {

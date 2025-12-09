@@ -3,10 +3,16 @@ import { ChartSvg } from "@/components/chart-svg"
 import KneeAreaChart from "@/components/knee-area-chart"
 import { PlatformIndicator } from "@/components/platform-indicator"
 import { ProfileSelector } from "@/components/ProfileSelector"
+import { TopNavTabs } from "@/components/TopNavTabs"
+import { ActionBar, type ActionId } from "@/components/ActionBar"
+import { ActionModal } from "@/components/ActionModal"
+import { StorageSettingsModal } from "@/components/StorageSettingsModal"
 import { useState, useRef, useEffect, useMemo, useCallback, lazy, Suspense } from "react"
 import { useToast } from "@/hooks/use-toast"
+import { ToastAction } from "@/components/ui/toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useDevices, type UIDevice, DeviceId } from "@/hooks/useDevices"
+import { useRecordingExport } from "@/hooks/useRecordingExport"
 import { persistence } from "@/lib/persistence"
 import { UIProfileProvider, useUIProfile } from "@/lib/ui-profiles"
 
@@ -98,6 +104,27 @@ function AppContent() {
   // Client Launcher state
   const [clientLaunched, setClientLaunched] = useState(false)
   const [clientDisplay, setClientDisplay] = useState<ClientDisplayMode>('closed')
+
+  // Action modal state
+  const [activeActionModal, setActiveActionModal] = useState<ActionId | null>(null)
+
+  // Storage settings modal state
+  const [isStorageSettingsOpen, setIsStorageSettingsOpen] = useState(false)
+
+  // Recording export/import hook
+  const {
+    isExporting,
+    exportCSV,
+    openFile,
+    openFolder,
+    selectFolder,
+    exportPath,
+    resetPath,
+    isImporting,
+    importedRecording,
+    importCSV,
+    clearImport,
+  } = useRecordingExport()
 
   const autoStartRef = useRef(false)
 
@@ -365,6 +392,86 @@ function AppContent() {
   const handleSnapClientRight = () => { setClientDisplay('snapped-right') }
   const handleClientBackToModal = () => { setClientDisplay('modal') }
 
+  // Action bar handler
+  const handleActionClick = async (actionId: ActionId) => {
+    if (actionId === 'load') {
+      if (isStreaming) {
+        toast({
+          title: "Cannot Load",
+          description: "Stop streaming before loading a recording.",
+          variant: "destructive",
+          duration: 4000,
+        })
+        return
+      }
+
+      // Handle load directly - open file picker and import
+      const result = await importCSV()
+      if (result.success && result.recording) {
+        // Clear streaming state to show imported data
+        setHasStartedStreaming(true)
+        setClearChartTrigger(prev => prev + 1)
+        toast({
+          title: "Recording Loaded",
+          description: `${result.recording.metadata.fileName} (${result.recording.metadata.sampleCount} samples)`,
+          duration: 4000,
+        })
+      } else if (!result.canceled && result.error) {
+        toast({
+          title: "Import Failed",
+          description: result.error,
+          variant: "destructive",
+          duration: 5000,
+        })
+      }
+      return
+    }
+    setActiveActionModal(actionId)
+  }
+
+  // CSV export handler
+  const handleExportCSV = useCallback(async () => {
+    if (isStreaming) {
+      toast({
+        title: "Cannot Export",
+        description: "Stop streaming before exporting the recording.",
+        variant: "destructive",
+        duration: 4000,
+      })
+      return
+    }
+
+    const result = await exportCSV()
+
+    if (result.success && result.filePath) {
+      toast({
+        title: "Recording Exported",
+        description: result.fileName,
+        duration: 8000,
+        action: (
+          <div className="flex gap-2">
+            <ToastAction altText="Open file" onClick={() => openFile(result.filePath!)}>
+              Open
+            </ToastAction>
+            <ToastAction altText="Show in folder" onClick={() => openFolder(result.filePath!)}>
+              Folder
+            </ToastAction>
+            <ToastAction altText="Settings" onClick={() => setIsStorageSettingsOpen(true)}>
+              Settings
+            </ToastAction>
+          </div>
+        ),
+      })
+    } else {
+      toast({
+        title: "Export Failed",
+        description: result.error || "Could not export recording",
+        variant: "destructive",
+        duration: 5000,
+      })
+    }
+  }, [exportCSV, openFile, openFolder, toast])
+
   // Drag & drop handlers
   const handleDragStart = (index: number) => (e: React.DragEvent) => {
     if (isLocating || isSyncing) return
@@ -544,15 +651,22 @@ function AppContent() {
             </header>
           )}
 
+          {/* Top Navigation Tabs - non-compact only */}
+          {!isCompact && (
+            <div className="pointer-events-auto" style={{ WebkitAppRegion: 'no-drag' } as any}>
+              <TopNavTabs />
+            </div>
+          )}
+
           <div className={isCompact ? "flex-1 flex relative pointer-events-none" : "flex-1 flex items-center justify-center px-8 relative pointer-events-none"}>
             <div className={isCompact ? "flex gap-0 w-full h-full pointer-events-none" : "flex gap-6 w-[90%] pointer-events-none"}>
               {/* Left Pane */}
               <div
-                className={`flex-shrink-0 bg-white flex flex-col transition-all pointer-events-auto ${isFlashing ? "flash-pane" : ""} ${isCompact ? "w-1/2 h-full p-4" : "w-[500px] p-6"}`}
+                className={`flex-shrink-0 bg-white flex flex-col transition-all pointer-events-auto ${isFlashing ? "flash-pane" : ""} ${isCompact ? "w-1/2 h-full p-4" : "w-[450px] p-6"}`}
                 style={{
                   border: isCompact ? "none" : "1px solid #e5e5e5",
                   borderRadius: isCompact ? "0" : "36px",
-                  height: isCompact ? "100%" : "500px",
+                  height: isCompact ? "100%" : "550px",
                   WebkitAppRegion: 'no-drag',
                   position: 'relative',
                   padding: clientDisplay === 'snapped-left' ? '0' : undefined,
@@ -700,10 +814,7 @@ function AppContent() {
                       <Suspense fallback={null}>
                         <DynamicIsland expanded={false} onToggle={handleLaunchClient}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', cursor: 'pointer' }}>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                              <line x1="9" y1="3" x2="9" y2="21"></line>
-                            </svg>
+                            <span style={{ fontSize: '18px' }}>🚀</span>
                             <span style={{ fontWeight: 500 }}>Launch Client</span>
                           </div>
                         </DynamicIsland>
@@ -713,13 +824,17 @@ function AppContent() {
                 )}
               </div>
 
-              {/* Right Pane */}
+              {/* Right Container - holds right pane and action bar */}
               <div
-                className={`bg-white gradient-diagonal flex flex-col pointer-events-auto ${clientDisplay === 'snapped-right' ? '' : 'items-center justify-center'} ${isCompact ? "w-1/2 h-full flex-1 p-4" : "flex-1 p-6"}`}
+                className={isCompact ? "w-1/2 h-full" : "flex-1 flex flex-col"}
+                style={{ height: isCompact ? undefined : '550px' }}
+              >
+                {/* Right Pane */}
+                <div
+                  className={`bg-white gradient-diagonal flex flex-col pointer-events-auto ${clientDisplay === 'snapped-right' ? '' : 'items-center justify-center'} ${isCompact ? "h-full p-4" : "flex-1 p-6"}`}
                 style={{
                   border: isCompact ? "none" : "1px solid #e5e5e5",
                   borderRadius: isCompact ? "0" : "36px",
-                  height: isCompact ? "100%" : "500px",
                   WebkitAppRegion: 'no-drag',
                   position: 'relative',
                   padding: clientDisplay === 'snapped-right' ? '0' : undefined,
@@ -733,7 +848,12 @@ function AppContent() {
                 ) : (
                   <>
                     {isStreaming || hasStartedStreaming ? (
-                      <KneeAreaChart leftKnee={leftKneeData} rightKnee={rightKneeData} clearTrigger={clearChartTrigger} />
+                      <KneeAreaChart
+                        leftKnee={leftKneeData}
+                        rightKnee={rightKneeData}
+                        clearTrigger={clearChartTrigger}
+                        importedData={importedRecording?.samples}
+                      />
                     ) : (
                       <ChartSvg />
                     )}
@@ -793,6 +913,16 @@ function AppContent() {
                     </div>
                   </>
                 )}
+                </div>
+
+                {/* Action Bar - non-compact only */}
+                {!isCompact && (
+                  <ActionBar
+                    onActionClick={handleActionClick}
+                    onExportCSV={handleExportCSV}
+                    isExporting={isExporting}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -820,6 +950,22 @@ function AppContent() {
 
         {/* Profile Selector */}
         <ProfileSelector isOpen={isProfileSelectorOpen} onClose={() => setIsProfileSelectorOpen(false)} />
+
+        {/* Action Modal */}
+        <ActionModal
+          actionId={activeActionModal}
+          open={activeActionModal !== null}
+          onOpenChange={(open) => !open && setActiveActionModal(null)}
+        />
+
+        {/* Storage Settings Modal */}
+        <StorageSettingsModal
+          open={isStorageSettingsOpen}
+          onOpenChange={setIsStorageSettingsOpen}
+          currentPath={exportPath}
+          onSelectFolder={selectFolder}
+          onResetPath={resetPath}
+        />
       </div>
     </TooltipProvider>
   )

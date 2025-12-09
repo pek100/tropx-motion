@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { TropxWSClient } from '../lib/tropx-ws-client';
 import { EVENT_TYPES, MESSAGE_TYPES } from '../lib/tropx-ws-client';
 import type { ClientMetadata } from '../lib/tropx-ws-client/types/messages';
+import { RecordingBuffer } from '../lib/recording';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -69,6 +70,9 @@ export interface BLEDevice {
 export interface KneeData {
   current: number;
   sensorTimestamp: number;
+  velocity: number;
+  acceleration: number;
+  quality: number;
 }
 
 /**
@@ -212,14 +216,19 @@ export function useDevices() {
   const [lastUpdate, setLastUpdate] = useState<number>(0);
 
   // ─── Motion Data ──────────────────────────────────────────────────────
-  // Separate state for left/right - React 18 batches automatically
   const [leftKneeData, setLeftKneeData] = useState<KneeData>({
     current: 0,
     sensorTimestamp: Date.now(),
+    velocity: 0,
+    acceleration: 0,
+    quality: 100,
   });
   const [rightKneeData, setRightKneeData] = useState<KneeData>({
     current: 0,
     sensorTimestamp: Date.now(),
+    velocity: 0,
+    acceleration: 0,
+    quality: 100,
   });
 
 
@@ -344,22 +353,45 @@ export function useDevices() {
           }
         });
 
-        // ─── Motion Data Handler (OPTIMIZED for 60Hz) ────────────────
+        // ─── Motion Data Handler ───────────────────────────────────────
         client.on(EVENT_TYPES.MOTION_DATA, (message: any) => {
           lastMotionDataTimeRef.current = Date.now();
 
-          // HOT PATH: Backend always sends Float32Array during streaming
-          // Add minimal safety check for connection phase
-          if (!(message.data instanceof Float32Array) || message.data.length < 2) {
-            return; // Silently ignore invalid data during connection phase
+          const raw = message?.data;
+          let leftCurrent = 0;
+          let rightCurrent = 0;
+
+          if (raw instanceof Float32Array) {
+            leftCurrent = raw[0] || 0;
+            rightCurrent = raw[1] || 0;
+          } else if (Array.isArray(raw)) {
+            leftCurrent = raw[0] || 0;
+            rightCurrent = raw[1] || 0;
+          } else if (raw && typeof raw === 'object' && 'left' in raw && 'right' in raw) {
+            leftCurrent = raw.left?.current ?? 0;
+            rightCurrent = raw.right?.current ?? 0;
           }
 
-          const data = message.data;
-          const timestamp = message.timestamp || Date.now();
+          const timestamp = message?.timestamp || Date.now();
 
-          // Minimal object creation - only essential fields
-          setLeftKneeData({ current: data[0], sensorTimestamp: timestamp });
-          setRightKneeData({ current: data[1], sensorTimestamp: timestamp });
+          setLeftKneeData({
+            current: leftCurrent,
+            sensorTimestamp: timestamp,
+            velocity: 0,
+            acceleration: 0,
+            quality: 100,
+          });
+
+          setRightKneeData({
+            current: rightCurrent,
+            sensorTimestamp: timestamp,
+            velocity: 0,
+            acceleration: 0,
+            quality: 100,
+          });
+
+          // Push to recording buffer
+          RecordingBuffer.push(timestamp, leftCurrent, rightCurrent);
         });
 
         // ─── Client List Handler ───────────────────────────────────────
@@ -609,6 +641,8 @@ export function useDevices() {
     if (!clientRef.current) return { success: false, error: 'Not connected' };
     const result = await clientRef.current.startRecording(sessionId, exerciseId, setNumber);
     if (result.success) {
+      // Start recording buffer
+      RecordingBuffer.start();
       // globalState update comes via STATE_UPDATE from backend
       return { success: true, data: result.data.recordingId };
     }
@@ -618,6 +652,8 @@ export function useDevices() {
   const stopStreaming = useCallback(async (): Promise<Result<void>> => {
     if (!clientRef.current) return { success: false, error: 'Not connected' };
     const result = await clientRef.current.stopRecording();
+    // Stop recording buffer (keeps data for export)
+    RecordingBuffer.stop();
     // globalState update comes via STATE_UPDATE from backend
     // Reset health check cooldown on success - new session should have fresh cooldown
     if (result.success) {

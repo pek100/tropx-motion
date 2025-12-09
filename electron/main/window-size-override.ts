@@ -51,7 +51,7 @@
 
       // Use defaults for larger screens
       return {
-        width: 1600,
+        width: 1700,
         height: 800,
         minWidth: 800,
         minHeight: 600,

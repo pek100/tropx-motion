@@ -99,9 +99,6 @@ export interface ITransport extends EventEmitter {
   getPeripheral(deviceId: string): IPeripheral | null;
   forgetPeripheral(deviceId: string): void | Promise<void>;
 
-  // Cache management
-  clearDeviceCache(bleAddress: string): Promise<boolean>;
-
   // Events:
   // 'deviceDiscovered' (DiscoveredDevice)
   // 'scanStarted'

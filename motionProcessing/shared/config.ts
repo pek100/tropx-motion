@@ -1,5 +1,5 @@
 import { MotionConfig } from "./types";
-import { SAMPLE_RATES, CACHE, DEVICE_PATTERNS } from './constants';
+import { SAMPLE_RATES, DEVICE_PATTERNS } from './constants';
 
 export enum PerformanceProfile {
     HZ_100_SAMPLING = '100HZ_SAMPLING',
@@ -12,38 +12,28 @@ export enum JointName {
     RIGHT_KNEE = 'right-knee'
 }
 
-
 interface PerformanceSettings {
     sampleRate: number;
-    cacheSize: number;
     logging: boolean;
 }
 
-/**
- * Predefined performance profiles for different use cases.
- * Higher frequencies provide more precision but require more processing power.
- */
 const PERFORMANCE_OPTIONS: Record<PerformanceProfile, PerformanceSettings> = {
     [PerformanceProfile.HZ_100_SAMPLING]: {
         sampleRate: SAMPLE_RATES.HZ_100,
-        cacheSize: CACHE.SIZE_LOW_FREQ,
         logging: false
     },
     [PerformanceProfile.HZ_200_SAMPLING]: {
         sampleRate: SAMPLE_RATES.HZ_200,
-        cacheSize: CACHE.SIZE_MID_FREQ,
         logging: false
     },
     [PerformanceProfile.HZ_400_SAMPLING]: {
         sampleRate: SAMPLE_RATES.HZ_400,
-        cacheSize: CACHE.SIZE_HIGH_FREQ,
         logging: false
     }
 };
 
 /**
  * Creates motion processing configuration with specified performance profile.
- * Configures sampling rate, cache sizes, and joint definitions.
  */
 export function createMotionConfig(
     profile: PerformanceProfile = PerformanceProfile.HZ_100_SAMPLING,
@@ -55,16 +45,10 @@ export function createMotionConfig(
         targetHz: settings.sampleRate,
         logging: enableLogging || settings.logging,
         joints: createJointConfigs(),
-        performance: {
-            cacheSize: settings.cacheSize
-        }
+        performance: {}
     };
 }
 
-/**
- * Creates standard joint configurations for left and right knee tracking.
- * Uses device pattern matching to automatically assign sensors to joints.
- */
 function createJointConfigs() {
     return [
         {

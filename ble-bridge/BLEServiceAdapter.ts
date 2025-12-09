@@ -101,18 +101,7 @@ export class BLEServiceAdapter implements BLEService {
           }
         });
 
-        // Register cache clearing function for stale GATT cache cleanup before reconnection
-        // CRITICAL: Prevents reconnection failures after device has been gone for >10 seconds
-        ReconnectionManager.setClearCacheFunction(async (bleAddress: string) => {
-          try {
-            return await this.bleService.clearDeviceCache(bleAddress);
-          } catch (error) {
-            console.error(`[ReconnectionManager] Clear cache failed for ${bleAddress}:`, error);
-            return false;
-          }
-        });
-
-        console.log('🔄 ReconnectionManager configured with connect, streaming, and cache clearing functions');
+        console.log('🔄 ReconnectionManager configured with connect and streaming functions');
       } else {
         console.error('❌ Failed to initialize BLE Service Adapter');
       }
