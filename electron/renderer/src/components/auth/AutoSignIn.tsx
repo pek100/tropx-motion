@@ -4,9 +4,8 @@ import { useEffect, useState } from "react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useConvexAuth } from "convex/react";
 
-// Protocol URL for Electron OAuth callback
-const ELECTRON_CALLBACK_URL = 'tropx://auth-callback';
 const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';
+const ELECTRON_CALLBACK_URL_KEY = 'tropx_electron_callback_url';
 
 /**
  * AutoSignIn Component
@@ -23,8 +22,10 @@ const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';
 export function AutoSignIn() {
   const [isAutoSignIn, setIsAutoSignIn] = useState(false);
   const [isElectronAuth, setIsElectronAuth] = useState(false);
+  const [callbackUrl, setCallbackUrl] = useState<string | null>(null);
   const [triggered, setTriggered] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [redirected, setRedirected] = useState(false);
   const { signIn } = useAuthActions();
   const { isAuthenticated, isLoading } = useConvexAuth();
 
@@ -33,14 +34,22 @@ export function AutoSignIn() {
     const params = new URLSearchParams(window.location.search);
     const autoSignIn = params.get('autoSignIn');
     const electronAuth = params.get('electronAuth');
+    const callbackUrlParam = params.get('callbackUrl');
 
     // Check if there's a pending electron auth from localStorage
     const pendingElectronAuth = localStorage.getItem(ELECTRON_AUTH_KEY) === 'true';
+    const storedCallbackUrl = localStorage.getItem(ELECTRON_CALLBACK_URL_KEY);
 
     if (autoSignIn === 'google') {
       setIsAutoSignIn(true);
       const isElectron = electronAuth === 'true';
       setIsElectronAuth(isElectron);
+
+      // Store callback URL if provided (for localhost callback)
+      if (callbackUrlParam) {
+        setCallbackUrl(callbackUrlParam);
+        localStorage.setItem(ELECTRON_CALLBACK_URL_KEY, callbackUrlParam);
+      }
 
       // Persist electron auth flag across OAuth redirect
       if (isElectron) {
@@ -51,21 +60,49 @@ export function AutoSignIn() {
       const url = new URL(window.location.href);
       url.searchParams.delete('autoSignIn');
       url.searchParams.delete('electronAuth');
+      url.searchParams.delete('callbackUrl');
       window.history.replaceState({}, '', url.toString());
     } else if (pendingElectronAuth) {
       // We're returning from OAuth redirect - restore electron auth state
       setIsElectronAuth(true);
-      console.log('[AutoSignIn] Restored electronAuth from localStorage');
+      if (storedCallbackUrl) {
+        setCallbackUrl(storedCallbackUrl);
+      }
+      console.log('[AutoSignIn] Restored electronAuth from localStorage, callback:', storedCallbackUrl);
     }
   }, []);
 
-  // Clear the pending flag when auth is complete
+  // When auth completes, redirect to callback URL with tokens
   useEffect(() => {
-    if (isElectronAuth && isAuthenticated && !isLoading) {
-      // Auth completed, clear the pending flag
+    if (isElectronAuth && isAuthenticated && !isLoading && !redirected && callbackUrl) {
+      console.log('[AutoSignIn] Auth complete, redirecting to callback:', callbackUrl);
+      setRedirected(true);
+
+      // Get tokens from localStorage
+      const keys = Object.keys(localStorage);
+      const jwtKey = keys.find(k => k.toLowerCase().includes('jwt') && k.includes('convex'));
+      const refreshKey = keys.find(k => k.toLowerCase().includes('refreshtoken') && k.includes('convex'));
+
+      const jwt = jwtKey ? localStorage.getItem(jwtKey) : null;
+      const refreshToken = refreshKey ? localStorage.getItem(refreshKey) : null;
+
+      // Clear pending flags
+      localStorage.removeItem(ELECTRON_AUTH_KEY);
+      localStorage.removeItem(ELECTRON_CALLBACK_URL_KEY);
+
+      // Redirect to callback with tokens
+      if (jwt && refreshToken) {
+        const redirectUrl = `${callbackUrl}?jwt=${encodeURIComponent(jwt)}&refreshToken=${encodeURIComponent(refreshToken)}`;
+        window.location.href = redirectUrl;
+      } else {
+        // No tokens - redirect with error
+        window.location.href = `${callbackUrl}?error=${encodeURIComponent('Failed to get authentication tokens')}`;
+      }
+    } else if (isElectronAuth && isAuthenticated && !isLoading && !callbackUrl) {
+      // No callback URL - just clear flags (old protocol-based flow)
       localStorage.removeItem(ELECTRON_AUTH_KEY);
     }
-  }, [isElectronAuth, isAuthenticated, isLoading]);
+  }, [isElectronAuth, isAuthenticated, isLoading, redirected, callbackUrl]);
 
   // Trigger OAuth after detecting param (only if not already authenticated)
   // Wait for isLoading to be false before deciding
@@ -91,13 +128,44 @@ export function AutoSignIn() {
     }
   }, [isAutoSignIn, triggered, signIn, isElectronAuth, isAuthenticated, isLoading]);
 
-  // Handle return to Electron app
-  const handleReturnToApp = () => {
-    window.location.href = ELECTRON_CALLBACK_URL;
-  };
 
   // For Electron flow: Show "return to app" screen after successful auth
   if (isElectronAuth && !isLoading && isAuthenticated) {
+    // If we have a callback URL, show redirecting message
+    if (callbackUrl) {
+      return (
+        <div className="fixed inset-0 bg-gradient-to-br from-[#fff6f3] to-white flex items-center justify-center z-[9999]">
+          <div className="text-center p-8 max-w-md">
+            {/* Success Icon */}
+            <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-green-100 flex items-center justify-center">
+              <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+
+            <h1 className="text-2xl font-semibold text-gray-800 mb-3">
+              Sign-in Successful!
+            </h1>
+            <p className="text-gray-600 mb-4">
+              Returning to TropX Motion...
+            </p>
+
+            {/* Spinner */}
+            <div
+              className="w-6 h-6 mx-auto rounded-full animate-spin"
+              style={{
+                borderWidth: '2px',
+                borderStyle: 'solid',
+                borderColor: '#e5e7eb',
+                borderTopColor: '#ff4d35'
+              }}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    // No callback URL - show manual return button (fallback)
     return (
       <div className="fixed inset-0 bg-gradient-to-br from-[#fff6f3] to-white flex items-center justify-center z-[9999]">
         <div className="text-center p-8 max-w-md">
@@ -111,19 +179,8 @@ export function AutoSignIn() {
           <h1 className="text-2xl font-semibold text-gray-800 mb-3">
             Sign-in Successful!
           </h1>
-          <p className="text-gray-600 mb-8">
-            You're now signed in. Return to TropX Motion to continue.
-          </p>
-
-          <button
-            onClick={handleReturnToApp}
-            className="px-8 py-3 bg-[#ff4d35] text-white font-medium rounded-xl hover:bg-[#e6442f] transition-colors shadow-lg shadow-red-200"
-          >
-            Open TropX Motion
-          </button>
-
-          <p className="text-sm text-gray-400 mt-6">
-            You can close this browser tab after returning to the app.
+          <p className="text-gray-600 mb-4">
+            You can close this tab and return to TropX Motion.
           </p>
         </div>
       </div>
@@ -132,6 +189,14 @@ export function AutoSignIn() {
 
   // For Electron flow: Show error screen
   if (isElectronAuth && authError) {
+    // If we have a callback URL, redirect with error
+    if (callbackUrl && !redirected) {
+      setRedirected(true);
+      localStorage.removeItem(ELECTRON_AUTH_KEY);
+      localStorage.removeItem(ELECTRON_CALLBACK_URL_KEY);
+      window.location.href = `${callbackUrl}?error=${encodeURIComponent(authError)}`;
+    }
+
     return (
       <div className="fixed inset-0 bg-gradient-to-br from-[#fff6f3] to-white flex items-center justify-center z-[9999]">
         <div className="text-center p-8 max-w-md">
@@ -148,13 +213,9 @@ export function AutoSignIn() {
           <p className="text-gray-600 mb-4">
             {authError}
           </p>
-
-          <button
-            onClick={() => window.location.href = `${ELECTRON_CALLBACK_URL}?error=${encodeURIComponent(authError)}`}
-            className="px-8 py-3 bg-gray-600 text-white font-medium rounded-xl hover:bg-gray-700 transition-colors"
-          >
-            Return to App
-          </button>
+          <p className="text-sm text-gray-400">
+            You can close this tab and try again.
+          </p>
         </div>
       </div>
     );
