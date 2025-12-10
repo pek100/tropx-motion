@@ -31,7 +31,7 @@ export function NotificationBell() {
 
   const count = invitations?.length ?? 0;
 
-  // Close dropdown when clicking outside
+  // Close dropdown when clicking outside or window loses focus
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (isOpen && dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -39,9 +39,20 @@ export function NotificationBell() {
       }
     };
 
+    const handleWindowBlur = () => {
+      if (isOpen) {
+        setIsOpen(false);
+      }
+    };
+
     // Use capture phase to ensure we catch the event before it's stopped
     document.addEventListener("mousedown", handleClickOutside, true);
-    return () => document.removeEventListener("mousedown", handleClickOutside, true);
+    window.addEventListener("blur", handleWindowBlur);
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside, true);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
   }, [isOpen]);
 
   const handleAccept = async (inviteId: Id<"invites">) => {
@@ -83,9 +94,9 @@ export function NotificationBell() {
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          "relative p-2 rounded-full transition-all cursor-pointer",
-          "hover:bg-[var(--tropx-hover)] hover:scale-105 active:scale-95",
-          isOpen && "bg-[var(--tropx-hover)]"
+          "relative p-2 rounded-full transition-all duration-150 cursor-pointer",
+          "hover:bg-[var(--tropx-hover)] hover:scale-110 active:scale-95",
+          isOpen && "bg-[var(--tropx-hover)] scale-110"
         )}
       >
         <Bell
