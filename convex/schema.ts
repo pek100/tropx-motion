@@ -46,29 +46,28 @@ export default defineSchema({
   // Convex Auth tables
   ...authTables,
 
-  // Users table
+  // Users table - extends Convex Auth's users table
+  // Fields from Convex Auth: email, name, image, emailVerificationTime
+  // Our custom fields must be optional since Auth creates the initial record
   users: defineTable({
-    // Auth link (from Convex Auth)
-    authId: v.string(),
-
-    // Profile
-    email: v.string(),
-    name: v.string(),
+    // Profile (from Convex Auth - these are provided by OAuth)
+    email: v.optional(v.string()),
+    emailVerificationTime: v.optional(v.number()),
+    name: v.optional(v.string()),
     image: v.optional(v.string()),
 
     // Role
     role: v.optional(roleValidator), // Optional until onboarding complete
 
     // Contacts
-    contacts: v.array(contactValidator),
+    contacts: v.optional(v.array(contactValidator)),
 
     // Soft delete
     ...softDeleteFields,
 
     // Timestamps
-    createdAt: v.number(),
+    createdAt: v.optional(v.number()),
   })
-    .index("by_authId", ["authId"])
     .index("email", ["email"]) // Required by Convex Auth
     .index("by_role", ["role"])
     .index("by_archived", ["isArchived", "archivedAt"]),
