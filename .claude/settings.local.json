@@ -49,7 +49,10 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "WebFetch(domain:labs.convex.dev)"
+      "WebFetch(domain:labs.convex.dev)",
+      "Bash(npx convex env:*)",
+      "Bash(npm view:*)",
+      "Bash(git restore:*)"
     ],
     "deny": [],
     "ask": [],
