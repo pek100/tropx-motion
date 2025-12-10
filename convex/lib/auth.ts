@@ -1,37 +1,34 @@
 import { QueryCtx, MutationCtx } from "../_generated/server";
 import { Id } from "../_generated/dataModel";
+import { auth } from "../auth";
 
-// Get the authenticated user's auth ID (from Convex Auth)
+// Get the authenticated user's ID (from Convex Auth)
+// Returns the user's _id in the users table, or null if not authenticated
 export async function getAuthUserId(
   ctx: QueryCtx | MutationCtx
-): Promise<string | null> {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) return null;
-  return identity.subject;
+): Promise<Id<"users"> | null> {
+  const userId = await auth.getUserId(ctx);
+  return userId;
 }
 
 // Get the authenticated user's database record
 export async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
-  const authId = await getAuthUserId(ctx);
-  if (!authId) return null;
+  const userId = await getAuthUserId(ctx);
+  if (!userId) return null;
 
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .first();
-
+  const user = await ctx.db.get(userId);
   return user;
 }
 
 // Require authentication - throws if not authenticated
 export async function requireAuth(
   ctx: QueryCtx | MutationCtx
-): Promise<string> {
-  const authId = await getAuthUserId(ctx);
-  if (!authId) {
+): Promise<Id<"users">> {
+  const userId = await getAuthUserId(ctx);
+  if (!userId) {
     throw new Error("Not authenticated");
   }
-  return authId;
+  return userId;
 }
 
 // Require user record exists - throws if not found

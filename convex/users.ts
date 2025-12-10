@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation, internalMutation } from "./_generated/server";
+import { query, mutation } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import {
   getAuthUserId,
@@ -13,16 +13,14 @@ import { ROLES } from "./schema";
 export const getMe = query({
   args: {},
   handler: async (ctx) => {
-    const authId = await getAuthUserId(ctx);
-    if (!authId) return null;
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
 
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authId))
-      .first();
+    const user = await ctx.db.get(userId);
 
     if (!user) {
-      // User authenticated but no record - needs onboarding
+      // User authenticated but no record - shouldn't happen with Convex Auth
+      // but handle gracefully
       const identity = await ctx.auth.getUserIdentity();
       return {
         needsOnboarding: true,
@@ -67,7 +65,7 @@ export const getUser = query({
   },
 });
 
-// Complete onboarding - create user record and set role
+// Complete onboarding - set role on user record
 export const completeOnboarding = mutation({
   args: {
     role: v.union(
@@ -76,67 +74,53 @@ export const completeOnboarding = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const authId = await requireAuth(ctx);
-    const identity = await ctx.auth.getUserIdentity();
+    const userId = await requireAuth(ctx);
+    const user = await ctx.db.get(userId);
 
-    if (!identity) {
-      throw new Error("No identity found");
+    if (!user) {
+      throw new Error("User not found");
     }
 
-    // Check if user already exists
-    const existingUser = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authId))
-      .first();
-
-    if (existingUser) {
-      // Update existing user with role
-      if (!existingUser.role) {
-        await ctx.db.patch(existingUser._id, { role: args.role });
-      }
-      return existingUser._id;
+    // Update user with role if not already set
+    if (!user.role) {
+      await ctx.db.patch(userId, {
+        role: args.role,
+        contacts: user.contacts ?? [],
+        createdAt: user.createdAt ?? Date.now(),
+      });
     }
-
-    // Create new user
-    const userId = await ctx.db.insert("users", {
-      authId,
-      email: identity.email ?? "",
-      name: identity.name ?? "Unknown",
-      image: identity.pictureUrl ?? undefined,
-      role: args.role,
-      contacts: [],
-      createdAt: Date.now(),
-    });
 
     // Check for pending invites for this email and auto-accept
-    const pendingInvites = await ctx.db
-      .query("invites")
-      .withIndex("by_to_email", (q) =>
-        q.eq("toEmail", identity.email ?? "").eq("status", "pending")
-      )
-      .collect();
+    if (user.email) {
+      const pendingInvites = await ctx.db
+        .query("invites")
+        .withIndex("by_to_email", (q) =>
+          q.eq("toEmail", user.email!).eq("status", "pending")
+        )
+        .collect();
 
-    for (const invite of pendingInvites) {
-      if (invite.expiresAt > Date.now()) {
-        // Accept the invite
-        await ctx.db.patch(invite._id, {
-          status: "accepted",
-          acceptedAt: Date.now(),
-          acceptedByUserId: userId,
-        });
+      for (const invite of pendingInvites) {
+        if (invite.expiresAt > Date.now()) {
+          // Accept the invite
+          await ctx.db.patch(invite._id, {
+            status: "accepted",
+            acceptedAt: Date.now(),
+            acceptedByUserId: userId,
+          });
 
-        // Add contact relationship (inviter -> invitee)
-        const inviter = await ctx.db.get(invite.fromUserId);
-        if (inviter && !inviter.isArchived) {
-          const updatedContacts = [
-            ...inviter.contacts,
-            {
-              userId,
-              alias: invite.alias,
-              addedAt: Date.now(),
-            },
-          ];
-          await ctx.db.patch(invite.fromUserId, { contacts: updatedContacts });
+          // Add contact relationship (inviter -> invitee)
+          const inviter = await ctx.db.get(invite.fromUserId);
+          if (inviter && !inviter.isArchived) {
+            const updatedContacts = [
+              ...(inviter.contacts ?? []),
+              {
+                userId,
+                alias: invite.alias,
+                addedAt: Date.now(),
+              },
+            ];
+            await ctx.db.patch(invite.fromUserId, { contacts: updatedContacts });
+          }
         }
       }
     }
@@ -171,7 +155,7 @@ export const getContacts = query({
   args: {},
   handler: async (ctx) => {
     const user = await getCurrentUser(ctx);
-    if (!user) return [];
+    if (!user || !user.contacts) return [];
 
     const contacts = await Promise.all(
       user.contacts.map(async (contact) => {
@@ -326,37 +310,3 @@ export const archiveMyAccount = mutation({
   },
 });
 
-// Internal: Create user from auth (called during invite acceptance)
-export const createUserFromAuth = internalMutation({
-  args: {
-    authId: v.string(),
-    email: v.string(),
-    name: v.string(),
-    image: v.optional(v.string()),
-    role: v.union(
-      v.literal(ROLES.PHYSIOTHERAPIST),
-      v.literal(ROLES.PATIENT)
-    ),
-  },
-  handler: async (ctx, args) => {
-    // Check if already exists
-    const existing = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", args.authId))
-      .first();
-
-    if (existing) return existing._id;
-
-    const userId = await ctx.db.insert("users", {
-      authId: args.authId,
-      email: args.email,
-      name: args.name,
-      image: args.image,
-      role: args.role,
-      contacts: [],
-      createdAt: Date.now(),
-    });
-
-    return userId;
-  },
-});

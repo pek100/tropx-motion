@@ -169,11 +169,11 @@ export const createInvite = mutation({
 export const acceptInvite = mutation({
   args: { token: v.string() },
   handler: async (ctx, args) => {
-    const authId = await requireAuth(ctx);
-    const identity = await ctx.auth.getUserIdentity();
+    const userId = await requireAuth(ctx);
+    const user = await ctx.db.get(userId);
 
-    if (!identity) {
-      throw new Error("No identity found");
+    if (!user) {
+      throw new Error("User not found");
     }
 
     // Find invite
@@ -195,28 +195,13 @@ export const acceptInvite = mutation({
       throw new Error("Invite has expired");
     }
 
-    // Get or create user
-    let user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authId))
-      .first();
-
-    if (!user) {
-      // Create user as patient (default for invite acceptance)
-      const userId = await ctx.db.insert("users", {
-        authId,
-        email: identity.email ?? "",
-        name: identity.name ?? "Unknown",
-        image: identity.pictureUrl ?? undefined,
+    // Set role to patient if not already set (default for invite acceptance)
+    if (!user.role) {
+      await ctx.db.patch(userId, {
         role: ROLES.PATIENT,
-        contacts: [],
-        createdAt: Date.now(),
+        contacts: user.contacts ?? [],
+        createdAt: user.createdAt ?? Date.now(),
       });
-      user = await ctx.db.get(userId);
-    }
-
-    if (!user) {
-      throw new Error("Failed to create user");
     }
 
     // Mark invite as accepted
