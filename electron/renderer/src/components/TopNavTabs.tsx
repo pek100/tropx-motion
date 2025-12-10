@@ -1,9 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { CircleUserRound, LayoutDashboard, Disc3, LogOut, Loader2 } from 'lucide-react'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
-import { useAuthActions } from '@convex-dev/auth/react'
 import { AuthModal } from './auth'
-import { isConvexConfigured } from '@/lib/convex'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,34 +28,6 @@ export function TopNavTabs() {
     signOut,
     isConvexEnabled,
   } = useCurrentUser()
-
-  // Get signIn action for auto-sign-in flow (always call hook, check config inside)
-  const authActions = useAuthActions()
-  const autoSignInTriggered = useRef(false)
-
-  // Auto-trigger Google OAuth when ?autoSignIn=google is in URL (for Electron OAuth popup)
-  useEffect(() => {
-    if (autoSignInTriggered.current) return
-    if (!isConvexConfigured()) return
-
-    const params = new URLSearchParams(window.location.search)
-    const autoSignIn = params.get('autoSignIn')
-
-    if (autoSignIn === 'google' && !isLoading && !isAuthenticated) {
-      console.log('[TopNavTabs] Auto-triggering Google sign-in')
-      autoSignInTriggered.current = true
-
-      // Clean up URL first
-      const url = new URL(window.location.href)
-      url.searchParams.delete('autoSignIn')
-      window.history.replaceState({}, '', url.toString())
-
-      // Trigger Google OAuth directly - this will redirect to Google
-      authActions.signIn('google').catch((err: Error) => {
-        console.error('[TopNavTabs] Auto sign-in failed:', err)
-      })
-    }
-  }, [isLoading, isAuthenticated, authActions])
 
   // Build nav items dynamically based on auth state
   const getProfileLabel = () => {
