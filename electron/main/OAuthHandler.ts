@@ -205,14 +205,19 @@ export class OAuthHandler {
               (function() {
                 // Find JWT and refresh tokens in localStorage
                 const keys = Object.keys(localStorage);
-                const jwtKey = keys.find(k => k.includes('convexAuthJWT'));
-                const refreshKey = keys.find(k => k.includes('convexAuthRefreshToken'));
+                console.log('[OAuthHandler] localStorage keys:', keys);
+
+                // Look for Convex Auth tokens (key contains 'JWT' or 'RefreshToken')
+                const jwtKey = keys.find(k => k.toLowerCase().includes('jwt') && k.includes('convex'));
+                const refreshKey = keys.find(k => k.toLowerCase().includes('refreshtoken') && k.includes('convex'));
 
                 const jwt = jwtKey ? localStorage.getItem(jwtKey) : null;
                 const refreshToken = refreshKey ? localStorage.getItem(refreshKey) : null;
 
                 // Check for success screen text
                 const hasSuccessScreen = document.body.innerText.includes('Sign-in Successful');
+
+                console.log('[OAuthHandler] Found tokens:', { jwtKey, refreshKey, hasJWT: !!jwt, hasRefresh: !!refreshToken });
 
                 return { jwt, refreshToken, jwtKey, refreshKey, hasSuccessScreen };
               })()
