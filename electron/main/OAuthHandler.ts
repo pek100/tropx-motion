@@ -154,8 +154,10 @@ export class OAuthHandler {
     console.log('[OAuthHandler] Opening auth window');
 
     this.authWindow = new BrowserWindow({
-      width: 500,
-      height: 700,
+      width: 600,
+      height: 800,
+      minWidth: 500,
+      minHeight: 700,
       show: true,
       title: 'Sign in to TropX Motion',
       webPreferences: {
@@ -185,8 +187,10 @@ export class OAuthHandler {
       }
 
       // Success: User returned to web app after Google OAuth
-      if (wentToGoogle && url.startsWith(WEB_APP_URL)) {
+      // Also check for ?code= parameter which indicates OAuth callback
+      if ((wentToGoogle && url.startsWith(WEB_APP_URL)) || url.includes('?code=')) {
         console.log('[OAuthHandler] Returned to web app, checking for auth completion...');
+        console.log('[OAuthHandler] URL:', url);
 
         // Poll for auth completion by checking page content
         authCheckInterval = setInterval(async () => {
