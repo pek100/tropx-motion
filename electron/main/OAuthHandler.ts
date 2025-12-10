@@ -68,18 +68,15 @@ export class OAuthHandler {
 
       // Check if this is our auth callback
       if (parsedUrl.host === CALLBACK_PATH || parsedUrl.pathname.includes(CALLBACK_PATH)) {
-        const token = parsedUrl.searchParams.get('token');
         const error = parsedUrl.searchParams.get('error');
 
         if (error) {
           console.log('[OAuthHandler] Auth error:', error);
           this.resolveAuth({ success: false, error });
-        } else if (token) {
-          console.log('[OAuthHandler] Auth token received');
-          this.resolveAuth({ success: true, token });
         } else {
-          // No token but also no error - auth was successful on web
-          console.log('[OAuthHandler] Auth callback received (no token in URL)');
+          // Protocol callback received - auth was successful on web
+          // Note: For production installed apps, the main window will reload to pick up tokens
+          console.log('[OAuthHandler] Auth callback received');
           this.resolveAuth({ success: true });
         }
       }
