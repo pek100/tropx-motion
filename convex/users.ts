@@ -191,7 +191,7 @@ export const searchUserByEmail = query({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_email", (q) => q.eq("email", args.email.toLowerCase()))
+      .withIndex("email", (q) => q.eq("email", args.email.toLowerCase()))
       .first();
 
     if (!user || user.isArchived) return null;

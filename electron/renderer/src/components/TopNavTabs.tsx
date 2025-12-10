@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { CircleUserRound, LayoutDashboard, Disc3, LogOut, Loader2 } from 'lucide-react'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { AuthModal } from './auth'
+import { NotificationBell } from './NotificationBell'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -90,38 +91,45 @@ export function TopNavTabs() {
   const renderProfileTab = (item: NavItem) => {
     const buttonClass = `inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-shadow)] hover:text-[var(--tropx-vibrant)] data-[active=true]:text-[var(--tropx-vibrant)]`
 
-    // If authenticated, show dropdown menu
+    // If authenticated, show dropdown menu with bell inside a styled pill
     if (isAuthenticated && user && isConvexEnabled) {
       return (
-        <DropdownMenu key={item.id}>
-          <DropdownMenuTrigger asChild>
-            <button
-              data-active={item.id === activeTab}
-              className={buttonClass}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56">
-            <DropdownMenuLabel>
-              <div className="flex flex-col">
-                <span className="font-medium">{user.name}</span>
-                <span className="text-xs text-muted-foreground">{user.email}</span>
-                {user.role && (
-                  <span className="text-xs text-muted-foreground capitalize mt-1">
-                    {user.role}
-                  </span>
-                )}
-              </div>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleSignOut} className="text-red-600">
-              <LogOut className="w-4 h-4 mr-2" />
-              Sign Out
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div
+          key={item.id}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white/80 border border-[var(--tropx-coral)]/30 shadow-sm"
+        >
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                data-active={item.id === activeTab}
+                className="inline-flex items-center gap-2 px-2 py-1 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-dark)] hover:text-[var(--tropx-vibrant)]"
+              >
+                {item.icon}
+                <span>{item.label}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuLabel>
+                <div className="flex flex-col">
+                  <span className="font-medium">{user.name}</span>
+                  <span className="text-xs text-muted-foreground">{user.email}</span>
+                  {user.role && (
+                    <span className="text-xs text-muted-foreground capitalize mt-1">
+                      {user.role}
+                    </span>
+                  )}
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleSignOut} className="text-red-600">
+                <LogOut className="w-4 h-4 mr-2" />
+                Sign Out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <div className="w-px h-4 bg-[var(--tropx-coral)]/30" />
+          <NotificationBell />
+        </div>
       )
     }
 

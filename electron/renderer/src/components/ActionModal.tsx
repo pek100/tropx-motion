@@ -2,6 +2,8 @@ import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { XIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ActionId } from './ActionBar'
+import { PatientSearchModal } from './PatientSearchModal'
+import { Id } from '../../../../convex/_generated/dataModel'
 
 // Modal titles for each action
 const MODAL_TITLES: Record<ActionId, string> = {
@@ -10,7 +12,6 @@ const MODAL_TITLES: Record<ActionId, string> = {
   'recording-title': 'Recording Title',
   'description': 'Description',
   'save': 'Save Recording',
-  'export': 'Export Data',
   'load': 'Load Recording',
 }
 
@@ -18,9 +19,35 @@ interface ActionModalProps {
   actionId: ActionId | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  selectedPatientId?: Id<"users"> | null
+  onPatientSelect?: (patient: { userId: Id<"users">; name: string; alias?: string }) => void
 }
 
-export function ActionModal({ actionId, open, onOpenChange }: ActionModalProps) {
+export function ActionModal({
+  actionId,
+  open,
+  onOpenChange,
+  selectedPatientId,
+  onPatientSelect,
+}: ActionModalProps) {
+  // For patient-name, use PatientSearchModal directly
+  if (actionId === 'patient-name') {
+    return (
+      <PatientSearchModal
+        open={open}
+        onOpenChange={onOpenChange}
+        selectedPatientId={selectedPatientId}
+        onSelectPatient={(patient) => {
+          onPatientSelect?.({
+            userId: patient.userId,
+            name: patient.name,
+            alias: patient.alias,
+          })
+        }}
+      />
+    )
+  }
+
   if (!actionId) return null
 
   const handleClose = () => onOpenChange(false)

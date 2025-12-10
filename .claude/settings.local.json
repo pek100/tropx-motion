@@ -53,7 +53,8 @@
       "Bash(npx convex env:*)",
       "Bash(npm view:*)",
       "Bash(git restore:*)",
-      "Bash(npx @convex-dev/auth:*)"
+      "Bash(npx @convex-dev/auth:*)",
+      "Read(//mnt/f/**)"
     ],
     "deny": [],
     "ask": [],

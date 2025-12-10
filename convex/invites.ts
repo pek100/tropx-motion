@@ -88,6 +88,130 @@ export const getPendingInvitesForEmail = query({
   },
 });
 
+// Get my pending invitations (invites sent TO the current user)
+export const getMyPendingInvitations = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUser(ctx);
+    if (!user || !user.email) return [];
+
+    const invites = await ctx.db
+      .query("invites")
+      .withIndex("by_to_email", (q) =>
+        q.eq("toEmail", user.email!).eq("status", "pending")
+      )
+      .collect();
+
+    // Filter out expired and get inviter info
+    const validInvites = await Promise.all(
+      invites
+        .filter((invite) => invite.expiresAt > Date.now())
+        .map(async (invite) => {
+          const inviter = await ctx.db.get(invite.fromUserId);
+          return {
+            _id: invite._id,
+            alias: invite.alias,
+            createdAt: invite.createdAt,
+            expiresAt: invite.expiresAt,
+            inviter: inviter
+              ? {
+                  _id: inviter._id,
+                  name: inviter.name,
+                  email: inviter.email,
+                  image: inviter.image,
+                  role: inviter.role,
+                }
+              : null,
+          };
+        })
+    );
+
+    return validInvites;
+  },
+});
+
+// Reject invite
+export const rejectInvite = mutation({
+  args: { inviteId: v.id("invites") },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+
+    const invite = await ctx.db.get(args.inviteId);
+    if (!invite) {
+      throw new Error("Invite not found");
+    }
+
+    // Can only reject invites sent to you
+    if (invite.toEmail.toLowerCase() !== user.email?.toLowerCase()) {
+      throw new Error("Not authorized to reject this invite");
+    }
+
+    if (invite.status !== "pending") {
+      throw new Error(`Cannot reject ${invite.status} invite`);
+    }
+
+    // Delete the invite (or could mark as rejected if we want to track)
+    await ctx.db.delete(args.inviteId);
+    return args.inviteId;
+  },
+});
+
+// Accept invite by ID (for notification bell)
+export const acceptInviteById = mutation({
+  args: { inviteId: v.id("invites") },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+
+    const invite = await ctx.db.get(args.inviteId);
+    if (!invite) {
+      throw new Error("Invite not found");
+    }
+
+    // Can only accept invites sent to you
+    if (invite.toEmail.toLowerCase() !== user.email?.toLowerCase()) {
+      throw new Error("Not authorized to accept this invite");
+    }
+
+    if (invite.status !== "pending") {
+      throw new Error(`Invite already ${invite.status}`);
+    }
+
+    if (invite.expiresAt < Date.now()) {
+      await ctx.db.patch(invite._id, { status: INVITE_STATUS.EXPIRED });
+      throw new Error("Invite has expired");
+    }
+
+    // Mark invite as accepted
+    await ctx.db.patch(invite._id, {
+      status: INVITE_STATUS.ACCEPTED,
+      acceptedAt: Date.now(),
+      acceptedByUserId: user._id,
+    });
+
+    // Add contact relationship (inviter -> invitee)
+    const inviter = await ctx.db.get(invite.fromUserId);
+    if (inviter && !inviter.isArchived) {
+      const inviterContacts = inviter.contacts ?? [];
+      const alreadyContact = inviterContacts.some(
+        (c) => c.userId === user._id
+      );
+      if (!alreadyContact) {
+        const updatedContacts = [
+          ...inviterContacts,
+          {
+            userId: user._id,
+            alias: invite.alias,
+            addedAt: Date.now(),
+          },
+        ];
+        await ctx.db.patch(invite.fromUserId, { contacts: updatedContacts });
+      }
+    }
+
+    return { userId: user._id, inviterId: invite.fromUserId };
+  },
+});
+
 // Create invite
 export const createInvite = mutation({
   args: {
@@ -114,11 +238,11 @@ export const createInvite = mutation({
     // Check if user already exists and is already a contact
     const existingUser = await ctx.db
       .query("users")
-      .withIndex("by_email", (q) => q.eq("email", email))
+      .withIndex("email", (q) => q.eq("email", email))
       .first();
 
     if (existingUser && !existingUser.isArchived) {
-      const alreadyContact = user.contacts.some(
+      const alreadyContact = (user.contacts ?? []).some(
         (c) => c.userId === existingUser._id
       );
       if (alreadyContact) {
@@ -214,12 +338,13 @@ export const acceptInvite = mutation({
     // Add contact relationship (inviter -> invitee)
     const inviter = await ctx.db.get(invite.fromUserId);
     if (inviter && !inviter.isArchived) {
-      const alreadyContact = inviter.contacts.some(
+      const inviterContacts = inviter.contacts ?? [];
+      const alreadyContact = inviterContacts.some(
         (c) => c.userId === user!._id
       );
       if (!alreadyContact) {
         const updatedContacts = [
-          ...inviter.contacts,
+          ...inviterContacts,
           {
             userId: user._id,
             alias: invite.alias,
