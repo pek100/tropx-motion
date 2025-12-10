@@ -3,6 +3,7 @@
 import { ReactNode } from "react";
 import { ConvexReactClient, ConvexProvider } from "convex/react";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
+import { AutoSignIn } from "../components/auth/AutoSignIn";
 
 // Initialize Convex client
 // In Electron, get from preload; in web/dev, use import.meta.env
@@ -34,7 +35,10 @@ export function ConvexClientProvider({ children }: ConvexClientProviderProps) {
 
   return (
     <ConvexProvider client={convex}>
-      <ConvexAuthProvider client={convex}>{children}</ConvexAuthProvider>
+      <ConvexAuthProvider client={convex}>
+        <AutoSignIn />
+        {children}
+      </ConvexAuthProvider>
     </ConvexProvider>
   );
 }

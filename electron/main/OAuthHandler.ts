@@ -5,20 +5,20 @@ interface OAuthResult {
   error?: string;
 }
 
-// Web app URL for OAuth - with auth=signin to auto-open sign-in modal
+// Web app URL - with autoSignIn param to trigger Google OAuth automatically
 const WEB_APP_URL = process.env.TROPX_WEB_URL || 'https://app.tropx.ai';
-const AUTH_URL = `${WEB_APP_URL}?auth=signin`;
+const AUTH_URL = `${WEB_APP_URL}?autoSignIn=google`;
 
 export class OAuthHandler {
   private authWindow: BrowserWindow | null = null;
 
   /**
-   * OAuth Flow using Web App:
-   * 1. Open BrowserWindow pointing to web app
-   * 2. User authenticates via Google on the web app
-   * 3. Web app sets auth cookies (shared session)
-   * 4. Detect successful auth and close window
-   * 5. Main app reloads with shared session cookies
+   * OAuth Flow via Web App:
+   * 1. Open BrowserWindow to web app with ?autoSignIn=google param
+   * 2. Web app auto-triggers Google OAuth on load
+   * 3. User authenticates with Google
+   * 4. Google redirects back through Convex
+   * 5. Detect when back on web app (authenticated) and close
    */
   async signInWithGoogle(): Promise<OAuthResult> {
     return new Promise((resolve) => {
@@ -47,7 +47,7 @@ export class OAuthHandler {
         }
       };
 
-      console.log('[OAuthHandler] Opening web app for auth:', AUTH_URL);
+      console.log('[OAuthHandler] Opening web app with auto sign-in:', AUTH_URL);
 
       // Create auth window with shared session partition
       // MUST match the partition in MainProcess.ts for cookie sharing
@@ -66,37 +66,23 @@ export class OAuthHandler {
 
       // Track OAuth flow state
       let authDetected = false;
-      let leftForOAuth = false;  // True once user navigates to Google/auth
-      let isInitialLoad = true;
+      let wentToGoogle = false;
 
-      // Monitor URL changes to detect successful auth
+      // Monitor URL changes to detect OAuth flow
       this.authWindow.webContents.on('did-navigate', (_event, url) => {
         console.log('[OAuthHandler] Navigated to:', url.substring(0, 100));
 
-        // Skip the initial load to web app
-        if (isInitialLoad && url.startsWith(WEB_APP_URL)) {
-          console.log('[OAuthHandler] Initial load, waiting for user action');
-          isInitialLoad = false;
+        // Detect Google OAuth
+        if (url.includes('accounts.google.com')) {
+          console.log('[OAuthHandler] At Google OAuth');
+          wentToGoogle = true;
           return;
         }
 
-        // Detect when user leaves for OAuth (Google, auth API, etc)
-        if (url.includes('accounts.google.com') ||
-            url.includes('/api/auth/') ||
-            url.includes('oauth') ||
-            url.includes('signin')) {
-          console.log('[OAuthHandler] User navigating to OAuth provider');
-          leftForOAuth = true;
-          return;
-        }
-
-        // Only trigger success if user RETURNED to web app after OAuth
-        if (leftForOAuth &&
-            url.startsWith(WEB_APP_URL) &&
-            !url.includes('/api/auth/')) {
-          // Give a moment for cookies to be set
+        // Success: User returned to web app after Google OAuth
+        if (wentToGoogle && url.startsWith(WEB_APP_URL) && !authDetected) {
           setTimeout(() => {
-            console.log('[OAuthHandler] Auth successful, closing window');
+            console.log('[OAuthHandler] Auth successful, back at web app');
             authDetected = true;
             succeed();
           }, 1000);
@@ -106,11 +92,8 @@ export class OAuthHandler {
       this.authWindow.webContents.on('did-navigate-in-page', (_event, url) => {
         console.log('[OAuthHandler] In-page navigation:', url.substring(0, 100));
 
-        // Handle SPA navigation after auth - only if we went through OAuth
-        if (leftForOAuth &&
-            url.startsWith(WEB_APP_URL) &&
-            !url.includes('/api/auth/') &&
-            !authDetected) {
+        // Handle SPA navigation after auth
+        if (wentToGoogle && url.startsWith(WEB_APP_URL) && !authDetected) {
           setTimeout(() => {
             console.log('[OAuthHandler] Auth detected via SPA navigation');
             authDetected = true;
@@ -127,7 +110,7 @@ export class OAuthHandler {
         }
       });
 
-      // Load the web app with auth param to auto-open sign-in modal
+      // Load the web app with autoSignIn param
       this.authWindow.loadURL(AUTH_URL).catch((err) => {
         console.error('[OAuthHandler] Failed to load:', err);
         fail(`Failed to load authentication page: ${err.message}`);
