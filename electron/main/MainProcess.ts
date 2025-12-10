@@ -573,6 +573,38 @@ export class MainProcess {
     ipcMain.handle('auth:signInWithGoogle', async () => {
       try {
         const result = await oauthHandler.signInWithGoogle();
+
+        // If we got tokens from the BrowserWindow, inject them into the main window
+        if (result.success && result.tokens && this.mainWindow) {
+          const convexUrl = process.env.VITE_CONVEX_URL || 'https://tough-anteater-529.convex.cloud';
+          // Create the storage key (same format Convex Auth uses)
+          const sanitizedUrl = convexUrl.replace(/[^a-zA-Z0-9]/g, '');
+
+          console.log('[MainProcess] Injecting auth tokens into main window');
+
+          await this.mainWindow.webContents.executeJavaScript(`
+            (function() {
+              const jwtKey = '__convexAuthJWT_${sanitizedUrl}';
+              const refreshKey = '__convexAuthRefreshToken_${sanitizedUrl}';
+
+              localStorage.setItem(jwtKey, ${JSON.stringify(result.tokens.jwt)});
+              localStorage.setItem(refreshKey, ${JSON.stringify(result.tokens.refreshToken)});
+
+              console.log('[Auth] Tokens injected into localStorage');
+
+              // Trigger a storage event to notify Convex client
+              window.dispatchEvent(new StorageEvent('storage', {
+                key: jwtKey,
+                newValue: ${JSON.stringify(result.tokens.jwt)}
+              }));
+            })()
+          `);
+
+          // Force reload to pick up the new auth state
+          console.log('[MainProcess] Reloading main window to apply auth');
+          this.mainWindow.webContents.reload();
+        }
+
         return result;
       } catch (err) {
         return { success: false, error: String(err) };

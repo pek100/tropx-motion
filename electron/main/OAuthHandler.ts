@@ -1,9 +1,12 @@
-import { BrowserWindow, session, shell, app } from 'electron';
+import { BrowserWindow, session, shell, app, ipcMain } from 'electron';
 
 interface OAuthResult {
   success: boolean;
   error?: string;
-  token?: string;
+  tokens?: {
+    jwt: string;
+    refreshToken: string;
+  };
 }
 
 // Web app URL - with electronAuth param to indicate Electron OAuth flow
@@ -144,10 +147,14 @@ export class OAuthHandler {
   }
 
   /**
-   * Fallback: Open BrowserWindow if system browser fails
+   * BrowserWindow OAuth flow:
+   * - Opens web app in BrowserWindow
+   * - Monitors for OAuth completion
+   * - Auto-closes when auth is successful
+   * - Works for portable apps (no protocol handler needed)
    */
   private openFallbackWindow(): void {
-    console.log('[OAuthHandler] Opening fallback auth window');
+    console.log('[OAuthHandler] Opening auth window');
 
     this.authWindow = new BrowserWindow({
       width: 500,
@@ -163,6 +170,7 @@ export class OAuthHandler {
 
     // Track OAuth flow state
     let wentToGoogle = false;
+    let authCheckInterval: NodeJS.Timeout | null = null;
 
     // Monitor URL changes to detect OAuth flow
     this.authWindow.webContents.on('did-navigate', (_event, url) => {
@@ -173,7 +181,7 @@ export class OAuthHandler {
         return;
       }
 
-      // Check for our custom protocol redirect
+      // Check for our custom protocol redirect (works in production)
       if (url.startsWith(`${PROTOCOL}://`)) {
         this.handleProtocolUrl(url);
         return;
@@ -181,15 +189,72 @@ export class OAuthHandler {
 
       // Success: User returned to web app after Google OAuth
       if (wentToGoogle && url.startsWith(WEB_APP_URL)) {
-        // Wait a bit for the token to be set, then close
+        console.log('[OAuthHandler] Returned to web app, checking for auth completion...');
+
+        // Poll for auth completion by checking page content
+        authCheckInterval = setInterval(async () => {
+          try {
+            if (!this.authWindow || this.authWindow.isDestroyed()) {
+              if (authCheckInterval) clearInterval(authCheckInterval);
+              return;
+            }
+
+            // Check if JWT token exists and extract it
+            const result = await this.authWindow.webContents.executeJavaScript(`
+              (function() {
+                // Find JWT and refresh tokens in localStorage
+                const keys = Object.keys(localStorage);
+                const jwtKey = keys.find(k => k.includes('convexAuthJWT'));
+                const refreshKey = keys.find(k => k.includes('convexAuthRefreshToken'));
+
+                const jwt = jwtKey ? localStorage.getItem(jwtKey) : null;
+                const refreshToken = refreshKey ? localStorage.getItem(refreshKey) : null;
+
+                // Check for success screen text
+                const hasSuccessScreen = document.body.innerText.includes('Sign-in Successful');
+
+                return { jwt, refreshToken, jwtKey, refreshKey, hasSuccessScreen };
+              })()
+            `);
+
+            console.log('[OAuthHandler] Auth check:', {
+              hasJWT: !!result.jwt,
+              hasRefresh: !!result.refreshToken,
+              hasSuccessScreen: result.hasSuccessScreen
+            });
+
+            if (result.jwt && result.refreshToken) {
+              if (authCheckInterval) clearInterval(authCheckInterval);
+              console.log('[OAuthHandler] Auth successful, extracting tokens');
+              this.resolveAuth({
+                success: true,
+                tokens: {
+                  jwt: result.jwt,
+                  refreshToken: result.refreshToken
+                }
+              });
+            } else if (result.hasSuccessScreen) {
+              // Success screen but no tokens yet, wait a bit more
+              console.log('[OAuthHandler] Success screen visible, waiting for tokens...');
+            }
+          } catch (err) {
+            // Window might be closed
+            if (authCheckInterval) clearInterval(authCheckInterval);
+          }
+        }, 500);
+
+        // Stop checking after 30 seconds
         setTimeout(() => {
-          console.log('[OAuthHandler] Auth successful via fallback window');
-          this.resolveAuth({ success: true });
-        }, 1500);
+          if (authCheckInterval) {
+            clearInterval(authCheckInterval);
+            authCheckInterval = null;
+          }
+        }, 30000);
       }
     });
 
     this.authWindow.on('closed', () => {
+      if (authCheckInterval) clearInterval(authCheckInterval);
       this.authWindow = null;
       if (this.pendingAuthResolve) {
         this.resolveAuth({ success: false, error: 'Authentication cancelled' });
@@ -197,7 +262,7 @@ export class OAuthHandler {
     });
 
     this.authWindow.loadURL(AUTH_URL).catch((err) => {
-      console.error('[OAuthHandler] Failed to load fallback window:', err);
+      console.error('[OAuthHandler] Failed to load auth window:', err);
       this.resolveAuth({ success: false, error: `Failed to load authentication page: ${err.message}` });
     });
   }
