@@ -5,8 +5,9 @@ interface OAuthResult {
   error?: string;
 }
 
-// Web app URL for OAuth
+// Web app URL for OAuth - with auth=signin to auto-open sign-in modal
 const WEB_APP_URL = process.env.TROPX_WEB_URL || 'https://app.tropx.ai';
+const AUTH_URL = `${WEB_APP_URL}?auth=signin`;
 
 export class OAuthHandler {
   private authWindow: BrowserWindow | null = null;
@@ -46,7 +47,7 @@ export class OAuthHandler {
         }
       };
 
-      console.log('[OAuthHandler] Opening web app for auth:', WEB_APP_URL);
+      console.log('[OAuthHandler] Opening web app for auth:', AUTH_URL);
 
       // Create auth window with shared session partition
       // MUST match the partition in MainProcess.ts for cookie sharing
@@ -126,8 +127,8 @@ export class OAuthHandler {
         }
       });
 
-      // Load the web app - user will click sign in there
-      this.authWindow.loadURL(WEB_APP_URL).catch((err) => {
+      // Load the web app with auth param to auto-open sign-in modal
+      this.authWindow.loadURL(AUTH_URL).catch((err) => {
         console.error('[OAuthHandler] Failed to load:', err);
         fail(`Failed to load authentication page: ${err.message}`);
       });

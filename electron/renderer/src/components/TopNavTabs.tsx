@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { CircleUserRound, LayoutDashboard, Disc3, LogOut, Loader2 } from 'lucide-react'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { AuthModal } from './auth'
@@ -28,6 +28,18 @@ export function TopNavTabs() {
     signOut,
     isConvexEnabled,
   } = useCurrentUser()
+
+  // Auto-open auth modal when ?auth=signin is in URL (for Electron OAuth flow)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('auth') === 'signin' && !isLoading && !isAuthenticated) {
+      setAuthModalOpen(true)
+      // Clean up URL without triggering navigation
+      const url = new URL(window.location.href)
+      url.searchParams.delete('auth')
+      window.history.replaceState({}, '', url.toString())
+    }
+  }, [isLoading, isAuthenticated])
 
   // Build nav items dynamically based on auth state
   const getProfileLabel = () => {
