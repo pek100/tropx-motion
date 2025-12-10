@@ -15,9 +15,7 @@ console.log('[Convex] URL source:', window.electronAPI?.config?.convexUrl ? 'pre
 console.log('[Convex] CONVEX_URL:', convexUrl ? 'configured' : 'NOT SET')
 
 // Only create client if URL is configured
-const convex = convexUrl ? new ConvexReactClient(convexUrl, {
-  verbose: true, // Enable verbose logging for debugging OAuth
-}) : null;
+const convex = convexUrl ? new ConvexReactClient(convexUrl) : null;
 
 console.log('[Convex] Client created:', !!convex)
 
