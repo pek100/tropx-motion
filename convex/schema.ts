@@ -69,7 +69,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_authId", ["authId"])
-    .index("by_email", ["email"])
+    .index("email", ["email"]) // Required by Convex Auth
     .index("by_role", ["role"])
     .index("by_archived", ["isArchived", "archivedAt"]),
 
