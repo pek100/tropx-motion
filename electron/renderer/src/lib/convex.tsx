@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { ConvexReactClient, ConvexProvider } from "convex/react";
+import { ConvexReactClient } from "convex/react";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { AutoSignIn } from "../components/auth/AutoSignIn";
 
@@ -34,12 +34,10 @@ export function ConvexClientProvider({ children }: ConvexClientProviderProps) {
   }
 
   return (
-    <ConvexProvider client={convex}>
-      <ConvexAuthProvider client={convex}>
-        <AutoSignIn />
-        {children}
-      </ConvexAuthProvider>
-    </ConvexProvider>
+    <ConvexAuthProvider client={convex}>
+      <AutoSignIn />
+      {children}
+    </ConvexAuthProvider>
   );
 }
 
