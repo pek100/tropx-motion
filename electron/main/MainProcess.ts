@@ -24,6 +24,14 @@ log.transports.console.level = 'debug';
 // Log file location
 console.log('Electron log file location:', log.transports.file.getFile().path);
 
+// Single instance lock - required for protocol handler on Windows/Linux
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  console.log('Another instance is already running, quitting...');
+  app.quit();
+}
+
 export class MainProcess {
   private mainWindow: BrowserWindow | null = null;
   private motionService: MotionService;

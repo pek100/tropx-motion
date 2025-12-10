@@ -1,7 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useAuthActions } from "@convex-dev/auth/react";
+import { useConvexAuth } from "convex/react";
+
+// Protocol URL for Electron OAuth callback
+const ELECTRON_CALLBACK_URL = 'tropx://auth-callback';
 
 /**
  * AutoSignIn Component
@@ -10,23 +14,32 @@ import { useAuthActions } from "@convex-dev/auth/react";
  * When the web app loads with this param, it immediately triggers Google OAuth.
  * Used by Electron app to bypass the sign-in modal and go straight to Google.
  * Shows a loading screen while redirecting to provide immediate visual feedback.
+ *
+ * For Electron auth flow (?electronAuth=true):
+ * After successful auth, redirects to tropx://auth-callback to notify Electron.
  */
 export function AutoSignIn() {
   const [isAutoSignIn, setIsAutoSignIn] = useState(false);
+  const [isElectronAuth, setIsElectronAuth] = useState(false);
   const [triggered, setTriggered] = useState(false);
+  const redirectedRef = useRef(false);
   const { signIn } = useAuthActions();
+  const { isAuthenticated, isLoading } = useConvexAuth();
 
   // Check for autoSignIn param immediately on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const autoSignIn = params.get('autoSignIn');
+    const electronAuth = params.get('electronAuth');
 
     if (autoSignIn === 'google') {
       setIsAutoSignIn(true);
+      setIsElectronAuth(electronAuth === 'true');
 
-      // Clear the URL param to prevent re-triggering on back navigation
+      // Clear the URL params to prevent re-triggering on back navigation
       const url = new URL(window.location.href);
       url.searchParams.delete('autoSignIn');
+      url.searchParams.delete('electronAuth');
       window.history.replaceState({}, '', url.toString());
     }
   }, []);
@@ -34,15 +47,34 @@ export function AutoSignIn() {
   // Trigger OAuth after detecting param
   useEffect(() => {
     if (isAutoSignIn && !triggered) {
-      console.log('[AutoSignIn] Triggering Google OAuth');
+      console.log('[AutoSignIn] Triggering Google OAuth, electronAuth:', isElectronAuth);
       setTriggered(true);
 
       // Trigger Google sign-in - this will redirect to Google OAuth
       signIn("google").catch((err) => {
         console.error('[AutoSignIn] OAuth error:', err);
+
+        // If this is Electron auth, redirect back with error
+        if (isElectronAuth) {
+          window.location.href = `${ELECTRON_CALLBACK_URL}?error=${encodeURIComponent(err.message || 'OAuth failed')}`;
+        }
       });
     }
-  }, [isAutoSignIn, triggered, signIn]);
+  }, [isAutoSignIn, triggered, signIn, isElectronAuth]);
+
+  // After successful auth, redirect back to Electron app
+  useEffect(() => {
+    // Only for Electron auth flow, after auth is complete (not loading, is authenticated)
+    if (isElectronAuth && !isLoading && isAuthenticated && !redirectedRef.current) {
+      console.log('[AutoSignIn] Auth successful, redirecting to Electron app');
+      redirectedRef.current = true;
+
+      // Small delay to ensure token is saved
+      setTimeout(() => {
+        window.location.href = ELECTRON_CALLBACK_URL;
+      }, 500);
+    }
+  }, [isElectronAuth, isLoading, isAuthenticated]);
 
   // Show loading screen while redirecting to Google
   if (isAutoSignIn) {
@@ -73,10 +105,12 @@ export function AutoSignIn() {
 
           {/* Text */}
           <h1 className="text-xl font-semibold text-gray-800 mb-2">
-            Signing in to TropX
+            {isAuthenticated ? 'Signed in!' : 'Signing in to TropX'}
           </h1>
           <p className="text-sm text-gray-500">
-            Redirecting to Google...
+            {isAuthenticated && isElectronAuth
+              ? 'Returning to the app...'
+              : 'Redirecting to Google...'}
           </p>
         </div>
       </div>
