@@ -43,18 +43,18 @@ export function TopNavTabs() {
 
   const getProfileIcon = () => {
     if (isLoading) {
-      return <Loader2 className="size-4 animate-spin" />
+      return <Loader2 className="size-5 animate-spin" />
     }
     if (isAuthenticated && user?.image) {
       return (
         <img
           src={user.image}
-          alt={user.name}
-          className="size-4 rounded-full"
+          alt={user.name || 'User'}
+          className="size-6 rounded-full border-2 border-[var(--tropx-vibrant)]/30 object-cover"
         />
       )
     }
-    return <CircleUserRound className="size-4" />
+    return <CircleUserRound className="size-5" />
   }
 
   const NAV_ITEMS: NavItem[] = [

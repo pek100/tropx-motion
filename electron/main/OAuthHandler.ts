@@ -48,7 +48,8 @@ export class OAuthHandler {
 
       console.log('[OAuthHandler] Opening web app for auth:', WEB_APP_URL);
 
-      // Create auth window with shared session
+      // Create auth window with shared session partition
+      // MUST match the partition in MainProcess.ts for cookie sharing
       this.authWindow = new BrowserWindow({
         width: 500,
         height: 700,
@@ -57,8 +58,8 @@ export class OAuthHandler {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
-          // Use default session to share cookies with main window
-          partition: undefined,
+          // Share session with main window for Convex auth cookies
+          partition: 'persist:convex-auth',
         },
       });
 
@@ -124,8 +125,10 @@ export class OAuthHandler {
 
   async signOut(): Promise<void> {
     try {
-      await session.defaultSession.clearStorageData({
-        storages: ['cookies', 'localstorage', 'sessionstorage'],
+      // Clear the shared session partition (must match MainProcess.ts)
+      const authSession = session.fromPartition('persist:convex-auth');
+      await authSession.clearStorageData({
+        storages: ['cookies', 'localstorage'],
       });
       console.log('[OAuthHandler] Session cleared');
     } catch (err) {
