@@ -5,6 +5,17 @@ export interface ElectronAPI {
     // Quick access for WebSocket port (used by new tropx-ws-client)
     getWSPort: () => Promise<number>;
 
+    // Config (environment variables)
+    config: {
+        convexUrl: string | undefined;
+    };
+
+    // OAuth authentication
+    auth: {
+        signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
+        signOut: () => Promise<{ success: boolean; error?: string }>;
+    };
+
     window: {
         minimize: () => Promise<void>;
         maximize: () => Promise<void>;
@@ -65,6 +76,15 @@ export interface ElectronAPI {
 
 const electronAPI: ElectronAPI = {
     getWSPort: () => ipcRenderer.invoke('motion:getWebSocketPort'),
+
+    config: {
+        convexUrl: process.env.VITE_CONVEX_URL,
+    },
+
+    auth: {
+        signInWithGoogle: () => ipcRenderer.invoke('auth:signInWithGoogle'),
+        signOut: () => ipcRenderer.invoke('auth:signOut'),
+    },
 
     window: {
         minimize: () => ipcRenderer.invoke('window:minimize'),

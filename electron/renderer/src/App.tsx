@@ -7,6 +7,8 @@ import { TopNavTabs } from "@/components/TopNavTabs"
 import { ActionBar, type ActionId } from "@/components/ActionBar"
 import { ActionModal } from "@/components/ActionModal"
 import { StorageSettingsModal } from "@/components/StorageSettingsModal"
+import { DesktopRequired } from "@/components/DesktopRequired"
+import { isElectron } from "@/lib/platform"
 import { useState, useRef, useEffect, useMemo, useCallback, lazy, Suspense } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { ToastAction } from "@/components/ui/toast"
@@ -620,18 +622,20 @@ function AppContent() {
 
         {/* Content */}
         <div className={isCompact ? "relative h-screen flex flex-col pointer-events-none" : "relative min-h-screen flex flex-col pointer-events-none"} style={{ zIndex: 2 } as any}>
-          {/* Window Controls */}
-          <div className="fixed top-4 right-4 flex items-center gap-1 pointer-events-auto" style={{ zIndex: 50, WebkitAppRegion: 'no-drag' } as any}>
-            <button onClick={() => window.electronAPI?.window.minimize()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm" title="Minimize">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            </button>
-            <button onClick={() => window.electronAPI?.window.maximize()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm" title="Maximize">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
-            </button>
-            <button onClick={() => window.electronAPI?.window.close()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-red-500 hover:text-white transition-all shadow-sm" title="Close">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
-          </div>
+          {/* Window Controls - Desktop only */}
+          {isElectron() && (
+            <div className="fixed top-4 right-4 flex items-center gap-1 pointer-events-auto" style={{ zIndex: 50, WebkitAppRegion: 'no-drag' } as any}>
+              <button onClick={() => window.electronAPI?.window.minimize()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm" title="Minimize">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              </button>
+              <button onClick={() => window.electronAPI?.window.maximize()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm" title="Maximize">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+              </button>
+              <button onClick={() => window.electronAPI?.window.close()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-red-500 hover:text-white transition-all shadow-sm" title="Close">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </button>
+            </div>
+          )}
 
           <PlatformIndicator />
 
@@ -659,6 +663,21 @@ function AppContent() {
           )}
 
           <div className={isCompact ? "flex-1 flex relative pointer-events-none" : "flex-1 flex items-center justify-center px-8 relative pointer-events-none"}>
+            {/* Show DesktopRequired on web, recording UI on desktop */}
+            {!isElectron() ? (
+              <div className="flex gap-6 w-[90%] pointer-events-auto">
+                <div
+                  className="w-full bg-white flex flex-col"
+                  style={{
+                    border: "1px solid #e5e5e5",
+                    borderRadius: "36px",
+                    minHeight: "550px",
+                  }}
+                >
+                  <DesktopRequired feature="Recording" />
+                </div>
+              </div>
+            ) : (
             <div className={isCompact ? "flex gap-0 w-full h-full pointer-events-none" : "flex gap-6 w-[90%] pointer-events-none"}>
               {/* Left Pane */}
               <div
@@ -925,6 +944,7 @@ function AppContent() {
                 )}
               </div>
             </div>
+            )}
           </div>
         </div>
 

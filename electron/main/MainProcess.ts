@@ -5,6 +5,7 @@ import * as path from 'path';
 import { pathToFileURL } from 'url';
 import log from 'electron-log';
 import { MotionService } from './services/MotionService';
+import { oauthHandler } from './OAuthHandler';
 // Web Bluetooth removed - we use node-ble/Noble directly
 // import { BluetoothService } from './services/BluetoothService';
 import { isDev } from './utils/environment';
@@ -219,6 +220,8 @@ export class MainProcess {
         // enableBlinkFeatures: 'WebBluetooth,WebBluetoothScanning',
         allowRunningInsecureContent: true,
         backgroundThrottling: false,  // Disable throttling when window loses focus
+        // Share session with auth popup for Convex cookies
+        partition: 'persist:convex-auth',
       },
       show: false,
     });
@@ -556,6 +559,25 @@ export class MainProcess {
       }
 
       return { success: true, path: result.filePaths[0] };
+    });
+
+    // OAuth handlers
+    ipcMain.handle('auth:signInWithGoogle', async () => {
+      try {
+        const result = await oauthHandler.signInWithGoogle();
+        return result;
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
+    });
+
+    ipcMain.handle('auth:signOut', async () => {
+      try {
+        await oauthHandler.signOut();
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
     });
 
     // Import CSV file

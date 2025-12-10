@@ -39,7 +39,16 @@
       "WebFetch(domain:m2.material.io)",
       "Read(//mnt/f/NeuraWeave/Apps/NeuraWeaveApp/**)",
       "Bash(awk:*)",
-      "Bash(git diff:*)"
+      "Bash(git diff:*)",
+      "WebFetch(domain:docs.convex.dev)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(lsof:*)",
+      "Bash(powershell.exe:*)",
+      "WebFetch(domain:pradyothkukkapalli.com)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": [],

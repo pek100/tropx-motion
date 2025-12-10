@@ -1,5 +1,15 @@
 import { useState } from 'react'
-import { CircleUserRound, LayoutDashboard, Disc3 } from 'lucide-react'
+import { CircleUserRound, LayoutDashboard, Disc3, LogOut, Loader2 } from 'lucide-react'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { AuthModal } from './auth'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu'
 
 interface NavItem {
   id: string
@@ -7,28 +17,156 @@ interface NavItem {
   icon: React.ReactNode
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { id: 'patient', label: 'Michael', icon: <CircleUserRound className="size-4" /> },
-  { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="size-4" /> },
-  { id: 'record', label: 'Record', icon: <Disc3 className="size-4" /> },
-]
-
 export function TopNavTabs() {
   const [activeTab, setActiveTab] = useState('record')
+  const [authModalOpen, setAuthModalOpen] = useState(false)
+
+  const {
+    isAuthenticated,
+    isLoading,
+    user,
+    signOut,
+    isConvexEnabled,
+  } = useCurrentUser()
+
+  // Build nav items dynamically based on auth state
+  const getProfileLabel = () => {
+    if (!isConvexEnabled) return 'Profile'
+    if (isLoading) return 'Loading...'
+    if (isAuthenticated && user) {
+      // Show first name only
+      const firstName = user.name?.split(' ')[0] || 'Profile'
+      return firstName
+    }
+    return 'Sign In'
+  }
+
+  const getProfileIcon = () => {
+    if (isLoading) {
+      return <Loader2 className="size-4 animate-spin" />
+    }
+    if (isAuthenticated && user?.image) {
+      return (
+        <img
+          src={user.image}
+          alt={user.name}
+          className="size-4 rounded-full"
+        />
+      )
+    }
+    return <CircleUserRound className="size-4" />
+  }
+
+  const NAV_ITEMS: NavItem[] = [
+    { id: 'profile', label: getProfileLabel(), icon: getProfileIcon() },
+    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="size-4" /> },
+    { id: 'record', label: 'Record', icon: <Disc3 className="size-4" /> },
+  ]
+
+  const handleProfileClick = () => {
+    console.log('[TopNavTabs] handleProfileClick', { isConvexEnabled, isLoading, isAuthenticated })
+
+    if (!isConvexEnabled) {
+      console.warn('[TopNavTabs] Convex not enabled')
+      return
+    }
+
+    if (isLoading) {
+      console.log('[TopNavTabs] Still loading...')
+      return
+    }
+
+    if (!isAuthenticated) {
+      console.log('[TopNavTabs] Opening auth modal')
+      setAuthModalOpen(true)
+    }
+    // If authenticated, dropdown handles it
+  }
+
+  const handleSignOut = async () => {
+    await signOut()
+  }
+
+  const renderProfileTab = (item: NavItem) => {
+    const buttonClass = `inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-shadow)] hover:text-[var(--tropx-vibrant)] data-[active=true]:text-[var(--tropx-vibrant)]`
+
+    // If authenticated, show dropdown menu
+    if (isAuthenticated && user && isConvexEnabled) {
+      return (
+        <DropdownMenu key={item.id}>
+          <DropdownMenuTrigger asChild>
+            <button
+              data-active={item.id === activeTab}
+              className={buttonClass}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuLabel>
+              <div className="flex flex-col">
+                <span className="font-medium">{user.name}</span>
+                <span className="text-xs text-muted-foreground">{user.email}</span>
+                {user.role && (
+                  <span className="text-xs text-muted-foreground capitalize mt-1">
+                    {user.role}
+                  </span>
+                )}
+              </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handleSignOut} className="text-red-600">
+              <LogOut className="w-4 h-4 mr-2" />
+              Sign Out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )
+    }
+
+    // Not authenticated - show button that opens auth modal
+    return (
+      <button
+        key={item.id}
+        data-active={item.id === activeTab}
+        className={buttonClass}
+        onClick={handleProfileClick}
+        disabled={isLoading}
+      >
+        {item.icon}
+        <span>{item.label}</span>
+      </button>
+    )
+  }
 
   return (
-    <nav className="flex items-center justify-center gap-6 -mt-2 pointer-events-auto">
-      {NAV_ITEMS.map((item) => (
-        <button
-          key={item.id}
-          data-active={item.id === activeTab}
-          className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-shadow)] hover:text-[var(--tropx-vibrant)] data-[active=true]:text-[var(--tropx-vibrant)]"
-          onClick={() => setActiveTab(item.id)}
-        >
-          {item.icon}
-          <span>{item.label}</span>
-        </button>
-      ))}
-    </nav>
+    <>
+      <nav className="flex items-center justify-center gap-6 -mt-2 pointer-events-auto">
+        {NAV_ITEMS.map((item) => {
+          if (item.id === 'profile') {
+            return renderProfileTab(item)
+          }
+
+          return (
+            <button
+              key={item.id}
+              data-active={item.id === activeTab}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-shadow)] hover:text-[var(--tropx-vibrant)] data-[active=true]:text-[var(--tropx-vibrant)]"
+              onClick={() => setActiveTab(item.id)}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          )
+        })}
+      </nav>
+
+      {/* Auth Modal */}
+      <AuthModal
+        open={authModalOpen}
+        onOpenChange={setAuthModalOpen}
+      />
+    </>
   )
 }

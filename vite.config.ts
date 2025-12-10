@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   base: './',
   root: 'electron/renderer',
+  envDir: resolve(__dirname), // Load .env from project root
   build: {
     outDir: '../../dist/renderer',
     emptyOutDir: true,
