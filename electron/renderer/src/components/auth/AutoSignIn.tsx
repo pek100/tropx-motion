@@ -16,13 +16,13 @@ const ELECTRON_CALLBACK_URL = 'tropx://auth-callback';
  * Shows a loading screen while redirecting to provide immediate visual feedback.
  *
  * For Electron auth flow (?electronAuth=true):
- * After successful auth, redirects to tropx://auth-callback to notify Electron.
+ * After successful auth, shows a "return to app" screen with a button.
  */
 export function AutoSignIn() {
   const [isAutoSignIn, setIsAutoSignIn] = useState(false);
   const [isElectronAuth, setIsElectronAuth] = useState(false);
   const [triggered, setTriggered] = useState(false);
-  const redirectedRef = useRef(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const { signIn } = useAuthActions();
   const { isAuthenticated, isLoading } = useConvexAuth();
 
@@ -53,28 +53,79 @@ export function AutoSignIn() {
       // Trigger Google sign-in - this will redirect to Google OAuth
       signIn("google").catch((err) => {
         console.error('[AutoSignIn] OAuth error:', err);
-
-        // If this is Electron auth, redirect back with error
-        if (isElectronAuth) {
-          window.location.href = `${ELECTRON_CALLBACK_URL}?error=${encodeURIComponent(err.message || 'OAuth failed')}`;
-        }
+        setAuthError(err.message || 'OAuth failed');
       });
     }
   }, [isAutoSignIn, triggered, signIn, isElectronAuth]);
 
-  // After successful auth, redirect back to Electron app
-  useEffect(() => {
-    // Only for Electron auth flow, after auth is complete (not loading, is authenticated)
-    if (isElectronAuth && !isLoading && isAuthenticated && !redirectedRef.current) {
-      console.log('[AutoSignIn] Auth successful, redirecting to Electron app');
-      redirectedRef.current = true;
+  // Handle return to Electron app
+  const handleReturnToApp = () => {
+    window.location.href = ELECTRON_CALLBACK_URL;
+  };
 
-      // Small delay to ensure token is saved
-      setTimeout(() => {
-        window.location.href = ELECTRON_CALLBACK_URL;
-      }, 500);
-    }
-  }, [isElectronAuth, isLoading, isAuthenticated]);
+  // For Electron flow: Show "return to app" screen after successful auth
+  if (isElectronAuth && !isLoading && isAuthenticated) {
+    return (
+      <div className="fixed inset-0 bg-gradient-to-br from-[#fff6f3] to-white flex items-center justify-center z-[9999]">
+        <div className="text-center p-8 max-w-md">
+          {/* Success Icon */}
+          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-green-100 flex items-center justify-center">
+            <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+
+          <h1 className="text-2xl font-semibold text-gray-800 mb-3">
+            Sign-in Successful!
+          </h1>
+          <p className="text-gray-600 mb-8">
+            You're now signed in. Return to TropX Motion to continue.
+          </p>
+
+          <button
+            onClick={handleReturnToApp}
+            className="px-8 py-3 bg-[#ff4d35] text-white font-medium rounded-xl hover:bg-[#e6442f] transition-colors shadow-lg shadow-red-200"
+          >
+            Open TropX Motion
+          </button>
+
+          <p className="text-sm text-gray-400 mt-6">
+            You can close this browser tab after returning to the app.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // For Electron flow: Show error screen
+  if (isElectronAuth && authError) {
+    return (
+      <div className="fixed inset-0 bg-gradient-to-br from-[#fff6f3] to-white flex items-center justify-center z-[9999]">
+        <div className="text-center p-8 max-w-md">
+          {/* Error Icon */}
+          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-red-100 flex items-center justify-center">
+            <svg className="w-10 h-10 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </div>
+
+          <h1 className="text-2xl font-semibold text-gray-800 mb-3">
+            Sign-in Failed
+          </h1>
+          <p className="text-gray-600 mb-4">
+            {authError}
+          </p>
+
+          <button
+            onClick={() => window.location.href = `${ELECTRON_CALLBACK_URL}?error=${encodeURIComponent(authError)}`}
+            className="px-8 py-3 bg-gray-600 text-white font-medium rounded-xl hover:bg-gray-700 transition-colors"
+          >
+            Return to App
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Show loading screen while redirecting to Google
   if (isAutoSignIn) {
@@ -105,12 +156,10 @@ export function AutoSignIn() {
 
           {/* Text */}
           <h1 className="text-xl font-semibold text-gray-800 mb-2">
-            {isAuthenticated ? 'Signed in!' : 'Signing in to TropX'}
+            Signing in to TropX
           </h1>
           <p className="text-sm text-gray-500">
-            {isAuthenticated && isElectronAuth
-              ? 'Returning to the app...'
-              : 'Redirecting to Google...'}
+            Redirecting to Google...
           </p>
         </div>
       </div>
