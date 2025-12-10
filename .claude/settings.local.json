@@ -52,7 +52,8 @@
       "WebFetch(domain:labs.convex.dev)",
       "Bash(npx convex env:*)",
       "Bash(npm view:*)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(npx @convex-dev/auth:*)"
     ],
     "deny": [],
     "ask": [],
