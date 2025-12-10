@@ -105,30 +105,33 @@ export class OAuthHandler {
   }
 
   /**
-   * OAuth Flow via System Browser (preferred):
-   * 1. Open default browser to web app with ?autoSignIn=google&electronAuth=true
-   * 2. Web app auto-triggers Google OAuth on load
-   * 3. User authenticates with Google
-   * 4. Web app redirects to tropx://auth-callback?token=...
-   * 5. Electron receives the callback via protocol handler
-   *
-   * Falls back to BrowserWindow if system browser fails
+   * OAuth Flow:
+   * - In production: Opens system browser, uses tropx:// protocol for callback
+   * - In development: Uses BrowserWindow (protocol handler doesn't work in dev)
    */
   async signInWithGoogle(): Promise<OAuthResult> {
     return new Promise((resolve) => {
       this.pendingAuthResolve = resolve;
 
-      console.log('[OAuthHandler] Opening system browser for auth:', AUTH_URL);
+      // In dev mode, protocol handler won't work - use BrowserWindow directly
+      const isDev = !app.isPackaged;
 
-      // Try to open system browser first
-      shell.openExternal(AUTH_URL)
-        .then(() => {
-          console.log('[OAuthHandler] System browser opened successfully');
-        })
-        .catch((err) => {
-          console.error('[OAuthHandler] Failed to open system browser, using fallback:', err);
-          this.openFallbackWindow();
-        });
+      if (isDev) {
+        console.log('[OAuthHandler] Dev mode - using BrowserWindow for auth');
+        this.openFallbackWindow();
+      } else {
+        console.log('[OAuthHandler] Production - opening system browser for auth:', AUTH_URL);
+
+        // Try to open system browser first
+        shell.openExternal(AUTH_URL)
+          .then(() => {
+            console.log('[OAuthHandler] System browser opened successfully');
+          })
+          .catch((err) => {
+            console.error('[OAuthHandler] Failed to open system browser, using fallback:', err);
+            this.openFallbackWindow();
+          });
+      }
 
       // Timeout after 5 minutes
       this.authTimeout = setTimeout(() => {

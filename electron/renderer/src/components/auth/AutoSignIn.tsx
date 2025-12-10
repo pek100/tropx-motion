@@ -67,9 +67,13 @@ export function AutoSignIn() {
     }
   }, [isElectronAuth, isAuthenticated, isLoading]);
 
-  // Trigger OAuth after detecting param
+  // Trigger OAuth after detecting param (only if not already authenticated)
+  // Wait for isLoading to be false before deciding
   useEffect(() => {
-    if (isAutoSignIn && !triggered) {
+    // Don't do anything while still loading auth state
+    if (isLoading) return;
+
+    if (isAutoSignIn && !triggered && !isAuthenticated) {
       console.log('[AutoSignIn] Triggering Google OAuth, electronAuth:', isElectronAuth);
       setTriggered(true);
 
@@ -80,8 +84,12 @@ export function AutoSignIn() {
         // Clear pending flag on error
         localStorage.removeItem(ELECTRON_AUTH_KEY);
       });
+    } else if (isAutoSignIn && isAuthenticated && !triggered) {
+      // Already authenticated - skip OAuth
+      console.log('[AutoSignIn] Already authenticated, skipping OAuth');
+      setTriggered(true);
     }
-  }, [isAutoSignIn, triggered, signIn, isElectronAuth]);
+  }, [isAutoSignIn, triggered, signIn, isElectronAuth, isAuthenticated, isLoading]);
 
   // Handle return to Electron app
   const handleReturnToApp = () => {
