@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { isWeb } from '../lib/platform';
 import {
   RecordingBuffer,
   generateCSV,
@@ -59,13 +60,6 @@ export function useRecordingExport(): UseRecordingExportReturn {
       return result;
     }
 
-    // Check if electronAPI is available
-    if (!window.electronAPI?.file?.writeCSV) {
-      const result = { success: false, error: 'Export not available (running outside Electron)' };
-      setLastExport(result);
-      return result;
-    }
-
     setIsExporting(true);
 
     try {
@@ -81,8 +75,35 @@ export function useRecordingExport(): UseRecordingExportReturn {
       }
 
       const fileName = generateFilename();
-      const filePath = `${exportPath}/${fileName}`;
 
+      // Web: Download file via browser
+      if (isWeb()) {
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        const result: ExportResult = {
+          success: true,
+          fileName
+        };
+        setLastExport(result);
+        return result;
+      }
+
+      // Electron: Write to file system
+      if (!window.electronAPI?.file?.writeCSV) {
+        const result = { success: false, error: 'Export not available' };
+        setLastExport(result);
+        return result;
+      }
+
+      const filePath = `${exportPath}/${fileName}`;
       const response = await window.electronAPI.file.writeCSV(filePath, csvContent);
 
       if (response.success) {
@@ -92,7 +113,6 @@ export function useRecordingExport(): UseRecordingExportReturn {
           fileName
         };
         setLastExport(result);
-        // Data kept until new recording starts
         return result;
       } else {
         const result: ExportResult = {
@@ -115,14 +135,61 @@ export function useRecordingExport(): UseRecordingExportReturn {
   }, [exportPath]);
 
   const importCSV = useCallback(async (): Promise<ImportResult> => {
-    // Check if electronAPI is available
-    if (!window.electronAPI?.file?.importCSV) {
-      return { success: false, error: 'Import not available (running outside Electron)' };
-    }
-
     setIsImporting(true);
 
     try {
+      // Web: Use file input element
+      if (isWeb()) {
+        return new Promise((resolve) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = '.csv';
+
+          input.onchange = async (e) => {
+            const file = (e.target as HTMLInputElement).files?.[0];
+            if (!file) {
+              setIsImporting(false);
+              resolve({ success: false, canceled: true });
+              return;
+            }
+
+            try {
+              const content = await file.text();
+              const recording = parseCSV(content, file.name);
+
+              if (recording.samples.length === 0) {
+                setIsImporting(false);
+                resolve({ success: false, error: 'No valid data found in CSV' });
+                return;
+              }
+
+              setImportedRecording(recording);
+              setIsImporting(false);
+              resolve({ success: true, recording });
+            } catch (err) {
+              setIsImporting(false);
+              resolve({
+                success: false,
+                error: err instanceof Error ? err.message : 'Failed to read file'
+              });
+            }
+          };
+
+          input.oncancel = () => {
+            setIsImporting(false);
+            resolve({ success: false, canceled: true });
+          };
+
+          input.click();
+        });
+      }
+
+      // Electron: Use native file dialog
+      if (!window.electronAPI?.file?.importCSV) {
+        setIsImporting(false);
+        return { success: false, error: 'Import not available' };
+      }
+
       const response = await window.electronAPI.file.importCSV();
 
       if (response.canceled) {

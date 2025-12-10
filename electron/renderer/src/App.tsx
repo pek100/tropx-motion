@@ -7,8 +7,8 @@ import { TopNavTabs } from "@/components/TopNavTabs"
 import { ActionBar, type ActionId } from "@/components/ActionBar"
 import { ActionModal } from "@/components/ActionModal"
 import { StorageSettingsModal } from "@/components/StorageSettingsModal"
-import { DesktopRequired } from "@/components/DesktopRequired"
-import { isElectron } from "@/lib/platform"
+import { isElectron, isWeb } from "@/lib/platform"
+import { platformInfo } from "@/lib/platform"
 import { useState, useRef, useEffect, useMemo, useCallback, lazy, Suspense } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { ToastAction } from "@/components/ui/toast"
@@ -129,6 +129,20 @@ function AppContent() {
   } = useRecordingExport()
 
   const autoStartRef = useRef(false)
+
+  // Web feature toast helper
+  const showWebFeatureToast = useCallback(() => {
+    toast({
+      title: "Desktop App Required",
+      description: "To scan and stream you need to download the TropX Motion app.",
+      duration: 8000,
+      action: (
+        <ToastAction altText="Download now" onClick={() => window.open(platformInfo.downloadUrl, '_blank')}>
+          Download
+        </ToastAction>
+      ),
+    })
+  }, [toast])
 
   // Sync isRefreshing with backend
   useEffect(() => {
@@ -287,6 +301,10 @@ function AppContent() {
   }
 
   const handleRefresh = async () => {
+    if (isWeb()) {
+      showWebFeatureToast()
+      return
+    }
     if (isStreaming) {
       toast({ title: "Cannot Scan", description: "Stop angle streaming before scanning.", variant: "destructive", duration: 3000 })
       return
@@ -305,6 +323,10 @@ function AppContent() {
 
   const SYNC_TIMEOUT_MS = 15000
   const handleSync = async () => {
+    if (isWeb()) {
+      showWebFeatureToast()
+      return
+    }
     if (isLocating) return
     try {
       const syncPromise = syncAllDevices()
@@ -322,6 +344,10 @@ function AppContent() {
   }
 
   const handleLocate = async () => {
+    if (isWeb()) {
+      showWebFeatureToast()
+      return
+    }
     if (sortedDevices.some((d) => d.connectionStatus === "synchronizing")) return
     if (isLocating) {
       if (locateDelayTimeoutRef.current) {
@@ -347,6 +373,10 @@ function AppContent() {
   }
 
   const handleToggleStreaming = async () => {
+    if (isWeb()) {
+      showWebFeatureToast()
+      return
+    }
     if (isLocating || isSyncing) return
     if (!isStreaming && !validateStreaming()) {
       toast({ title: "Cannot Start Streaming", description: "Connect at least 2 devices of the same joint type.", variant: "destructive", duration: 4000 })
@@ -445,25 +475,34 @@ function AppContent() {
 
     const result = await exportCSV()
 
-    if (result.success && result.filePath) {
-      toast({
-        title: "Recording Exported",
-        description: result.fileName,
-        duration: 8000,
-        action: (
-          <div className="flex gap-2">
-            <ToastAction altText="Open file" onClick={() => openFile(result.filePath!)}>
-              Open
-            </ToastAction>
-            <ToastAction altText="Show in folder" onClick={() => openFolder(result.filePath!)}>
-              Folder
-            </ToastAction>
-            <ToastAction altText="Settings" onClick={() => setIsStorageSettingsOpen(true)}>
-              Settings
-            </ToastAction>
-          </div>
-        ),
-      })
+    if (result.success) {
+      // Web export (no filePath, just downloaded) vs Electron export (has filePath)
+      if (result.filePath) {
+        toast({
+          title: "Recording Exported",
+          description: result.fileName,
+          duration: 8000,
+          action: (
+            <div className="flex gap-2">
+              <ToastAction altText="Open file" onClick={() => openFile(result.filePath!)}>
+                Open
+              </ToastAction>
+              <ToastAction altText="Show in folder" onClick={() => openFolder(result.filePath!)}>
+                Folder
+              </ToastAction>
+              <ToastAction altText="Settings" onClick={() => setIsStorageSettingsOpen(true)}>
+                Settings
+              </ToastAction>
+            </div>
+          ),
+        })
+      } else {
+        toast({
+          title: "Recording Downloaded",
+          description: result.fileName,
+          duration: 5000,
+        })
+      }
     } else {
       toast({
         title: "Export Failed",
@@ -649,7 +688,7 @@ function AppContent() {
                 </svg>
                 <div>
                   <h1 className="text-3xl font-semibold leading-tight"><span style={{ color: "var(--tropx-dark)" }} className="italic">TropX</span></h1>
-                  <p className="text-sm" style={{ color: "var(--tropx-shadow)" }}>Research Suite</p>
+                  <p className="text-sm italic" style={{ color: "var(--tropx-shadow)" }}>Motion</p>
                 </div>
               </div>
             </header>
@@ -663,21 +702,6 @@ function AppContent() {
           )}
 
           <div className={isCompact ? "flex-1 flex relative pointer-events-none" : "flex-1 flex items-center justify-center px-8 relative pointer-events-none"}>
-            {/* Show DesktopRequired on web, recording UI on desktop */}
-            {!isElectron() ? (
-              <div className="flex gap-6 w-[90%] pointer-events-auto">
-                <div
-                  className="w-full bg-white flex flex-col"
-                  style={{
-                    border: "1px solid #e5e5e5",
-                    borderRadius: "36px",
-                    minHeight: "550px",
-                  }}
-                >
-                  <DesktopRequired feature="Recording" />
-                </div>
-              </div>
-            ) : (
             <div className={isCompact ? "flex gap-0 w-full h-full pointer-events-none" : "flex gap-6 w-[90%] pointer-events-none"}>
               {/* Left Pane */}
               <div
@@ -944,7 +968,6 @@ function AppContent() {
                 )}
               </div>
             </div>
-            )}
           </div>
         </div>
 
