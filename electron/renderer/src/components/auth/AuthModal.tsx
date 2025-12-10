@@ -11,6 +11,8 @@ import {
 import { Button } from "../ui/button";
 import { Loader2 } from "lucide-react";
 import { isConvexConfigured } from "../../lib/convex";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { isElectron } from "../../lib/platform";
 
 interface AuthModalProps {
   open: boolean;
@@ -26,15 +28,15 @@ function AuthModalContent({
 }: AuthModalProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { signIn } = useAuthActions();
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      // Check if running in Electron
-      if (window.electronAPI?.auth) {
-        // Use Electron's popup OAuth flow
+      if (isElectron() && window.electronAPI?.auth) {
+        // Electron: Use popup OAuth flow via web app
         console.log('[AuthModal] Using Electron OAuth popup flow');
         const result = await window.electronAPI.auth.signInWithGoogle();
 
@@ -49,9 +51,10 @@ function AuthModalContent({
           setIsLoading(false);
         }
       } else {
-        // Web fallback - this won't work well but kept for completeness
-        setError("OAuth not available in this environment");
-        setIsLoading(false);
+        // Web: Use Convex Auth directly
+        console.log('[AuthModal] Using Convex Auth (web)');
+        await signIn("google");
+        // Convex Auth handles the redirect, no need to do anything else
       }
     } catch (err) {
       console.error("Sign in error:", err);

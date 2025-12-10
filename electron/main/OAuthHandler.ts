@@ -63,40 +63,58 @@ export class OAuthHandler {
         },
       });
 
-      // Track if user successfully authenticated
+      // Track OAuth flow state
       let authDetected = false;
+      let leftForOAuth = false;  // True once user navigates to Google/auth
+      let isInitialLoad = true;
 
       // Monitor URL changes to detect successful auth
       this.authWindow.webContents.on('did-navigate', (_event, url) => {
         console.log('[OAuthHandler] Navigated to:', url.substring(0, 100));
 
-        // After Google OAuth, user lands back on web app
-        // Check if we're on the main app (not auth pages) - indicates success
-        if (url.startsWith(WEB_APP_URL) &&
-            !url.includes('/api/auth/') &&
-            !url.includes('accounts.google.com')) {
+        // Skip the initial load to web app
+        if (isInitialLoad && url.startsWith(WEB_APP_URL)) {
+          console.log('[OAuthHandler] Initial load, waiting for user action');
+          isInitialLoad = false;
+          return;
+        }
 
+        // Detect when user leaves for OAuth (Google, auth API, etc)
+        if (url.includes('accounts.google.com') ||
+            url.includes('/api/auth/') ||
+            url.includes('oauth') ||
+            url.includes('signin')) {
+          console.log('[OAuthHandler] User navigating to OAuth provider');
+          leftForOAuth = true;
+          return;
+        }
+
+        // Only trigger success if user RETURNED to web app after OAuth
+        if (leftForOAuth &&
+            url.startsWith(WEB_APP_URL) &&
+            !url.includes('/api/auth/')) {
           // Give a moment for cookies to be set
           setTimeout(() => {
             console.log('[OAuthHandler] Auth successful, closing window');
             authDetected = true;
             succeed();
-          }, 500);
+          }, 1000);
         }
       });
 
       this.authWindow.webContents.on('did-navigate-in-page', (_event, url) => {
         console.log('[OAuthHandler] In-page navigation:', url.substring(0, 100));
 
-        // Handle SPA navigation after auth
-        if (url.startsWith(WEB_APP_URL) &&
+        // Handle SPA navigation after auth - only if we went through OAuth
+        if (leftForOAuth &&
+            url.startsWith(WEB_APP_URL) &&
             !url.includes('/api/auth/') &&
             !authDetected) {
           setTimeout(() => {
             console.log('[OAuthHandler] Auth detected via SPA navigation');
             authDetected = true;
             succeed();
-          }, 500);
+          }, 1000);
         }
       });
 
