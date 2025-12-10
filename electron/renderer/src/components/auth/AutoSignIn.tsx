@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useConvexAuth } from "convex/react";
 
 // Protocol URL for Electron OAuth callback
 const ELECTRON_CALLBACK_URL = 'tropx://auth-callback';
+const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';
 
 /**
  * AutoSignIn Component
@@ -17,6 +18,7 @@ const ELECTRON_CALLBACK_URL = 'tropx://auth-callback';
  *
  * For Electron auth flow (?electronAuth=true):
  * After successful auth, shows a "return to app" screen with a button.
+ * Uses localStorage to persist the electronAuth flag across OAuth redirects.
  */
 export function AutoSignIn() {
   const [isAutoSignIn, setIsAutoSignIn] = useState(false);
@@ -26,23 +28,44 @@ export function AutoSignIn() {
   const { signIn } = useAuthActions();
   const { isAuthenticated, isLoading } = useConvexAuth();
 
-  // Check for autoSignIn param immediately on mount
+  // Check for autoSignIn param OR pending electron auth on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const autoSignIn = params.get('autoSignIn');
     const electronAuth = params.get('electronAuth');
 
+    // Check if there's a pending electron auth from localStorage
+    const pendingElectronAuth = localStorage.getItem(ELECTRON_AUTH_KEY) === 'true';
+
     if (autoSignIn === 'google') {
       setIsAutoSignIn(true);
-      setIsElectronAuth(electronAuth === 'true');
+      const isElectron = electronAuth === 'true';
+      setIsElectronAuth(isElectron);
+
+      // Persist electron auth flag across OAuth redirect
+      if (isElectron) {
+        localStorage.setItem(ELECTRON_AUTH_KEY, 'true');
+      }
 
       // Clear the URL params to prevent re-triggering on back navigation
       const url = new URL(window.location.href);
       url.searchParams.delete('autoSignIn');
       url.searchParams.delete('electronAuth');
       window.history.replaceState({}, '', url.toString());
+    } else if (pendingElectronAuth) {
+      // We're returning from OAuth redirect - restore electron auth state
+      setIsElectronAuth(true);
+      console.log('[AutoSignIn] Restored electronAuth from localStorage');
     }
   }, []);
+
+  // Clear the pending flag when auth is complete
+  useEffect(() => {
+    if (isElectronAuth && isAuthenticated && !isLoading) {
+      // Auth completed, clear the pending flag
+      localStorage.removeItem(ELECTRON_AUTH_KEY);
+    }
+  }, [isElectronAuth, isAuthenticated, isLoading]);
 
   // Trigger OAuth after detecting param
   useEffect(() => {
@@ -54,6 +77,8 @@ export function AutoSignIn() {
       signIn("google").catch((err) => {
         console.error('[AutoSignIn] OAuth error:', err);
         setAuthError(err.message || 'OAuth failed');
+        // Clear pending flag on error
+        localStorage.removeItem(ELECTRON_AUTH_KEY);
       });
     }
   }, [isAutoSignIn, triggered, signIn, isElectronAuth]);
