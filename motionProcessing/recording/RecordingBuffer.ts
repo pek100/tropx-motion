@@ -126,7 +126,7 @@ class RecordingBufferClass {
     private static lastRecordedTs: number = 0;
 
     /**
-     * Push a pre-synchronized pair from JointSynchronizer.
+     * Push a pre-synchronized pair from BatchSynchronizer.
      * This is the preferred method - both joints already have unified timestamp.
      */
     pushSynchronizedPair(timestamp: number, leftQuat: Quaternion, rightQuat: Quaternion): void {

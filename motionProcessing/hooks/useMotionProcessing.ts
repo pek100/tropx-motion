@@ -70,9 +70,13 @@ export const useMotionProcessing = (): UseMotionProcessingReturn => {
                 }
             }));
 
-            setCurrentAngles(new Map(coordinator.getCurrentJointAngles()));
+            // Update current angles from the UI data
+            const angles = new Map<string, number>();
+            if (data.left?.current !== undefined) angles.set('left-knee', data.left.current);
+            if (data.right?.current !== undefined) angles.set('right-knee', data.right.current);
+            setCurrentAngles(angles);
         }
-    }, [coordinator]);
+    }, []);
 
     const startRecording = useCallback((sessionId: string, exerciseId: string, setNumber: number): boolean => {
         try {

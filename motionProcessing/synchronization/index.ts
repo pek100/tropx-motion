@@ -1,9 +1,10 @@
 /**
  * Batch Synchronization Module
  *
- * Two-stage processing:
- * 1. SHEAR ALIGNMENT: Hierarchical alignment of all sensors to scan line
- * 2. TIME-GRID INTERPOLATION: SLERP to uniform Hz output
+ * Three-stage hierarchical processing:
+ * 1. INTRA-JOINT SHEAR: Align thigh↔shin within each joint
+ * 2. INTER-JOINT SHEAR: Align left↔right joints to same scan line
+ * 3. GRID INTERPOLATION: SLERP all 4 sensors to exact grid position
  */
 
 // Main orchestrator
@@ -30,6 +31,3 @@ export {
     DEVICE_MAPPING,
     SYNC_CONFIG,
 } from './types';
-
-// Legacy export (to be removed after integration complete)
-export { JointSynchronizer, type SynchronizedJointPair } from './JointSynchronizer';

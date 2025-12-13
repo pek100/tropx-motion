@@ -199,7 +199,7 @@ export abstract class JointProcessor {
             console.log(`🔢 [JointProcessor] Sample #${JointProcessor.debugSampleCount}: joint=${angleData.jointName}, quat=[${relativeQuat.w.toFixed(3)}, ${relativeQuat.x.toFixed(3)}, ${relativeQuat.y.toFixed(3)}, ${relativeQuat.z.toFixed(3)}]`);
         }
 
-        // Note: Recording push moved to JointSynchronizer for unified timestamp handling
+        // Note: Recording is handled via BatchSynchronizer path
         this.latestAngle = angleData;
 
         // Use sorting buffer for smooth real-time output

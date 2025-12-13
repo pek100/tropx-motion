@@ -1,14 +1,26 @@
 import { DeviceProcessor } from './deviceProcessing/DeviceProcessor';
-import { JointProcessor, KneeJointProcessor, JointAngleDataWithQuat } from './jointProcessing/JointProcessor';
 import { UIProcessor } from './uiProcessing/UIProcessor';
-import { JointSynchronizer, SynchronizedJointPair, BatchSynchronizer, type AlignedSampleSet, JointSide } from './synchronization';
-import { MotionConfig, IMUData, SessionContext, JointAngleData, DeviceData, Quaternion } from './shared/types';
+import { BatchSynchronizer, type AlignedSampleSet } from './synchronization';
+import { MotionConfig, IMUData, SessionContext, Quaternion } from './shared/types';
 import { createMotionConfig, PerformanceProfile, JointName } from './shared/config';
-import { PerformanceLogger } from './shared/PerformanceLogger';
 import { DeviceID, UnifiedBLEStateStore, GlobalState, type GlobalStateChange } from '../ble-management';
 import { RecordingBuffer, CSVExporter, type RecordingState, type ExportResult, type ExportOptions } from './recording';
-import { TimestampDebugLogger, type PipelineStats } from '../ble-bridge/TimestampDebugLogger';
 import { AngleCalculationService } from './jointProcessing/AngleCalculationService';
+
+/** Synchronized joint pair for downstream consumers */
+export interface SynchronizedJointPair {
+    timestamp: number;
+    leftKnee: {
+        angle: number;
+        relativeQuat: Quaternion;
+        deviceIds: string[];
+    };
+    rightKnee: {
+        angle: number;
+        relativeQuat: Quaternion;
+        deviceIds: string[];
+    };
+}
 
 interface RecordingStatus {
     isRecording: boolean;
@@ -19,17 +31,12 @@ interface RecordingStatus {
  * Central coordinator for motion processing system.
  * Manages data flow between device processing, joint calculations, and UI updates.
  *
- * New flow (BatchSync enabled):
+ * Data flow:
  * DeviceProcessor → BatchSynchronizer → AngleCalculator → UIProcessor/RecordingBuffer
- *
- * Legacy flow (BatchSync disabled):
- * DeviceProcessor → JointProcessor → JointSynchronizer → UIProcessor/RecordingBuffer
  */
 export class MotionProcessingCoordinator {
     private static instance: MotionProcessingCoordinator | null = null;
     private deviceProcessor!: DeviceProcessor;
-    private jointProcessors = new Map<string, JointProcessor>();
-    private jointSynchronizer!: JointSynchronizer;
     private uiProcessor!: UIProcessor;
     private isRecording = false;
     private sessionContext: SessionContext | null = null;
@@ -45,8 +52,6 @@ export class MotionProcessingCoordinator {
     private constructor(private config: MotionConfig) {
         try {
             this.initializeServices();
-            this.initializeJointProcessors();
-            this.setupDataFlow();
             this.startPerformanceMonitoring();
             this.isInitialized = true;
             console.log('✅ MotionProcessingCoordinator initialized successfully');
@@ -108,12 +113,9 @@ export class MotionProcessingCoordinator {
 
         this.sessionContext = sessionId ? { sessionId, exerciseId: exerciseId || '', setNumber: setNumber || 0 } : null;
         this.isRecording = true;
-        this.resetJointProcessors();
 
         // Reset timestamp tracking for fresh recording
-        // IMPORTANT: This prevents monotonic check from blocking samples based on previous recording
         DeviceProcessor.resetForNewRecording();
-        JointSynchronizer.resetForNewRecording();
         UIProcessor.resetForNewRecording();
 
         // Start backend recording buffer with target Hz from config
@@ -155,17 +157,6 @@ export class MotionProcessingCoordinator {
 
     getUIData(): { left: any; right: any } {
         return this.uiProcessor.getChartFormat();
-    }
-
-    getCurrentJointAngles(): Map<string, number> {
-        const angles = new Map<string, number>();
-        this.jointProcessors.forEach((processor, jointName) => {
-            const latest = processor.getLatestAngle();
-            if (latest) {
-                angles.set(jointName, latest.angle);
-            }
-        });
-        return angles;
     }
 
     getBatteryLevels(): Map<string, number> {
@@ -213,10 +204,7 @@ export class MotionProcessingCoordinator {
         BatchSynchronizer.reset();
 
         this.deviceProcessor.cleanup();
-        this.jointProcessors.forEach(processor => processor.cleanup());
-        JointSynchronizer.reset();
         this.uiProcessor.cleanup();
-        this.jointProcessors.clear();
         this.isInitialized = false;
 
         console.log('🧹 MotionProcessingCoordinator cleanup completed');
@@ -240,7 +228,6 @@ export class MotionProcessingCoordinator {
 
     private initializeServices(): void {
         this.deviceProcessor = DeviceProcessor.getInstance(this.config);
-        this.jointSynchronizer = JointSynchronizer.getInstance();
         this.uiProcessor = UIProcessor.getInstance();
 
         // Initialize angle calculators for BatchSync path
@@ -254,17 +241,14 @@ export class MotionProcessingCoordinator {
             this.rightKneeAngleCalc = new AngleCalculationService(rightKneeConfig, this.config);
         }
 
-        // Set up BatchSynchronizer subscription (new path)
+        // Set up BatchSynchronizer subscription
         this.setupBatchSyncSubscription();
 
-        // Set up legacy sync subscriptions (for fallback)
-        this.setupSyncSubscriptions();
-
-        console.log('✅ Core services initialized (BatchSync enabled)');
+        console.log('✅ Core services initialized');
     }
 
     /**
-     * Set up subscription to BatchSynchronizer for the new aligned data flow.
+     * Set up subscription to BatchSynchronizer for aligned data flow.
      * Processes aligned samples through angle calculation and routes to UI/Recording.
      */
     private setupBatchSyncSubscription(): void {
@@ -364,90 +348,23 @@ export class MotionProcessingCoordinator {
         );
     }
 
-    /**
-     * Set up subscriptions from JointSynchronizer to downstream consumers.
-     * JointSynchronizer emits COMPLETE pairs on every update (flight controller approach).
-     */
-    private setupSyncSubscriptions(): void {
-        this.jointSynchronizer.subscribe((pair: SynchronizedJointPair) => {
-            // Route COMPLETE synchronized pair directly to UIProcessor
-            // No individual joint updates - pass the whole pair for immediate broadcast
-            this.uiProcessor.broadcastCompletePair(pair);
-
-            // Route synchronized data to RecordingBuffer
-            RecordingBuffer.pushSynchronizedPair(
-                pair.timestamp,
-                pair.leftKnee.relativeQuat,
-                pair.rightKnee.relativeQuat
-            );
-        });
-        console.log('✅ JointSynchronizer subscriptions configured (flight controller mode)');
-    }
-
-    private initializeJointProcessors(): void {
-        for (const jointConfig of this.config.joints) {
-            const processor = new KneeJointProcessor(jointConfig, this.config);
-            this.jointProcessors.set(jointConfig.name, processor);
-            this.subscribeToJointProcessor(processor);
-        }
-        console.log(`✅ Initialized ${this.jointProcessors.size} joint processors`);
-    }
-
-    private subscribeToJointProcessor(processor: JointProcessor): void {
-        processor.subscribe((angleData: JointAngleDataWithQuat) => {
-            const start = performance.now();
-
-            // Route to JointSynchronizer for cross-joint timestamp matching
-            // JointSynchronizer will emit synchronized pairs to UIProcessor and RecordingBuffer
-            this.jointSynchronizer.pushJointSample(angleData, angleData.relativeQuat);
-
-            const duration = performance.now() - start;
-            if (duration > 1) {
-                PerformanceLogger.log('COORDINATOR', 'joint_processing', duration, angleData.jointName);
-            }
-        });
-    }
-
-    private setupDataFlow(): void {
-        this.deviceProcessor.setJointUpdateCallback((jointName, devices, triggeringTimestamp) => {
-            this.processSingleJoint(jointName, devices, triggeringTimestamp);
-        });
-    }
-
-    private processSingleJoint(jointName: string, devices: Map<string, DeviceData>, triggeringTimestamp: number): void {
-        const jointProcessor = this.jointProcessors.get(jointName);
-        if (!jointProcessor) return;
-
-        try {
-            jointProcessor.processDevices(devices, triggeringTimestamp);
-        } catch (error) {
-            console.error(`❌ [MOTION_COORDINATOR] Error processing ${jointName}:`, error);
-        }
-    }
-
-    private resetJointProcessors(): void {
-        this.jointProcessors.forEach(processor => processor.resetStats());
-    }
-
     setPerformanceOptions(opts: { bypassInterpolation?: boolean; asyncNotify?: boolean }): void {
         if (this.deviceProcessor) {
             this.deviceProcessor.updatePerformanceOptions(opts);
         }
     }
 
-    /** Collect and set pipeline stats to TimestampDebugLogger for analysis */
-    static flushPipelineStats(): void {
-        const stats: PipelineStats = {
+    /** Get debug stats for pipeline analysis */
+    static getDebugStats(): object {
+        return {
             deviceProcessor: DeviceProcessor.getDebugStats(),
-            jointSynchronizer: JointSynchronizer.getDebugStats(),
+            batchSync: BatchSynchronizer.getInstance().getFullDebugInfo(),
             uiProcessor: UIProcessor.getDebugStats()
         };
-        TimestampDebugLogger.setPipelineStats(stats);
-        console.log('📊 [MOTION_COORDINATOR] Pipeline stats collected for debug log');
     }
 }
 
-// Factory - always create coordinator (MotionProcessingConsumer removed)
+// Factory - always create coordinator
 export const motionProcessingCoordinator = MotionProcessingCoordinator.getInstance(
     createMotionConfig(PerformanceProfile.HZ_100_SAMPLING, false)
 );

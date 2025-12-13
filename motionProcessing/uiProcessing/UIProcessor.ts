@@ -1,6 +1,6 @@
 import { JointAngleData, UIJointData, APIRecording } from '../shared/types';
 import { JointName } from "../shared/config";
-import { SynchronizedJointPair } from '../synchronization/JointSynchronizer';
+import { SynchronizedJointPair } from '../MotionProcessingCoordinator';
 
 interface UIState {
     left: UIJointData;
@@ -10,10 +10,8 @@ interface UIState {
 /**
  * Manages UI data state and updates for joint angle visualization.
  *
- * Simplified for flight controller approach:
- * - Receives COMPLETE pairs from JointSynchronizer
- * - Broadcasts directly without any internal batching
- * - Every sensor update flows through to display
+ * Receives synchronized pairs from BatchSynchronizer via MotionProcessingCoordinator.
+ * Broadcasts directly to WebSocket without any internal batching.
  */
 export class UIProcessor {
     private static instance: UIProcessor | null = null;
