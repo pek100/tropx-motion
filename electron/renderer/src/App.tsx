@@ -93,9 +93,11 @@ function AppContent() {
 
   // Auto-sync before streaming overlay state
   const [autoSyncOverlay, setAutoSyncOverlay] = useState<'idle' | 'syncing' | 'countdown'>('idle')
-  const [countdownNumber, setCountdownNumber] = useState(3)
+  const [countdownNumber, setCountdownNumber] = useState(2)
   // Track devices synced this session (client-side, cleared on page refresh)
   const syncedThisSessionRef = useRef<Set<string>>(new Set())
+  // Ref to track current isSyncing value (for async checks during countdown)
+  const isSyncingRef = useRef(isSyncing)
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   const touchStartY = useRef<number | null>(null)
@@ -154,6 +156,11 @@ function AppContent() {
   useEffect(() => {
     setIsRefreshing(isScanning)
   }, [isScanning])
+
+  // Keep isSyncingRef in sync with isSyncing (for async countdown checks)
+  useEffect(() => {
+    isSyncingRef.current = isSyncing
+  }, [isSyncing])
 
   // Load persisted state
   useEffect(() => {
@@ -407,20 +414,70 @@ function AppContent() {
           // Mark all connected devices as synced this session
           connectedDevices.forEach(d => syncedThisSessionRef.current.add(d.id))
 
-          // Sync complete - start streaming immediately
-          setAutoSyncOverlay('idle')
-          setHasStartedStreaming(true)
-          setStreamStartTime(Date.now())
-          setStreamElapsedTime(0)
-          setClearChartTrigger((prev) => prev + 1)
-          const sessionId = `session_${Date.now()}`
-          const result = await startStreaming(sessionId, "test_exercise", 1)
-          setIsValidatingState(false)
-          if (!result.success) {
-            setHasStartedStreaming(false)
-            setStreamStartTime(null)
-            toast({ title: "Cannot Start Streaming", description: (result as any).error || "Failed", variant: "destructive", duration: 6000 })
+          // Wait for state to settle (STATE_UPDATE propagation delay)
+          await new Promise(resolve => setTimeout(resolve, 300))
+
+          // Sync complete - start countdown
+          setAutoSyncOverlay('countdown')
+          setCountdownNumber(2)
+
+          // Helper to start streaming after countdown
+          const startStreamAfterCountdown = async () => {
+            setHasStartedStreaming(true)
+            setStreamStartTime(Date.now())
+            setStreamElapsedTime(0)
+            setClearChartTrigger((prev) => prev + 1)
+            const sessionId = `session_${Date.now()}`
+            const result = await startStreaming(sessionId, "test_exercise", 1)
+            setAutoSyncOverlay('idle')
+            setIsValidatingState(false)
+            if (!result.success) {
+              setHasStartedStreaming(false)
+              setStreamStartTime(null)
+              toast({ title: "Cannot Start Streaming", description: (result as any).error || "Failed", variant: "destructive", duration: 6000 })
+            }
           }
+
+          // Countdown: 2 -> 1 -> start (with sync check)
+          for (let i = 2; i >= 1; i--) {
+            // Check if sync became active again (shouldn't happen, but be safe)
+            if (isSyncingRef.current) {
+              setAutoSyncOverlay('syncing')
+              // Wait for sync to complete
+              await new Promise<void>(resolve => {
+                const checkSync = setInterval(() => {
+                  if (!isSyncingRef.current) {
+                    clearInterval(checkSync)
+                    resolve()
+                  }
+                }, 100)
+              })
+              // Restart countdown
+              setAutoSyncOverlay('countdown')
+              i = 3 // Will decrement to 2 at loop end
+              continue
+            }
+            setCountdownNumber(i)
+            await new Promise(resolve => setTimeout(resolve, 1000))
+          }
+
+          // Final check before starting stream
+          if (isSyncingRef.current) {
+            setAutoSyncOverlay('syncing')
+            // Wait for sync to complete then restart
+            await new Promise<void>(resolve => {
+              const checkSync = setInterval(() => {
+                if (!isSyncingRef.current) {
+                  clearInterval(checkSync)
+                  resolve()
+                }
+              }, 100)
+            })
+          }
+
+          // After countdown, start streaming
+          await startStreamAfterCountdown()
+
         } catch (error) {
           setAutoSyncOverlay('idle')
           setIsValidatingState(false)
@@ -976,7 +1033,7 @@ function AppContent() {
                                 />
                               )}
                               <p className="text-base font-medium whitespace-nowrap relative z-10">
-                                Syncing device clocks...
+                                {autoSyncOverlay === 'countdown' ? countdownNumber : 'Syncing device clocks...'}
                               </p>
                             </div>
                             {autoSyncOverlay === 'syncing' && (

@@ -279,6 +279,22 @@ export class NobleBluetoothService {
         this.devices.delete(deviceId);
       }
 
+      // CRITICAL FIX: Check for stale peripheral connection from a previous timed-out attempt
+      // If peripheral appears connected but we don't have a TropXDevice for it,
+      // the previous connection timed out but Noble's connect eventually succeeded.
+      // We must disconnect to clear Noble's stale GATT cache before reconnecting.
+      if (peripheral.state === 'connected' && !this.devices.has(deviceId)) {
+        console.log(`⚠️ [${deviceId}] Peripheral is connected but no TropXDevice exists - clearing stale connection`);
+        try {
+          await peripheral.disconnectAsync();
+          console.log(`✅ [${deviceId}] Stale connection cleared`);
+          // Wait for Noble to fully clean up
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (disconnectError) {
+          console.warn(`⚠️ [${deviceId}] Failed to clear stale connection:`, disconnectError);
+        }
+      }
+
       // Create device wrapper with state management
       const deviceInfo = this.createDeviceInfo(peripheral);
       const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
