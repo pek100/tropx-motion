@@ -1,20 +1,23 @@
 /**
  * Intra-joint alignment: aligns thigh and shin sensor buffers.
- * Supports batch reuse: same batch can be used multiple times until new data arrives.
- * Cleanup only occurs when advancing to next batch.
+ * Supports batch reuse and inline interpolation to time grid.
  */
 
 import { SensorBuffer } from './SensorBuffer';
 import { JointSamples, JointSide, Sample } from './types';
+import { QuaternionService } from '../shared/QuaternionService';
+import { Quaternion } from '../shared/types';
 
 export class JointAligner {
     private thighBuffer: SensorBuffer | null = null;
     private shinBuffer: SensorBuffer | null = null;
     private readonly jointSide: JointSide;
 
-    // Last consumed sample for reuse (when no new data)
-    private lastConsumedSample: JointSamples | null = null;
-    private lastConsumedTimestamp: number = 0;
+    // Track last 2 samples PER SENSOR for interpolation (sensor-level, not joint-level)
+    private prevThigh: Sample | null = null;
+    private currThigh: Sample | null = null;
+    private prevShin: Sample | null = null;
+    private currShin: Sample | null = null;
 
     constructor(jointSide: JointSide) {
         this.jointSide = jointSide;
@@ -42,73 +45,49 @@ export class JointAligner {
         return !this.thighBuffer.isEmpty() && !this.shinBuffer.isEmpty();
     }
 
-    /** Check if either buffer has data OR we have a reusable sample */
+    /** Check if we have data for interpolation */
     hasAnyData(): boolean {
-        if (this.lastConsumedSample) return true;
+        if (this.currThigh || this.currShin) return true;
         if (!this.thighBuffer || !this.shinBuffer) return false;
         return !this.thighBuffer.isEmpty() || !this.shinBuffer.isEmpty();
     }
 
-    /**
-     * Peek at the oldest timestamp that would be consumed.
-     * Returns MAX timestamp from the next matchable pair without consuming.
-     * If no new data, returns lastConsumedTimestamp (for reuse).
-     */
-    peekOldestTimestamp(): number | null {
-        if (!this.thighBuffer || !this.shinBuffer) return null;
-
-        const thighEmpty = this.thighBuffer.isEmpty();
-        const shinEmpty = this.shinBuffer.isEmpty();
-
-        // No new data - return last consumed for reuse
-        if (thighEmpty && shinEmpty) {
-            return this.lastConsumedTimestamp > 0 ? this.lastConsumedTimestamp : null;
-        }
-
-        // Both have data - peek at matched pair timestamps
-        if (!thighEmpty && !shinEmpty) {
-            const thighSample = this.thighBuffer.getSampleAtIndex(0);
-            if (!thighSample) return this.lastConsumedTimestamp || null;
-
-            const closestShinIndex = this.shinBuffer.findClosestIndex(thighSample.timestamp);
-            const shinSample = this.shinBuffer.getSampleAtIndex(closestShinIndex);
-
-            if (shinSample) {
-                return Math.max(thighSample.timestamp, shinSample.timestamp);
-            }
-            return thighSample.timestamp;
-        }
-
-        // Only thigh
-        if (!thighEmpty) {
-            return this.thighBuffer.getOldestTimestamp();
-        }
-
-        // Only shin
-        return this.shinBuffer.getOldestTimestamp();
+    /** Get newest timestamp we have (for grid bounds checking) */
+    getNewestTimestamp(): number | null {
+        const thighTs = this.currThigh?.timestamp ?? 0;
+        const shinTs = this.currShin?.timestamp ?? 0;
+        const newest = Math.max(thighTs, shinTs);
+        return newest > 0 ? newest : null;
     }
 
     /**
-     * Get current sample: either consume NEW data or REUSE last consumed.
-     * - If new data available: consume it, cleanup previous, update lastConsumed
-     * - If no new data: return lastConsumedSample (reuse)
+     * Consume next aligned sample from shear alignment.
+     * Updates per-SENSOR prev/curr tracking for interpolation.
      */
     consumeOneMatch(): JointSamples | null {
-        if (!this.thighBuffer || !this.shinBuffer) return this.lastConsumedSample;
+        if (!this.thighBuffer || !this.shinBuffer) {
+            // Return current state
+            if (this.currThigh || this.currShin) {
+                return { thigh: this.currThigh ?? undefined, shin: this.currShin ?? undefined };
+            }
+            return null;
+        }
 
         const thighEmpty = this.thighBuffer.isEmpty();
         const shinEmpty = this.shinBuffer.isEmpty();
 
-        // No new data - REUSE last consumed sample
+        // No new data - return current (reuse)
         if (thighEmpty && shinEmpty) {
-            return this.lastConsumedSample;
+            if (this.currThigh || this.currShin) {
+                return { thigh: this.currThigh ?? undefined, shin: this.currShin ?? undefined };
+            }
+            return null;
         }
 
-        // We have new data - consume it
-        const pair: JointSamples = {};
-        let newTimestamp = 0;
+        let thighConsumed = false;
+        let shinConsumed = false;
 
-        // Both have data - match closest pair
+        // Both have data - match closest pair (intra-joint shear)
         if (!thighEmpty && !shinEmpty) {
             const thighSample = this.thighBuffer.getSampleAtIndex(0);
             if (thighSample) {
@@ -116,11 +95,16 @@ export class JointAligner {
                 const shinSample = this.shinBuffer.getSampleAtIndex(closestShinIndex);
 
                 if (shinSample) {
-                    pair.thigh = { ...thighSample };
-                    pair.shin = { ...shinSample };
-                    newTimestamp = Math.max(thighSample.timestamp, shinSample.timestamp);
+                    // Shift thigh: curr -> prev, new -> curr
+                    this.prevThigh = this.currThigh;
+                    this.currThigh = { ...thighSample };
+                    thighConsumed = true;
 
-                    // Remove consumed samples from buffers
+                    // Shift shin: curr -> prev, new -> curr
+                    this.prevShin = this.currShin;
+                    this.currShin = { ...shinSample };
+                    shinConsumed = true;
+
                     this.thighBuffer.discardUpTo(1);
                     this.shinBuffer.removeAtIndex(closestShinIndex);
                 }
@@ -130,12 +114,9 @@ export class JointAligner {
         else if (!thighEmpty) {
             const thighSample = this.thighBuffer.getSampleAtIndex(0);
             if (thighSample) {
-                pair.thigh = { ...thighSample };
-                // Keep shin from last consumed if available
-                if (this.lastConsumedSample?.shin) {
-                    pair.shin = this.lastConsumedSample.shin;
-                }
-                newTimestamp = thighSample.timestamp;
+                this.prevThigh = this.currThigh;
+                this.currThigh = { ...thighSample };
+                thighConsumed = true;
                 this.thighBuffer.discardUpTo(1);
             }
         }
@@ -143,32 +124,96 @@ export class JointAligner {
         else if (!shinEmpty) {
             const shinSample = this.shinBuffer.getSampleAtIndex(0);
             if (shinSample) {
-                pair.shin = { ...shinSample };
-                // Keep thigh from last consumed if available
-                if (this.lastConsumedSample?.thigh) {
-                    pair.thigh = this.lastConsumedSample.thigh;
-                }
-                newTimestamp = shinSample.timestamp;
+                this.prevShin = this.currShin;
+                this.currShin = { ...shinSample };
+                shinConsumed = true;
                 this.shinBuffer.discardUpTo(1);
             }
         }
 
-        // If we got new data, update tracking and cleanup old
-        if (pair.thigh || pair.shin) {
-            // Cleanup samples older than the PREVIOUS consumed timestamp
-            // (deferred cleanup - only when we advance)
-            if (this.lastConsumedTimestamp > 0) {
-                this.cleanupBeforeTimestamp(this.lastConsumedTimestamp);
-            }
-
-            // Update last consumed
-            this.lastConsumedSample = pair;
-            this.lastConsumedTimestamp = newTimestamp;
-
-            return pair;
+        // Cleanup old data from buffers
+        if (thighConsumed && this.prevThigh) {
+            this.discardSamplesBeforeTimestamp(this.thighBuffer, this.prevThigh.timestamp);
+        }
+        if (shinConsumed && this.prevShin) {
+            this.discardSamplesBeforeTimestamp(this.shinBuffer, this.prevShin.timestamp);
         }
 
-        return this.lastConsumedSample;
+        // Return current state
+        if (this.currThigh || this.currShin) {
+            return { thigh: this.currThigh ?? undefined, shin: this.currShin ?? undefined };
+        }
+        return null;
+    }
+
+    /**
+     * Get interpolated sample at exact grid timestamp.
+     * SLERPs each SENSOR individually using its own prev/curr.
+     */
+    getInterpolatedAt(gridTimestamp: number): JointSamples | null {
+        if (!this.currThigh && !this.currShin) return null;
+
+        const result: JointSamples = {};
+
+        // Interpolate THIGH sensor
+        if (this.currThigh) {
+            if (this.prevThigh) {
+                const prevTs = this.prevThigh.timestamp;
+                const currTs = this.currThigh.timestamp;
+                const dt = currTs - prevTs;
+
+                if (gridTimestamp <= prevTs) {
+                    result.thigh = { timestamp: gridTimestamp, quaternion: this.prevThigh.quaternion };
+                } else if (gridTimestamp >= currTs) {
+                    result.thigh = { timestamp: gridTimestamp, quaternion: this.currThigh.quaternion };
+                } else if (dt > 0) {
+                    const t = (gridTimestamp - prevTs) / dt;
+                    result.thigh = {
+                        timestamp: gridTimestamp,
+                        quaternion: QuaternionService.slerp(
+                            this.prevThigh.quaternion,
+                            this.currThigh.quaternion,
+                            t
+                        )
+                    };
+                } else {
+                    result.thigh = { timestamp: gridTimestamp, quaternion: this.currThigh.quaternion };
+                }
+            } else {
+                result.thigh = { timestamp: gridTimestamp, quaternion: this.currThigh.quaternion };
+            }
+        }
+
+        // Interpolate SHIN sensor
+        if (this.currShin) {
+            if (this.prevShin) {
+                const prevTs = this.prevShin.timestamp;
+                const currTs = this.currShin.timestamp;
+                const dt = currTs - prevTs;
+
+                if (gridTimestamp <= prevTs) {
+                    result.shin = { timestamp: gridTimestamp, quaternion: this.prevShin.quaternion };
+                } else if (gridTimestamp >= currTs) {
+                    result.shin = { timestamp: gridTimestamp, quaternion: this.currShin.quaternion };
+                } else if (dt > 0) {
+                    const t = (gridTimestamp - prevTs) / dt;
+                    result.shin = {
+                        timestamp: gridTimestamp,
+                        quaternion: QuaternionService.slerp(
+                            this.prevShin.quaternion,
+                            this.currShin.quaternion,
+                            t
+                        )
+                    };
+                } else {
+                    result.shin = { timestamp: gridTimestamp, quaternion: this.currShin.quaternion };
+                }
+            } else {
+                result.shin = { timestamp: gridTimestamp, quaternion: this.currShin.quaternion };
+            }
+        }
+
+        return (result.thigh || result.shin) ? result : null;
     }
 
     /** Cleanup all samples before the given timestamp */
@@ -199,17 +244,30 @@ export class JointAligner {
 
     /** Clear state */
     reset(): void {
-        this.lastConsumedSample = null;
-        this.lastConsumedTimestamp = 0;
+        this.prevThigh = null;
+        this.currThigh = null;
+        this.prevShin = null;
+        this.currShin = null;
     }
 
     /** Get debug info */
-    getDebugInfo(): { joint: JointSide; thighSize: number; shinSize: number; lastTs: number } {
+    getDebugInfo(): {
+        joint: JointSide;
+        thighSize: number;
+        shinSize: number;
+        thighPrevTs: number;
+        thighCurrTs: number;
+        shinPrevTs: number;
+        shinCurrTs: number;
+    } {
         return {
             joint: this.jointSide,
             thighSize: this.thighBuffer?.getSize() ?? 0,
             shinSize: this.shinBuffer?.getSize() ?? 0,
-            lastTs: this.lastConsumedTimestamp,
+            thighPrevTs: this.prevThigh?.timestamp ?? 0,
+            thighCurrTs: this.currThigh?.timestamp ?? 0,
+            shinPrevTs: this.prevShin?.timestamp ?? 0,
+            shinCurrTs: this.currShin?.timestamp ?? 0,
         };
     }
 }

@@ -1,10 +1,9 @@
 /**
- * BatchSynchronizer: Time-grid approach for multi-sensor alignment.
+ * BatchSynchronizer: Hierarchical shear alignment + time-grid interpolation.
  *
- * INPUT: pushSample() buffers samples as they arrive (async, bursty BLE)
- * OUTPUT: Timer ticks at targetHz, consuming ONE match per joint per tick
- *
- * This decouples input buffering from output cadence for smooth, consistent Hz.
+ * Two-stage processing:
+ * 1. SHEAR ALIGNMENT: Aligns all 4 sensors to same scan line position
+ * 2. TIME-GRID INTERPOLATION: SLERP to uniform Hz output (inline, no extra buffer)
  */
 
 import { Quaternion } from '../shared/types';
@@ -18,27 +17,20 @@ import {
     SyncDebugStats,
 } from './types';
 
-// Device IDs
-const LEFT_THIGH = 0x11;
-const LEFT_SHIN = 0x12;
-const RIGHT_THIGH = 0x21;
-const RIGHT_SHIN = 0x22;
-
-// Map device ID to joint side
-const DEVICE_TO_JOINT: Map<number, JointSide> = new Map([
-    [LEFT_THIGH, JointSide.LEFT],
-    [LEFT_SHIN, JointSide.LEFT],
-    [RIGHT_THIGH, JointSide.RIGHT],
-    [RIGHT_SHIN, JointSide.RIGHT],
-]);
+// Device IDs (from ble-management/types.ts DeviceID enum)
+// Upper nibble: joint (1=left, 2=right), Lower nibble: position (1=shin, 2=thigh)
+const LEFT_SHIN = 0x11;   // Left joint, shin position
+const LEFT_THIGH = 0x12;  // Left joint, thigh position
+const RIGHT_SHIN = 0x21;  // Right joint, shin position
+const RIGHT_THIGH = 0x22; // Right joint, thigh position
 
 export class BatchSynchronizer {
     private static instance: BatchSynchronizer | null = null;
 
-    // Per-sensor buffers
+    // Per-sensor raw buffers (input stage)
     private buffers: Map<number, SensorBuffer> = new Map();
 
-    // Joint aligners (one per knee)
+    // Joint aligners for shear alignment + inline interpolation
     private leftKneeAligner: JointAligner;
     private rightKneeAligner: JointAligner;
 
@@ -50,16 +42,17 @@ export class BatchSynchronizer {
     private tickIntervalMs: number = 10; // Default 100Hz
     private isRunning: boolean = false;
 
+    // Time grid position (advances monotonically at fixed Hz)
+    private gridPosition: number = 0;
+    private gridInitialized: boolean = false;
+
     // Stats
     private pushCount: number = 0;
     private emitCount: number = 0;
     private tickCount: number = 0;
 
-    // Monotonic timestamp tracking (prevents backward time jumps)
-    private lastEmittedTimestamp: number = 0;
-
     private constructor() {
-        // Initialize buffers for each sensor
+        // Initialize raw buffers for each sensor
         this.buffers.set(LEFT_THIGH, new SensorBuffer(LEFT_THIGH));
         this.buffers.set(LEFT_SHIN, new SensorBuffer(LEFT_SHIN));
         this.buffers.set(RIGHT_THIGH, new SensorBuffer(RIGHT_THIGH));
@@ -69,7 +62,7 @@ export class BatchSynchronizer {
         this.leftKneeAligner = new JointAligner(JointSide.LEFT);
         this.rightKneeAligner = new JointAligner(JointSide.RIGHT);
 
-        // Connect buffers to joint aligners
+        // Connect raw buffers to joint aligners
         this.leftKneeAligner.setBuffers(
             this.buffers.get(LEFT_THIGH)!,
             this.buffers.get(LEFT_SHIN)!
@@ -132,74 +125,95 @@ export class BatchSynchronizer {
     }
 
     /**
-     * Timer tick: Inter-joint aligned output.
-     * 1. Peek oldest timestamps from both joints
-     * 2. Calculate global MAX timestamp for unified output
-     * 3. Consume one match from each joint (each manages own cleanup)
-     * 4. Emit at unified global timestamp
-     *
-     * NOTE: No global cleanup - each joint manages its own buffer cleanup
-     * to avoid discarding samples from "behind" joints.
+     * Timer tick: Three-stage hierarchical processing.
+     * 1. INTRA-JOINT shear: Align thigh↔shin within each joint
+     * 2. INTER-JOINT shear: Align left↔right joints to same scan line
+     * 3. GRID interpolation: SLERP all 4 sensors to exact grid position
      */
     private tick(): void {
         this.tickCount++;
 
-        // Check if any joint has data
-        const leftHasData = this.leftKneeAligner.hasAnyData();
-        const rightHasData = this.rightKneeAligner.hasAnyData();
+        // Stage 1: INTRA-JOINT shear (thigh↔shin per joint)
+        this.leftKneeAligner.consumeOneMatch();
+        this.rightKneeAligner.consumeOneMatch();
 
-        if (!leftHasData && !rightHasData) return;
+        // Stage 2: INTER-JOINT shear (compute aligned scan line)
+        const scanLineTs = this.computeInterJointScanLine();
+        if (scanLineTs === null) return;  // No data yet
 
-        // Step 1: Peek oldest timestamps from both joints
-        const leftTs = this.leftKneeAligner.peekOldestTimestamp();
-        const rightTs = this.rightKneeAligner.peekOldestTimestamp();
-
-        // Step 2: Calculate global MAX timestamp (for unified output)
-        let globalMaxTs = 0;
-        if (leftTs !== null) globalMaxTs = Math.max(globalMaxTs, leftTs);
-        if (rightTs !== null) globalMaxTs = Math.max(globalMaxTs, rightTs);
-
-        if (globalMaxTs === 0) return;
-
-        // Step 2b: Ensure monotonic timestamps (prevent backward jumps)
-        globalMaxTs = Math.max(globalMaxTs, this.lastEmittedTimestamp);
-
-        // Step 3: Consume one match from each joint
-        // Each joint's consumeOneMatch() handles its own cleanup
-        const leftMatch = this.leftKneeAligner.consumeOneMatch();
-        const rightMatch = this.rightKneeAligner.consumeOneMatch();
-
-        // Step 4: Emit at unified global timestamp
-        if (leftMatch || rightMatch) {
-            this.lastEmittedTimestamp = globalMaxTs;
-            this.emitCombinedMatch(leftMatch, rightMatch, globalMaxTs);
-        }
+        // Stage 3: Grid interpolation (all 4 sensors to grid)
+        this.interpolateAndEmit(scanLineTs);
     }
 
-    /** Emit a combined AlignedSampleSet at unified global timestamp */
-    private emitCombinedMatch(
-        leftMatch: JointSamples | null,
-        rightMatch: JointSamples | null,
-        globalTimestamp: number
-    ): void {
+    /**
+     * Stage 2: Compute inter-joint scan line timestamp.
+     * Aligns left and right joints to the same temporal position.
+     * Uses MIN of joint timestamps to avoid extrapolation.
+     */
+    private computeInterJointScanLine(): number | null {
+        const leftTs = this.leftKneeAligner.getNewestTimestamp();
+        const rightTs = this.rightKneeAligner.getNewestTimestamp();
+
+        // No data from either joint
+        if (!leftTs && !rightTs) return null;
+
+        // Single joint mode - use that joint's timestamp
+        if (!leftTs) return rightTs;
+        if (!rightTs) return leftTs;
+
+        // Both joints have data - align to MIN (don't extrapolate beyond available data)
+        return Math.min(leftTs, rightTs);
+    }
+
+    /**
+     * Stage 3: Advance time grid and emit interpolated samples.
+     * @param scanLineTs - Inter-joint aligned timestamp (from Stage 2)
+     */
+    private interpolateAndEmit(scanLineTs: number): void {
+        // Initialize grid position from first scan line
+        if (!this.gridInitialized) {
+            this.gridPosition = scanLineTs;
+            this.gridInitialized = true;
+            return;  // Wait for next tick to have bracketing data
+        }
+
+        // Calculate next grid position
+        const nextGridPosition = this.gridPosition + this.tickIntervalMs;
+
+        // Only advance if scan line has enough data
+        if (nextGridPosition > scanLineTs) {
+            return;  // Wait for more data
+        }
+
+        this.gridPosition = nextGridPosition;
+
+        // Interpolate all 4 sensors to grid position
+        const leftInterp = this.leftKneeAligner.getInterpolatedAt(this.gridPosition);
+        const rightInterp = this.rightKneeAligner.getInterpolatedAt(this.gridPosition);
+
+        // Build aligned sample set
         const alignedSamples: AlignedSampleSet = {
-            timestamp: globalTimestamp,
+            timestamp: this.gridPosition,
         };
 
-        if (leftMatch) {
-            alignedSamples.leftKnee = leftMatch;
-        }
-        if (rightMatch) {
-            alignedSamples.rightKnee = rightMatch;
+        if (leftInterp && leftInterp.thigh && leftInterp.shin) {
+            alignedSamples.leftKnee = leftInterp;
         }
 
-        this.emitCount++;
-        this.notifySubscribers(alignedSamples);
+        if (rightInterp && rightInterp.thigh && rightInterp.shin) {
+            alignedSamples.rightKnee = rightInterp;
+        }
+
+        // Emit if we have any joint data
+        if (alignedSamples.leftKnee || alignedSamples.rightKnee) {
+            this.emitCount++;
+            this.notifySubscribers(alignedSamples);
+        }
     }
 
     /**
      * Push a new sample from a sensor.
-     * BUFFER ONLY - no immediate emit. Timer handles output.
+     * Goes to raw buffer for shear alignment.
      */
     pushSample(deviceId: number, timestamp: number, quaternion: Quaternion): void {
         const buffer = this.buffers.get(deviceId);
@@ -251,15 +265,15 @@ export class BatchSynchronizer {
 
     /** Check if only one joint has data */
     isSingleJointMode(): boolean {
-        const leftHasData = this.leftKneeAligner.hasData();
-        const rightHasData = this.rightKneeAligner.hasData();
+        const leftHasData = this.leftKneeAligner.hasAnyData();
+        const rightHasData = this.rightKneeAligner.hasAnyData();
         return (leftHasData && !rightHasData) || (!leftHasData && rightHasData);
     }
 
     /** Get active joint in single joint mode */
     getActiveJoint(): JointSide | null {
-        const leftHasData = this.leftKneeAligner.hasData();
-        const rightHasData = this.rightKneeAligner.hasData();
+        const leftHasData = this.leftKneeAligner.hasAnyData();
+        const rightHasData = this.rightKneeAligner.hasAnyData();
 
         if (leftHasData && !rightHasData) return JointSide.LEFT;
         if (!leftHasData && rightHasData) return JointSide.RIGHT;
@@ -281,7 +295,8 @@ export class BatchSynchronizer {
         this.pushCount = 0;
         this.emitCount = 0;
         this.tickCount = 0;
-        this.lastEmittedTimestamp = 0;
+        this.gridPosition = 0;
+        this.gridInitialized = false;
     }
 
     /** Get debug statistics */
@@ -295,10 +310,10 @@ export class BatchSynchronizer {
 
         return {
             buffers: bufferStats,
-            leftKneeAligned: this.leftKneeAligner.hasData(),
-            rightKneeAligned: this.rightKneeAligner.hasData(),
+            leftKneeAligned: this.leftKneeAligner.hasAnyData(),
+            rightKneeAligned: this.rightKneeAligner.hasAnyData(),
             globalAligned: true,
-            scanWindowPosition: 0,
+            scanWindowPosition: this.gridPosition,
             outputCount: this.emitCount,
         };
     }
@@ -318,6 +333,11 @@ export class BatchSynchronizer {
         return this.tickCount;
     }
 
+    /** Get current grid position */
+    getGridPosition(): number {
+        return this.gridPosition;
+    }
+
     /** Get detailed debug info for all components */
     getFullDebugInfo(): object {
         return {
@@ -327,6 +347,8 @@ export class BatchSynchronizer {
             pushCount: this.pushCount,
             emitCount: this.emitCount,
             tickCount: this.tickCount,
+            gridPosition: this.gridPosition,
+            gridInitialized: this.gridInitialized,
             isRunning: this.isRunning,
             tickIntervalMs: this.tickIntervalMs,
         };

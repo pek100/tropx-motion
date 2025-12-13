@@ -1,8 +1,9 @@
 /**
  * Batch Synchronization Module
  *
- * TIME-GRID approach: Buffer samples as they arrive, output ONE match
- * per joint per timer tick at configured Hz for smooth, consistent output.
+ * Two-stage processing:
+ * 1. SHEAR ALIGNMENT: Hierarchical alignment of all sensors to scan line
+ * 2. TIME-GRID INTERPOLATION: SLERP to uniform Hz output
  */
 
 // Main orchestrator

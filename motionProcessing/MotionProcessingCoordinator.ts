@@ -5,7 +5,7 @@ import { JointSynchronizer, SynchronizedJointPair, BatchSynchronizer, type Align
 import { MotionConfig, IMUData, SessionContext, JointAngleData, DeviceData, Quaternion } from './shared/types';
 import { createMotionConfig, PerformanceProfile, JointName } from './shared/config';
 import { PerformanceLogger } from './shared/PerformanceLogger';
-import { DeviceID } from '../ble-management';
+import { DeviceID, UnifiedBLEStateStore, GlobalState, type GlobalStateChange } from '../ble-management';
 import { RecordingBuffer, CSVExporter, type RecordingState, type ExportResult, type ExportOptions } from './recording';
 import { TimestampDebugLogger, type PipelineStats } from '../ble-bridge/TimestampDebugLogger';
 import { AngleCalculationService } from './jointProcessing/AngleCalculationService';
@@ -275,10 +275,23 @@ export class MotionProcessingCoordinator {
             this.processAlignedSamples(alignedSamples);
         });
 
-        // Start the time-grid timer at configured Hz
-        batchSync.start(this.config.targetHz);
+        // Listen to global state changes to start/stop BatchSynchronizer
+        UnifiedBLEStateStore.on('globalStateChanged', (change: GlobalStateChange) => {
+            if (change.newState === GlobalState.STREAMING) {
+                // Start BatchSynchronizer when streaming begins
+                if (!batchSync.isActive()) {
+                    batchSync.start(this.config.targetHz);
+                    console.log(`▶️ [BatchSync] Started on STREAMING state`);
+                }
+            } else if (change.previousState === GlobalState.STREAMING) {
+                // Stop BatchSynchronizer when streaming ends
+                batchSync.stop();
+                console.log(`⏹️ [BatchSync] Stopped on ${change.newState} state`);
+            }
+        });
 
-        console.log(`✅ BatchSynchronizer configured and started at ${this.config.targetHz}Hz`);
+        // Don't auto-start - wait for STREAMING state
+        console.log(`✅ BatchSynchronizer configured (waiting for STREAMING state)`);
     }
 
     /**
