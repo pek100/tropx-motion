@@ -398,3 +398,23 @@
 .animate-spin-slow { animation: spin-slow 8s infinite; }
 .animate-spin-medium { animation: spin-medium 5s infinite; }
 .animate-spin-fast { animation: spin-fast 3s infinite; }
+
+/* Action bar responsive breakpoints
+ * - Below 1400px: Icons only for all islands
+ * - 1400px-1700px: Left island icons only, Middle uses short labels, AI shows "AI Analysis"
+ * - Above 1700px: Full labels everywhere
+ *
+ * Classes:
+ * - actionbar-sm: visible at 1400px+ (short labels appear)
+ * - actionbar-md: visible at 1400px+ (AI Analysis full label)
+ * - actionbar-lg: visible at 1700px+ (full labels for middle + left islands)
+ */
+@media (min-width: 1400px) {
+  .actionbar-sm\:inline { display: inline; }
+  .actionbar-md\:inline { display: inline; }
+  .actionbar-md\:hidden { display: none; }
+}
+@media (min-width: 1700px) {
+  .actionbar-lg\:inline { display: inline; }
+  .actionbar-lg\:hidden { display: none; }
+}

@@ -22,55 +22,62 @@ interface ActionBarProps {
 export function ActionBar({ onActionClick, onExportCSV, isExporting }: ActionBarProps) {
   return (
     <div className="action-bar pointer-events-auto" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-      {/* AI Analysis - single button island for consistency */}
-      <IslandButtonGroup>
-        <IslandButton
-          icon={<AtomSpin className="size-4 text-[var(--tropx-vibrant)]" />}
-          label="AI Analysis"
-          grouped
-          onClick={() => onActionClick('ai-analysis')}
-        />
-      </IslandButtonGroup>
-
-      {/* Middle group: Patient Name, Recording Title, Description */}
-      <IslandButtonGroup>
-        <IslandButton
-          icon={<CircleUser className="size-4" />}
-          label="Patient Name"
-          grouped
-          onClick={() => onActionClick('patient-name')}
-        />
-        <IslandButton
-          icon={<Tag className="size-4" />}
-          label="Recording Title"
-          grouped
-          onClick={() => onActionClick('recording-title')}
-        />
-        <IslandButton
-          icon={<FileText className="size-4" />}
-          label="Description"
-          grouped
-          onClick={() => onActionClick('description')}
-        />
-      </IslandButtonGroup>
-
-      {/* Right group: Save, Export (dropdown), Load */}
+      {/* Left group: Save, Export (dropdown), Load - labels hidden below 1700px */}
       <IslandButtonGroup>
         <IslandButton
           icon={<Save className="size-4" />}
           label="Save"
+          hideLabel
           grouped
           onClick={() => onActionClick('save')}
         />
         <ExportDropdownButton
           onExportCSV={onExportCSV}
           isExporting={isExporting}
+          hideLabel
         />
         <IslandButton
           icon={<Upload className="size-4" />}
           label="Load"
+          hideLabel
           grouped
           onClick={() => onActionClick('load')}
+        />
+      </IslandButtonGroup>
+
+      {/* Middle group: Patient Name, Recording Title, Description - short labels below 1700px */}
+      <IslandButtonGroup>
+        <IslandButton
+          icon={<CircleUser className="size-4" />}
+          label="Patient Name"
+          shortLabel="Name"
+          grouped
+          onClick={() => onActionClick('patient-name')}
+        />
+        <IslandButton
+          icon={<Tag className="size-4" />}
+          label="Recording Title"
+          shortLabel="Title"
+          grouped
+          onClick={() => onActionClick('recording-title')}
+        />
+        <IslandButton
+          icon={<FileText className="size-4" />}
+          label="Description"
+          shortLabel="Desc"
+          grouped
+          onClick={() => onActionClick('description')}
+        />
+      </IslandButtonGroup>
+
+      {/* Right group: AI Analysis - icon only below 1200px, "AI Analysis" at 1200px+ */}
+      <IslandButtonGroup>
+        <IslandButton
+          icon={<AtomSpin className="size-4 text-[var(--tropx-vibrant)]" />}
+          label="AI Analysis"
+          showFullAt1200
+          grouped
+          onClick={() => onActionClick('ai-analysis')}
         />
       </IslandButtonGroup>
     </div>

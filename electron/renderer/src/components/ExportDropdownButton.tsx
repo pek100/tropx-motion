@@ -6,6 +6,8 @@ interface ExportDropdownButtonProps {
   onExportCSV: (interpolated?: boolean) => void;
   disabled?: boolean;
   isExporting?: boolean;
+  /** Hide label at smallest breakpoint */
+  hideLabel?: boolean;
 }
 
 type ExportOption = 'csv' | 'csv-interpolated' | 'json' | 'cloud';
@@ -26,7 +28,7 @@ const MENU_ITEMS: MenuItem[] = [
   { id: 'cloud', label: 'Cloud Sync', icon: <Cloud className="size-4" />, disabled: true, badge: 'Soon' },
 ];
 
-export function ExportDropdownButton({ onExportCSV, disabled, isExporting }: ExportDropdownButtonProps) {
+export function ExportDropdownButton({ onExportCSV, disabled, isExporting, hideLabel }: ExportDropdownButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [defaultAction] = useState<ExportOption>('csv');
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -81,7 +83,7 @@ export function ExportDropdownButton({ onExportCSV, disabled, isExporting }: Exp
         ) : (
           <Download className="size-4" />
         )}
-        <span>Export</span>
+        <span className={cn(hideLabel && 'hidden actionbar-lg:inline')}>Export</span>
 
         {/* Dropdown arrow integrated */}
         <div
