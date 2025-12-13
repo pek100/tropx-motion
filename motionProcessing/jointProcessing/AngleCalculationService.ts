@@ -48,6 +48,26 @@ export class AngleCalculationService {
   }
 
   /**
+   * Calculate joint angle directly from thigh (proximal) and shin (distal) quaternions.
+   * Used by BatchSynchronizer path where sensors are already aligned.
+   *
+   * @param thighQuat - Proximal (thigh) sensor quaternion
+   * @param shinQuat - Distal (shin) sensor quaternion
+   * @param axis - Rotation axis to extract angle from
+   */
+  calculateFromQuaternions(thighQuat: Quaternion, shinQuat: Quaternion, axis: 'x' | 'y' | 'z' = 'y'): AngleCalculationResult | null {
+    try {
+      const { angle, relativeQuat } = this.calculateAngleWithQuat(thighQuat, shinQuat, axis);
+      return {
+        angle: this.applyCalibration(angle),
+        relativeQuat
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Clears internal state.
    */
   resetAngleState(): void {

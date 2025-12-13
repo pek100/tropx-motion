@@ -2,6 +2,7 @@ import { IMUData, DeviceData, MotionConfig, Quaternion } from '../shared/types';
 import { DEVICE, SYSTEM, BATTERY, CONNECTION_STATE } from '../shared/constants';
 import { QuaternionService } from '../shared/QuaternionService';
 import { UnifiedBLEStateStore, DeviceID, isValidDeviceID, getJointName } from '../../ble-management';
+import { BatchSynchronizer } from '../synchronization';
 
 interface DeviceStatus {
     total: number;
@@ -19,19 +20,17 @@ interface DeviceSample {
 }
 
 /**
- * "Latest value" fusion strategy (flight controller approach).
- * When ANY sensor updates, combine with latest values from all other sensors.
- * No buffering = zero added latency.
+ * Callback for legacy joint update path (being phased out).
+ * @deprecated Use BatchSynchronizer subscription instead.
  */
-
 type JointUpdateCallback = (jointName: string, devices: Map<string, DeviceData>, triggeringTimestamp: number) => void;
 
 /**
  * Manages device data processing and state tracking.
- * Processes raw quaternion data directly for real-time responsiveness.
+ * Routes normalized quaternion data to BatchSynchronizer for temporal alignment.
  *
- * Note: Timestamp spreading is handled at the source (TropXDevice.ts)
- * to ensure all downstream consumers receive properly spaced timestamps.
+ * Data flow:
+ * Raw IMU → DeviceProcessor (normalize) → BatchSynchronizer (align) → JointProcessor
  */
 export class DeviceProcessor {
     private static instance: DeviceProcessor | null = null;
@@ -42,7 +41,10 @@ export class DeviceProcessor {
     private deviceToJoints = new Map<string, string[]>();
     private processingCounter = 0;
 
-    /** Latest sample per device - "flight controller" approach: always use most recent */
+    /** Whether to use BatchSynchronizer (new) or legacy flight controller (old) */
+    private useBatchSync: boolean = true;
+
+    /** Latest sample per device - for legacy path only */
     private latestSamples = new Map<string, DeviceSample>();
 
     /** Debug counters for tracing sample flow */
@@ -164,18 +166,25 @@ export class DeviceProcessor {
 
         this.updateLatestDeviceData(deviceSample);
 
-        // Store latest sample (flight controller approach - no buffering)
-        this.setLatestSample(deviceIdStr, {
-            quaternion: deviceSample.quaternion,
-            timestamp: deviceSample.timestamp
-        });
+        // Route to BatchSynchronizer (new path) or legacy flight controller
+        if (this.useBatchSync && resolvedDeviceId) {
+            // NEW PATH: Route to BatchSynchronizer for temporal alignment
+            BatchSynchronizer.getInstance().pushSample(
+                resolvedDeviceId,
+                deviceSample.timestamp,
+                deviceSample.quaternion
+            );
+            DeviceProcessor.debugEmitCount.set('batch_sync', (DeviceProcessor.debugEmitCount.get('batch_sync') || 0) + 1);
+        } else if (this.jointUpdateCallback) {
+            // LEGACY PATH: Flight controller approach (being phased out)
+            this.setLatestSample(deviceIdStr, {
+                quaternion: deviceSample.quaternion,
+                timestamp: deviceSample.timestamp
+            });
 
-        // Trigger joint angle calculation using latest values from all sensors
-        if (this.jointUpdateCallback) {
             const joints = this.deviceToJoints.get(deviceIdStr);
             if (joints && joints.length > 0) {
                 for (const jointName of joints) {
-                    // Get the OTHER device's ID for this joint
                     let otherDeviceId: string | null = null;
                     for (const [devId, devJoints] of this.deviceToJoints) {
                         if (devId !== deviceIdStr && devJoints.includes(jointName)) {
@@ -185,53 +194,40 @@ export class DeviceProcessor {
                     }
 
                     if (!otherDeviceId) {
-                        // Debug: track when no other device found
                         const dropKey = `${jointName}:no_other`;
                         DeviceProcessor.debugDropCount.set(dropKey, (DeviceProcessor.debugDropCount.get(dropKey) || 0) + 1);
                         continue;
                     }
 
-                    // Flight controller approach: ALWAYS emit on every sensor update
-                    // otherSample = last available quaternion from the other sensor (persists between updates)
                     const otherSample = this.getLatestSample(otherDeviceId);
-
-                    // Only skip if other sensor has NEVER reported (no last available)
-                    // Once it reports once, we always have a "last available" to use
                     if (!otherSample) {
                         const dropKey = `${jointName}:no_sample`;
                         DeviceProcessor.debugDropCount.set(dropKey, (DeviceProcessor.debugDropCount.get(dropKey) || 0) + 1);
                         continue;
                     }
 
-                    // Use MAX of both timestamps - other sensor's timestamp is from its last update
                     const emitTimestamp = Math.max(imuData.timestamp, otherSample.timestamp);
-
-                    // Build matched devices using LAST AVAILABLE quaternion from other sensor
                     const matchedDevices = new Map<string, DeviceData>();
                     matchedDevices.set(deviceIdStr, deviceSample);
                     matchedDevices.set(otherDeviceId, {
                         deviceId: otherDeviceId,
-                        quaternion: otherSample.quaternion, // Last available - always valid
+                        quaternion: otherSample.quaternion,
                         timestamp: otherSample.timestamp,
                         interpolated: false,
                         connectionState: 'streaming' as any
                     });
 
                     this.jointUpdateCallback(jointName, matchedDevices, emitTimestamp);
-
-                    // Debug: track successful emits
                     DeviceProcessor.debugEmitCount.set(jointName, (DeviceProcessor.debugEmitCount.get(jointName) || 0) + 1);
                 }
             }
         }
 
-        // Debug: periodic logging of emit/drop stats
+        // Debug: periodic logging
         if (DeviceProcessor.debugPacketCount === 50 || DeviceProcessor.debugPacketCount === 200) {
-            console.log(`📊 [DEVICE_PROC_DEBUG] Packet #${DeviceProcessor.debugPacketCount}`);
+            console.log(`📊 [DEVICE_PROC_DEBUG] Packet #${DeviceProcessor.debugPacketCount}, useBatchSync=${this.useBatchSync}`);
             console.log(`📊 [DEVICE_PROC_DEBUG] Emit counts:`, Object.fromEntries(DeviceProcessor.debugEmitCount));
             console.log(`📊 [DEVICE_PROC_DEBUG] Drop counts:`, Object.fromEntries(DeviceProcessor.debugDropCount));
-            console.log(`📊 [DEVICE_PROC_DEBUG] latestSamples keys:`, Array.from(DeviceProcessor.instance?.latestSamples.keys() || []));
-            console.log(`📊 [DEVICE_PROC_DEBUG] deviceToJoints:`, Object.fromEntries(DeviceProcessor.instance?.deviceToJoints || []));
         }
     }
 
@@ -302,7 +298,19 @@ export class DeviceProcessor {
 
     cleanup(): void {
         this.clearAllMaps();
+        BatchSynchronizer.reset();
         console.log('🧹 DeviceProcessor cleanup completed');
+    }
+
+    /** Enable or disable batch synchronization (new path vs legacy flight controller) */
+    setUseBatchSync(enabled: boolean): void {
+        this.useBatchSync = enabled;
+        console.log(`🔄 [DEVICE_PROCESSOR] BatchSync ${enabled ? 'enabled' : 'disabled'}`);
+    }
+
+    /** Check if batch sync is enabled */
+    isUsingBatchSync(): boolean {
+        return this.useBatchSync;
     }
 
     updatePerformanceOptions(opts: { bypassInterpolation?: boolean; asyncNotify?: boolean }): void {
