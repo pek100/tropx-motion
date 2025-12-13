@@ -8,6 +8,7 @@
 export { TimeSyncManager } from './TimeSyncManager';
 export { TimeSyncSession } from './TimeSyncSession';
 export { OffsetEstimator } from './OffsetEstimator';
+export { TimeSyncDebugLogger } from './TimeSyncDebugLogger';
 
 export {
   REFERENCE_EPOCH_MS,

@@ -1,4 +1,4 @@
-import { IMUData, DeviceData, MotionConfig } from '../shared/types';
+import { IMUData, DeviceData, MotionConfig, Quaternion } from '../shared/types';
 import { DEVICE, SYSTEM, BATTERY, CONNECTION_STATE } from '../shared/constants';
 import { QuaternionService } from '../shared/QuaternionService';
 import { UnifiedBLEStateStore, DeviceID, isValidDeviceID, getJointName } from '../../ble-management';
@@ -10,11 +10,28 @@ interface DeviceStatus {
     recentlyActive: number;
 }
 
-type JointUpdateCallback = (jointName: string, devices: Map<string, DeviceData>) => void;
+/**
+ * Sample entry for timestamp matching.
+ */
+interface DeviceSample {
+    quaternion: Quaternion;
+    timestamp: number;
+}
+
+/**
+ * "Latest value" fusion strategy (flight controller approach).
+ * When ANY sensor updates, combine with latest values from all other sensors.
+ * No buffering = zero added latency.
+ */
+
+type JointUpdateCallback = (jointName: string, devices: Map<string, DeviceData>, triggeringTimestamp: number) => void;
 
 /**
  * Manages device data processing and state tracking.
  * Processes raw quaternion data directly for real-time responsiveness.
+ *
+ * Note: Timestamp spreading is handled at the source (TropXDevice.ts)
+ * to ensure all downstream consumers receive properly spaced timestamps.
  */
 export class DeviceProcessor {
     private static instance: DeviceProcessor | null = null;
@@ -24,6 +41,13 @@ export class DeviceProcessor {
     private latestDeviceData = new Map<string, DeviceData>();
     private deviceToJoints = new Map<string, string[]>();
     private processingCounter = 0;
+
+    /** Latest sample per device - "flight controller" approach: always use most recent */
+    private latestSamples = new Map<string, DeviceSample>();
+
+    /** Debug counters for tracing sample flow */
+    private static debugEmitCount = new Map<string, number>();
+    private static debugDropCount = new Map<string, number>();
 
     private constructor(private config: MotionConfig) {}
 
@@ -41,8 +65,19 @@ export class DeviceProcessor {
         this.deviceToJoints.delete(deviceIdStr);
         this.batteryLevels.delete(deviceIdStr);
         this.connectionStates.delete(deviceIdStr);
+        this.latestSamples.delete(deviceIdStr);
 
         console.log(`🧹 [DEVICE_PROCESSOR] Device ${deviceIdStr} removed`);
+    }
+
+    /** Store latest sample for device (replaces buffering) */
+    private setLatestSample(deviceId: string, sample: DeviceSample): void {
+        this.latestSamples.set(deviceId, sample);
+    }
+
+    /** Get latest sample from device (no buffering, immediate) */
+    private getLatestSample(deviceId: string): DeviceSample | null {
+        return this.latestSamples.get(deviceId) || null;
     }
 
     static reset(): void {
@@ -52,10 +87,47 @@ export class DeviceProcessor {
         }
     }
 
+    /** Reset debug counters for fresh logging (call when starting recording). */
+    static resetDebugCounters(): void {
+        DeviceProcessor.debugPacketCount = 0;
+        DeviceProcessor.lastProcessedTs.clear();
+    }
+
+    /** Reset timestamp tracking for new recording session.
+     *  IMPORTANT: Must be called when starting a new recording to prevent
+     *  monotonic timestamp check from blocking samples based on previous recording's timestamps.
+     */
+    static resetForNewRecording(): void {
+        if (DeviceProcessor.instance) {
+            DeviceProcessor.instance.latestSamples.clear();
+            console.log('🔄 [DEVICE_PROCESSOR] Reset for new recording');
+        }
+        DeviceProcessor.resetDebugCounters();
+        // Reset emit/drop debug counters
+        DeviceProcessor.debugEmitCount.clear();
+        DeviceProcessor.debugDropCount.clear();
+    }
+
+    private static debugPacketCount = 0;
+    private static lastProcessedTs = new Map<string, number>();
+
     processData(deviceId: DeviceID | string, imuData: IMUData): void {
         if (!deviceId || !imuData) {
             console.error(`❌ [DEVICE_PROCESSOR] Invalid data: deviceId=${deviceId}, imuData=${!!imuData}`);
             return;
+        }
+
+        const deviceIdStr = typeof deviceId === 'number' ? `0x${deviceId.toString(16)}` : deviceId;
+
+        // Calculate delta from last timestamp for this device to verify spreading
+        const lastTs = DeviceProcessor.lastProcessedTs.get(deviceIdStr);
+        const delta = lastTs !== undefined ? imuData.timestamp - lastTs : 0;
+        DeviceProcessor.lastProcessedTs.set(deviceIdStr, imuData.timestamp);
+
+        // Debug: log first few packets with timestamp delta
+        DeviceProcessor.debugPacketCount++;
+        if (DeviceProcessor.debugPacketCount <= 20) {
+            console.log(`📥 [DeviceProcessor] Packet #${DeviceProcessor.debugPacketCount}: device=${deviceIdStr.slice(-8)}, ts=${imuData.timestamp}, delta=${delta.toFixed(1)}ms`);
         }
 
         this.processingCounter++;
@@ -71,41 +143,95 @@ export class DeviceProcessor {
         }
 
         const jointName = resolvedDeviceId ? getJointName(resolvedDeviceId) : null;
-        const systemTimestamp = Date.now();
 
         if (resolvedDeviceId) {
             UnifiedBLEStateStore.updateLastSeen(resolvedDeviceId);
         }
 
-        const deviceIdStr = typeof deviceId === 'number' ? `0x${deviceId.toString(16)}` : deviceId;
-
         if (jointName && !this.deviceToJoints.has(deviceIdStr)) {
             this.deviceToJoints.set(deviceIdStr, [jointName]);
         }
 
+        // Timestamp already spread at source (TropXDevice.ts)
+        // Use it directly - no additional processing needed
         const deviceSample: DeviceData = {
             deviceId: deviceIdStr,
             quaternion: QuaternionService.normalize(imuData.quaternion ?? QuaternionService.createIdentity()),
-            timestamp: systemTimestamp,
+            timestamp: imuData.timestamp,
             interpolated: false,
             connectionState: 'streaming' as any
         };
 
         this.updateLatestDeviceData(deviceSample);
-        this.processAffectedJoints(deviceIdStr);
-    }
 
-    private processAffectedJoints(deviceId: string): void {
-        if (!this.jointUpdateCallback) return;
+        // Store latest sample (flight controller approach - no buffering)
+        this.setLatestSample(deviceIdStr, {
+            quaternion: deviceSample.quaternion,
+            timestamp: deviceSample.timestamp
+        });
 
-        const joints = this.deviceToJoints.get(deviceId);
-        if (!joints || joints.length === 0) return;
+        // Trigger joint angle calculation using latest values from all sensors
+        if (this.jointUpdateCallback) {
+            const joints = this.deviceToJoints.get(deviceIdStr);
+            if (joints && joints.length > 0) {
+                for (const jointName of joints) {
+                    // Get the OTHER device's ID for this joint
+                    let otherDeviceId: string | null = null;
+                    for (const [devId, devJoints] of this.deviceToJoints) {
+                        if (devId !== deviceIdStr && devJoints.includes(jointName)) {
+                            otherDeviceId = devId;
+                            break;
+                        }
+                    }
 
-        for (const jointName of joints) {
-            const devices = this.getDevicesForJoint(jointName);
-            if (devices.size >= SYSTEM.MINIMUM_DEVICES_FOR_JOINT) {
-                this.jointUpdateCallback(jointName, devices);
+                    if (!otherDeviceId) {
+                        // Debug: track when no other device found
+                        const dropKey = `${jointName}:no_other`;
+                        DeviceProcessor.debugDropCount.set(dropKey, (DeviceProcessor.debugDropCount.get(dropKey) || 0) + 1);
+                        continue;
+                    }
+
+                    // Flight controller approach: ALWAYS emit on every sensor update
+                    // otherSample = last available quaternion from the other sensor (persists between updates)
+                    const otherSample = this.getLatestSample(otherDeviceId);
+
+                    // Only skip if other sensor has NEVER reported (no last available)
+                    // Once it reports once, we always have a "last available" to use
+                    if (!otherSample) {
+                        const dropKey = `${jointName}:no_sample`;
+                        DeviceProcessor.debugDropCount.set(dropKey, (DeviceProcessor.debugDropCount.get(dropKey) || 0) + 1);
+                        continue;
+                    }
+
+                    // Use MAX of both timestamps - other sensor's timestamp is from its last update
+                    const emitTimestamp = Math.max(imuData.timestamp, otherSample.timestamp);
+
+                    // Build matched devices using LAST AVAILABLE quaternion from other sensor
+                    const matchedDevices = new Map<string, DeviceData>();
+                    matchedDevices.set(deviceIdStr, deviceSample);
+                    matchedDevices.set(otherDeviceId, {
+                        deviceId: otherDeviceId,
+                        quaternion: otherSample.quaternion, // Last available - always valid
+                        timestamp: otherSample.timestamp,
+                        interpolated: false,
+                        connectionState: 'streaming' as any
+                    });
+
+                    this.jointUpdateCallback(jointName, matchedDevices, emitTimestamp);
+
+                    // Debug: track successful emits
+                    DeviceProcessor.debugEmitCount.set(jointName, (DeviceProcessor.debugEmitCount.get(jointName) || 0) + 1);
+                }
             }
+        }
+
+        // Debug: periodic logging of emit/drop stats
+        if (DeviceProcessor.debugPacketCount === 50 || DeviceProcessor.debugPacketCount === 200) {
+            console.log(`📊 [DEVICE_PROC_DEBUG] Packet #${DeviceProcessor.debugPacketCount}`);
+            console.log(`📊 [DEVICE_PROC_DEBUG] Emit counts:`, Object.fromEntries(DeviceProcessor.debugEmitCount));
+            console.log(`📊 [DEVICE_PROC_DEBUG] Drop counts:`, Object.fromEntries(DeviceProcessor.debugDropCount));
+            console.log(`📊 [DEVICE_PROC_DEBUG] latestSamples keys:`, Array.from(DeviceProcessor.instance?.latestSamples.keys() || []));
+            console.log(`📊 [DEVICE_PROC_DEBUG] deviceToJoints:`, Object.fromEntries(DeviceProcessor.instance?.deviceToJoints || []));
         }
     }
 
@@ -142,6 +268,23 @@ export class DeviceProcessor {
 
     setJointUpdateCallback(callback: JointUpdateCallback): void {
         this.jointUpdateCallback = callback;
+    }
+
+    /** Get debug stats for pipeline analysis */
+    static getDebugStats(): {
+        emitCounts: Record<string, number>;
+        dropCounts: Record<string, number>;
+        latestSampleDevices: string[];
+        deviceToJoints: Record<string, string[]>;
+    } {
+        return {
+            emitCounts: Object.fromEntries(DeviceProcessor.debugEmitCount),
+            dropCounts: Object.fromEntries(DeviceProcessor.debugDropCount),
+            latestSampleDevices: Array.from(DeviceProcessor.instance?.latestSamples.keys() || []),
+            deviceToJoints: Object.fromEntries(
+                Array.from(DeviceProcessor.instance?.deviceToJoints.entries() || [])
+            )
+        };
     }
 
     getDeviceStatus(): DeviceStatus {
@@ -229,5 +372,6 @@ export class DeviceProcessor {
         this.latestDeviceData.clear();
         this.batteryLevels.clear();
         this.connectionStates.clear();
+        this.latestSamples.clear();
     }
 }

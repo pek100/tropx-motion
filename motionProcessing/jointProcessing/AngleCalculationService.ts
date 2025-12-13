@@ -3,6 +3,12 @@ import { SYSTEM } from '../shared/constants';
 import { QuaternionService } from '../shared/QuaternionService';
 import { DeviceID, isValidDeviceID, getSortOrder } from '../../ble-management';
 
+/** Result containing both angle and relative quaternion for recording. */
+export interface AngleCalculationResult {
+  angle: number;
+  relativeQuat: Quaternion;
+}
+
 /**
  * Service for calculating joint angles from quaternion data of paired sensors.
  * Uses ble-management DeviceID operations for consistent sensor ordering.
@@ -19,9 +25,10 @@ export class AngleCalculationService {
   }
 
   /**
-   * Calculates joint angle from device quaternion data using specified rotation axis.
+   * Calculates joint angle and relative quaternion from device quaternion data.
+   * Returns both for recording purposes - angle for display, quaternion for SLERP interpolation.
    */
-  calculateJointAngle(devices: DeviceData[], axis: 'x' | 'y' | 'z' = 'y'): number | null {
+  calculateJointAngle(devices: DeviceData[], axis: 'x' | 'y' | 'z' = 'y'): AngleCalculationResult | null {
     if (devices.length < SYSTEM.MINIMUM_DEVICES_FOR_JOINT) return null;
 
     const sorted = this.sortBySensorDefinition(devices);
@@ -30,8 +37,11 @@ export class AngleCalculationService {
     const [proximal, distal] = sorted;
 
     try {
-      const angle = this.calculateAngle(proximal.quaternion, distal.quaternion, axis);
-      return this.applyCalibration(angle);
+      const { angle, relativeQuat } = this.calculateAngleWithQuat(proximal.quaternion, distal.quaternion, axis);
+      return {
+        angle: this.applyCalibration(angle),
+        relativeQuat
+      };
     } catch {
       return null;
     }
@@ -58,12 +68,17 @@ export class AngleCalculationService {
     return isValidDeviceID(num) ? num : null;
   }
 
+  private static debugSortFailCount = 0;
+
   /**
    * Sort devices by position (thigh=proximal=0, shin=distal=1).
    * Returns [proximal, distal] or null if devices can't be identified.
    */
   private sortBySensorDefinition(devices: DeviceData[]): [DeviceData, DeviceData] | null {
-    if (devices.length < 2) return null;
+    if (devices.length < 2) {
+      console.warn(`[AngleCalc] sortBySensorDefinition: devices.length=${devices.length} < 2`);
+      return null;
+    }
 
     // Map devices to their sort orders
     const withOrder: { device: DeviceData; order: number }[] = [];
@@ -71,7 +86,10 @@ export class AngleCalculationService {
     for (const device of devices) {
       const deviceId = this.parseDeviceID(device.deviceId);
       if (!deviceId) {
-        console.error(`[AngleCalc] Unknown device ID: ${device.deviceId}`);
+        AngleCalculationService.debugSortFailCount++;
+        if (AngleCalculationService.debugSortFailCount <= 5) {
+          console.error(`[AngleCalc] Unknown device ID: ${device.deviceId} (fail #${AngleCalculationService.debugSortFailCount})`);
+        }
         return null;
       }
 
@@ -94,9 +112,10 @@ export class AngleCalculationService {
   }
 
   /**
-   * Calculates relative angle between two quaternions using matrix transformation.
+   * Calculates relative angle and quaternion between two quaternions.
+   * Returns copy of relative quaternion to avoid race conditions with shared buffer.
    */
-  private calculateAngle(q1: Quaternion, q2: Quaternion, axis: 'x' | 'y' | 'z'): number {
+  private calculateAngleWithQuat(q1: Quaternion, q2: Quaternion, axis: 'x' | 'y' | 'z'): { angle: number; relativeQuat: Quaternion } {
     QuaternionService.writeToBuffer(q1, this.workingQuat1);
     QuaternionService.writeToBuffer(q2, this.workingQuat2);
     QuaternionService.getInverseQuaternion(this.workingQuat1, this.workingQuat1);
@@ -110,6 +129,11 @@ export class AngleCalculationService {
     };
 
     const [a, b] = axisExtractionMap[axis];
-    return Math.atan2(this.workingMatrix[a], this.workingMatrix[b]) * (180 / Math.PI);
+    const angle = Math.atan2(this.workingMatrix[a], this.workingMatrix[b]) * (180 / Math.PI);
+
+    // Return copy to avoid race condition with shared workingQuatRel buffer
+    const relativeQuat = QuaternionService.readFromBuffer(this.workingQuatRel);
+
+    return { angle, relativeQuat };
   }
 }

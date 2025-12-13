@@ -15,12 +15,21 @@ export class OffsetEstimator {
 
   /**
    * Add sample from three-way handshake
-   * Uses NTP midpoint formula: offset = masterMidpoint - deviceCounter
+   *
+   * Per Muse v3 Protocol (section 5.5.6):
+   * "The sub-second timestamp reports the number of milliseconds since 26 January 2020 00:53:20"
+   *
+   * So streaming timestamps should be time since REFERENCE_EPOCH, not Unix time.
+   * Offset formula: offset = (masterTime - REFERENCE_EPOCH) - deviceCounter
+   * After SET_CLOCK_OFFSET: streaming_ts = deviceCounter + offset = time_since_reference_epoch
+   * Then handleDataNotification adds REFERENCE_EPOCH to get Unix time.
    */
   addSample(T1: MasterTimestampMs, deviceCounter: DeviceTimestampMs, T4: MasterTimestampMs): void {
     const RTT = T4 - T1;
     const masterMidpoint = (T1 + T4) / 2;
-    const offset = masterMidpoint - deviceCounter;
+    // Convert master time to "time since REFERENCE_EPOCH" before computing offset
+    const masterSinceRefEpoch = masterMidpoint - REFERENCE_EPOCH_MS;
+    const offset = masterSinceRefEpoch - deviceCounter;
 
     this.samples.push({ T1, T4, deviceCounter, RTT, offset });
   }

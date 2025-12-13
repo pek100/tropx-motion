@@ -26,6 +26,11 @@ import {
 import { TropXCommands } from './TropXCommands';
 import { TimeSyncEstimator } from './TimeSyncEstimator';
 import { bleLogger } from './BleLogger';
+import { TimestampDebugLogger } from './TimestampDebugLogger';
+
+// Static import for state store to avoid circular dependency issues
+// Previously used dynamic require() which caused TropXCommands to become undefined
+import { UnifiedBLEStateStore, DeviceState } from '../ble-management';
 
 export class TropXDevice {
   private wrapper: NoblePeripheralWrapper;
@@ -36,14 +41,22 @@ export class TropXDevice {
   private hasLoggedFirstPacket: boolean = false;
   private userInitiatedDisconnect: boolean = false;
 
-  // Static tracking for first packet timestamps across all devices
-  private static firstPacketTimestamps = new Map<string, number>();
-  private static firstDeviceName: string | null = null;
+  // Per-sensor timestamp offset (calculated on first packet)
+  private timestampOffset: number | null = null;
 
-  // Reset first packet tracking (call when starting new recording session)
-  static resetFirstPacketTracking(): void {
-    TropXDevice.firstPacketTimestamps.clear();
-    TropXDevice.firstDeviceName = null;
+  // Static: Common reference time for all sensors (set when streaming starts)
+  private static streamingReferenceTime: number = 0;
+
+  /** Set streaming reference time (call once when streaming starts, BEFORE any device starts streaming) */
+  static setStreamingReferenceTime(time: number): void {
+    TropXDevice.streamingReferenceTime = time;
+    console.log(`⏱️ [TropXDevice] Streaming reference time set: ${time} (${new Date(time).toISOString()})`);
+  }
+
+  /** Reset streaming state (call when streaming stops) */
+  static resetStreamingState(): void {
+    TropXDevice.streamingReferenceTime = 0;
+    console.log(`⏱️ [TropXDevice] Streaming state reset`);
   }
 
   constructor(
@@ -304,7 +317,9 @@ export class TropXDevice {
         await this.stopStreaming();
       }
 
-      this.cleanup();
+      // Force-clear characteristics on user-initiated disconnect
+      // since we're intentionally disconnecting the BLE connection
+      this.cleanup(true);
 
       if (this.wrapper.peripheral.state === 'connected') {
         await this.wrapper.peripheral.disconnectAsync();
@@ -321,16 +336,32 @@ export class TropXDevice {
     const MAX_RETRIES = 2;
     const RETRY_DELAY_MS = 500;
 
+    // Fast path: characteristics already discovered
     if (this.wrapper.commandCharacteristic && this.wrapper.dataCharacteristic) {
-      return true; // Already discovered
+      // Verify they're still valid (peripheral connected)
+      if (this.wrapper.peripheral.state === 'connected') {
+        return true; // Already discovered and valid
+      } else {
+        // Stale characteristics - clear them
+        console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Stale characteristics detected (peripheral state: ${this.wrapper.peripheral.state})`);
+        this.wrapper.commandCharacteristic = null;
+        this.wrapper.dataCharacteristic = null;
+      }
     }
 
-    if (!this.wrapper.service) {
-      console.error('Device not properly connected - no service available');
+    // CRITICAL: Check peripheral state before attempting discovery
+    // This prevents trying to discover characteristics on a disconnected device
+    if (this.wrapper.peripheral.state !== 'connected') {
+      console.error(`❌ [${this.wrapper.deviceInfo.name}] Cannot discover characteristics - peripheral not connected (state: ${this.wrapper.peripheral.state})`);
       return false;
     }
 
-    console.log(`🔍 [${this.wrapper.deviceInfo.name}] Discovering characteristics...${retryCount > 0 ? ` (retry ${retryCount}/${MAX_RETRIES})` : ''}`);
+    if (!this.wrapper.service) {
+      console.error(`❌ [${this.wrapper.deviceInfo.name}] Device not properly connected - no service available`);
+      return false;
+    }
+
+    console.log(`🔍 [${this.wrapper.deviceInfo.name}] Discovering characteristics...${retryCount > 0 ? ` (retry ${retryCount}/${MAX_RETRIES})` : ''} [peripheral: ${this.wrapper.peripheral.state}]`);
     try {
       // Fix EventEmitter memory leak warning
       if (this.wrapper.service.setMaxListeners) {
@@ -446,6 +477,12 @@ export class TropXDevice {
    * @returns Device state value or NONE if failed
    */
   async getSystemState(): Promise<number> {
+    // DEFENSIVE: Check TropXCommands is available (guards against circular dependency issues)
+    if (!TropXCommands) {
+      console.error(`❌ [${this.wrapper.deviceInfo.name}] TropXCommands is undefined - module import issue`);
+      return TROPX_STATES.NONE;
+    }
+
     const hasCharacteristics = await this.ensureCharacteristics();
     if (!hasCharacteristics) {
       console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Cannot get system state: characteristics not available`);
@@ -517,12 +554,15 @@ export class TropXDevice {
       return false;
     }
 
+    // Helper to get state name safely
+    const getStateName = (s: number) => TropXCommands?.getStateName?.(s) ?? `0x${s.toString(16)}`;
+
     if (!validator(state)) {
-      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Cannot ${operation}: device in ${TropXCommands.getStateName(state)} state`);
+      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Cannot ${operation}: device in ${getStateName(state)} state`);
       return false;
     }
 
-    console.log(`✅ [${this.wrapper.deviceInfo.name}] Device state valid for ${operation}: ${TropXCommands.getStateName(state)}`);
+    console.log(`✅ [${this.wrapper.deviceInfo.name}] Device state valid for ${operation}: ${getStateName(state)}`);
     return true;
   }
 
@@ -543,6 +583,12 @@ export class TropXDevice {
 
       // Reset first packet flag to log fresh timestamps for this session
       this.hasLoggedFirstPacket = false;
+
+      // Reset per-sensor timestamp offset for fresh calculation
+      this.timestampOffset = null;
+
+      // Reset debug logger for fresh samples
+      TimestampDebugLogger.reset();
 
       // CRITICAL: Clean up any stale handlers from previous operations (e.g., locate mode)
       // This prevents handler accumulation and subscription conflicts
@@ -1236,37 +1282,36 @@ export class TropXDevice {
         // Therefore: streaming timestamps are ALWAYS in milliseconds
         const deviceTimestampMs = deviceTimestamp;
 
-        // Hardware clock offset already applied by SET_CLOCK_OFFSET during time sync
-        syncedTimestamp = deviceTimestampMs;
+        // Per Muse v3 Protocol (section 5.5.6):
+        // "The sub-second timestamp reports the number of milliseconds since 26 January 2020 00:53:20"
+        // After TIME SYNC, the device clock is corrected via SET_CLOCK_OFFSET.
+        // Simply add REFERENCE_EPOCH_MS to convert to Unix timestamp.
+        syncedTimestamp = REFERENCE_EPOCH_MS + deviceTimestampMs;
 
-        // DEBUG: Log first packet
+        // Log first packet for debugging
+        if (this.timestampOffset === null) {
+          this.timestampOffset = REFERENCE_EPOCH_MS; // Mark as initialized
+          console.log(`⏱️ [${this.wrapper.deviceInfo.name}] First packet (time-synced device):`);
+          console.log(`   Raw sensor timestamp: ${deviceTimestampMs}ms (since REFERENCE_EPOCH)`);
+          console.log(`   Wall clock: ${syncedTimestamp}ms (${new Date(syncedTimestamp).toISOString()})`);
+        }
+
+        // Log to debug file for analysis (first 200 samples per session)
+        TimestampDebugLogger.log(
+          this.wrapper.deviceInfo.name,
+          deviceTimestampMs,
+          null,  // No previous sensor ts tracking needed
+          syncedTimestamp,
+          receptionTimestamp
+        );
+
+        // DEBUG: Log first processed packet
         if (!this.hasLoggedFirstPacket) {
-          // Track timestamp for this device
-          TropXDevice.firstPacketTimestamps.set(this.wrapper.deviceInfo.name, syncedTimestamp);
-
-          // If this is the first device, remember it as reference
-          if (TropXDevice.firstDeviceName === null) {
-            TropXDevice.firstDeviceName = this.wrapper.deviceInfo.name;
-          }
-
-          console.log(`🔍 [${this.wrapper.deviceInfo.name}] Firmware always uses MILLISECONDS (48-bit limit requires it)`);
-
           console.log(`📦 [${this.wrapper.deviceInfo.name}] First packet:`);
-          console.log(`   Raw timestamp bytes: [${Array.from(timestampBytes).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`);
-          console.log(`   Parsed as 48-bit value: ${deviceTimestamp}ms`);
-          console.log(`   Device timestamp: ${deviceTimestampMs.toFixed(3)}ms`);
+          console.log(`   Sensor timestamp: ${deviceTimestampMs.toFixed(3)}ms`);
+          console.log(`   Offset: ${this.timestampOffset.toFixed(0)}ms`);
+          console.log(`   Synced timestamp: ${syncedTimestamp.toFixed(3)}ms`);
           console.log(`   = ${new Date(syncedTimestamp).toISOString()}`);
-
-          // Calculate delta from first device
-          if (TropXDevice.firstDeviceName && TropXDevice.firstDeviceName !== this.wrapper.deviceInfo.name) {
-            const firstTimestamp = TropXDevice.firstPacketTimestamps.get(TropXDevice.firstDeviceName);
-            if (firstTimestamp !== undefined) {
-              const delta = syncedTimestamp - firstTimestamp;
-              console.log(`   ⏱️  Δ from ${TropXDevice.firstDeviceName}: ${delta > 0 ? '+' : ''}${delta.toFixed(3)}ms`);
-            }
-          }
-
-          console.log(`   ℹ️  Hardware clock offset already applied (SET_CLOCK_OFFSET)`);
           this.hasLoggedFirstPacket = true;
         }
       } catch (parseError) {
@@ -1311,10 +1356,9 @@ export class TropXDevice {
   private handleDisconnect(): void {
     console.log(`🔌 Device disconnected: ${this.wrapper.deviceInfo.name} (user-initiated: ${this.userInitiatedDisconnect})`);
 
-    // Import state store dynamically to update state
+    // Update state store (using static import to avoid circular dependency issues)
     // This is critical for UI to show correct disconnect/reconnect state
     try {
-      const { UnifiedBLEStateStore, DeviceState } = require('../ble-management');
       const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(this.wrapper.deviceInfo.id);
 
       if (storeDeviceId) {
@@ -1332,8 +1376,8 @@ export class TropXDevice {
         // Note: For unexpected disconnects, BLEServiceAdapter.handleDeviceEvent('auto_reconnect')
         // handles the transition to RECONNECTING state via ReconnectionManager
       }
-    } catch (importError) {
-      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Could not import state store:`, importError);
+    } catch (stateError) {
+      console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Could not update state store:`, stateError);
     }
 
     this.cleanup();
@@ -1385,7 +1429,10 @@ export class TropXDevice {
   }
 
   // Cleanup resources
-  private cleanup(): void {
+  // CRITICAL: Only clear characteristics if BLE connection is actually lost
+  // Clearing characteristics on a still-connected device causes characteristic discovery
+  // timeouts on reconnect attempts, making the device unusable
+  private cleanup(forceCharacteristicClear = false): void {
     if (this.streamingTimer) {
       clearTimeout(this.streamingTimer);
       this.streamingTimer = null;
@@ -1397,8 +1444,19 @@ export class TropXDevice {
     }
 
     this.wrapper.isStreaming = false;
-    this.wrapper.commandCharacteristic = null;
-    this.wrapper.dataCharacteristic = null;
+
+    // Only clear characteristics if:
+    // 1. Force clear is requested (actual disconnect), OR
+    // 2. The peripheral is actually disconnected
+    // This preserves characteristics for reconnection scenarios where BLE is still up
+    const isActuallyDisconnected = this.wrapper.peripheral.state !== 'connected';
+    if (forceCharacteristicClear || isActuallyDisconnected) {
+      console.log(`🧹 [${this.wrapper.deviceInfo.name}] Clearing characteristics (force=${forceCharacteristicClear}, disconnected=${isActuallyDisconnected})`);
+      this.wrapper.commandCharacteristic = null;
+      this.wrapper.dataCharacteristic = null;
+    } else {
+      console.log(`🔄 [${this.wrapper.deviceInfo.name}] Preserving characteristics (peripheral still connected)`);
+    }
   }
 
   // Notify event callback

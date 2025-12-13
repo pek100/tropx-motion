@@ -181,18 +181,19 @@ export class TropXTimeSyncAdapter implements TimeSyncDevice {
 
   async setClockOffset(offsetMs: ClockOffsetMs): Promise<void> {
     // Command format: [CMD=0x31, LENGTH=0x08, OFFSET (8 bytes little-endian)]
+    // Per spec (Figure 7): Send ABSOLUTE VALUE as UInt64 - firmware subtracts from timestamps
     const cmd = Buffer.allocUnsafe(10);
     cmd[0] = TimeSyncCommand.SET_CLOCK_OFFSET;
     cmd[1] = 0x08;
 
-    // Device firmware uses MILLISECONDS for all timestamps (48-bit limit requires it)
-    // Send offset in milliseconds
-    const offsetValue = BigInt(Math.round(offsetMs));
-    console.log(`⏱️ [${this.deviceName}] Sending offset in MILLISECONDS: ${offsetMs.toFixed(2)}ms`);
+    // Per spec: Use Math.Abs() and UInt64 (unsigned)
+    // Device firmware uses MILLISECONDS for all timestamps
+    const offsetValue = BigInt(Math.round(Math.abs(offsetMs)));
+    console.log(`⏱️ [${this.deviceName}] Sending offset as UNSIGNED: ${offsetValue}ms (original: ${offsetMs.toFixed(2)}ms)`);
 
-    cmd.writeBigInt64LE(offsetValue, 2);
+    cmd.writeBigUInt64LE(offsetValue, 2);  // Use UNSIGNED per spec
 
-    console.log(`⏱️ [${this.deviceName}] SET_CLOCK_OFFSET: ${offsetMs.toFixed(2)}ms`);
+    console.log(`⏱️ [${this.deviceName}] SET_CLOCK_OFFSET: ${offsetValue}ms (unsigned, per spec)`);
 
     const response = await this.device.sendRawCommand(cmd);
 

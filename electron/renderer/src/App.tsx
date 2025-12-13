@@ -462,7 +462,7 @@ function AppContent() {
   }
 
   // CSV export handler
-  const handleExportCSV = useCallback(async () => {
+  const handleExportCSV = useCallback(async (interpolated: boolean = false) => {
     if (isStreaming) {
       toast({
         title: "Cannot Export",
@@ -473,7 +473,7 @@ function AppContent() {
       return
     }
 
-    const result = await exportCSV()
+    const result = await exportCSV(interpolated)
 
     if (result.success) {
       // Web export (no filePath, just downloaded) vs Electron export (has filePath)
@@ -511,7 +511,7 @@ function AppContent() {
         duration: 5000,
       })
     }
-  }, [exportCSV, openFile, openFolder, toast])
+  }, [isStreaming, exportCSV, openFile, openFolder, toast])
 
   // Drag & drop handlers
   const handleDragStart = (index: number) => (e: React.DragEvent) => {

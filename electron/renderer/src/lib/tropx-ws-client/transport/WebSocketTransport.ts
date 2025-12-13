@@ -139,23 +139,18 @@ export class WebSocketTransport extends TypedEventEmitter {
 
   private handleMessage(event: MessageEvent): void {
     try {
-      console.log('📨 Received WebSocket message, data type:', typeof event.data, 'instanceof ArrayBuffer:', event.data instanceof ArrayBuffer);
       const message = BinaryProtocol.deserialize(event.data as ArrayBuffer);
       if (!message) {
-        console.error('❌ Failed to deserialize message');
         return;
       }
-      console.log('✅ Deserialized message:', JSON.stringify(message, null, 2));
       if (message.requestId && this.pendingRequests.has(message.requestId)) {
         const { resolve, timeout } = this.pendingRequests.get(message.requestId)!;
         this.pendingRequests.delete(message.requestId);
         clearTimeout(timeout);
-        console.log('✅ Resolving pending request:', message.requestId);
         resolve(message);
       }
       this.emitMessageEvent(message);
     } catch (error) {
-      console.error('❌ Error handling message:', error);
       this.emit(EVENT_TYPES.ERROR, error as Error);
     }
   }

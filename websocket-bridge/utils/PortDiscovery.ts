@@ -1,8 +1,8 @@
 import { createServer } from 'net';
 
 const PORT_RANGE = {
-  START: 8080,
-  SCAN_COUNT: 50,
+  START: 9080, // Start above Windows reserved range (8020-8119)
+  SCAN_COUNT: 100,
 } as const;
 
 export interface PortDiscoveryResult {
@@ -46,7 +46,7 @@ export class PortDiscovery {
       server.once('error', onError);
       server.once('listening', onListening);
 
-      server.listen(port, 'localhost');
+      server.listen(port, '0.0.0.0');
     });
   }
 

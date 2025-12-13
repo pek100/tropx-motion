@@ -54,7 +54,13 @@
       "Bash(npm view:*)",
       "Bash(git restore:*)",
       "Bash(npx @convex-dev/auth:*)",
-      "Read(//mnt/f/**)"
+      "Read(//mnt/f/**)",
+      "Read(//mnt/c/Users/**)",
+      "Read(//mnt/**)",
+      "Bash(node:*)",
+      "Read(//home/pek/**)",
+      "Bash(git log:*)",
+      "Bash(git ls-tree:*)"
     ],
     "deny": [],
     "ask": [],

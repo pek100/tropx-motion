@@ -1,3 +1,16 @@
+/**
+ * Web/Fallback Recording Buffer
+ *
+ * This renderer-side buffer stores pre-computed angle values for web exports.
+ * It serves as a fallback when the backend quaternion buffer is unavailable.
+ *
+ * For Electron builds, the backend RecordingBuffer (motionProcessing/recording/)
+ * stores raw quaternions and supports SLERP interpolation for uniform sample rates.
+ * The useRecordingExport hook automatically uses the backend when available.
+ *
+ * This buffer stores angles directly (no interpolation support).
+ */
+
 const MAX_BUFFER_SIZE = 60000; // 10 min at 100Hz
 const STORAGE_PREFIX = 'tropx_recording_chunk_';
 

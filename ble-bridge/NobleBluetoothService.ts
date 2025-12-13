@@ -265,6 +265,20 @@ export class NobleBluetoothService {
     try {
       console.log(`🔗 [${deviceId}] Connecting to device: ${peripheral.advertisement?.localName || deviceId}`);
 
+      // CRITICAL: Clean up any existing TropXDevice instance for this deviceId
+      // This prevents stale instances with outdated characteristics from causing issues
+      const existingDevice = this.devices.get(deviceId);
+      if (existingDevice) {
+        console.log(`🧹 [${deviceId}] Cleaning up existing TropXDevice instance before reconnect`);
+        try {
+          // Don't await - just trigger cleanup
+          existingDevice.disconnect().catch(() => {});
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+        this.devices.delete(deviceId);
+      }
+
       // Create device wrapper with state management
       const deviceInfo = this.createDeviceInfo(peripheral);
       const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
@@ -371,7 +385,13 @@ export class NobleBluetoothService {
       };
     }
 
-    // STEP 2: Start streaming on all connected devices in parallel
+    // STEP 2: Set common reference time for all sensors BEFORE starting streaming
+    // This ensures all sensors' timestamps align to the same reference point
+    const streamingReferenceTime = Date.now();
+    TropXDevice.setStreamingReferenceTime(streamingReferenceTime);
+
+    // STEP 3: Start streaming on all connected devices in parallel
+    // Note: Sorting buffer in JointProcessor handles timestamp ordering
     const streamingTasks = connectedDevices.map(device => this.startDeviceStreaming(device.id));
     const results = await Promise.all(streamingTasks);
 
@@ -483,6 +503,9 @@ export class NobleBluetoothService {
 
     const successCount = results.filter(result => result.success).length;
     // NOTE: GlobalState managed by BLEServiceAdapter
+
+    // Reset streaming state (clears common reference time)
+    TropXDevice.resetStreamingState();
 
     console.log(`✅ Global streaming stopped: ${successCount}/${streamingDevices.length} devices stopped`);
 

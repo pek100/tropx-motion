@@ -214,11 +214,16 @@ export class BLEServiceAdapter implements BLEService {
           };
         }
 
-        // Transition to CONNECTED
-        try {
-          UnifiedBLEStateStore.transition(registeredDeviceId, DeviceState.CONNECTED);
-        } catch (e) {
-          console.warn(`⚠️ Could not transition to CONNECTED:`, e);
+        // Transition to CONNECTED (only if not already in that state)
+        const currentDevice = UnifiedBLEStateStore.getDevice(registeredDeviceId);
+        if (currentDevice?.state !== DeviceState.CONNECTED) {
+          try {
+            UnifiedBLEStateStore.transition(registeredDeviceId, DeviceState.CONNECTED);
+          } catch (e) {
+            console.warn(`⚠️ Could not transition to CONNECTED:`, e);
+          }
+        } else {
+          console.log(`ℹ️ Device already in CONNECTED state, skipping transition`);
         }
 
         // Register streaming hook with pre-bound DeviceID
@@ -450,27 +455,12 @@ export class BLEServiceAdapter implements BLEService {
         })
         .filter((adapter): adapter is TropXTimeSyncAdapter => adapter !== null);
 
-      // Fix #4: Use Promise.allSettled to handle partial sync failures gracefully
-      // This allows some devices to sync successfully even if others fail (e.g., disconnect during sync)
-      const syncResults = await Promise.allSettled(
-        adapters.map(adapter => this.timeSyncManager.syncDevice(adapter))
-      );
-
-      // Convert settled results to standard result format
-      const results = syncResults.map((settled, i) => {
-        if (settled.status === 'fulfilled') {
-          return settled.value;
-        } else {
-          console.error(`❌ [SYNC] Device sync rejected:`, settled.reason);
-          return {
-            success: false,
-            deviceName: adapters[i]?.deviceName || 'Unknown',
-            finalOffset: 0,
-            deviceTimestampMs: 0,
-            error: settled.reason?.message || 'Sync failed unexpectedly'
-          };
-        }
-      });
+      // CRITICAL FIX: Use syncDevices (plural) to sync all devices TOGETHER
+      // This calculates relative offsets between devices and applies SET_CLOCK_OFFSET
+      // to align all devices to the same reference timestamp.
+      // Previously this was calling syncDevice individually which didn't align devices!
+      // syncDevices() returns TimeSyncResult[] directly - each result has success/error info
+      const results = await this.timeSyncManager.syncDevices(adapters);
 
       // Broadcast SYNC_PROGRESS for each device with clock offset
       for (let i = 0; i < results.length; i++) {
@@ -733,10 +723,6 @@ export class BLEServiceAdapter implements BLEService {
     try {
       console.log(`🎬 BLE: Starting recording session ${sessionId}`);
 
-      // Reset first packet tracking for delta calculations
-      const { TropXDevice } = await import('./TropXDevice');
-      TropXDevice.resetFirstPacketTracking();
-
       // Clear clock offsets for all devices - will be recalculated from first streaming packet
       const connectedDevices = this.bleService.getConnectedDevices();
       for (const device of connectedDevices) {
@@ -751,7 +737,13 @@ export class BLEServiceAdapter implements BLEService {
       UnifiedBLEStateStore.setGlobalState(GlobalState.STREAMING);
       PollingManager.block('streaming');
 
-      // Motion processing will be handled in WebSocket bridge (main process)
+      // Start motion processing recording (backend quaternion buffer)
+      if (this.motionCoordinator && typeof this.motionCoordinator.startRecording === 'function') {
+        const recordingStarted = this.motionCoordinator.startRecording(sessionId, exerciseId, setNumber);
+        console.log(`🎬 [BLEServiceAdapter] Motion coordinator recording: ${recordingStarted ? 'started' : 'already active'}`);
+      } else {
+        console.warn('⚠️ [BLEServiceAdapter] Motion coordinator not available - recording buffer not started');
+      }
 
       // Start streaming on all connected devices with state validation
       console.log(`🎬 [BLEServiceAdapter] About to call startGlobalStreaming, connectedDevices.length=${connectedDevices.length}`);
@@ -840,6 +832,12 @@ export class BLEServiceAdapter implements BLEService {
 
     try {
       console.log('🛑 BLE: Stopping recording session');
+
+      // Stop motion processing recording (backend quaternion buffer)
+      if (this.motionCoordinator && typeof this.motionCoordinator.stopRecording === 'function') {
+        const recordingStopped = this.motionCoordinator.stopRecording();
+        console.log(`🛑 [BLEServiceAdapter] Motion coordinator recording: ${recordingStopped ? 'stopped' : 'was not active'}`);
+      }
 
       // Stop watchdog monitoring FIRST (always)
       Watchdog.stop();

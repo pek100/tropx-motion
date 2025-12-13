@@ -1,5 +1,6 @@
 import { JointAngleData, UIJointData, APIRecording } from '../shared/types';
 import { JointName } from "../shared/config";
+import { SynchronizedJointPair } from '../synchronization/JointSynchronizer';
 
 interface UIState {
     left: UIJointData;
@@ -8,12 +9,20 @@ interface UIState {
 
 /**
  * Manages UI data state and updates for joint angle visualization.
+ *
+ * Simplified for flight controller approach:
+ * - Receives COMPLETE pairs from JointSynchronizer
+ * - Broadcasts directly without any internal batching
+ * - Every sensor update flows through to display
  */
 export class UIProcessor {
     private static instance: UIProcessor | null = null;
     private jointDataMap = new Map<string, UIJointData>();
     private subscribers = new Set<(data: UIState) => void>();
     private webSocketBroadcast: ((message: any, clientIds: string[]) => Promise<void>) | null = null;
+
+    /** Debug counter */
+    private static debugBroadcastCount = 0;
 
     private constructor() {
         this.initializeJointData();
@@ -33,21 +42,95 @@ export class UIProcessor {
         }
     }
 
+    /** Reset state for new recording session. */
+    static resetForNewRecording(): void {
+        if (UIProcessor.instance) {
+            UIProcessor.debugBroadcastCount = 0;
+            console.log('🔄 [UI_PROCESSOR] Reset for new recording');
+        }
+    }
+
     setWebSocketBroadcast(broadcastFn: (message: any, clientIds: string[]) => Promise<void>): void {
         this.webSocketBroadcast = broadcastFn;
         console.log('📡 UIProcessor: WebSocket broadcast function configured');
     }
 
-    updateJointAngle(angleData: JointAngleData): void {
-        const jointData = this.jointDataMap.get(angleData.jointName);
-        if (!jointData) {
-            console.error(`❌ [UI_PROCESSOR] Joint data not found for: ${angleData.jointName}`);
+    /** Get debug stats for pipeline analysis */
+    static getDebugStats(): { broadcastCount: number } {
+        return {
+            broadcastCount: UIProcessor.debugBroadcastCount
+        };
+    }
+
+    /**
+     * Broadcast COMPLETE synchronized pair directly.
+     * No internal batching - JointSynchronizer already provides complete pairs.
+     * Flight controller approach: every update is broadcast immediately.
+     */
+    broadcastCompletePair(pair: SynchronizedJointPair): void {
+        // Update UI state for subscribers
+        this.updateUIState(pair);
+        this.notifySubscribers();
+
+        // Broadcast via WebSocket
+        if (!this.webSocketBroadcast) {
             return;
         }
 
-        this.updateJointData(jointData, angleData);
+        UIProcessor.debugBroadcastCount++;
+
+        // Debug logging at intervals
+        if (UIProcessor.debugBroadcastCount === 50 || UIProcessor.debugBroadcastCount === 200) {
+            console.log(`📊 [UI_PROC_DEBUG] broadcasts=${UIProcessor.debugBroadcastCount}`);
+        }
+
+        try {
+            const data = new Float32Array([pair.leftKnee.angle, pair.rightKnee.angle]);
+
+            const message = {
+                type: 0x30, // MESSAGE_TYPES.MOTION_DATA
+                requestId: 0,
+                timestamp: pair.timestamp,
+                deviceName: [...pair.leftKnee.deviceIds, ...pair.rightKnee.deviceIds].join(','),
+                data: data
+            };
+
+            this.webSocketBroadcast(message, []).catch(error => {
+                console.error('❌ [UI_PROCESSOR] Error broadcasting:', error);
+            });
+
+        } catch (error) {
+            console.error('❌ [UI_PROCESSOR] Error creating WebSocket message:', error);
+        }
+    }
+
+    /** Update internal UI state from synchronized pair. */
+    private updateUIState(pair: SynchronizedJointPair): void {
+        const leftData = this.jointDataMap.get(JointName.LEFT_KNEE);
+        const rightData = this.jointDataMap.get(JointName.RIGHT_KNEE);
+
+        if (leftData) {
+            leftData.current = this.roundToOneDecimal(pair.leftKnee.angle);
+            leftData.lastUpdate = pair.timestamp;
+            leftData.devices = pair.leftKnee.deviceIds;
+        }
+
+        if (rightData) {
+            rightData.current = this.roundToOneDecimal(pair.rightKnee.angle);
+            rightData.lastUpdate = pair.timestamp;
+            rightData.devices = pair.rightKnee.deviceIds;
+        }
+    }
+
+    // Legacy method - kept for backward compatibility with processServerData
+    updateJointAngle(angleData: JointAngleData): void {
+        const jointData = this.jointDataMap.get(angleData.jointName);
+        if (!jointData) return;
+
+        jointData.current = this.roundToOneDecimal(angleData.angle);
+        jointData.lastUpdate = angleData.timestamp;
+        jointData.devices = angleData.deviceIds;
         this.notifySubscribers();
-        this.broadcastJointAngleData(angleData);
     }
 
     processServerData(recording: APIRecording): void {
@@ -95,12 +178,6 @@ export class UIProcessor {
         return Math.round(value * 10) / 10;
     }
 
-    private updateJointData(jointData: UIJointData, angleData: JointAngleData): void {
-        jointData.current = this.roundToOneDecimal(angleData.angle);
-        jointData.lastUpdate = angleData.timestamp;
-        jointData.devices = angleData.deviceIds;
-    }
-
     private processJointsData(joints: any[]): void {
         joints.forEach(joint => {
             const jointData = this.jointDataMap.get(joint.joint_name);
@@ -141,34 +218,5 @@ export class UIProcessor {
                 // Continue with other subscribers if one fails
             }
         });
-    }
-
-    private async broadcastJointAngleData(angleData: JointAngleData): Promise<void> {
-        if (!this.webSocketBroadcast) {
-            console.error('❌ [UI_PROCESSOR] No WebSocket broadcast function configured');
-            return;
-        }
-
-        try {
-            const leftKnee = this.jointDataMap.get(JointName.LEFT_KNEE) || this.createEmptyJointData();
-            const rightKnee = this.jointDataMap.get(JointName.RIGHT_KNEE) || this.createEmptyJointData();
-
-            const data = new Float32Array([leftKnee.current, rightKnee.current]);
-
-            const message = {
-                type: 0x30, // MESSAGE_TYPES.MOTION_DATA
-                requestId: 0,
-                timestamp: Date.now(),
-                deviceName: angleData.deviceIds.join(','),
-                data: data
-            };
-
-            this.webSocketBroadcast(message, []).catch(error => {
-                console.error('❌ [UI_PROCESSOR] Error broadcasting joint angle data:', error);
-            });
-
-        } catch (error) {
-            console.error('❌ [UI_PROCESSOR] Error creating WebSocket message:', error);
-        }
     }
 }

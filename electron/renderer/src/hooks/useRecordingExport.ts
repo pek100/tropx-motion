@@ -15,6 +15,7 @@ interface ExportResult {
   success: boolean;
   filePath?: string;
   fileName?: string;
+  sampleCount?: number;
   error?: string;
 }
 
@@ -30,19 +31,24 @@ interface UseRecordingExportReturn {
   isExporting: boolean;
   lastExport: ExportResult | null;
   exportPath: string;
-  exportCSV: () => Promise<ExportResult>;
+  exportCSV: (interpolated?: boolean) => Promise<ExportResult>;
   openFile: (filePath: string) => Promise<void>;
   openFolder: (filePath: string) => Promise<void>;
   selectFolder: () => Promise<string | null>;
   setExportPath: (path: string) => void;
   resetPath: () => void;
-  hasRecordingData: () => boolean;
+  hasRecordingData: () => Promise<boolean>;
   // Import
   isImporting: boolean;
   importedRecording: ImportedRecording | null;
   importCSV: () => Promise<ImportResult>;
   clearImport: () => void;
 }
+
+/** Check if backend recording API is available. */
+const hasBackendAPI = (): boolean => {
+  return !isWeb() && !!window.electronAPI?.recording;
+};
 
 export function useRecordingExport(): UseRecordingExportReturn {
   const [isExporting, setIsExporting] = useState(false);
@@ -53,23 +59,38 @@ export function useRecordingExport(): UseRecordingExportReturn {
   const [isImporting, setIsImporting] = useState(false);
   const [importedRecording, setImportedRecording] = useState<ImportedRecording | null>(null);
 
-  const exportCSV = useCallback(async (): Promise<ExportResult> => {
-    if (RecordingBuffer.isEmpty()) {
-      const result = { success: false, error: 'No recording data to export' };
-      setLastExport(result);
-      return result;
-    }
-
+  const exportCSV = useCallback(async (interpolated: boolean = false): Promise<ExportResult> => {
     setIsExporting(true);
 
     try {
-      const csvContent = generateCSV({ includeMetadata: true });
+      // Backend API (Electron with quaternion buffer) - preferred
+      if (hasBackendAPI()) {
+        const response = await window.electronAPI.recording.export({
+          interpolated,
+          outputPath: exportPath
+        });
 
-      if (!csvContent) {
         const result: ExportResult = {
-          success: false,
-          error: 'Failed to generate CSV content'
+          success: response.success,
+          filePath: response.filePath,
+          fileName: response.fileName,
+          sampleCount: response.sampleCount,
+          error: response.error
         };
+        setLastExport(result);
+        return result;
+      }
+
+      // Fallback: Renderer buffer (web or no backend API)
+      if (RecordingBuffer.isEmpty()) {
+        const result = { success: false, error: 'No recording data to export' };
+        setLastExport(result);
+        return result;
+      }
+
+      const csvContent = generateCSV({ includeMetadata: true });
+      if (!csvContent) {
+        const result: ExportResult = { success: false, error: 'Failed to generate CSV content' };
         setLastExport(result);
         return result;
       }
@@ -88,15 +109,12 @@ export function useRecordingExport(): UseRecordingExportReturn {
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
 
-        const result: ExportResult = {
-          success: true,
-          fileName
-        };
+        const result: ExportResult = { success: true, fileName };
         setLastExport(result);
         return result;
       }
 
-      // Electron: Write to file system
+      // Electron fallback: Write via file API
       if (!window.electronAPI?.file?.writeCSV) {
         const result = { success: false, error: 'Export not available' };
         setLastExport(result);
@@ -106,22 +124,11 @@ export function useRecordingExport(): UseRecordingExportReturn {
       const filePath = `${exportPath}/${fileName}`;
       const response = await window.electronAPI.file.writeCSV(filePath, csvContent);
 
-      if (response.success) {
-        const result: ExportResult = {
-          success: true,
-          filePath: response.filePath,
-          fileName
-        };
-        setLastExport(result);
-        return result;
-      } else {
-        const result: ExportResult = {
-          success: false,
-          error: response.error || 'Failed to write file'
-        };
-        setLastExport(result);
-        return result;
-      }
+      const result: ExportResult = response.success
+        ? { success: true, filePath: response.filePath, fileName }
+        : { success: false, error: response.error || 'Failed to write file' };
+      setLastExport(result);
+      return result;
     } catch (err) {
       const result: ExportResult = {
         success: false,
@@ -250,7 +257,13 @@ export function useRecordingExport(): UseRecordingExportReturn {
     setExportPathState(getDefaultExportPath());
   }, []);
 
-  const hasRecordingData = useCallback(() => {
+  const hasRecordingData = useCallback(async (): Promise<boolean> => {
+    // Check backend first if available
+    if (hasBackendAPI()) {
+      const state = await window.electronAPI.recording.getState();
+      return state.sampleCount > 0;
+    }
+    // Fallback to renderer buffer
     return !RecordingBuffer.isEmpty();
   }, []);
 

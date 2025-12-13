@@ -22,7 +22,7 @@ export interface ServerStats {
 }
 
 const DEFAULT_CONFIG: ServerConfig = {
-  host: 'localhost',
+  host: '0.0.0.0', // Bind to all interfaces for cross-platform compatibility
   maxConnections: 10,
   heartbeatInterval: 30000,
   connectionTimeout: 60000,

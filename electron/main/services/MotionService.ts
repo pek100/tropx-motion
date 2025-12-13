@@ -34,7 +34,7 @@ export class MotionService {
       };
 
       const unifiedConfig = {
-        port: 8080, // Default port for Unified WebSocket Bridge
+        // port not specified - uses PortDiscovery to find available port in range 9080-9179
         enableBinaryProtocol: true,
         performanceMode: 'high_throughput' as const,
       };
@@ -100,7 +100,7 @@ export class MotionService {
       console.log('Stopping recording session...');
 
       // Stop recording in motion processing coordinator
-      const success = await motionProcessingCoordinator.stopRecording();
+      const success = motionProcessingCoordinator.stopRecording();
 
       const sessionId = this.currentSessionId;
       this.isRecording = false;
@@ -228,7 +228,7 @@ export class MotionService {
     }
 
     if (this.isRecording) {
-      motionProcessingCoordinator.stopRecording().catch(console.error);
+      motionProcessingCoordinator.stopRecording();
     }
 
     console.log('Motion Service cleanup complete');

@@ -143,9 +143,78 @@ export class QuaternionService {
         matrix[3] = xy + wz; matrix[4] = 1 - (xx + zz); matrix[5] = yz - wx;
         matrix[6] = xz - wy; matrix[7] = yz + wx; matrix[8] = 1 - (xx + yy);
     }
+
+    /**
+     * Creates a deep copy of a quaternion.
+     */
+    static copy(q: Quaternion): Quaternion {
+        return { w: q.w, x: q.x, y: q.y, z: q.z };
+    }
+
+    /**
+     * Spherical linear interpolation between two quaternions.
+     * Handles shortest path by negating q2 if dot product is negative.
+     */
+    static slerp(q1: Quaternion, q2: Quaternion, t: number): Quaternion {
+        if (t <= 0) return QuaternionService.copy(q1);
+        if (t >= 1) return QuaternionService.copy(q2);
+
+        let dot = QuaternionService.dot(q1, q2);
+
+        // Take shortest path
+        let q2Final = q2;
+        if (dot < 0) {
+            q2Final = QuaternionService.negateQuaternion(q2);
+            dot = -dot;
+        }
+
+        // Use linear interpolation for nearly identical quaternions
+        if (dot > 0.9995) {
+            return QuaternionService.normalize({
+                w: q1.w + t * (q2Final.w - q1.w),
+                x: q1.x + t * (q2Final.x - q1.x),
+                y: q1.y + t * (q2Final.y - q1.y),
+                z: q1.z + t * (q2Final.z - q1.z)
+            });
+        }
+
+        const theta0 = Math.acos(dot);
+        const theta = theta0 * t;
+        const sinTheta = Math.sin(theta);
+        const sinTheta0 = Math.sin(theta0);
+
+        const s1 = Math.cos(theta) - dot * sinTheta / sinTheta0;
+        const s2 = sinTheta / sinTheta0;
+
+        return {
+            w: s1 * q1.w + s2 * q2Final.w,
+            x: s1 * q1.x + s2 * q2Final.x,
+            y: s1 * q1.y + s2 * q2Final.y,
+            z: s1 * q1.z + s2 * q2Final.z
+        };
+    }
+
+    /**
+     * Extracts rotation angle around specified axis from relative quaternion.
+     * Uses same math as AngleCalculationService for consistency.
+     */
+    static toEulerAngle(q: Quaternion, axis: 'x' | 'y' | 'z' = 'y'): number {
+        const buffer = new Float32Array([q.w, q.x, q.y, q.z]);
+        const matrix = new Float32Array(9);
+        QuaternionService.quaternionToMatrix(buffer, matrix);
+
+        const axisExtractionMap = {
+            x: [5, 4],
+            y: [2, 0],
+            z: [1, 3],
+        };
+
+        const [a, b] = axisExtractionMap[axis];
+        return Math.atan2(matrix[a], matrix[b]) * (180 / Math.PI);
+    }
 }
 
 /**
- * lerp helper function
+ * Linear interpolation helper.
  */
 export const lerp = (a: number, b: number, t: number): number => (1 - t) * a + t * b;

@@ -76,34 +76,31 @@ export class TimeSyncSession {
     }
 
     // Compute median offset using NTP algorithm
+    // IMPORTANT: Use median offset from ALL samples, not a single final measurement
+    // This is more robust against BLE RTT variability
     const { medianOffset, avgRTT, sampleCount } = this.estimator.computeMedianOffset();
-    console.log(`⏱️ [${this.device.deviceName}] NTP median offset: ${medianOffset.toFixed(2)}ms (RTT: ${avgRTT.toFixed(2)}ms)`);
+    console.log(`⏱️ [${this.device.deviceName}] NTP median offset: ${medianOffset.toFixed(2)}ms (RTT: ${avgRTT.toFixed(2)}ms, samples: ${sampleCount})`);
 
-    // Calculate simple software offset: systemTime - deviceTime
-    // This ensures deviceTime + offset = systemTime
-    const currentSystemTime = Date.now();
-    const currentDeviceTime = await this.device.getDeviceTimestamp();
-    const softwareOffset = currentSystemTime - currentDeviceTime;
-
-    console.log(`⏱️ [${this.device.deviceName}] Software offset calculation:`);
-    console.log(`   System time: ${currentSystemTime}ms (${new Date(currentSystemTime).toISOString()})`);
-    console.log(`   Device time: ${currentDeviceTime}ms (${new Date(currentDeviceTime).toISOString()})`);
-    console.log(`   Offset: ${softwareOffset.toFixed(2)}ms`);
-    console.log(`   Verification: ${currentDeviceTime}ms + ${softwareOffset.toFixed(2)}ms = ${(currentDeviceTime + softwareOffset).toFixed(2)}ms`);
-
+    // Exit timesync mode
     await this.device.exitTimeSyncMode();
 
-    console.log(`✅ [${this.device.deviceName}] Time sync complete - using software offset: ${softwareOffset.toFixed(2)}ms`);
+    // NOTE: We do NOT call SET_CLOCK_OFFSET here!
+    // Firmware behavior for SET_CLOCK_OFFSET is inconsistent across device hardware revisions.
+    // Some devices apply it, others ignore it completely.
+    // Instead, we store the offset and apply it in SOFTWARE during streaming.
+    // This ensures consistent behavior across all firmware versions.
+    console.log(`✅ [${this.device.deviceName}] Time sync complete - software offset: ${medianOffset.toFixed(2)}ms (will be applied in streaming handler)`);
 
     const samples = this.estimator.getSamples();
     const RTTs = samples.map(s => s.RTT);
+    const lastSample = samples[samples.length - 1];
 
     return {
       deviceId: this.device.deviceId,
       deviceName: this.device.deviceName,
-      medianOffset: softwareOffset,  // Use software offset instead of NTP offset
-      finalOffset: softwareOffset,
-      deviceTimestampMs: currentDeviceTime, // Include device timestamp for live display
+      medianOffset: medianOffset,
+      finalOffset: medianOffset,  // Use NTP median - more robust against BLE variability
+      deviceTimestampMs: lastSample?.deviceCounter ?? 0,
       sampleCount,
       avgRTT,
       minRTT: Math.min(...RTTs),

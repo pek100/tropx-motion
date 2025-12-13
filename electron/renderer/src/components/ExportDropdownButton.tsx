@@ -1,14 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
-import { Download, ChevronDown, FileText, Cloud, Database } from 'lucide-react';
+import { Download, ChevronDown, FileText, Cloud, Database, Wand2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ExportDropdownButtonProps {
-  onExportCSV: () => void;
+  onExportCSV: (interpolated?: boolean) => void;
   disabled?: boolean;
   isExporting?: boolean;
 }
 
-type ExportOption = 'csv' | 'json' | 'cloud';
+type ExportOption = 'csv' | 'csv-interpolated' | 'json' | 'cloud';
 
 interface MenuItem {
   id: ExportOption;
@@ -16,10 +16,12 @@ interface MenuItem {
   icon: React.ReactNode;
   disabled?: boolean;
   badge?: string;
+  description?: string;
 }
 
 const MENU_ITEMS: MenuItem[] = [
-  { id: 'csv', label: 'Export CSV', icon: <FileText className="size-4" /> },
+  { id: 'csv', label: 'Export CSV', icon: <FileText className="size-4" />, description: 'Raw data' },
+  { id: 'csv-interpolated', label: 'Export Interpolated', icon: <Wand2 className="size-4" />, description: 'Uniform 100Hz' },
   { id: 'json', label: 'Export JSON', icon: <Database className="size-4" />, disabled: true, badge: 'Soon' },
   { id: 'cloud', label: 'Cloud Sync', icon: <Cloud className="size-4" />, disabled: true, badge: 'Soon' },
 ];
@@ -43,7 +45,9 @@ export function ExportDropdownButton({ onExportCSV, disabled, isExporting }: Exp
   const handleMainClick = () => {
     if (disabled || isExporting) return;
     if (defaultAction === 'csv') {
-      onExportCSV();
+      onExportCSV(false);
+    } else if (defaultAction === 'csv-interpolated') {
+      onExportCSV(true);
     }
   };
 
@@ -51,7 +55,9 @@ export function ExportDropdownButton({ onExportCSV, disabled, isExporting }: Exp
     if (item.disabled) return;
     setIsOpen(false);
     if (item.id === 'csv') {
-      onExportCSV();
+      onExportCSV(false);
+    } else if (item.id === 'csv-interpolated') {
+      onExportCSV(true);
     }
   };
 
@@ -89,22 +95,35 @@ export function ExportDropdownButton({ onExportCSV, disabled, isExporting }: Exp
         </div>
       </button>
 
-      {/* Dropdown menu */}
+      {/* Dropdown menu - opens upward */}
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+        <div
+          className="absolute right-0 bottom-full mb-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
+          onClick={(e) => e.stopPropagation()}
+        >
           {MENU_ITEMS.map((item) => (
             <button
               key={item.id}
-              onClick={() => handleMenuItemClick(item)}
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleMenuItemClick(item);
+              }}
               disabled={item.disabled}
               className={cn(
                 'w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors',
-                item.disabled ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-50',
+                item.disabled ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-50 cursor-pointer',
                 item.id === defaultAction && !item.disabled && 'bg-gray-50'
               )}
             >
               {item.icon}
-              <span className="flex-1">{item.label}</span>
+              <div className="flex-1">
+                <div>{item.label}</div>
+                {item.description && (
+                  <div className="text-xs text-gray-400">{item.description}</div>
+                )}
+              </div>
               {item.badge && (
                 <span className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">
                   {item.badge}

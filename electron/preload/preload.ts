@@ -72,6 +72,14 @@ export interface ElectronAPI {
         selectFolder: () => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>;
         importCSV: () => Promise<{ success: boolean; content?: string; filePath?: string; fileName?: string; canceled?: boolean; error?: string }>;
     };
+
+    recording: {
+        start: () => Promise<{ success: boolean; error?: string }>;
+        stop: () => Promise<{ success: boolean; error?: string }>;
+        getState: () => Promise<{ isRecording: boolean; sampleCount: number; durationMs: number; startTime: number | null; error?: string }>;
+        export: (options?: { interpolated?: boolean; outputPath?: string }) => Promise<{ success: boolean; filePath?: string; fileName?: string; sampleCount?: number; error?: string }>;
+        clear: () => Promise<{ success: boolean; error?: string }>;
+    };
 }
 
 const electronAPI: ElectronAPI = {
@@ -140,6 +148,14 @@ const electronAPI: ElectronAPI = {
         openFolder: (filePath: string) => ipcRenderer.invoke('file:openFolder', filePath),
         selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
         importCSV: () => ipcRenderer.invoke('file:importCSV'),
+    },
+
+    recording: {
+        start: () => ipcRenderer.invoke('recording:start'),
+        stop: () => ipcRenderer.invoke('recording:stop'),
+        getState: () => ipcRenderer.invoke('recording:getState'),
+        export: (options) => ipcRenderer.invoke('recording:export', options),
+        clear: () => ipcRenderer.invoke('recording:clear'),
     },
 };
 

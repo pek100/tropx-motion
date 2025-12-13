@@ -646,6 +646,55 @@ export class MainProcess {
         return { success: false, error: String(err) };
       }
     });
+
+    // Recording control handlers (backend quaternion buffer)
+    ipcMain.handle('recording:start', () => {
+      try {
+        const { motionProcessingCoordinator } = require('../../motionProcessing/MotionProcessingCoordinator');
+        const success = motionProcessingCoordinator.startRecording();
+        return { success };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
+    });
+
+    ipcMain.handle('recording:stop', () => {
+      try {
+        const { motionProcessingCoordinator } = require('../../motionProcessing/MotionProcessingCoordinator');
+        const success = motionProcessingCoordinator.stopRecording();
+        return { success };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
+    });
+
+    ipcMain.handle('recording:getState', () => {
+      try {
+        const { motionProcessingCoordinator } = require('../../motionProcessing/MotionProcessingCoordinator');
+        return motionProcessingCoordinator.getRecordingState();
+      } catch (err) {
+        return { isRecording: false, sampleCount: 0, durationMs: 0, startTime: null, error: String(err) };
+      }
+    });
+
+    ipcMain.handle('recording:export', (_e, options?: { interpolated?: boolean; outputPath?: string }) => {
+      try {
+        const { motionProcessingCoordinator } = require('../../motionProcessing/MotionProcessingCoordinator');
+        return motionProcessingCoordinator.exportRecording(options || {});
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
+    });
+
+    ipcMain.handle('recording:clear', () => {
+      try {
+        const { motionProcessingCoordinator } = require('../../motionProcessing/MotionProcessingCoordinator');
+        motionProcessingCoordinator.clearRecording();
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
+    });
   }
 
   // Initialize core services
