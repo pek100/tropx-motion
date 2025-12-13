@@ -59,6 +59,34 @@ export class BLEServiceAdapter implements BLEService {
   private lastScanStart = 0;
   private readonly MIN_RESTART_INTERVAL_MS = 700;
 
+  // Track which devices have been synced this session (cleared on app restart)
+  private syncedThisSession: Set<DeviceID> = new Set();
+
+  /**
+   * Check if any connected device needs sync before streaming
+   * Returns device IDs that need sync (not synced this session)
+   */
+  getDevicesNeedingSync(): DeviceID[] {
+    const connectedDevices = this.bleService.getConnectedDevices();
+    const needSync: DeviceID[] = [];
+
+    for (const device of connectedDevices) {
+      const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(device.id);
+      if (storeDeviceId && !this.syncedThisSession.has(storeDeviceId)) {
+        needSync.push(storeDeviceId);
+      }
+    }
+
+    return needSync;
+  }
+
+  /**
+   * Check if sync is required before streaming can start
+   */
+  needsSyncBeforeStreaming(): boolean {
+    return this.getDevicesNeedingSync().length > 0;
+  }
+
   constructor(bleService: IBleService) {
     this.bleService = bleService;
     this.setupStateManagerEventListeners();
@@ -488,6 +516,8 @@ export class BLEServiceAdapter implements BLEService {
             // CRITICAL: Transition from SYNCING -> SYNCED
             try {
               UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.SYNCED);
+              // Mark device as synced this session (for auto-sync check before streaming)
+              this.syncedThisSession.add(storeDeviceId);
               // Keep syncProgress at 100 - will be cleared at next sync start
               console.log(`✅ [SYNC] Device ${deviceInfo.name} → SYNCED state (offset: ${result.finalOffset.toFixed(2)}ms)`);
               // Immediately broadcast so UI updates per-device (force bypasses throttle)

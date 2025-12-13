@@ -90,6 +90,12 @@ function AppContent() {
   const [streamElapsedTime, setStreamElapsedTime] = useState(0)
   const [clearChartTrigger, setClearChartTrigger] = useState(0)
   const [isTimerHovered, setIsTimerHovered] = useState(false)
+
+  // Auto-sync before streaming overlay state
+  const [autoSyncOverlay, setAutoSyncOverlay] = useState<'idle' | 'syncing' | 'countdown'>('idle')
+  const [countdownNumber, setCountdownNumber] = useState(3)
+  // Track devices synced this session (client-side, cleared on page refresh)
+  const syncedThisSessionRef = useRef<Set<string>>(new Set())
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   const touchStartY = useRef<number | null>(null)
@@ -385,6 +391,45 @@ function AppContent() {
       return
     }
     if (!isStreaming) {
+      // Check if any connected device needs sync (not synced this session - client-side tracking)
+      const connectedDevices = sortedDevices.filter(d => d.connectionStatus === "connected")
+      const devicesNeedingSync = connectedDevices.filter(d => !syncedThisSessionRef.current.has(d.id))
+
+      if (devicesNeedingSync.length > 0) {
+        // Show sync overlay and auto-sync before streaming
+        setAutoSyncOverlay('syncing')
+        setIsValidatingState(true)
+
+        try {
+          // Run sync
+          await syncAllDevices()
+
+          // Mark all connected devices as synced this session
+          connectedDevices.forEach(d => syncedThisSessionRef.current.add(d.id))
+
+          // Sync complete - start streaming immediately
+          setAutoSyncOverlay('idle')
+          setHasStartedStreaming(true)
+          setStreamStartTime(Date.now())
+          setStreamElapsedTime(0)
+          setClearChartTrigger((prev) => prev + 1)
+          const sessionId = `session_${Date.now()}`
+          const result = await startStreaming(sessionId, "test_exercise", 1)
+          setIsValidatingState(false)
+          if (!result.success) {
+            setHasStartedStreaming(false)
+            setStreamStartTime(null)
+            toast({ title: "Cannot Start Streaming", description: (result as any).error || "Failed", variant: "destructive", duration: 6000 })
+          }
+        } catch (error) {
+          setAutoSyncOverlay('idle')
+          setIsValidatingState(false)
+          toast({ title: "Sync Failed", description: error instanceof Error ? error.message : "Sync failed before streaming", variant: "destructive", duration: 4000 })
+        }
+        return
+      }
+
+      // No sync needed - start streaming immediately
       setIsValidatingState(true)
       setHasStartedStreaming(true)
       setStreamStartTime(Date.now())
@@ -890,6 +935,69 @@ function AppContent() {
                   </Suspense>
                 ) : (
                   <>
+                    {/* Auto-sync overlay for chart area */}
+                    {autoSyncOverlay !== 'idle' && (
+                      <>
+                        <div className="absolute inset-0 bg-white/60 z-20 pointer-events-none rounded-3xl" />
+                        <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none">
+                          <div className="flex flex-col items-center gap-2">
+                            <div
+                              className="py-4 px-8 rounded-full backdrop-blur-md shadow-lg relative overflow-hidden"
+                              style={{
+                                backgroundColor: "rgba(147, 51, 234, 0.25)",
+                                color: "#7c3aed",
+                                border: "2px solid rgba(147, 51, 234, 0.3)",
+                              }}
+                            >
+                              {/* Progress border overlay */}
+                              {autoSyncOverlay === 'syncing' && (
+                                <div
+                                  className="absolute inset-0 rounded-full pointer-events-none"
+                                  style={{
+                                    background: (() => {
+                                      const syncingDevices = sortedDevices.filter(d =>
+                                        d.connectionStatus === "connected" || d.connectionStatus === "synchronizing"
+                                      )
+                                      if (syncingDevices.length === 0) return 'none'
+                                      const totalProgress = syncingDevices.reduce((sum, d) => {
+                                        const deviceProgress = syncProgress[d.id]?.progress
+                                        return sum + (deviceProgress ?? 0)
+                                      }, 0)
+                                      const percent = Math.round(totalProgress / syncingDevices.length)
+                                      // Conic gradient for circular progress border
+                                      return `conic-gradient(#9333ea ${percent * 3.6}deg, transparent ${percent * 3.6}deg)`
+                                    })(),
+                                    mask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                                    maskComposite: 'xor',
+                                    WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                                    WebkitMaskComposite: 'xor',
+                                    padding: '4px',
+                                  }}
+                                />
+                              )}
+                              <p className="text-base font-medium whitespace-nowrap relative z-10">
+                                Syncing device clocks...
+                              </p>
+                            </div>
+                            {autoSyncOverlay === 'syncing' && (
+                              <span className="text-sm font-medium" style={{ color: "#7c3aed" }}>
+                                {(() => {
+                                  const syncingDevices = sortedDevices.filter(d =>
+                                    d.connectionStatus === "connected" || d.connectionStatus === "synchronizing"
+                                  )
+                                  if (syncingDevices.length === 0) return '0%'
+                                  const totalProgress = syncingDevices.reduce((sum, d) => {
+                                    const deviceProgress = syncProgress[d.id]?.progress
+                                    return sum + (deviceProgress ?? 0)
+                                  }, 0)
+                                  return `${Math.round(totalProgress / syncingDevices.length)}%`
+                                })()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
                     {isStreaming || hasStartedStreaming ? (
                       <KneeAreaChart
                         leftKnee={leftKneeData}
