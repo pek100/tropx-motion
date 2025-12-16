@@ -100,7 +100,7 @@ export function MiniRecordingChart({
     const linePoints = data.map((val, i) => {
       const x = padding + i * xStep;
       const normalized = (val - rangeMin) / range;
-      const y = padding + (1 - normalized) * chartHeight; // Flip so higher values are at top
+      const y = padding + normalized * chartHeight;
       return { x, y };
     });
 
@@ -109,7 +109,7 @@ export function MiniRecordingChart({
       .join(' ');
 
     // Build area path (line + close to zero baseline)
-    const baselineY = padding + (1 - (0 - rangeMin) / range) * chartHeight;
+    const baselineY = padding + ((0 - rangeMin) / range) * chartHeight;
     const areaPath = linePath +
       ` L ${(padding + (data.length - 1) * xStep).toFixed(1)} ${baselineY.toFixed(1)} ` +
       `L ${padding} ${baselineY.toFixed(1)} Z`;
@@ -149,9 +149,9 @@ export function MiniRecordingChart({
         {/* Grid line at zero baseline */}
         <line
           x1={padding}
-          y1={padding + (1 - (0 - rangeMin) / range) * chartHeight}
+          y1={padding + ((0 - rangeMin) / range) * chartHeight}
           x2={width - padding}
-          y2={padding + (1 - (0 - rangeMin) / range) * chartHeight}
+          y2={padding + ((0 - rangeMin) / range) * chartHeight}
           stroke="#e5e7eb"
           strokeWidth="0.5"
         />
