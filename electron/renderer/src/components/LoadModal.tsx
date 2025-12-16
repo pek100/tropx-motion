@@ -147,10 +147,10 @@ function RecordingCard({
       onClick={onClick}
       className={cn(
         'relative w-full text-left p-3 rounded-xl transition-all cursor-pointer group',
-        'border',
+        'border-2',
         isSelected
-          ? 'bg-[var(--tropx-hover)] border-[var(--tropx-vibrant)] shadow-sm'
-          : 'bg-white hover:bg-gray-50/80 border-gray-100 hover:border-gray-200'
+          ? 'bg-white border-[var(--tropx-vibrant)] shadow-sm'
+          : 'bg-white hover:bg-gray-50/80 border-transparent hover:border-gray-200'
       )}
     >
       {/* Delete button - top right corner */}
@@ -266,11 +266,8 @@ function SubjectNoteInput({
   };
 
   return (
-    <div className="p-3 bg-violet-50 border border-violet-200 rounded-lg">
-      <div className="flex items-center gap-2 text-xs text-violet-700 mb-2">
-        <MessageSquare className="size-3.5" />
-        <span className="font-medium">Add a note for the owner</span>
-      </div>
+    <div className="space-y-1.5">
+      <Label className="text-xs text-muted-foreground">Leave a note</Label>
       <div className="flex gap-2">
         <input
           type="text"
@@ -278,20 +275,20 @@ function SubjectNoteInput({
           onChange={(e) => setNote(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
           placeholder="Type your note..."
-          className="flex-1 px-3 py-1.5 text-sm border border-violet-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
+          className="flex-1 px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-[var(--tropx-vibrant)] focus:ring-1 focus:ring-[var(--tropx-vibrant)]"
           disabled={isSending}
         />
         <button
           onClick={handleSend}
           disabled={!note.trim() || isSending}
           className={cn(
-            'px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5',
+            'p-1.5 rounded-lg transition-colors',
             note.trim() && !isSending
-              ? 'bg-violet-500 text-white hover:bg-violet-600'
-              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              ? 'text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-hover)]'
+              : 'text-gray-300 cursor-not-allowed'
           )}
         >
-          {isSending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+          {isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
         </button>
       </div>
     </div>
@@ -409,11 +406,13 @@ function RecordingPreview({
       </div>
 
       {/* Chart */}
-      <MiniRecordingChart
-        packedData={previewData}
-        isLoading={isPreviewLoading}
-        height={48}
-      />
+      <div className="min-h-[52px]">
+        <MiniRecordingChart
+          packedData={previewData}
+          isLoading={isPreviewLoading}
+          height={42}
+        />
+      </div>
 
       <Separator />
 

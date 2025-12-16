@@ -89,30 +89,46 @@ export function MiniRecordingChart({
   const maxVal = Math.max(...allValues);
   const range = maxVal - minVal || 1;
 
-  // Generate SVG paths
-  const createPath = (data: number[], color: string) => {
+  // Generate SVG area paths
+  const createAreaPath = (data: number[], color: string, fillColor: string) => {
     const xStep = chartWidth / (data.length - 1 || 1);
-    const pathData = data
-      .map((val, i) => {
-        const x = padding + i * xStep;
-        // Normalize value to chart height (lower values at top, matching main chart)
-        const normalized = (val - minVal) / range;
-        const y = padding + normalized * chartHeight;
-        return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
-      })
+
+    // Build line path
+    const linePoints = data.map((val, i) => {
+      const x = padding + i * xStep;
+      const normalized = (val - minVal) / range;
+      const y = padding + normalized * chartHeight;
+      return { x, y };
+    });
+
+    const linePath = linePoints
+      .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
       .join(' ');
 
+    // Build area path (line + close to bottom)
+    const areaPath = linePath +
+      ` L ${(padding + (data.length - 1) * xStep).toFixed(1)} ${height - padding} ` +
+      `L ${padding} ${height - padding} Z`;
+
     return (
-      <path
-        key={color}
-        d={pathData}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity="0.8"
-      />
+      <g key={color}>
+        {/* Area fill */}
+        <path
+          d={areaPath}
+          fill={fillColor}
+          opacity="0.15"
+        />
+        {/* Line stroke */}
+        <path
+          d={linePath}
+          fill="none"
+          stroke={color}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity="0.8"
+        />
+      </g>
     );
   };
 
@@ -136,14 +152,16 @@ export function MiniRecordingChart({
           strokeWidth="0.5"
         />
         {/* Left knee (coral/red) */}
-        {createPath(
+        {createAreaPath(
           points.map((p) => p.left),
-          'var(--tropx-coral, #f97066)'
+          'var(--tropx-coral, #f97066)',
+          '#f97066'
         )}
         {/* Right knee (blue) */}
-        {createPath(
+        {createAreaPath(
           points.map((p) => p.right),
-          'var(--tropx-sky, #60a5fa)'
+          'var(--tropx-sky, #60a5fa)',
+          '#60a5fa'
         )}
       </svg>
     </div>

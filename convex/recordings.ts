@@ -115,6 +115,25 @@ export const createChunk = mutation({
       createdAt: now,
     });
 
+    // Notify subject if they are not the owner (only on first chunk)
+    if (args.chunkIndex === 0 && args.subjectId && args.subjectId !== user._id) {
+      const title = args.tags?.[0] || "Untitled Recording";
+      await ctx.db.insert("notifications", {
+        userId: args.subjectId,
+        type: "added_as_subject",
+        title: "You were added to a recording",
+        body: `${user.name ?? "Someone"} recorded "${title}" with you as the subject`,
+        data: {
+          sessionId: args.sessionId,
+          ownerId: user._id,
+          ownerName: user.name,
+          recordingTitle: title,
+        },
+        read: false,
+        createdAt: now,
+      });
+    }
+
     return chunkId;
   },
 });
@@ -811,6 +830,26 @@ export const updateSession = mutation({
       const currentHistory = firstChunk.modificationHistory ?? [];
       updates.modificationHistory = [...currentHistory, historyEntry];
       updates.modifiedAt = now;
+
+      // Check if subject was changed to a different user (not the owner)
+      const subjectDiff = diffs.find(d => d.field === "subjectId");
+      if (subjectDiff && args.subjectId && args.subjectId !== user._id && args.subjectId !== firstChunk.subjectId) {
+        const title = args.tags?.[0] || firstChunk.tags?.[0] || "Untitled Recording";
+        await ctx.db.insert("notifications", {
+          userId: args.subjectId,
+          type: "added_as_subject",
+          title: "You were added to a recording",
+          body: `${user.name ?? "Someone"} added you as the subject of "${title}"`,
+          data: {
+            sessionId: args.sessionId,
+            ownerId: user._id,
+            ownerName: user.name,
+            recordingTitle: title,
+          },
+          read: false,
+          createdAt: now,
+        });
+      }
     }
 
     await ctx.db.patch(firstChunk._id, updates);
