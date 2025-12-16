@@ -28,6 +28,8 @@ import {
   LucideIcon,
 } from "lucide-react";
 import { cn, formatTimeAgo } from "@/lib/utils";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -251,115 +253,162 @@ function GenericNotificationItem({
   const ownerName = notification.data?.ownerName as string | undefined;
   const recordingTitle = notification.data?.recordingTitle as string | undefined;
 
-  return (
-    <div
-      className={cn(
-        "p-4 transition-colors border-b border-gray-100 last:border-b-0",
-        notification.read ? "bg-white" : "bg-blue-50/30"
-      )}
-    >
-      <div className="flex gap-3">
-        {/* Avatar or Icon */}
-        {isAddedAsSubject && ownerImage ? (
-          <img
-            src={ownerImage}
-            alt={ownerName || ""}
-            className="size-10 rounded-full object-cover flex-shrink-0"
-          />
-        ) : (
-          <div
-            className={cn(
-              "size-10 rounded-full flex items-center justify-center flex-shrink-0",
-              template.bgColor
-            )}
-          >
-            <Icon className={cn("size-5", template.iconColor)} />
-          </div>
+  // Compact layout for ADDED_AS_SUBJECT
+  if (isAddedAsSubject) {
+    return (
+      <div
+        className={cn(
+          "px-3 py-2.5 flex items-center gap-2.5 border-b border-gray-100 last:border-b-0 transition-all hover:bg-gray-50/50",
+          notification.read ? "bg-white" : "bg-orange-50/30"
         )}
+      >
+        {/* Avatar with badge */}
+        <div className="relative flex-shrink-0">
+          <Avatar className="size-8">
+            <AvatarImage src={ownerImage} alt={ownerName || ""} />
+            <AvatarFallback className="bg-orange-100 text-orange-600 text-xs">
+              {(ownerName || "?")[0].toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <div className="absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full bg-orange-500 flex items-center justify-center ring-1.5 ring-white">
+            <Activity className="size-2 text-white" />
+          </div>
+        </div>
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          {isAddedAsSubject ? (
-            // Minimal style for added_as_subject (like invite)
-            <>
-              <p className={cn(
-                "text-sm",
-                notification.read ? "text-[var(--tropx-shadow)]" : "text-[var(--tropx-dark)]"
-              )}>
-                <span className="font-medium">{ownerName || "Someone"}</span>{" "}
-                added you to a recording
-                {recordingTitle && (
-                  <span className="text-[var(--tropx-shadow)]">
-                    {" "}&ldquo;{recordingTitle}&rdquo;
-                  </span>
-                )}
-              </p>
-              <p className="text-xs text-gray-400 mt-1">
-                {formatTimeAgo(notification.createdAt)}
-              </p>
-            </>
-          ) : (
-            // Default style for other notification types
-            <>
-              <p
-                className={cn(
-                  "text-sm",
-                  notification.read
-                    ? "text-[var(--tropx-shadow)]"
-                    : "text-[var(--tropx-dark)] font-medium"
-                )}
-              >
-                {notification.title}
-              </p>
-              <p className="text-xs text-[var(--tropx-shadow)] mt-0.5 line-clamp-2">
-                {notification.body}
-              </p>
-              <p className="text-xs text-gray-400 mt-1">
-                {formatTimeAgo(notification.createdAt)}
-              </p>
-            </>
-          )}
+          <p className={cn(
+            "text-xs leading-tight",
+            notification.read ? "text-[var(--tropx-shadow)]" : "text-[var(--tropx-dark)]"
+          )}>
+            <span className="font-medium">{ownerName || "Someone"}</span>
+            {" "}added you to{" "}
+            {recordingTitle ? (
+              <span className="text-[var(--tropx-shadow)]">&ldquo;{recordingTitle}&rdquo;</span>
+            ) : (
+              "a recording"
+            )}
+          </p>
+          <p className="text-[10px] text-gray-400 mt-0.5">
+            {formatTimeAgo(notification.createdAt)}
+          </p>
         </div>
 
         {/* Actions */}
-        <div className="flex-shrink-0 flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-shrink-0">
           {hasViewAction && (
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={(e) => {
                 e.stopPropagation();
                 onViewRecording(sessionId);
                 onMarkRead(notification._id);
               }}
-              className="px-2.5 py-1 rounded-full bg-[var(--tropx-vibrant)]/10 text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/20 transition-colors text-xs font-medium flex items-center gap-1 cursor-pointer"
-              title="View recording"
+              className="h-7 px-2 text-xs text-[var(--tropx-vibrant)] hover:text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/10"
             >
               <Eye className="size-3" />
               View
-            </button>
+            </Button>
           )}
-          {!notification.read && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onMarkRead(notification._id);
-              }}
-              className="p-1.5 rounded-full hover:bg-gray-100 transition-colors text-gray-400 hover:text-green-500 cursor-pointer"
-              title="Mark as read"
-            >
-              <Check className="size-3.5" />
-            </button>
-          )}
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={(e) => {
               e.stopPropagation();
               onDelete(notification._id);
             }}
-            className="p-1.5 rounded-full hover:bg-gray-100 transition-colors text-gray-400 hover:text-red-500 cursor-pointer"
+            className="size-6 text-gray-400 hover:text-red-500 hover:bg-red-50"
             title="Delete"
           >
-            <X className="size-3.5" />
-          </button>
+            <X className="size-3" />
+          </Button>
         </div>
+      </div>
+    );
+  }
+
+  // Default layout for other notification types
+  return (
+    <div
+      className={cn(
+        "px-3 py-2.5 flex items-start gap-2.5 border-b border-gray-100 last:border-b-0 transition-all hover:bg-gray-50/50",
+        notification.read ? "bg-white" : "bg-blue-50/30"
+      )}
+    >
+      {/* Icon */}
+      <div
+        className={cn(
+          "size-8 rounded-full flex items-center justify-center flex-shrink-0",
+          template.bgColor
+        )}
+      >
+        <Icon className={cn("size-4", template.iconColor)} />
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <p
+          className={cn(
+            "text-xs leading-tight",
+            notification.read
+              ? "text-[var(--tropx-shadow)]"
+              : "text-[var(--tropx-dark)] font-medium"
+          )}
+        >
+          {notification.title}
+        </p>
+        <p className="text-[10px] text-[var(--tropx-shadow)] mt-0.5 line-clamp-2">
+          {notification.body}
+        </p>
+        <p className="text-[10px] text-gray-400 mt-0.5">
+          {formatTimeAgo(notification.createdAt)}
+        </p>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-1 flex-shrink-0">
+        {hasViewAction && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onViewRecording(sessionId);
+              onMarkRead(notification._id);
+            }}
+            className="h-7 px-2 text-xs text-[var(--tropx-vibrant)] hover:text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/10"
+          >
+            <Eye className="size-3" />
+            View
+          </Button>
+        )}
+        {!notification.read && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMarkRead(notification._id);
+            }}
+            className="size-6 text-gray-400 hover:text-green-500 hover:bg-green-50"
+            title="Mark as read"
+          >
+            <Check className="size-3" />
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(notification._id);
+          }}
+          className="size-6 text-gray-400 hover:text-red-500 hover:bg-red-50"
+          title="Delete"
+        >
+          <X className="size-3" />
+        </Button>
       </div>
     </div>
   );
