@@ -83,11 +83,14 @@ export function MiniRecordingChart({
   const chartWidth = width - padding * 2;
   const chartHeight = height - padding * 2;
 
-  // Find min/max for normalization
+  // Find max for normalization (baseline is 0)
   const allValues = points.flatMap((p) => [p.left, p.right]);
-  const minVal = Math.min(...allValues);
-  const maxVal = Math.max(...allValues);
-  const range = maxVal - minVal || 1;
+  const maxVal = Math.max(...allValues, 0);
+  const minVal = Math.min(...allValues, 0);
+  // Ensure we include 0 in the range
+  const rangeMax = Math.max(maxVal, 0);
+  const rangeMin = Math.min(minVal, 0);
+  const range = rangeMax - rangeMin || 1;
 
   // Generate SVG area paths
   const createAreaPath = (data: number[], color: string, fillColor: string) => {
@@ -96,8 +99,8 @@ export function MiniRecordingChart({
     // Build line path
     const linePoints = data.map((val, i) => {
       const x = padding + i * xStep;
-      const normalized = (val - minVal) / range;
-      const y = padding + normalized * chartHeight;
+      const normalized = (val - rangeMin) / range;
+      const y = padding + (1 - normalized) * chartHeight; // Flip so higher values are at top
       return { x, y };
     });
 
@@ -105,10 +108,11 @@ export function MiniRecordingChart({
       .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
       .join(' ');
 
-    // Build area path (line + close to bottom)
+    // Build area path (line + close to zero baseline)
+    const baselineY = padding + (1 - (0 - rangeMin) / range) * chartHeight;
     const areaPath = linePath +
-      ` L ${(padding + (data.length - 1) * xStep).toFixed(1)} ${height - padding} ` +
-      `L ${padding} ${height - padding} Z`;
+      ` L ${(padding + (data.length - 1) * xStep).toFixed(1)} ${baselineY.toFixed(1)} ` +
+      `L ${padding} ${baselineY.toFixed(1)} Z`;
 
     return (
       <g key={color}>
@@ -142,12 +146,12 @@ export function MiniRecordingChart({
         className="w-full h-full"
         preserveAspectRatio="none"
       >
-        {/* Grid line at center */}
+        {/* Grid line at zero baseline */}
         <line
           x1={padding}
-          y1={height / 2}
+          y1={padding + (1 - (0 - rangeMin) / range) * chartHeight}
           x2={width - padding}
-          y2={height / 2}
+          y2={padding + (1 - (0 - rangeMin) / range) * chartHeight}
           stroke="#e5e7eb"
           strokeWidth="0.5"
         />
