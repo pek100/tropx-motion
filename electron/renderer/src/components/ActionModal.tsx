@@ -31,6 +31,8 @@ interface ActionModalProps {
   recordingSource?: 'app' | 'csv'
   onLoadSession?: (sessionId: string) => void
   onImportCSV?: () => void
+  // Pre-select session in LoadModal (from notification)
+  initialLoadSessionId?: string
 }
 
 export function ActionModal({
@@ -47,6 +49,7 @@ export function ActionModal({
   recordingSource = 'app',
   onLoadSession,
   onImportCSV,
+  initialLoadSessionId,
 }: ActionModalProps) {
   // For patient-name, use PatientSearchModal directly
   if (actionId === 'patient-name') {
@@ -106,6 +109,7 @@ export function ActionModal({
         onOpenChange={onOpenChange}
         onLoadSession={onLoadSession ?? (() => {})}
         onImportCSV={onImportCSV}
+        initialSessionId={initialLoadSessionId}
       />
     )
   }

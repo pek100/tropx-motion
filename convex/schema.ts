@@ -34,6 +34,7 @@ export const NOTIFICATION_TYPES = {
   SUBJECT_NOTE: "subject_note",
   RECORDING_SHARED: "recording_shared",
   INVITE_ACCEPTED: "invite_accepted",
+  ADDED_AS_SUBJECT: "added_as_subject",
 } as const;
 
 // Recording source types (system tags)

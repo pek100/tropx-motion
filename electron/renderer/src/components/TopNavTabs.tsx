@@ -11,7 +11,12 @@ interface NavItem {
   icon: React.ReactNode
 }
 
-export function TopNavTabs() {
+interface TopNavTabsProps {
+  /** Callback when user clicks "View" on a recording notification */
+  onViewRecording?: (sessionId: string) => void;
+}
+
+export function TopNavTabs({ onViewRecording }: TopNavTabsProps = {}) {
   const [activeTab, setActiveTab] = useState('record')
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [profilePanelOpen, setProfilePanelOpen] = useState(false)
@@ -183,6 +188,10 @@ export function TopNavTabs() {
               }
             }}
             centerDropdown
+            onViewRecording={(sessionId) => {
+              closeAllPanels()
+              onViewRecording?.(sessionId)
+            }}
           />
 
           {/* Profile Panel - centered under the pill (w-72 = 18rem, half = 9rem = ml-[-9rem]) */}

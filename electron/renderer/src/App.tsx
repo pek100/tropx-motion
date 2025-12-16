@@ -174,6 +174,7 @@ function AppContent() {
 
   // Action modal state
   const [activeActionModal, setActiveActionModal] = useState<ActionId | null>(null)
+  const [initialLoadSessionId, setInitialLoadSessionId] = useState<string | undefined>()
 
   // Storage settings modal state
   const [isStorageSettingsOpen, setIsStorageSettingsOpen] = useState(false)
@@ -1004,7 +1005,14 @@ function AppContent() {
           )}
 
           {/* Top Navigation Tabs - non-compact only */}
-          {!isCompact && <TopNavTabs />}
+          {!isCompact && (
+            <TopNavTabs
+              onViewRecording={(sessionId) => {
+                setInitialLoadSessionId(sessionId)
+                setActiveActionModal('load')
+              }}
+            />
+          )}
 
           <div className={isCompact ? "flex-1 flex relative" : "flex-1 flex items-center justify-center px-8 relative"}>
             <div className={isCompact ? "flex gap-0 w-full h-full" : "flex gap-6 w-[90%]"}>
@@ -1384,7 +1392,13 @@ function AppContent() {
         <ActionModal
           actionId={activeActionModal}
           open={activeActionModal !== null}
-          onOpenChange={(open) => !open && setActiveActionModal(null)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setActiveActionModal(null)
+              setInitialLoadSessionId(undefined)
+            }
+          }}
+          initialLoadSessionId={initialLoadSessionId}
           selectedPatientId={selectedPatient?.userId as any}
           selectedPatientName={selectedPatient?.name}
           selectedPatientImage={selectedPatient?.image}

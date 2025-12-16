@@ -23,6 +23,8 @@ import {
   MessageSquare,
   Share2,
   CheckCircle,
+  Activity,
+  Eye,
   LucideIcon,
 } from "lucide-react";
 import { cn, formatTimeAgo } from "@/lib/utils";
@@ -95,6 +97,12 @@ const NOTIFICATION_TEMPLATES: Record<string, NotificationTemplate> = {
     icon: CheckCircle,
     iconColor: "text-emerald-500",
     bgColor: "bg-emerald-50",
+  },
+  // Added as subject to a recording
+  [NOTIFICATION_TYPES.ADDED_AS_SUBJECT]: {
+    icon: Activity,
+    iconColor: "text-orange-500",
+    bgColor: "bg-orange-50",
   },
 };
 
@@ -225,75 +233,149 @@ function GenericNotificationItem({
   notification,
   onMarkRead,
   onDelete,
+  onViewRecording,
 }: {
   notification: GenericNotification;
   onMarkRead: (id: Id<"notifications">) => void;
   onDelete: (id: Id<"notifications">) => void;
+  onViewRecording?: (sessionId: string) => void;
 }) {
   const template = getTemplate(notification.type);
   const Icon = template.icon;
+  const sessionId = notification.data?.sessionId as string | undefined;
+  const hasViewAction = sessionId && onViewRecording;
+
+  // Special minimal layout for ADDED_AS_SUBJECT (like invite notifications)
+  const isAddedAsSubject = notification.type === NOTIFICATION_TYPES.ADDED_AS_SUBJECT;
+  const ownerImage = notification.data?.ownerImage as string | undefined;
+  const ownerName = notification.data?.ownerName as string | undefined;
+  const recordingTitle = notification.data?.recordingTitle as string | undefined;
 
   return (
     <div
       className={cn(
-        "flex items-start gap-3 p-4 border-b border-gray-100 last:border-b-0 transition-colors",
+        "p-4 transition-colors border-b border-gray-100 last:border-b-0",
         notification.read ? "bg-white" : "bg-blue-50/30"
       )}
     >
-      {/* Icon */}
-      <div
-        className={cn(
-          "flex-shrink-0 size-10 rounded-full flex items-center justify-center",
-          template.bgColor
+      <div className="flex gap-3">
+        {/* Avatar or Icon */}
+        {isAddedAsSubject && ownerImage ? (
+          <img
+            src={ownerImage}
+            alt={ownerName || ""}
+            className="size-10 rounded-full object-cover flex-shrink-0"
+          />
+        ) : (
+          <div
+            className={cn(
+              "size-10 rounded-full flex items-center justify-center flex-shrink-0",
+              template.bgColor
+            )}
+          >
+            <Icon className={cn("size-5", template.iconColor)} />
+          </div>
         )}
-      >
-        <Icon className={cn("size-5", template.iconColor)} />
-      </div>
 
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        <p
-          className={cn(
-            "text-sm",
-            notification.read
-              ? "text-[var(--tropx-shadow)]"
-              : "text-[var(--tropx-dark)] font-medium"
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          {isAddedAsSubject ? (
+            // Minimal style for added_as_subject (like invite)
+            <>
+              <p className={cn(
+                "text-sm",
+                notification.read ? "text-[var(--tropx-shadow)]" : "text-[var(--tropx-dark)]"
+              )}>
+                <span className="font-medium">{ownerName || "Someone"}</span>{" "}
+                added you to a recording
+                {recordingTitle && (
+                  <span className="text-[var(--tropx-shadow)]">
+                    {" "}&ldquo;{recordingTitle}&rdquo;
+                  </span>
+                )}
+              </p>
+              <div className="flex items-center gap-2 mt-1">
+                <p className="text-xs text-gray-400">
+                  {formatTimeAgo(notification.createdAt)}
+                </p>
+                {hasViewAction && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onViewRecording(sessionId);
+                      onMarkRead(notification._id);
+                    }}
+                    className="flex items-center gap-1 text-xs text-[var(--tropx-vibrant)] hover:underline cursor-pointer"
+                  >
+                    <Eye className="size-3" />
+                    View
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            // Default style for other notification types
+            <>
+              <p
+                className={cn(
+                  "text-sm",
+                  notification.read
+                    ? "text-[var(--tropx-shadow)]"
+                    : "text-[var(--tropx-dark)] font-medium"
+                )}
+              >
+                {notification.title}
+              </p>
+              <p className="text-xs text-[var(--tropx-shadow)] mt-0.5 line-clamp-2">
+                {notification.body}
+              </p>
+              <div className="flex items-center gap-2 mt-1">
+                <p className="text-xs text-gray-400">
+                  {formatTimeAgo(notification.createdAt)}
+                </p>
+                {hasViewAction && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onViewRecording(sessionId);
+                      onMarkRead(notification._id);
+                    }}
+                    className="flex items-center gap-1 text-xs text-[var(--tropx-vibrant)] hover:underline cursor-pointer"
+                  >
+                    <Eye className="size-3" />
+                    View
+                  </button>
+                )}
+              </div>
+            </>
           )}
-        >
-          {notification.title}
-        </p>
-        <p className="text-xs text-[var(--tropx-shadow)] mt-0.5 line-clamp-2">
-          {notification.body}
-        </p>
-        <p className="text-xs text-gray-400 mt-1">
-          {formatTimeAgo(notification.createdAt)}
-        </p>
-      </div>
+        </div>
 
-      {/* Actions */}
-      <div className="flex-shrink-0 flex items-center gap-1">
-        {!notification.read && (
+        {/* Actions */}
+        <div className="flex-shrink-0 flex items-center gap-1">
+          {!notification.read && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onMarkRead(notification._id);
+              }}
+              className="p-1.5 rounded-full hover:bg-gray-100 transition-colors text-gray-400 hover:text-green-500 cursor-pointer"
+              title="Mark as read"
+            >
+              <Check className="size-3.5" />
+            </button>
+          )}
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onMarkRead(notification._id);
+              onDelete(notification._id);
             }}
-            className="p-1.5 rounded-full hover:bg-gray-100 transition-colors text-gray-400 hover:text-green-500 cursor-pointer"
-            title="Mark as read"
+            className="p-1.5 rounded-full hover:bg-gray-100 transition-colors text-gray-400 hover:text-red-500 cursor-pointer"
+            title="Delete"
           >
-            <Check className="size-3.5" />
+            <X className="size-3.5" />
           </button>
-        )}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(notification._id);
-          }}
-          className="p-1.5 rounded-full hover:bg-gray-100 transition-colors text-gray-400 hover:text-red-500 cursor-pointer"
-          title="Delete"
-        >
-          <X className="size-3.5" />
-        </button>
+        </div>
       </div>
     </div>
   );
@@ -310,12 +392,15 @@ interface NotificationBellProps {
   isOpen?: boolean;
   /** Callback when open state changes (required if isOpen is provided) */
   onOpenChange?: (open: boolean) => void;
+  /** Callback when user clicks "View" on a recording notification */
+  onViewRecording?: (sessionId: string) => void;
 }
 
 export function NotificationBell({
   centerDropdown = false,
   isOpen: controlledIsOpen,
   onOpenChange,
+  onViewRecording,
 }: NotificationBellProps) {
   const [internalIsOpen, setInternalIsOpen] = useState(false);
   const [processingInviteId, setProcessingInviteId] = useState<Id<"invites"> | null>(null);
@@ -533,6 +618,7 @@ export function NotificationBell({
                     notification={item.data}
                     onMarkRead={handleMarkRead}
                     onDelete={handleDeleteNotification}
+                    onViewRecording={onViewRecording}
                   />
                 );
               }

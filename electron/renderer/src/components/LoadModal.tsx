@@ -77,6 +77,8 @@ interface LoadModalProps {
   onOpenChange: (open: boolean) => void;
   onLoadSession: (sessionId: string) => void;
   onImportCSV?: () => void;
+  /** Pre-select a session when modal opens */
+  initialSessionId?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -562,7 +564,7 @@ function RecordingPreview({
       )}
 
       {/* Spacer */}
-      <div className="flex-1 min-h-2" />
+      <div className="flex-1 min-h-4" />
 
       {/* Delete confirmation */}
       {showDeleteConfirm && (
@@ -673,6 +675,7 @@ export function LoadModal({
   onOpenChange,
   onLoadSession,
   onImportCSV,
+  initialSessionId,
 }: LoadModalProps) {
   // State
   const [searchInput, setSearchInput] = useState('');
@@ -768,14 +771,17 @@ export function LoadModal({
       setSelectedSubjectId(null);
       setSelectedSubjectName(null);
       setSelectedSubjectImage(undefined);
-      setSelectedSessionId(null);
+      // Pre-select session if initialSessionId provided
+      setSelectedSessionId(initialSessionId ?? null);
       setCursor(null);
       setIsPatientSearchOpen(false);
       setPatientSearchMode('filter');
       setEditSubject(undefined);
-      setTimeout(() => searchInputRef.current?.focus(), 100);
+      if (!initialSessionId) {
+        setTimeout(() => searchInputRef.current?.focus(), 100);
+      }
     }
-  }, [open]);
+  }, [open, initialSessionId]);
 
   // Reset edit subject when session changes
   useEffect(() => {
@@ -893,7 +899,7 @@ export function LoadModal({
           {/* Main Modal Content */}
           <DialogPrimitive.Content
             className={cn(
-              'w-full max-w-3xl h-[80vh] max-h-[650px]',
+              'w-full max-w-3xl h-[85vh] max-h-[720px]',
               'bg-white rounded-2xl shadow-lg border border-gray-100',
               'flex flex-col overflow-hidden',
               'pointer-events-auto'
