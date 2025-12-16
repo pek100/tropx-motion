@@ -79,6 +79,13 @@ export interface ElectronAPI {
         getState: () => Promise<{ isRecording: boolean; sampleCount: number; durationMs: number; startTime: number | null; error?: string }>;
         export: (options?: { interpolated?: boolean; outputPath?: string }) => Promise<{ success: boolean; filePath?: string; fileName?: string; sampleCount?: number; error?: string }>;
         clear: () => Promise<{ success: boolean; error?: string }>;
+        getSamples: () => Promise<{
+            success: boolean;
+            samples: Array<{ t: number; lq: { w: number; x: number; y: number; z: number } | null; rq: { w: number; x: number; y: number; z: number } | null }>;
+            metadata: { startTime: number; endTime: number; sampleCount: number; targetHz: number } | null;
+            sampleCount: number;
+            error?: string;
+        }>;
     };
 }
 
@@ -156,6 +163,7 @@ const electronAPI: ElectronAPI = {
         getState: () => ipcRenderer.invoke('recording:getState'),
         export: (options) => ipcRenderer.invoke('recording:export', options),
         clear: () => ipcRenderer.invoke('recording:clear'),
+        getSamples: () => ipcRenderer.invoke('recording:getSamples'),
     },
 };
 

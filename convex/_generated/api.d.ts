@@ -15,7 +15,10 @@ import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as invites from "../invites.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as notifications from "../notifications.js";
+import type * as rawRecordings from "../rawRecordings.js";
 import type * as recordings from "../recordings.js";
+import type * as tags from "../tags.js";
 import type * as users from "../users.js";
 
 import type {
@@ -32,7 +35,10 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   invites: typeof invites;
   "lib/auth": typeof lib_auth;
+  notifications: typeof notifications;
+  rawRecordings: typeof rawRecordings;
   recordings: typeof recordings;
+  tags: typeof tags;
   users: typeof users;
 }>;
 

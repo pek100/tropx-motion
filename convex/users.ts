@@ -166,6 +166,7 @@ export const getContacts = query({
           userId: contact.userId,
           alias: contact.alias,
           addedAt: contact.addedAt,
+          starred: contact.starred ?? false,
           // User data
           name: contactUser.name,
           email: contactUser.email,
@@ -291,6 +292,31 @@ export const removeContact = mutation({
 
     await ctx.db.patch(user._id, { contacts: updatedContacts });
     return user._id;
+  },
+});
+
+// Toggle contact starred status
+export const toggleContactStar = mutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+
+    const contactIndex = user.contacts.findIndex(
+      (c) => c.userId === args.userId
+    );
+    if (contactIndex === -1) {
+      throw new Error("Contact not found");
+    }
+
+    const updatedContacts = [...user.contacts];
+    const currentStarred = updatedContacts[contactIndex].starred ?? false;
+    updatedContacts[contactIndex] = {
+      ...updatedContacts[contactIndex],
+      starred: !currentStarred,
+    };
+
+    await ctx.db.patch(user._id, { contacts: updatedContacts });
+    return !currentStarred; // Return new starred state
   },
 });
 

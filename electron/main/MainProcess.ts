@@ -572,37 +572,42 @@ export class MainProcess {
     // OAuth handlers
     ipcMain.handle('auth:signInWithGoogle', async () => {
       try {
+        console.log('[MainProcess] auth:signInWithGoogle called');
         const result = await oauthHandler.signInWithGoogle();
+        console.log('[MainProcess] OAuth result:', { success: result.success, hasTokens: !!result.tokens, error: result.error });
 
         // If we got tokens from the BrowserWindow, inject them into the main window
         if (result.success && result.tokens && this.mainWindow) {
-          const convexUrl = process.env.VITE_CONVEX_URL || 'https://tough-anteater-529.convex.cloud';
-          // Create the storage key (same format Convex Auth uses)
-          const sanitizedUrl = convexUrl.replace(/[^a-zA-Z0-9]/g, '');
-
           console.log('[MainProcess] Injecting auth tokens into main window');
+          console.log('[MainProcess] JWT length:', result.tokens.jwt?.length);
+          console.log('[MainProcess] RefreshToken length:', result.tokens.refreshToken?.length);
+
+          // Try both namespaced and non-namespaced keys to ensure Convex finds them
+          const convexUrl = process.env.VITE_CONVEX_URL || 'https://tough-anteater-529.convex.cloud';
+          const namespace = convexUrl.replace(/[^a-zA-Z0-9]/g, '');
 
           await this.mainWindow.webContents.executeJavaScript(`
             (function() {
-              const jwtKey = '__convexAuthJWT_${sanitizedUrl}';
-              const refreshKey = '__convexAuthRefreshToken_${sanitizedUrl}';
+              const jwt = ${JSON.stringify(result.tokens.jwt)};
+              const refreshToken = ${JSON.stringify(result.tokens.refreshToken)};
 
-              localStorage.setItem(jwtKey, ${JSON.stringify(result.tokens.jwt)});
-              localStorage.setItem(refreshKey, ${JSON.stringify(result.tokens.refreshToken)});
+              // Set both namespaced and non-namespaced keys
+              // Non-namespaced (default Convex Auth)
+              localStorage.setItem('__convexAuthJWT', jwt);
+              localStorage.setItem('__convexAuthRefreshToken', refreshToken);
+
+              // Namespaced (in case Convex Auth uses URL-based namespace)
+              localStorage.setItem('__convexAuthJWT_${namespace}', jwt);
+              localStorage.setItem('__convexAuthRefreshToken_${namespace}', refreshToken);
 
               console.log('[Auth] Tokens injected into localStorage');
-
-              // Trigger a storage event to notify Convex client
-              window.dispatchEvent(new StorageEvent('storage', {
-                key: jwtKey,
-                newValue: ${JSON.stringify(result.tokens.jwt)}
-              }));
+              console.log('[Auth] Keys set: __convexAuthJWT, __convexAuthJWT_${namespace}');
+              console.log('[Auth] JWT length:', jwt.length);
             })()
           `);
 
-          // Force reload to pick up the new auth state
-          console.log('[MainProcess] Reloading main window to apply auth');
-          this.mainWindow.webContents.reload();
+          console.log('[MainProcess] Auth tokens injected - AuthModal will handle reload');
+          // Don't reload here - let the IPC complete first, then AuthModal will reload
         }
 
         return result;
@@ -693,6 +698,23 @@ export class MainProcess {
         return { success: true };
       } catch (err) {
         return { success: false, error: String(err) };
+      }
+    });
+
+    // Get quaternion samples for Convex upload
+    ipcMain.handle('recording:getSamples', () => {
+      try {
+        const { RecordingBuffer } = require('../../motionProcessing/recording');
+        const samples = RecordingBuffer.getAllSamples();
+        const metadata = RecordingBuffer.getMetadata();
+        return {
+          success: true,
+          samples,
+          metadata,
+          sampleCount: samples.length
+        };
+      } catch (err) {
+        return { success: false, error: String(err), samples: [], metadata: null };
       }
     });
   }

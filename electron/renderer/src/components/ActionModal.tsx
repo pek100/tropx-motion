@@ -3,14 +3,14 @@ import { XIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ActionId } from './ActionBar'
 import { PatientSearchModal } from './PatientSearchModal'
+import { SaveModal } from './SaveModal'
+import { LoadModal } from './LoadModal'
 import { Id } from '../../../../convex/_generated/dataModel'
 
 // Modal titles for each action
 const MODAL_TITLES: Record<ActionId, string> = {
   'ai-analysis': 'AI Analysis',
   'patient-name': 'Patient Name',
-  'recording-title': 'Recording Title',
-  'description': 'Description',
   'save': 'Save Recording',
   'load': 'Load Recording',
 }
@@ -20,7 +20,17 @@ interface ActionModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   selectedPatientId?: Id<"users"> | null
-  onPatientSelect?: (patient: { userId: Id<"users">; name: string; alias?: string }) => void
+  selectedPatientName?: string
+  selectedPatientImage?: string
+  onPatientSelect?: (patient: { userId: Id<"users">; name: string; alias?: string; image?: string } | undefined) => void
+  // Recording title (synced with toolbar)
+  recordingTitle?: string
+  onRecordingTitleChange?: (title: string) => void
+  // Recording context for save/edit mode
+  currentSessionId?: string | null
+  recordingSource?: 'app' | 'csv'
+  onLoadSession?: (sessionId: string) => void
+  onImportCSV?: () => void
 }
 
 export function ActionModal({
@@ -28,7 +38,15 @@ export function ActionModal({
   open,
   onOpenChange,
   selectedPatientId,
+  selectedPatientName,
+  selectedPatientImage,
   onPatientSelect,
+  recordingTitle,
+  onRecordingTitleChange,
+  currentSessionId,
+  recordingSource = 'app',
+  onLoadSession,
+  onImportCSV,
 }: ActionModalProps) {
   // For patient-name, use PatientSearchModal directly
   if (actionId === 'patient-name') {
@@ -42,8 +60,52 @@ export function ActionModal({
             userId: patient.userId,
             name: patient.name,
             alias: patient.alias,
+            image: patient.image,
           })
         }}
+      />
+    )
+  }
+
+  // For save, use SaveModal
+  // If currentSessionId exists, it's edit mode; otherwise save mode
+  if (actionId === 'save') {
+    return (
+      <SaveModal
+        open={open}
+        onOpenChange={onOpenChange}
+        mode={currentSessionId ? 'edit' : 'save'}
+        selectedPatientId={selectedPatientId}
+        selectedPatientName={selectedPatientName}
+        selectedPatientImage={selectedPatientImage}
+        recordingSource={recordingSource}
+        recordingTitle={recordingTitle}
+        onRecordingTitleChange={onRecordingTitleChange}
+        onPatientSelect={(patient) => {
+          if (patient) {
+            onPatientSelect?.({
+              userId: patient.userId,
+              name: patient.name,
+              image: patient.image,
+            })
+          } else {
+            // Clear selection - need to handle in App.tsx
+            onPatientSelect?.(undefined as any)
+          }
+        }}
+        sessionId={currentSessionId ?? undefined}
+      />
+    )
+  }
+
+  // For load, use LoadModal
+  if (actionId === 'load') {
+    return (
+      <LoadModal
+        open={open}
+        onOpenChange={onOpenChange}
+        onLoadSession={onLoadSession ?? (() => {})}
+        onImportCSV={onImportCSV}
       />
     )
   }

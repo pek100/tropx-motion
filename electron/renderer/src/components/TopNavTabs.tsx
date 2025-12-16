@@ -1,16 +1,9 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { CircleUserRound, LayoutDashboard, Disc3, LogOut, Loader2 } from 'lucide-react'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { AuthModal } from './auth'
 import { NotificationBell } from './NotificationBell'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from './ui/dropdown-menu'
+import { cn } from '@/lib/utils'
 
 interface NavItem {
   id: string
@@ -21,6 +14,9 @@ interface NavItem {
 export function TopNavTabs() {
   const [activeTab, setActiveTab] = useState('record')
   const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [profilePanelOpen, setProfilePanelOpen] = useState(false)
+  const [notificationPanelOpen, setNotificationPanelOpen] = useState(false)
+  const pillRef = useRef<HTMLDivElement>(null)
 
   const {
     isAuthenticated,
@@ -29,6 +25,69 @@ export function TopNavTabs() {
     signOut,
     isConvexEnabled,
   } = useCurrentUser()
+
+  // Toggle profile panel (closes notification)
+  const toggleProfilePanel = () => {
+    if (profilePanelOpen) {
+      setProfilePanelOpen(false)
+    } else {
+      setNotificationPanelOpen(false)
+      setProfilePanelOpen(true)
+    }
+  }
+
+  // Toggle notification panel (closes profile)
+  const toggleNotificationPanel = () => {
+    if (notificationPanelOpen) {
+      setNotificationPanelOpen(false)
+    } else {
+      setProfilePanelOpen(false)
+      setNotificationPanelOpen(true)
+    }
+  }
+
+  // Close all panels
+  const closeAllPanels = () => {
+    setProfilePanelOpen(false)
+    setNotificationPanelOpen(false)
+  }
+
+  // Close panels when clicking outside or on blur/escape
+  useEffect(() => {
+    const anyPanelOpen = profilePanelOpen || notificationPanelOpen
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        anyPanelOpen &&
+        pillRef.current &&
+        !pillRef.current.contains(e.target as Node)
+      ) {
+        closeAllPanels()
+      }
+    }
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && anyPanelOpen) {
+        closeAllPanels()
+      }
+    }
+
+    const handleBlur = () => {
+      if (anyPanelOpen) {
+        closeAllPanels()
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside, true)
+    document.addEventListener('keydown', handleEscape)
+    window.addEventListener('blur', handleBlur)
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside, true)
+      document.removeEventListener('keydown', handleEscape)
+      window.removeEventListener('blur', handleBlur)
+    }
+  }, [profilePanelOpen, notificationPanelOpen])
 
   // Build nav items dynamically based on auth state
   const getProfileLabel = () => {
@@ -91,44 +150,100 @@ export function TopNavTabs() {
   const renderProfileTab = (item: NavItem) => {
     const buttonClass = `inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-shadow)] hover:text-[var(--tropx-vibrant)] data-[active=true]:text-[var(--tropx-vibrant)]`
 
-    // If authenticated, show dropdown menu with bell inside a styled pill
+    // If authenticated, show profile button + notification bell inside a styled pill
     if (isAuthenticated && user && isConvexEnabled) {
       return (
         <div
           key={item.id}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white/80 border border-[var(--tropx-coral)]/30 shadow-sm"
+          ref={pillRef}
+          className="relative inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white/80 border border-[var(--tropx-coral)]/30 shadow-sm"
         >
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                data-active={item.id === activeTab}
-                className="inline-flex items-center gap-2 px-2 py-1 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-dark)] hover:text-[var(--tropx-vibrant)]"
-              >
-                {item.icon}
-                <span>{item.label}</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56">
-              <DropdownMenuLabel>
-                <div className="flex flex-col">
-                  <span className="font-medium">{user.name}</span>
-                  <span className="text-xs text-muted-foreground">{user.email}</span>
-                  {user.role && (
-                    <span className="text-xs text-muted-foreground capitalize mt-1">
-                      {user.role}
-                    </span>
-                  )}
-                </div>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleSignOut} className="text-red-600">
-                <LogOut className="w-4 h-4 mr-2" />
-                Sign Out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* Profile button */}
+          <button
+            onClick={toggleProfilePanel}
+            className={cn(
+              "inline-flex items-center gap-2 px-2 py-1 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-dark)] hover:text-[var(--tropx-vibrant)]",
+              profilePanelOpen && "text-[var(--tropx-vibrant)]"
+            )}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </button>
+
           <div className="w-px h-4 bg-[var(--tropx-coral)]/30" />
-          <NotificationBell />
+
+          {/* Notification bell (controlled by parent - dropdown positions relative to pill) */}
+          <NotificationBell
+            isOpen={notificationPanelOpen}
+            onOpenChange={(open) => {
+              if (open) {
+                toggleNotificationPanel()
+              } else {
+                setNotificationPanelOpen(false)
+              }
+            }}
+            centerDropdown
+          />
+
+          {/* Profile Panel - centered under the pill (w-72 = 18rem, half = 9rem = ml-[-9rem]) */}
+          {profilePanelOpen && (
+            <div
+              className={cn(
+                "absolute top-full left-1/2 ml-[-9rem] mt-2 w-72 z-50",
+                "bg-white border border-gray-200 rounded-2xl shadow-lg overflow-hidden",
+                "animate-[modal-bubble-in_0.15s_var(--spring-bounce)_forwards]"
+              )}
+            >
+              {/* Profile Header */}
+              <div className="px-4 py-4 border-b border-gray-100">
+                <div className="flex items-center gap-3">
+                  {user.image ? (
+                    <img
+                      src={user.image}
+                      alt={user.name || 'User'}
+                      className="size-12 rounded-full object-cover border-2 border-[var(--tropx-vibrant)]/20"
+                    />
+                  ) : (
+                    <div className="size-12 rounded-full bg-[var(--tropx-hover)] flex items-center justify-center">
+                      <CircleUserRound className="size-6 text-[var(--tropx-vibrant)]" />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-[var(--tropx-dark)] truncate">
+                      {user.name || 'User'}
+                    </p>
+                    <p className="text-sm text-[var(--tropx-shadow)] truncate">
+                      {user.email}
+                    </p>
+                    {user.role && (
+                      <span className="inline-block mt-1 px-2 py-0.5 text-xs font-medium rounded-full bg-[var(--tropx-hover)] text-[var(--tropx-vibrant)] capitalize">
+                        {user.role}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Sign Out Button */}
+              <div className="p-3">
+                <button
+                  onClick={() => {
+                    closeAllPanels()
+                    handleSignOut()
+                  }}
+                  className={cn(
+                    "w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl",
+                    "text-sm font-medium text-red-600",
+                    "border-2 border-red-200 hover:bg-red-50 hover:border-red-300",
+                    "transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  )}
+                >
+                  <LogOut className="size-4" />
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )
     }

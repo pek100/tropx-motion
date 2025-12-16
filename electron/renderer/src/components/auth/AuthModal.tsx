@@ -369,10 +369,10 @@ function AuthModalContent({
         const result = await window.electronAPI.auth.signInWithGoogle();
 
         if (result.success) {
-          console.log('[AuthModal] OAuth successful');
+          console.log('[AuthModal] OAuth successful, tokens injected - reloading to apply auth');
           onOpenChange(false);
           onSuccess?.();
-          // Reload the page to pick up the new auth state
+          // Convex Auth reads tokens on initialization, so reload to pick them up
           window.location.reload();
         } else {
           setError(result.error || "Failed to sign in. Please try again.");

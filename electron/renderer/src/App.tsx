@@ -7,6 +7,7 @@ import { TopNavTabs } from "@/components/TopNavTabs"
 import { ActionBar, type ActionId } from "@/components/ActionBar"
 import { ActionModal } from "@/components/ActionModal"
 import { StorageSettingsModal } from "@/components/StorageSettingsModal"
+import { AuthModal } from "@/components/auth"
 import { isElectron, isWeb } from "@/lib/platform"
 import { platformInfo } from "@/lib/platform"
 import { useState, useRef, useEffect, useMemo, useCallback, lazy, Suspense } from "react"
@@ -15,8 +16,13 @@ import { ToastAction } from "@/components/ui/toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useDevices, type UIDevice, DeviceId } from "@/hooks/useDevices"
 import { useRecordingExport } from "@/hooks/useRecordingExport"
+import { useCurrentUser } from "@/hooks/useCurrentUser"
 import { persistence } from "@/lib/persistence"
 import { UIProfileProvider, useUIProfile } from "@/lib/ui-profiles"
+import { useConvex } from "convex/react"
+import { api } from "../../../convex/_generated/api"
+import { mergeChunks, unpackToAngles, type PackedChunkData } from "../../../shared/QuaternionCodec"
+import type { ImportedSample } from "@/lib/recording"
 
 // Pending Operations - Optimistic UI State
 enum PendingOp {
@@ -42,6 +48,57 @@ type ClientDisplayMode = 'closed' | 'modal' | 'minimized' | 'snapped-left' | 'sn
 function AppContent() {
   const { toast } = useToast()
   const { profile, clearOverride } = useUIProfile()
+  const convex = useConvex()
+  const { isAuthenticated, isLoading: isAuthLoading, signIn } = useCurrentUser()
+
+  // Auth modal state (for toast sign-in actions)
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+  const [hasAttemptedAutoReauth, setHasAttemptedAutoReauth] = useState(false)
+
+  // Detect stale tokens and auto-trigger re-auth
+  useEffect(() => {
+    // Only check when auth loading is complete
+    if (isAuthLoading || hasAttemptedAutoReauth) return
+
+    // Check if we have tokens in localStorage but Convex says not authenticated
+    const hasJWT = localStorage.getItem('__convexAuthJWT') ||
+                   localStorage.getItem('__convexAuthJWT_httpstoughanteater529convexcloud')
+
+    if (hasJWT && !isAuthenticated) {
+      console.log('[Auth] Stale token detected - clearing and triggering re-auth')
+
+      // Clear stale tokens
+      const keysToRemove = Object.keys(localStorage).filter(k =>
+        k.includes('convexAuth') || k.includes('__convexAuth')
+      )
+      keysToRemove.forEach(key => localStorage.removeItem(key))
+
+      // Mark that we've attempted auto re-auth (prevent loops)
+      setHasAttemptedAutoReauth(true)
+
+      // Auto-trigger re-auth
+      if (isElectron()) {
+        // Electron: Open auth modal (popup OAuth flow)
+        setIsAuthModalOpen(true)
+        toast({
+          title: "Session Expired",
+          description: "Please sign in again to continue.",
+          duration: 5000,
+        })
+      } else {
+        // Web: Directly redirect to OAuth
+        console.log('[Auth] Redirecting to OAuth...')
+        signIn()
+      }
+    }
+  }, [isAuthenticated, isAuthLoading, hasAttemptedAutoReauth, toast, signIn])
+
+  // Reset auto-reauth flag when user successfully authenticates
+  useEffect(() => {
+    if (isAuthenticated && hasAttemptedAutoReauth) {
+      setHasAttemptedAutoReauth(false)
+    }
+  }, [isAuthenticated, hasAttemptedAutoReauth])
   const refreshTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const locateDelayTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -120,6 +177,28 @@ function AppContent() {
 
   // Storage settings modal state
   const [isStorageSettingsOpen, setIsStorageSettingsOpen] = useState(false)
+
+  // Selected patient state
+  const [selectedPatient, setSelectedPatient] = useState<{
+    userId: string;
+    name: string;
+    image?: string;
+  } | null>(null)
+
+  // Current recording state (tracks if editing an existing recording)
+  const [currentRecording, setCurrentRecording] = useState<{
+    sessionId: string;
+    source: 'app' | 'csv';
+  } | null>(null)
+
+  // Recording title for action bar input
+  const [recordingTitle, setRecordingTitle] = useState('')
+  const [savedRecordingTitle, setSavedRecordingTitle] = useState('')
+  const [titleJustSaved, setTitleJustSaved] = useState(false)
+
+  // Cloud-loaded recording data for display
+  const [loadedRecording, setLoadedRecording] = useState<ImportedSample[] | null>(null)
+  const [isLoadingSession, setIsLoadingSession] = useState(false)
 
   // Recording export/import hook
   const {
@@ -427,6 +506,9 @@ function AppContent() {
             setStreamStartTime(Date.now())
             setStreamElapsedTime(0)
             setClearChartTrigger((prev) => prev + 1)
+            // Clear current recording - this is a new recording from app
+            setCurrentRecording(null)
+            setLoadedRecording(null)
             const sessionId = `session_${Date.now()}`
             const result = await startStreaming(sessionId, "test_exercise", 1)
             setAutoSyncOverlay('idle')
@@ -492,6 +574,9 @@ function AppContent() {
       setStreamStartTime(Date.now())
       setStreamElapsedTime(0)
       setClearChartTrigger((prev) => prev + 1)
+      // Clear current recording - this is a new recording from app
+      setCurrentRecording(null)
+      setLoadedRecording(null)
       const sessionId = `session_${Date.now()}`
       const result = await startStreaming(sessionId, "test_exercise", 1)
       setIsValidatingState(false)
@@ -515,6 +600,11 @@ function AppContent() {
       setHasStartedStreaming(false)
       setStreamStartTime(null)
       setStreamElapsedTime(0)
+      // Clear current recording when returning to default view
+      setCurrentRecording(null)
+      // Clear imported and loaded data
+      clearImport()
+      setLoadedRecording(null)
     }
   }
 
@@ -526,38 +616,152 @@ function AppContent() {
   const handleSnapClientRight = () => { setClientDisplay('snapped-right') }
   const handleClientBackToModal = () => { setClientDisplay('modal') }
 
-  // Action bar handler
-  const handleActionClick = async (actionId: ActionId) => {
-    if (actionId === 'load') {
-      if (isStreaming) {
-        toast({
-          title: "Cannot Load",
-          description: "Stop streaming before loading a recording.",
-          variant: "destructive",
-          duration: 4000,
-        })
-        return
-      }
+  // Handle loading a session from cloud
+  const handleLoadSession = useCallback(async (sessionId: string) => {
+    setIsLoadingSession(true)
 
-      // Handle load directly - open file picker and import
-      const result = await importCSV()
-      if (result.success && result.recording) {
-        // Clear streaming state to show imported data
-        setHasStartedStreaming(true)
-        setClearChartTrigger(prev => prev + 1)
+    try {
+      // Fetch session data from Convex
+      const session = await convex.query(api.recordings.getSession, { sessionId })
+
+      if (!session || !session.chunks || session.chunks.length === 0) {
         toast({
-          title: "Recording Loaded",
-          description: `${result.recording.metadata.fileName} (${result.recording.metadata.sampleCount} samples)`,
-          duration: 4000,
-        })
-      } else if (!result.canceled && result.error) {
-        toast({
-          title: "Import Failed",
-          description: result.error,
+          title: "Load Failed",
+          description: "Recording not found or empty",
           variant: "destructive",
           duration: 5000,
         })
+        setIsLoadingSession(false)
+        return
       }
+
+      // Extract packed chunk data from session chunks
+      const packedChunks: PackedChunkData[] = session.chunks.map(chunk => ({
+        startTime: chunk.startTime,
+        endTime: chunk.endTime,
+        sampleRate: chunk.sampleRate,
+        sampleCount: chunk.sampleCount,
+        activeJoints: chunk.activeJoints,
+        leftKneeQ: chunk.leftKneeQ,
+        rightKneeQ: chunk.rightKneeQ,
+        leftKneeInterpolated: chunk.leftKneeInterpolated,
+        leftKneeMissing: chunk.leftKneeMissing,
+        rightKneeInterpolated: chunk.rightKneeInterpolated,
+        rightKneeMissing: chunk.rightKneeMissing,
+      }))
+
+      // Merge all chunks and convert to angles (Y-axis by default)
+      const mergedData = mergeChunks(packedChunks)
+      const angleSamples = unpackToAngles(mergedData, 'y')
+
+      // Convert to ImportedSample format for the chart
+      const chartData: ImportedSample[] = angleSamples.map(sample => ({
+        t: sample.t,
+        relative: sample.relative_s,
+        l: sample.left,
+        r: sample.right,
+      }))
+
+      // Update state
+      setLoadedRecording(chartData)
+      setCurrentRecording({
+        sessionId,
+        source: 'app',
+      })
+      setHasStartedStreaming(true)
+      setClearChartTrigger(prev => prev + 1)
+      setActiveActionModal(null) // Close modal
+
+      toast({
+        title: "Recording Loaded",
+        description: `${session.totalSampleCount} samples loaded from cloud`,
+        duration: 4000,
+      })
+    } catch (error) {
+      console.error('Failed to load session:', error)
+      toast({
+        title: "Load Failed",
+        description: error instanceof Error ? error.message : "Failed to load recording",
+        variant: "destructive",
+        duration: 5000,
+      })
+    } finally {
+      setIsLoadingSession(false)
+    }
+  }, [convex, toast])
+
+  // Handle CSV import from LoadModal
+  const handleImportCSVFromModal = useCallback(async () => {
+    const result = await importCSV()
+    if (result.success && result.recording) {
+      setHasStartedStreaming(true)
+      setClearChartTrigger(prev => prev + 1)
+      setCurrentRecording({
+        sessionId: '', // Empty until saved to cloud
+        source: 'csv',
+      })
+      setActiveActionModal(null) // Close modal
+      toast({
+        title: "Recording Loaded",
+        description: `${result.recording.metadata.fileName} (${result.recording.metadata.sampleCount} samples)`,
+        duration: 4000,
+      })
+    } else if (!result.canceled && result.error) {
+      toast({
+        title: "Import Failed",
+        description: result.error,
+        variant: "destructive",
+        duration: 5000,
+      })
+    }
+  }, [importCSV, toast])
+
+  // Action bar handler
+  const handleActionClick = async (actionId: ActionId) => {
+    // Check auth for save, load, and patient-name actions
+    if ((actionId === 'save' || actionId === 'load' || actionId === 'patient-name') && !isAuthenticated) {
+      if (actionId === 'save') {
+        // For save, show toast with sign-in + export options
+        toast({
+          title: "Sign In Required",
+          description: "Sign in to save recordings to the cloud. You can also export locally.",
+          duration: 10000,
+          action: (
+            <div className="flex gap-2">
+              <ToastAction altText="Sign in" onClick={() => setIsAuthModalOpen(true)}>
+                Sign In
+              </ToastAction>
+              <ToastAction altText="Export" onClick={() => handleExportCSV()}>
+                Export
+              </ToastAction>
+            </div>
+          ),
+        })
+      } else {
+        // For load and patient-name, show toast with sign-in button
+        toast({
+          title: "Sign In Required",
+          description: actionId === 'load'
+            ? "Sign in to load recordings from the cloud."
+            : "Sign in to select a patient.",
+          duration: 8000,
+          action: (
+            <ToastAction altText="Sign in" onClick={() => setIsAuthModalOpen(true)}>
+              Sign In
+            </ToastAction>
+          ),
+        })
+      }
+      return
+    }
+
+    if (actionId === 'load' && isStreaming) {
+      toast({
+        title: "Cannot Load",
+        description: "Stop streaming before loading a recording.",
+        variant: "destructive",
+        duration: 4000,
+      })
       return
     }
     setActiveActionModal(actionId)
@@ -758,14 +962,11 @@ function AppContent() {
   return (
     <TooltipProvider delayDuration={1500}>
       <div className={`${isCompact ? "h-screen bg-[#fff6f3] flex flex-col relative overflow-hidden" : "min-h-screen bg-[#fff6f3] flex flex-col relative"} ${showDynamicIsland ? "raspberry-pi" : ""}`}>
-        {/* Draggable region */}
-        <div className="fixed inset-0 w-full h-full" style={{ WebkitAppRegion: 'drag', zIndex: 1 } as any} />
-
         {/* Content */}
-        <div className={isCompact ? "relative h-screen flex flex-col pointer-events-none" : "relative min-h-screen flex flex-col pointer-events-none"} style={{ zIndex: 2 } as any}>
+        <div className={isCompact ? "relative h-screen flex flex-col" : "relative min-h-screen flex flex-col"}>
           {/* Window Controls - Desktop only, minimize/maximize hidden in kiosk mode */}
           {isElectron() && (
-            <div className="fixed top-4 right-4 flex items-center gap-1 pointer-events-auto" style={{ zIndex: 50, WebkitAppRegion: 'no-drag' } as any}>
+            <div className="fixed top-4 right-4 flex items-center gap-1" style={{ zIndex: 9999, WebkitAppRegion: 'no-drag' } as any}>
               {!isCompact && (
                 <>
                   <button onClick={() => window.electronAPI?.window.minimize()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm" title="Minimize">
@@ -784,9 +985,11 @@ function AppContent() {
 
           <PlatformIndicator />
 
-          {/* Header - hidden on compact layouts */}
+          {/* Header - hidden on compact layouts, draggable for window movement */}
           {showHeader && (
-            <header className="p-8 pb-0 pointer-events-auto">
+            <header className="p-8 pb-0 relative" style={{ WebkitAppRegion: 'drag' } as any}>
+              {/* Exclude top-right area from drag for window controls */}
+              <div className="absolute top-0 right-0 w-32 h-16" style={{ WebkitAppRegion: 'no-drag' } as any} />
               <div className="flex items-start gap-3 mb-2">
                 <svg width="40" height="40" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" className="flex-shrink-0 mt-1">
                   <path d="M536.573 188.5C480.508 217.268 427.514 275.625 441.339 293.707C458.235 315.077 528.125 283.844 583.423 229.597C645.632 167.952 620.288 146.582 536.573 188.5Z" fill="var(--tropx-vibrant)" />
@@ -801,25 +1004,20 @@ function AppContent() {
           )}
 
           {/* Top Navigation Tabs - non-compact only */}
-          {!isCompact && (
-            <div className="pointer-events-auto" style={{ WebkitAppRegion: 'no-drag' } as any}>
-              <TopNavTabs />
-            </div>
-          )}
+          {!isCompact && <TopNavTabs />}
 
-          <div className={isCompact ? "flex-1 flex relative pointer-events-none" : "flex-1 flex items-center justify-center px-8 relative pointer-events-none"}>
-            <div className={isCompact ? "flex gap-0 w-full h-full pointer-events-none" : "flex gap-6 w-[90%] pointer-events-none"}>
+          <div className={isCompact ? "flex-1 flex relative" : "flex-1 flex items-center justify-center px-8 relative"}>
+            <div className={isCompact ? "flex gap-0 w-full h-full" : "flex gap-6 w-[90%]"}>
               {/* Left Pane */}
               <div
-                className={`flex-shrink-0 bg-white flex flex-col transition-all pointer-events-auto ${isFlashing ? "flash-pane" : ""} ${isCompact ? "w-1/2 h-full p-4" : "w-[470px] p-6"}`}
+                className={`flex-shrink-0 bg-white flex flex-col transition-all ${isFlashing ? "flash-pane" : ""} ${isCompact ? "w-1/2 h-full p-4" : "w-[470px] p-6"}`}
                 style={{
                   border: isCompact ? "none" : "1px solid #e5e5e5",
                   borderRadius: isCompact ? "0" : "36px",
                   height: isCompact ? "100%" : "550px",
-                  WebkitAppRegion: 'no-drag',
                   position: 'relative',
                   padding: clientDisplay === 'snapped-left' ? '0' : undefined,
-                } as any}
+                }}
               >
                 {showClientLauncher && clientDisplay === 'snapped-left' ? (
                   <Suspense fallback={null}>
@@ -985,15 +1183,14 @@ function AppContent() {
               >
                 {/* Right Pane */}
                 <div
-                  className={`bg-white gradient-diagonal flex flex-col pointer-events-auto ${clientDisplay === 'snapped-right' ? '' : 'items-center justify-center'} ${isCompact ? "h-full p-4" : "flex-1 p-6"}`}
-                style={{
-                  border: isCompact ? "none" : "1px solid #e5e5e5",
-                  borderRadius: isCompact ? "0" : "36px",
-                  WebkitAppRegion: 'no-drag',
-                  position: 'relative',
-                  padding: clientDisplay === 'snapped-right' ? '0' : undefined,
-                } as any}
-              >
+                  className={`bg-white gradient-diagonal flex flex-col ${clientDisplay === 'snapped-right' ? '' : 'items-center justify-center'} ${isCompact ? "h-full p-4" : "flex-1 p-6"}`}
+                  style={{
+                    border: isCompact ? "none" : "1px solid #e5e5e5",
+                    borderRadius: isCompact ? "0" : "36px",
+                    position: 'relative',
+                    padding: clientDisplay === 'snapped-right' ? '0' : undefined,
+                  }}
+                >
                 {showClientLauncher && clientDisplay === 'snapped-right' ? (
                   <Suspense fallback={null}>
                     <ClientIframe className="client-iframe" />
@@ -1069,7 +1266,7 @@ function AppContent() {
                         leftKnee={leftKneeData}
                         rightKnee={rightKneeData}
                         clearTrigger={clearChartTrigger}
-                        importedData={importedRecording?.samples}
+                        importedData={loadedRecording || importedRecording?.samples}
                       />
                     ) : (
                       <ChartSvg />
@@ -1138,6 +1335,21 @@ function AppContent() {
                     onActionClick={handleActionClick}
                     onExportCSV={handleExportCSV}
                     isExporting={isExporting}
+                    isEditing={currentRecording !== null}
+                    selectedPatientName={selectedPatient?.name}
+                    selectedPatientImage={selectedPatient?.image}
+                    recordingTitle={recordingTitle}
+                    onRecordingTitleChange={setRecordingTitle}
+                    onRecordingTitleSave={() => {
+                      if (recordingTitle.trim()) {
+                        setSavedRecordingTitle(recordingTitle)
+                        setTitleJustSaved(true)
+                        setTimeout(() => setTitleJustSaved(false), 400)
+                      }
+                    }}
+                    onRecordingTitleRevert={() => setRecordingTitle(savedRecordingTitle)}
+                    titleDirty={recordingTitle !== savedRecordingTitle && recordingTitle.trim() !== ''}
+                    titleJustSaved={titleJustSaved}
                   />
                 )}
               </div>
@@ -1173,6 +1385,26 @@ function AppContent() {
           actionId={activeActionModal}
           open={activeActionModal !== null}
           onOpenChange={(open) => !open && setActiveActionModal(null)}
+          selectedPatientId={selectedPatient?.userId as any}
+          selectedPatientName={selectedPatient?.name}
+          selectedPatientImage={selectedPatient?.image}
+          onPatientSelect={(patient) => {
+            if (patient) {
+              setSelectedPatient({
+                userId: patient.userId,
+                name: patient.name,
+                image: patient.image,
+              })
+            } else {
+              setSelectedPatient(null)
+            }
+          }}
+          recordingTitle={recordingTitle}
+          onRecordingTitleChange={setRecordingTitle}
+          currentSessionId={currentRecording?.sessionId || null}
+          recordingSource={currentRecording?.source || 'app'}
+          onLoadSession={handleLoadSession}
+          onImportCSV={handleImportCSVFromModal}
         />
 
         {/* Storage Settings Modal */}
@@ -1182,6 +1414,12 @@ function AppContent() {
           currentPath={exportPath}
           onSelectFolder={selectFolder}
           onResetPath={resetPath}
+        />
+
+        {/* Auth Modal (for toast sign-in actions) */}
+        <AuthModal
+          open={isAuthModalOpen}
+          onOpenChange={setIsAuthModalOpen}
         />
       </div>
     </TooltipProvider>

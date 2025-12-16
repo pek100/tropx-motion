@@ -54,6 +54,10 @@ export class OAuthHandler {
           const refreshToken = url.searchParams.get('refreshToken');
           const error = url.searchParams.get('error');
 
+          console.log('[OAuthHandler] Callback params - jwt:', jwt ? `${jwt.length} chars` : 'null');
+          console.log('[OAuthHandler] Callback params - refreshToken:', refreshToken ? `${refreshToken.length} chars` : 'null');
+          console.log('[OAuthHandler] Callback params - error:', error);
+
           // Send a nice HTML response
           res.writeHead(200, { 'Content-Type': 'text/html' });
 
