@@ -294,24 +294,9 @@ function GenericNotificationItem({
                   </span>
                 )}
               </p>
-              <div className="flex items-center gap-2 mt-1">
-                <p className="text-xs text-gray-400">
-                  {formatTimeAgo(notification.createdAt)}
-                </p>
-                {hasViewAction && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onViewRecording(sessionId);
-                      onMarkRead(notification._id);
-                    }}
-                    className="flex items-center gap-1 text-xs text-[var(--tropx-vibrant)] hover:underline cursor-pointer"
-                  >
-                    <Eye className="size-3" />
-                    View
-                  </button>
-                )}
-              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                {formatTimeAgo(notification.createdAt)}
+              </p>
             </>
           ) : (
             // Default style for other notification types
@@ -329,30 +314,29 @@ function GenericNotificationItem({
               <p className="text-xs text-[var(--tropx-shadow)] mt-0.5 line-clamp-2">
                 {notification.body}
               </p>
-              <div className="flex items-center gap-2 mt-1">
-                <p className="text-xs text-gray-400">
-                  {formatTimeAgo(notification.createdAt)}
-                </p>
-                {hasViewAction && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onViewRecording(sessionId);
-                      onMarkRead(notification._id);
-                    }}
-                    className="flex items-center gap-1 text-xs text-[var(--tropx-vibrant)] hover:underline cursor-pointer"
-                  >
-                    <Eye className="size-3" />
-                    View
-                  </button>
-                )}
-              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                {formatTimeAgo(notification.createdAt)}
+              </p>
             </>
           )}
         </div>
 
         {/* Actions */}
         <div className="flex-shrink-0 flex items-center gap-1">
+          {hasViewAction && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewRecording(sessionId);
+                onMarkRead(notification._id);
+              }}
+              className="px-2.5 py-1 rounded-full bg-[var(--tropx-vibrant)]/10 text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/20 transition-colors text-xs font-medium flex items-center gap-1 cursor-pointer"
+              title="View recording"
+            >
+              <Eye className="size-3" />
+              View
+            </button>
+          )}
           {!notification.read && (
             <button
               onClick={(e) => {
