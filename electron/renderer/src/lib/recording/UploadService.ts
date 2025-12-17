@@ -33,11 +33,14 @@ import {
 // Types
 // ─────────────────────────────────────────────────────────────────
 
+export type ActivityProfile = 'power' | 'endurance' | 'rehabilitation' | 'general';
+
 export interface UploadOptions {
   subjectId?: Id<'users'>;
   subjectAlias?: string;
   notes?: string;
   tags?: string[];
+  activityProfile?: ActivityProfile;
   targetHz?: number;
 }
 
@@ -163,6 +166,7 @@ export class UploadService {
                 subjectAlias: options.subjectAlias,
                 notes: options.notes,
                 tags: options.tags,
+                activityProfile: options.activityProfile,
               }
             : {}),
         });

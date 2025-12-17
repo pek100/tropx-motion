@@ -2,34 +2,33 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { authTables } from "@convex-dev/auth/server";
 
-// Role types
+// ─────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────
+
 export const ROLES = {
   PHYSIOTHERAPIST: "physiotherapist",
   PATIENT: "patient",
   ADMIN: "admin",
 } as const;
 
-// Joint types
 export const JOINTS = {
   LEFT_KNEE: "left_knee",
   RIGHT_KNEE: "right_knee",
 } as const;
 
-// Recording constants
 export const RECORDING_CONSTANTS = {
   SAMPLES_PER_CHUNK: 6000,
   DEFAULT_SAMPLE_RATE: 100,
   RAW_RECORDING_TTL_MS: 14 * 24 * 60 * 60 * 1000, // 14 days
 } as const;
 
-// Invite status types
 export const INVITE_STATUS = {
   PENDING: "pending",
   ACCEPTED: "accepted",
   EXPIRED: "expired",
 } as const;
 
-// Notification types
 export const NOTIFICATION_TYPES = {
   SUBJECT_NOTE: "subject_note",
   RECORDING_SHARED: "recording_shared",
@@ -37,13 +36,64 @@ export const NOTIFICATION_TYPES = {
   ADDED_AS_SUBJECT: "added_as_subject",
 } as const;
 
-// Recording source types (system tags)
 export const RECORDING_SOURCES = {
   APP: "source:app",
   CSV: "source:csv",
 } as const;
 
+export const METRIC_STATUS = {
+  PENDING: "pending",
+  COMPUTING: "computing",
+  COMPLETE: "complete",
+  FAILED: "failed",
+} as const;
+
+export const MOVEMENT_TYPES = {
+  BILATERAL: "bilateral",
+  UNILATERAL: "unilateral",
+  SINGLE_LEG: "single_leg",
+  MIXED: "mixed",
+  UNKNOWN: "unknown",
+} as const;
+
+export const SHOCK_ABSORPTION_QUALITY = {
+  EXCELLENT: "excellent",
+  GOOD: "good",
+  POOR: "poor",
+  ABSENT: "absent",
+} as const;
+
+export const ASYMMETRY_DIRECTION = {
+  LEFT_DOMINANT: "left_dominant",
+  RIGHT_DOMINANT: "right_dominant",
+} as const;
+
+export const ACTIVITY_PROFILES = {
+  POWER: "power",
+  ENDURANCE: "endurance",
+  REHABILITATION: "rehabilitation",
+  GENERAL: "general",
+} as const;
+
+export const OPI_DOMAINS = {
+  SYMMETRY: "symmetry",
+  POWER: "power",
+  CONTROL: "control",
+  STABILITY: "stability",
+} as const;
+
+export const OPI_GRADES = {
+  A: "A",
+  B: "B",
+  C: "C",
+  D: "D",
+  F: "F",
+} as const;
+
+// ─────────────────────────────────────────────────────────────────
 // Validators
+// ─────────────────────────────────────────────────────────────────
+
 const roleValidator = v.union(
   v.literal(ROLES.PHYSIOTHERAPIST),
   v.literal(ROLES.PATIENT),
@@ -56,6 +106,281 @@ const inviteStatusValidator = v.union(
   v.literal(INVITE_STATUS.EXPIRED)
 );
 
+const metricStatusValidator = v.union(
+  v.literal(METRIC_STATUS.PENDING),
+  v.literal(METRIC_STATUS.COMPUTING),
+  v.literal(METRIC_STATUS.COMPLETE),
+  v.literal(METRIC_STATUS.FAILED)
+);
+
+const movementTypeValidator = v.union(
+  v.literal(MOVEMENT_TYPES.BILATERAL),
+  v.literal(MOVEMENT_TYPES.UNILATERAL),
+  v.literal(MOVEMENT_TYPES.SINGLE_LEG),
+  v.literal(MOVEMENT_TYPES.MIXED),
+  v.literal(MOVEMENT_TYPES.UNKNOWN)
+);
+
+const shockAbsorptionQualityValidator = v.union(
+  v.literal(SHOCK_ABSORPTION_QUALITY.EXCELLENT),
+  v.literal(SHOCK_ABSORPTION_QUALITY.GOOD),
+  v.literal(SHOCK_ABSORPTION_QUALITY.POOR),
+  v.literal(SHOCK_ABSORPTION_QUALITY.ABSENT)
+);
+
+const asymmetryDirectionValidator = v.union(
+  v.literal(ASYMMETRY_DIRECTION.LEFT_DOMINANT),
+  v.literal(ASYMMETRY_DIRECTION.RIGHT_DOMINANT)
+);
+
+const activityProfileValidator = v.union(
+  v.literal(ACTIVITY_PROFILES.POWER),
+  v.literal(ACTIVITY_PROFILES.ENDURANCE),
+  v.literal(ACTIVITY_PROFILES.REHABILITATION),
+  v.literal(ACTIVITY_PROFILES.GENERAL)
+);
+
+const opiDomainValidator = v.union(
+  v.literal(OPI_DOMAINS.SYMMETRY),
+  v.literal(OPI_DOMAINS.POWER),
+  v.literal(OPI_DOMAINS.CONTROL),
+  v.literal(OPI_DOMAINS.STABILITY)
+);
+
+const opiGradeValidator = v.union(
+  v.literal(OPI_GRADES.A),
+  v.literal(OPI_GRADES.B),
+  v.literal(OPI_GRADES.C),
+  v.literal(OPI_GRADES.D),
+  v.literal(OPI_GRADES.F)
+);
+
+const opiMovementTypeValidator = v.union(
+  v.literal("bilateral"),
+  v.literal("unilateral")
+);
+
+// ─── Metric Validators ───
+
+const perLegMetricsValidator = v.object({
+  overallMaxROM: v.float64(),
+  averageROM: v.float64(),
+  peakFlexion: v.float64(),
+  peakExtension: v.float64(),
+  peakAngularVelocity: v.float64(),
+  explosivenessLoading: v.float64(),
+  explosivenessConcentric: v.float64(),
+  rmsJerk: v.float64(),
+  romCoV: v.float64(),
+  peakResultantAcceleration: v.float64(),
+});
+
+const asymmetryIndicesValidator = v.object({
+  overallMaxROM: v.float64(),
+  averageROM: v.float64(),
+  peakAngularVelocity: v.float64(),
+  rmsJerk: v.float64(),
+  explosivenessLoading: v.float64(),
+  explosivenessConcentric: v.float64(),
+});
+
+const temporalAsymmetryValidator = v.object({
+  phaseShift: v.float64(),
+  crossCorrelation: v.float64(),
+  temporalLag: v.float64(),
+});
+
+const bilateralAnalysisValidator = v.object({
+  asymmetryIndices: asymmetryIndicesValidator,
+  netGlobalAsymmetry: v.float64(),
+  temporalAsymmetry: temporalAsymmetryValidator,
+});
+
+const unilateralMetricsValidator = v.object({
+  flexorExtensorRatio: v.float64(),
+  eccentricConcentricRatio: v.float64(),
+});
+
+const unilateralAnalysisValidator = v.object({
+  left: unilateralMetricsValidator,
+  right: unilateralMetricsValidator,
+  bilateralRatioDiff: v.float64(),
+});
+
+const jumpMetricsValidator = v.object({
+  groundContactTimeMs: v.float64(),
+  flightTimeMs: v.float64(),
+  jumpHeightCm: v.float64(),
+  rsi: v.float64(),
+});
+
+const forcePowerMetricsValidator = v.object({
+  eRFD: v.float64(),
+  peakNormalizedForce: v.float64(),
+  impulseEstimate: v.float64(),
+});
+
+const stiffnessMetricsValidator = v.object({
+  legStiffness: v.float64(),
+  verticalStiffness: v.float64(),
+});
+
+const smoothnessMetricsValidator = v.object({
+  sparc: v.float64(),
+  ldlj: v.float64(),
+  nVelocityPeaks: v.float64(),
+});
+
+const shockAbsorptionResultValidator = v.object({
+  score: v.float64(),
+  doubleDipDetected: v.boolean(),
+  patternQuality: shockAbsorptionQualityValidator,
+});
+
+const temporalCoordinationValidator = v.object({
+  maxFlexionTimingDiff: v.float64(),
+  zeroVelocityPhaseMs: v.float64(),
+  shockAbsorption: shockAbsorptionResultValidator,
+});
+
+const gaitCycleMetricsValidator = v.object({
+  stancePhasePct: v.float64(),
+  swingPhasePct: v.float64(),
+  dutyFactor: v.float64(),
+  strideTimeMs: v.float64(),
+});
+
+const movementClassificationValidator = v.object({
+  type: movementTypeValidator,
+  confidence: v.float64(),
+  correlationAtZero: v.float64(),
+  optimalLag: v.float64(),
+  optimalCorrelation: v.float64(),
+  estimatedCycleSamples: v.float64(),
+  phaseOffsetDegrees: v.float64(),
+});
+
+const transitionEventValidator = v.object({
+  index: v.number(),
+  timeMs: v.float64(),
+  fromPhase: v.float64(),
+  toPhase: v.float64(),
+  fromType: movementTypeValidator,
+  toType: movementTypeValidator,
+});
+
+const rollingPhaseResultValidator = v.object({
+  phaseOffsetSeries: v.array(v.float64()),
+  correlationSeries: v.array(v.float64()),
+  windowCenters: v.array(v.number()),
+  transitions: v.array(transitionEventValidator),
+  dominantPhaseOffset: v.float64(),
+});
+
+const phaseCorrectedSignalsValidator = v.object({
+  appliedShiftSamples: v.number(),
+  appliedShiftMs: v.float64(),
+  movementType: movementTypeValidator,
+  requiresCorrection: v.boolean(),
+});
+
+const asymmetryEventValidator = v.object({
+  startIndex: v.number(),
+  endIndex: v.number(),
+  startTimeMs: v.float64(),
+  endTimeMs: v.float64(),
+  durationMs: v.float64(),
+  peakAsymmetry: v.float64(),
+  avgAsymmetry: v.float64(),
+  direction: asymmetryDirectionValidator,
+  area: v.float64(),
+});
+
+const advancedAsymmetryResultValidator = v.object({
+  phaseCorrection: phaseCorrectedSignalsValidator,
+  asymmetryEvents: v.array(asymmetryEventValidator),
+  avgBaselineOffset: v.float64(),
+  avgRealAsymmetry: v.float64(),
+  maxRealAsymmetry: v.float64(),
+  totalAsymmetryDurationMs: v.float64(),
+  asymmetryPercentage: v.float64(),
+  baselineStability: v.float64(),
+  signalToNoiseRatio: v.float64(),
+});
+
+const rollingAsymmetrySummaryValidator = v.object({
+  avgAsymmetry: v.float64(),
+  maxAsymmetry: v.float64(),
+  timeInBilateral: v.float64(),
+  timeInUnilateral: v.float64(),
+  transitionCount: v.number(),
+});
+
+const rollingAsymmetryWindowValidator = v.object({
+  windowCenter: v.number(),
+  windowCenterMs: v.float64(),
+  movementType: movementTypeValidator,
+  phaseOffsetApplied: v.number(),
+  avgAsymmetry: v.float64(),
+  maxAsymmetry: v.float64(),
+  baselineOffset: v.float64(),
+});
+
+const rollingAsymmetryResultValidator = v.object({
+  windows: v.array(rollingAsymmetryWindowValidator),
+  overallSummary: rollingAsymmetrySummaryValidator,
+});
+
+const phaseAlignmentResultValidator = v.object({
+  optimalOffsetSamples: v.number(),
+  optimalOffsetMs: v.float64(),
+  optimalOffsetDegrees: v.float64(),
+  alignedCorrelation: v.float64(),
+  unalignedCorrelation: v.float64(),
+  correlationImprovement: v.float64(),
+});
+
+// ─── OPI Validators ───
+
+const opiConfidenceIntervalValidator = v.object({
+  lower: v.float64(),
+  upper: v.float64(),
+});
+
+const domainScoreContributorValidator = v.object({
+  name: v.string(),
+  raw: v.float64(),
+  normalized: v.float64(),
+  weight: v.float64(),
+  citation: v.string(),
+});
+
+const domainScoreValidator = v.object({
+  domain: opiDomainValidator,
+  score: v.float64(),
+  confidence: v.float64(),
+  sem: v.float64(),
+  contributors: v.array(domainScoreContributorValidator),
+});
+
+const opiResultValidator = v.object({
+  overallScore: v.float64(),
+  grade: opiGradeValidator,
+  confidenceInterval: opiConfidenceIntervalValidator,
+  sem: v.float64(),
+  mdc95: v.float64(),
+  domainScores: v.array(domainScoreValidator),
+  strengths: v.array(v.string()),
+  weaknesses: v.array(v.string()),
+  clinicalFlags: v.array(v.string()),
+  movementType: opiMovementTypeValidator,
+  activityProfile: activityProfileValidator,
+  dataCompleteness: v.float64(),
+  methodologyCitations: v.array(v.string()),
+});
+
+// ─── Non-Metric Validators ───
+
 const contactValidator = v.object({
   userId: v.id("users"),
   alias: v.optional(v.string()),
@@ -63,7 +388,6 @@ const contactValidator = v.object({
   starred: v.optional(v.boolean()),
 });
 
-// Modification diff validator (git-like tracking)
 const modificationDiffValidator = v.object({
   field: v.string(),
   old: v.any(),
@@ -76,125 +400,166 @@ const modificationHistoryEntryValidator = v.object({
   diffs: v.array(modificationDiffValidator),
 });
 
-// Subject note validator
 const subjectNoteValidator = v.object({
   userId: v.id("users"),
   note: v.string(),
-  createdAt: v.number(),
+  createdAt: v.number(), // Keep: embedded data, not a document
 });
 
-// Soft delete fields (reusable)
 const softDeleteFields = {
   isArchived: v.optional(v.boolean()),
   archivedAt: v.optional(v.number()),
   archiveReason: v.optional(v.string()),
 };
 
+// ─────────────────────────────────────────────────────────────────
+// Schema
+// ─────────────────────────────────────────────────────────────────
+
 export default defineSchema({
-  // Convex Auth tables
   ...authTables,
 
-  // Users table - extends Convex Auth's users table
-  // Fields from Convex Auth: email, name, image, emailVerificationTime
-  // Our custom fields must be optional since Auth creates the initial record
+  // ─── Users ───
   users: defineTable({
-    // Profile (from Convex Auth - these are provided by OAuth)
+    // Profile (from Convex Auth via OAuth)
     email: v.optional(v.string()),
     emailVerificationTime: v.optional(v.number()),
     name: v.optional(v.string()),
     image: v.optional(v.string()),
 
     // Role
-    role: v.optional(roleValidator), // Optional until onboarding complete
+    role: v.optional(roleValidator),
 
     // Contacts
     contacts: v.optional(v.array(contactValidator)),
 
-    // Notification settings
-    emailNotifications: v.optional(v.boolean()), // Default true (send emails for notifications)
+    // Settings
+    emailNotifications: v.optional(v.boolean()),
 
     // Soft delete
     ...softDeleteFields,
-
-    // Timestamps
-    createdAt: v.optional(v.number()),
   })
-    .index("email", ["email"]) // Required by Convex Auth
+    .index("email", ["email"])
     .index("by_role", ["role"])
-    .index("by_archived", ["isArchived", "archivedAt"]),
+    .index("by_archived", ["isArchived"]),
 
-  // Recordings table - quaternion storage with chunking
+  // ─── Recordings ───
   recordings: defineTable({
-    // Ownership
-    ownerId: v.id("users"),
-    subjectId: v.optional(v.id("users")),
-    subjectAlias: v.optional(v.string()),
-
-    // Sharing
-    sharedWith: v.optional(v.array(v.id("users"))),
-
-    // Session chunking
+    // Session Identity
     sessionId: v.string(),
     chunkIndex: v.number(),
     totalChunks: v.number(),
 
-    // Timing (uniform rate - timestamps reconstructed from startTime + index * interval)
-    startTime: v.number(),
-    endTime: v.number(),
+    // Ownership & Access
+    ownerId: v.id("users"),
+    subjectId: v.optional(v.id("users")),
+    subjectAlias: v.optional(v.string()),
+    sharedWith: v.optional(v.array(v.id("users"))),
+
+    // Sample Data
     sampleRate: v.number(),
     sampleCount: v.number(),
-
-    // Active joints (empty array = joint not recorded)
     activeJoints: v.array(v.string()),
 
-    // Quaternion data - flat arrays [w,x,y,z, w,x,y,z, ...] or [] if inactive
+    // Quaternions (flat arrays: [w,x,y,z, w,x,y,z, ...])
     leftKneeQ: v.array(v.float64()),
     rightKneeQ: v.array(v.float64()),
 
-    // Sparse flag indices (only non-real samples are listed)
+    // Sparse flag indices (only non-real samples listed)
     leftKneeInterpolated: v.array(v.number()),
     leftKneeMissing: v.array(v.number()),
     rightKneeInterpolated: v.array(v.number()),
     rightKneeMissing: v.array(v.number()),
 
-    // User metadata
+    // Timing
+    startTime: v.number(),
+    endTime: v.number(),
+    recordedAt: v.optional(v.number()), // Original capture time (for imports)
+
+    // User Metadata
     notes: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
+    subjectNotes: v.optional(v.array(subjectNoteValidator)),
+    activityProfile: v.optional(activityProfileValidator),
 
-    // System tags (source:app, source:csv) - non-removable
+    // System Metadata
     systemTags: v.optional(v.array(v.string())),
 
-    // Subject notes (from subjects viewing their recordings)
-    subjectNotes: v.optional(v.array(subjectNoteValidator)),
-
-    // Audit trail
-    recordedAt: v.optional(v.number()), // Original capture time (from first sample)
-    modifiedAt: v.optional(v.number()), // Last modification time
+    // Audit Trail
+    modifiedAt: v.optional(v.number()),
     modificationHistory: v.optional(v.array(modificationHistoryEntryValidator)),
 
-    // Soft delete
+    // Soft Delete
     ...softDeleteFields,
-
-    // Timestamps
-    createdAt: v.number(),
   })
-    .index("by_owner", ["ownerId", "createdAt"])
+    .index("by_owner", ["ownerId"])
     .index("by_session", ["sessionId", "chunkIndex"])
-    .index("by_subject", ["subjectId", "createdAt"])
-    .index("by_archived", ["isArchived", "archivedAt"])
+    .index("by_subject", ["subjectId"])
+    .index("by_archived", ["isArchived"])
     .searchIndex("search_recordings", {
       searchField: "notes",
       filterFields: ["ownerId", "subjectId", "isArchived"],
     }),
 
-  // Raw recordings - original timestamps, 2-week TTL for debugging
+  // ─── Recording Metrics ───
+  recordingMetrics: defineTable({
+    // Session link
+    sessionId: v.string(),
+
+    // Computation status
+    status: metricStatusValidator,
+    computedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+
+    // Per-leg metrics (#1-11)
+    leftLeg: v.optional(perLegMetricsValidator),
+    rightLeg: v.optional(perLegMetricsValidator),
+
+    // Bilateral analysis (#12-16)
+    bilateralAnalysis: v.optional(bilateralAnalysisValidator),
+
+    // Unilateral analysis (#17-19)
+    unilateralAnalysis: v.optional(unilateralAnalysisValidator),
+
+    // Jump metrics (#20-23) - TODO: review needed, angular accel derived
+    jumpMetrics: v.optional(jumpMetricsValidator),
+
+    // Force/power metrics (#24-26) - TODO: review needed, angular accel derived
+    forcePowerMetrics: v.optional(forcePowerMetricsValidator),
+
+    // Stiffness metrics (#27-28) - TODO: review needed, angular accel derived
+    stiffnessMetrics: v.optional(stiffnessMetricsValidator),
+
+    // Smoothness metrics (#29-31)
+    smoothnessMetrics: v.optional(smoothnessMetricsValidator),
+
+    // Temporal coordination (#32-34)
+    temporalCoordination: v.optional(temporalCoordinationValidator),
+
+    // Gait cycle metrics (#35-37) - TODO: review needed, angular accel derived
+    gaitCycleMetrics: v.optional(gaitCycleMetricsValidator),
+
+    // Movement classification (#38-39)
+    movementClassification: v.optional(movementClassificationValidator),
+    rollingPhase: v.optional(rollingPhaseResultValidator),
+
+    // Advanced asymmetry (#40-41)
+    advancedAsymmetry: v.optional(advancedAsymmetryResultValidator),
+    rollingAsymmetry: v.optional(rollingAsymmetryResultValidator),
+    phaseAlignment: v.optional(phaseAlignmentResultValidator),
+
+    // Overall Performance Index (OPI)
+    opiResult: v.optional(opiResultValidator),
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_status", ["status"]),
+
+  // ─── Raw Recordings (TTL debug data) ───
   rawRecordings: defineTable({
-    // Session chunking
     sessionId: v.string(),
     chunkIndex: v.number(),
     totalChunks: v.number(),
 
-    // Raw samples with original timestamps
     samples: v.array(
       v.object({
         t: v.number(),
@@ -217,33 +582,19 @@ export default defineSchema({
       })
     ),
 
-    // TTL
-    createdAt: v.number(),
     expiresAt: v.number(),
   })
     .index("by_session", ["sessionId", "chunkIndex"])
     .index("by_expires", ["expiresAt"]),
 
-  // Invites table
+  // ─── Invites ───
   invites: defineTable({
-    // Who sent the invite
     fromUserId: v.id("users"),
-
-    // Invitee info
     toEmail: v.string(),
     alias: v.optional(v.string()),
-
-    // Invite token (unique, used in URL)
     token: v.string(),
-
-    // Status
     status: inviteStatusValidator,
-
-    // Expiration
     expiresAt: v.number(),
-
-    // Timestamps
-    createdAt: v.number(),
     acceptedAt: v.optional(v.number()),
     acceptedByUserId: v.optional(v.id("users")),
   })
@@ -252,36 +603,23 @@ export default defineSchema({
     .index("by_to_email", ["toEmail", "status"])
     .index("by_status", ["status", "expiresAt"]),
 
-  // Notifications table
+  // ─── Notifications ───
   notifications: defineTable({
-    // Who receives the notification
     userId: v.id("users"),
-
-    // Notification type (subject_note, recording_shared, etc.)
     type: v.string(),
-
-    // Display content
     title: v.string(),
     body: v.string(),
-
-    // Additional data (sessionId, noteBy, etc.)
     data: v.optional(v.any()),
-
-    // Status
     read: v.boolean(),
-
-    // Timestamps
-    createdAt: v.number(),
   })
-    .index("by_user", ["userId", "createdAt"])
-    .index("by_user_unread", ["userId", "read", "createdAt"]),
+    .index("by_user", ["userId"])
+    .index("by_user_unread", ["userId", "read"]),
 
-  // User tags - tracks tag usage history per user
-  // userId = "default" for system-provided default tags
+  // ─── User Tags ───
   userTags: defineTable({
     userId: v.union(v.id("users"), v.literal("default")),
     tag: v.string(),
-    category: v.optional(v.string()), // 'exercise', 'session-type'
+    category: v.optional(v.string()),
     lastUsedAt: v.number(),
     usageCount: v.number(),
   })

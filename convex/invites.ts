@@ -34,7 +34,7 @@ export const getMyInvites = query({
       toEmail: invite.toEmail,
       alias: invite.alias,
       status: invite.status,
-      createdAt: invite.createdAt,
+      _creationTime: invite._creationTime,
       expiresAt: invite.expiresAt,
       isExpired: invite.expiresAt < Date.now() && invite.status === "pending",
     }));
@@ -111,7 +111,7 @@ export const getMyPendingInvitations = query({
           return {
             _id: invite._id,
             alias: invite.alias,
-            createdAt: invite.createdAt,
+            _creationTime: invite._creationTime,
             expiresAt: invite.expiresAt,
             inviter: inviter
               ? {
@@ -268,7 +268,6 @@ export const createInvite = mutation({
         token: newToken,
         alias: args.alias,
         expiresAt: Date.now() + INVITE_EXPIRY_MS,
-        createdAt: Date.now(),
       });
       return { inviteId: existingInvite._id, token: newToken };
     }
@@ -282,7 +281,6 @@ export const createInvite = mutation({
       token,
       status: INVITE_STATUS.PENDING,
       expiresAt: Date.now() + INVITE_EXPIRY_MS,
-      createdAt: Date.now(),
     });
 
     return { inviteId, token };
@@ -324,7 +322,6 @@ export const acceptInvite = mutation({
       await ctx.db.patch(userId, {
         role: ROLES.PATIENT,
         contacts: user.contacts ?? [],
-        createdAt: user.createdAt ?? Date.now(),
       });
     }
 

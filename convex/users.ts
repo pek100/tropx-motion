@@ -86,7 +86,6 @@ export const completeOnboarding = mutation({
       await ctx.db.patch(userId, {
         role: args.role,
         contacts: user.contacts ?? [],
-        createdAt: user.createdAt ?? Date.now(),
       });
     }
 

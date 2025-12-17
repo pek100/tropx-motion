@@ -11,13 +11,33 @@ interface NavItem {
   icon: React.ReactNode
 }
 
+export type NavTabId = 'profile' | 'dashboard' | 'record';
+
 interface TopNavTabsProps {
   /** Callback when user clicks "View" on a recording notification */
   onViewRecording?: (sessionId: string) => void;
+  /** Current active tab (controlled) */
+  activeTab?: NavTabId;
+  /** Callback when tab changes */
+  onTabChange?: (tabId: NavTabId) => void;
 }
 
-export function TopNavTabs({ onViewRecording }: TopNavTabsProps = {}) {
-  const [activeTab, setActiveTab] = useState('record')
+export function TopNavTabs({
+  onViewRecording,
+  activeTab: controlledActiveTab,
+  onTabChange,
+}: TopNavTabsProps = {}) {
+  const [internalActiveTab, setInternalActiveTab] = useState<NavTabId>('record')
+
+  // Use controlled or internal state
+  const activeTab = controlledActiveTab ?? internalActiveTab
+  const setActiveTab = (tabId: NavTabId) => {
+    if (onTabChange) {
+      onTabChange(tabId)
+    } else {
+      setInternalActiveTab(tabId)
+    }
+  }
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [profilePanelOpen, setProfilePanelOpen] = useState(false)
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false)
@@ -285,7 +305,7 @@ export function TopNavTabs({ onViewRecording }: TopNavTabsProps = {}) {
               key={item.id}
               data-active={item.id === activeTab}
               className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-shadow)] hover:text-[var(--tropx-vibrant)] data-[active=true]:text-[var(--tropx-vibrant)]"
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => setActiveTab(item.id as NavTabId)}
             >
               {item.icon}
               <span>{item.label}</span>

@@ -35,7 +35,7 @@ export const listAllUsers = query({
       isArchived: user.isArchived,
       archivedAt: user.archivedAt,
       archiveReason: user.archiveReason,
-      createdAt: user.createdAt,
+      _creationTime: user._creationTime,
     }));
   },
 });

@@ -1,8 +1,9 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requireUser, getCurrentUser } from "./lib/auth";
-import { JOINTS, RECORDING_SOURCES } from "./schema";
+import { JOINTS, RECORDING_SOURCES, ACTIVITY_PROFILES } from "./schema";
 
 // Quaternion object validator
 const quaternionValidator = v.object({
@@ -47,6 +48,12 @@ export const createChunk = mutation({
     subjectAlias: v.optional(v.string()),
     notes: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
+    activityProfile: v.optional(v.union(
+      v.literal(ACTIVITY_PROFILES.POWER),
+      v.literal(ACTIVITY_PROFILES.ENDURANCE),
+      v.literal(ACTIVITY_PROFILES.REHABILITATION),
+      v.literal(ACTIVITY_PROFILES.GENERAL)
+    )),
 
     // Source tracking (only on first chunk)
     recordedAt: v.optional(v.number()), // Original capture time
@@ -109,10 +116,10 @@ export const createChunk = mutation({
       rightKneeMissing: rightActive ? args.rightKneeMissing : [],
       notes: args.notes,
       tags: args.tags,
+      activityProfile: args.activityProfile,
       // Source tracking fields
       recordedAt: args.recordedAt ?? args.startTime,
       systemTags: args.systemTags ?? [RECORDING_SOURCES.APP],
-      createdAt: now,
     });
 
     // Notify subject if they are not the owner (only on first chunk)
@@ -131,7 +138,13 @@ export const createChunk = mutation({
           recordingTitle: title,
         },
         read: false,
-        createdAt: now,
+      });
+    }
+
+    // Trigger metrics computation when last chunk is saved
+    if (args.chunkIndex === args.totalChunks - 1) {
+      await ctx.scheduler.runAfter(0, internal.recordingMetrics.triggerMetricComputation, {
+        sessionId: args.sessionId,
       });
     }
 
@@ -202,7 +215,7 @@ export const getSession = query({
       startTime: sortedChunks[0].startTime,
       endTime: sortedChunks[sortedChunks.length - 1].endTime,
       totalSampleCount: sortedChunks.reduce((sum, c) => sum + c.sampleCount, 0),
-      createdAt: firstChunk.createdAt,
+      _creationTime: firstChunk._creationTime,
       isArchived: firstChunk.isArchived,
     };
   },
@@ -263,7 +276,7 @@ export const listMySessions = query({
           endTime: lastChunk?.endTime ?? chunk.endTime,
           totalSampleCount: sortedChunks.reduce((sum, c) => sum + c.sampleCount, 0),
           durationMs: (lastChunk?.endTime ?? chunk.endTime) - chunk.startTime,
-          createdAt: chunk.createdAt,
+          _creationTime: chunk._creationTime,
         };
       })
     );
@@ -304,7 +317,7 @@ export const listSessionsOfMe = query({
           totalChunks: chunk.totalChunks,
           startTime: chunk.startTime,
           durationMs: chunk.endTime - chunk.startTime,
-          createdAt: chunk.createdAt,
+          _creationTime: chunk._creationTime,
         };
       })
     );
@@ -344,7 +357,7 @@ export const searchSessions = query({
 
     // Apply cursor
     if (args.cursor) {
-      query = query.filter((q) => q.lt(q.field("createdAt"), args.cursor));
+      query = query.filter((q) => q.lt(q.field("_creationTime"), args.cursor));
     }
 
     // Get sessions
@@ -366,16 +379,16 @@ export const searchSessions = query({
 
       if (args.cursor) {
         subjectQuery = subjectQuery.filter((q) =>
-          q.lt(q.field("createdAt"), args.cursor)
+          q.lt(q.field("_creationTime"), args.cursor)
         );
       }
 
       subjectChunks = await subjectQuery.order("desc").take(limit + 10);
     }
 
-    // Combine and sort by createdAt
+    // Combine and sort by _creationTime
     let allChunks = [...ownedChunks, ...subjectChunks].sort(
-      (a, b) => b.createdAt - a.createdAt
+      (a, b) => b._creationTime - a._creationTime
     );
 
     // Apply subject filter
@@ -455,15 +468,16 @@ export const searchSessions = query({
           recordedAt: chunk.recordedAt ?? chunk.startTime,
           totalSampleCount: sortedChunks.reduce((sum, c) => sum + c.sampleCount, 0),
           durationMs: (lastChunk?.endTime ?? chunk.endTime) - chunk.startTime,
-          createdAt: chunk.createdAt,
+          _creationTime: chunk._creationTime,
           modifiedAt: chunk.modifiedAt,
+          subjectNotes: chunk.subjectNotes ?? [],
         };
       })
     );
 
     // Determine next cursor
     const nextCursor =
-      limited.length === limit ? limited[limited.length - 1].createdAt : null;
+      limited.length === limit ? limited[limited.length - 1]._creationTime : null;
 
     return { sessions, nextCursor };
   },
@@ -849,7 +863,6 @@ export const updateSession = mutation({
             recordingTitle: title,
           },
           read: false,
-          createdAt: now,
         });
       }
     }
@@ -918,7 +931,6 @@ export const addSubjectNote = mutation({
         notePreview: args.note.slice(0, 100),
       },
       read: false,
-      createdAt: now,
     });
 
     return { success: true, sessionId: args.sessionId };

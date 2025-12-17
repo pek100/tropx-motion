@@ -60,7 +60,8 @@
       "Bash(node:*)",
       "Read(//home/pek/**)",
       "Bash(git log:*)",
-      "Bash(git ls-tree:*)"
+      "Bash(git ls-tree:*)",
+      "Bash(npx:*)"
     ],
     "deny": [],
     "ask": [],

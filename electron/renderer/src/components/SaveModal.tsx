@@ -35,6 +35,7 @@ import {
   Type,
   StickyNote,
   ChevronRight,
+  Activity,
 } from 'lucide-react';
 import { cn, formatDuration, formatDateTime } from '@/lib/utils';
 import { isWeb } from '@/lib/platform';
@@ -49,6 +50,15 @@ import { PatientSearchModal } from './PatientSearchModal';
 // ─────────────────────────────────────────────────────────────────
 
 type ModalMode = 'save' | 'edit';
+
+type ActivityProfile = 'power' | 'endurance' | 'rehabilitation' | 'general';
+
+const ACTIVITY_PROFILE_OPTIONS: { value: ActivityProfile; label: string }[] = [
+  { value: 'general', label: 'General' },
+  { value: 'power', label: 'Power' },
+  { value: 'endurance', label: 'Endurance' },
+  { value: 'rehabilitation', label: 'Rehab' },
+];
 
 export interface SaveModalProps {
   open: boolean;
@@ -338,6 +348,7 @@ export function SaveModal({
   const [isLoadingInfo, setIsLoadingInfo] = useState(false);
   const [notes, setNotes] = useState('');
   const [tags, setTags] = useState<string[]>([]);
+  const [activityProfile, setActivityProfile] = useState<ActivityProfile>('general');
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -445,6 +456,7 @@ export function SaveModal({
     if (!open) {
       setNotes('');
       setTags([]);
+      setActivityProfile('general');
       setSaveError(null);
       setSaveSuccess(false);
       setIsPatientSearchOpen(false);
@@ -474,6 +486,7 @@ export function SaveModal({
         subjectAlias: selectedPatientName || undefined,
         notes: notes || undefined,
         tags: tags.length > 0 ? tags : undefined,
+        activityProfile,
       };
 
       const result = await upload(samples, options);
@@ -489,7 +502,7 @@ export function SaveModal({
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed');
     }
-  }, [mode, notes, tags, selectedPatientId, selectedPatientName, upload, syncUserTags, onOpenChange]);
+  }, [mode, notes, tags, activityProfile, selectedPatientId, selectedPatientName, upload, syncUserTags, onOpenChange]);
 
   // Handle edit (update existing)
   const handleEdit = useCallback(async () => {
@@ -655,6 +668,35 @@ export function SaveModal({
             {/* Mini Chart Preview */}
             {mode === 'save' && recordingInfo && recordingInfo.samples && recordingInfo.samples.length > 0 && (
               <MiniRecordingChart samples={recordingInfo.samples} />
+            )}
+
+            {/* Activity Profile Selector */}
+            {mode === 'save' && (
+              <div>
+                <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--tropx-dark)] mb-1.5">
+                  <Activity className="size-3.5" />
+                  Activity Profile
+                </label>
+                <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                  {ACTIVITY_PROFILE_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setActivityProfile(option.value)}
+                      disabled={isProcessing}
+                      className={cn(
+                        'flex-1 px-3 py-1.5 text-sm font-medium transition-colors',
+                        activityProfile === option.value
+                          ? 'bg-[var(--tropx-vibrant)] text-white'
+                          : 'bg-white text-[var(--tropx-shadow)] hover:bg-gray-50',
+                        isProcessing && 'opacity-50 cursor-not-allowed'
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
             {/* Recording Title & Patient - Compact inline row */}

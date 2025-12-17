@@ -33,6 +33,8 @@ import {
   Check,
   MessageSquare,
   Send,
+  RefreshCw,
+  Gauge,
 } from 'lucide-react';
 import { cn, formatDuration, formatDate, formatTime } from '@/lib/utils';
 import { isWeb } from '@/lib/platform';
@@ -45,6 +47,12 @@ import { Badge } from '@/components/ui/badge';
 // ─────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────
+
+interface SubjectNote {
+  userId: Id<'users'>;
+  note: string;
+  createdAt: number;
+}
 
 interface SessionSummary {
   sessionId: string;
@@ -70,6 +78,7 @@ interface SessionSummary {
   durationMs: number;
   createdAt: number;
   modifiedAt?: number;
+  subjectNotes: SubjectNote[];
 }
 
 interface LoadModalProps {
@@ -297,6 +306,22 @@ function SubjectNoteInput({
   );
 }
 
+// OPI Result type for display
+interface OPIResultDisplay {
+  overallScore: number;
+  grade: string;
+  dataCompleteness: number;
+  activityProfile: string;
+}
+
+// Metrics status type
+interface MetricsStatus {
+  status: string;
+  computedAt?: number;
+  error?: string;
+  opiResult?: OPIResultDisplay;
+}
+
 // Preview panel - with inline editing support
 function RecordingPreview({
   session,
@@ -306,9 +331,14 @@ function RecordingPreview({
   onDelete,
   onSessionUpdated,
   onOpenPatientSearch,
+  onRecomputeMetrics,
+  onDeleteMetrics,
   editSubject,
+  metricsStatus,
   isLoading,
   isDeleting,
+  isRecomputing,
+  isDeletingMetrics,
   isOwner,
 }: {
   session: SessionSummary | null;
@@ -318,12 +348,19 @@ function RecordingPreview({
   onDelete?: () => void;
   onSessionUpdated?: () => void;
   onOpenPatientSearch?: () => void;
+  onRecomputeMetrics?: () => void;
+  onDeleteMetrics?: () => void;
   editSubject?: { id: Id<'users'> | null; name: string; image?: string } | null;
+  metricsStatus?: MetricsStatus | null;
   isLoading: boolean;
   isDeleting: boolean;
+  isRecomputing?: boolean;
+  isDeletingMetrics?: boolean;
   isOwner: boolean;
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showRegenConfirm, setShowRegenConfirm] = useState(false);
+  const [showDeleteMetricsConfirm, setShowDeleteMetricsConfirm] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -415,6 +452,212 @@ function RecordingPreview({
           height={42}
         />
       </div>
+
+      {/* OPI Score Display */}
+      {!isEditing && (
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-gradient-to-r from-[var(--tropx-vibrant)]/5 to-[var(--tropx-vibrant)]/10 border border-[var(--tropx-vibrant)]/20">
+          <div className="flex items-center justify-center size-10 rounded-lg bg-[var(--tropx-vibrant)]/10">
+            <Gauge className="size-5 text-[var(--tropx-vibrant)]" />
+          </div>
+          <div className="flex-1 min-w-0">
+            {metricsStatus === undefined ? (
+              <div className="flex items-center gap-2">
+                <Loader2 className="size-4 animate-spin text-[var(--tropx-shadow)]" />
+                <span className="text-sm text-[var(--tropx-shadow)]">Loading metrics...</span>
+              </div>
+            ) : metricsStatus === null || metricsStatus.status === 'pending' ? (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[var(--tropx-shadow)]">No metrics computed</span>
+                {isOwner && onRecomputeMetrics && (
+                  <button
+                    onClick={onRecomputeMetrics}
+                    disabled={isRecomputing}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/10 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {isRecomputing ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-3" />
+                    )}
+                    Compute
+                  </button>
+                )}
+              </div>
+            ) : metricsStatus.status === 'computing' ? (
+              <div className="flex items-center gap-2">
+                <Loader2 className="size-4 animate-spin text-[var(--tropx-vibrant)]" />
+                <span className="text-sm text-[var(--tropx-shadow)]">Computing metrics...</span>
+              </div>
+            ) : metricsStatus.status === 'failed' ? (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-red-500">Metrics failed: {metricsStatus.error || 'Unknown error'}</span>
+                {isOwner && onRecomputeMetrics && (
+                  <button
+                    onClick={onRecomputeMetrics}
+                    disabled={isRecomputing}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/10 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {isRecomputing ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-3" />
+                    )}
+                    Retry
+                  </button>
+                )}
+              </div>
+            ) : metricsStatus.opiResult ? (
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold text-[var(--tropx-dark)]">
+                      {Math.round(metricsStatus.opiResult.overallScore)}
+                    </span>
+                    <span className={cn(
+                      "text-sm font-semibold px-1.5 py-0.5 rounded",
+                      metricsStatus.opiResult.grade === 'A' && "bg-green-100 text-green-700",
+                      metricsStatus.opiResult.grade === 'B' && "bg-blue-100 text-blue-700",
+                      metricsStatus.opiResult.grade === 'C' && "bg-yellow-100 text-yellow-700",
+                      metricsStatus.opiResult.grade === 'D' && "bg-orange-100 text-orange-700",
+                      metricsStatus.opiResult.grade === 'F' && "bg-red-100 text-red-700",
+                    )}>
+                      {metricsStatus.opiResult.grade}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-xs text-[var(--tropx-shadow)]">
+                      OPI Score
+                    </span>
+                    <span className="text-xs text-[var(--tropx-shadow)]/60">
+                      {Math.round(metricsStatus.opiResult.dataCompleteness)}% data
+                    </span>
+                  </div>
+                </div>
+                {isOwner && (
+                  <div className="flex items-center gap-1">
+                    {onRecomputeMetrics && (
+                      <button
+                        onClick={() => setShowRegenConfirm(true)}
+                        disabled={isRecomputing || isDeletingMetrics}
+                        className="p-1.5 text-[var(--tropx-shadow)] hover:text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/10 rounded-lg transition-colors disabled:opacity-50"
+                        title="Regenerate metrics"
+                      >
+                        {isRecomputing ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="size-4" />
+                        )}
+                      </button>
+                    )}
+                    {onDeleteMetrics && (
+                      <button
+                        onClick={() => setShowDeleteMetricsConfirm(true)}
+                        disabled={isRecomputing || isDeletingMetrics}
+                        className="p-1.5 text-[var(--tropx-shadow)] hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                        title="Delete metrics"
+                      >
+                        {isDeletingMetrics ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-4" />
+                        )}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[var(--tropx-shadow)]">Metrics computed (no OPI)</span>
+                {isOwner && (
+                  <div className="flex items-center gap-1">
+                    {onRecomputeMetrics && (
+                      <button
+                        onClick={() => setShowRegenConfirm(true)}
+                        disabled={isRecomputing || isDeletingMetrics}
+                        className="p-1.5 text-[var(--tropx-shadow)] hover:text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/10 rounded-lg transition-colors disabled:opacity-50"
+                        title="Regenerate metrics"
+                      >
+                        {isRecomputing ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="size-4" />
+                        )}
+                      </button>
+                    )}
+                    {onDeleteMetrics && (
+                      <button
+                        onClick={() => setShowDeleteMetricsConfirm(true)}
+                        disabled={isRecomputing || isDeletingMetrics}
+                        className="p-1.5 text-[var(--tropx-shadow)] hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                        title="Delete metrics"
+                      >
+                        {isDeletingMetrics ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-4" />
+                        )}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Regenerate confirmation */}
+      {showRegenConfirm && (
+        <div className="p-3 rounded-lg gradient-red-card">
+          <p className="text-sm text-[var(--tropx-dark)] mb-2">Regenerate metrics? This will overwrite existing data.</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowRegenConfirm(false)}
+              className="flex-1 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                onRecomputeMetrics?.();
+                setShowRegenConfirm(false);
+              }}
+              disabled={isRecomputing}
+              className="flex-1 py-1.5 text-xs font-medium text-white bg-[var(--tropx-vibrant)] rounded-lg hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-1"
+            >
+              {isRecomputing ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
+              Regenerate
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete metrics confirmation */}
+      {showDeleteMetricsConfirm && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-sm text-red-700 mb-2">Delete all computed metrics for this recording?</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowDeleteMetricsConfirm(false)}
+              className="flex-1 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                onDeleteMetrics?.();
+                setShowDeleteMetricsConfirm(false);
+              }}
+              disabled={isDeletingMetrics}
+              className="flex-1 py-1.5 text-xs font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 disabled:opacity-50 flex items-center justify-center gap-1"
+            >
+              {isDeletingMetrics ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
 
       <Separator />
 
@@ -552,6 +795,29 @@ function RecordingPreview({
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Subject Notes (messages from subject) */}
+      {!isEditing && session.subjectNotes && session.subjectNotes.length > 0 && (
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground flex items-center gap-1.5">
+            <MessageSquare className="size-3" />
+            Subject Notes ({session.subjectNotes.length})
+          </Label>
+          <div className="space-y-2 max-h-32 overflow-y-auto">
+            {session.subjectNotes.map((note, idx) => (
+              <div
+                key={idx}
+                className="p-2 rounded-lg gradient-red-card"
+              >
+                <p className="text-sm text-[var(--tropx-dark)]">{note.note}</p>
+                <p className="text-[10px] text-[var(--tropx-shadow)] mt-1">
+                  {formatDate(note.createdAt)} {formatTime(note.createdAt)}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -699,6 +965,12 @@ export function LoadModal({
 
   // Mutations
   const archiveSession = useMutation(api.recordings.archiveSession);
+  const recomputeMetrics = useMutation(api.recordingMetrics.recomputeMetrics);
+  const deleteMetricsMutation = useMutation(api.recordingMetrics.deleteMetrics);
+
+  // Metrics action states
+  const [isRecomputing, setIsRecomputing] = useState(false);
+  const [isDeletingMetrics, setIsDeletingMetrics] = useState(false);
 
   // Debounce search input
   useEffect(() => {
@@ -738,6 +1010,39 @@ export function LoadModal({
       ? { sessionId: selectedSessionId, maxPoints: 100 }
       : 'skip'
   );
+
+  // Query metrics for selected session
+  const metricsResult = useQuery(
+    api.recordingMetrics.getMetrics,
+    open && selectedSessionId
+      ? { sessionId: selectedSessionId }
+      : 'skip'
+  );
+
+  // Transform metrics result for display
+  const metricsStatus: MetricsStatus | null | undefined = useMemo(() => {
+    if (metricsResult === undefined) return undefined; // Loading
+    if (metricsResult === null) return null; // No metrics
+
+    const opiResult = metricsResult.opiResult as {
+      overallScore: number;
+      grade: string;
+      dataCompleteness: number;
+      activityProfile: string;
+    } | undefined;
+
+    return {
+      status: metricsResult.status,
+      computedAt: metricsResult.computedAt,
+      error: metricsResult.error,
+      opiResult: opiResult ? {
+        overallScore: opiResult.overallScore,
+        grade: opiResult.grade,
+        dataCompleteness: opiResult.dataCompleteness,
+        activityProfile: opiResult.activityProfile,
+      } : undefined,
+    };
+  }, [metricsResult]);
 
   // Convert preview result to PackedChunkData format
   const previewData: PackedChunkData | null = useMemo(() => {
@@ -868,6 +1173,32 @@ export function LoadModal({
       setIsDeleting(false);
     }
   }, [selectedSessionId, archiveSession]);
+
+  // Handle recompute metrics
+  const handleRecomputeMetrics = useCallback(async () => {
+    if (!selectedSessionId) return;
+    setIsRecomputing(true);
+    try {
+      await recomputeMetrics({ sessionId: selectedSessionId });
+    } catch (err) {
+      console.error('Failed to recompute metrics:', err);
+    } finally {
+      setIsRecomputing(false);
+    }
+  }, [selectedSessionId, recomputeMetrics]);
+
+  // Handle delete metrics
+  const handleDeleteMetrics = useCallback(async () => {
+    if (!selectedSessionId) return;
+    setIsDeletingMetrics(true);
+    try {
+      await deleteMetricsMutation({ sessionId: selectedSessionId });
+    } catch (err) {
+      console.error('Failed to delete metrics:', err);
+    } finally {
+      setIsDeletingMetrics(false);
+    }
+  }, [selectedSessionId, deleteMetricsMutation]);
 
   // Handle close
   const handleClose = () => {
@@ -1052,9 +1383,14 @@ export function LoadModal({
                   onDelete={handleDelete}
                   onSessionUpdated={() => setEditSubject(undefined)}
                   onOpenPatientSearch={handleOpenPatientSearchForEdit}
+                  onRecomputeMetrics={handleRecomputeMetrics}
+                  onDeleteMetrics={handleDeleteMetrics}
                   editSubject={editSubject}
+                  metricsStatus={metricsStatus}
                   isLoading={isLoadingSession}
                   isDeleting={isDeleting}
+                  isRecomputing={isRecomputing}
+                  isDeletingMetrics={isDeletingMetrics}
                   isOwner={selectedSession?.isOwner ?? false}
                 />
               </div>

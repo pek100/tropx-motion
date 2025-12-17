@@ -40,7 +40,6 @@ export const createChunk = mutation({
       chunkIndex: args.chunkIndex,
       totalChunks: args.totalChunks,
       samples: args.samples,
-      createdAt: now,
       expiresAt,
     });
 

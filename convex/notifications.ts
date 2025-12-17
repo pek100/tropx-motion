@@ -32,7 +32,11 @@ export const listForUser = query({
 
     const notifications = await query.order("desc").take(limit);
 
-    return notifications;
+    // Map _creationTime to createdAt for frontend compatibility
+    return notifications.map((n) => ({
+      ...n,
+      createdAt: n._creationTime,
+    }));
   },
 });
 
@@ -146,7 +150,6 @@ export const create = internalMutation({
       body: args.body,
       data: args.data,
       read: false,
-      createdAt: Date.now(),
     });
 
     // Check if user wants email notifications

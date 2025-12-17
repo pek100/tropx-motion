@@ -28,11 +28,14 @@ import {
 // Types
 // ─────────────────────────────────────────────────────────────────
 
+export type ActivityProfile = 'power' | 'endurance' | 'rehabilitation' | 'general';
+
 export interface UseRecordingUploadOptions {
   subjectId?: Id<'users'>;
   subjectAlias?: string;
   notes?: string;
   tags?: string[];
+  activityProfile?: ActivityProfile;
 }
 
 export interface UseRecordingUploadReturn {
@@ -144,6 +147,7 @@ export function useRecordingUpload(): UseRecordingUploadReturn {
           subjectAlias: options.subjectAlias,
           notes: options.notes,
           tags: options.tags,
+          activityProfile: options.activityProfile,
         };
 
         // Use the upload service directly for progress tracking

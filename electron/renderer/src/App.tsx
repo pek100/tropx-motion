@@ -3,7 +3,8 @@ import { ChartSvg } from "@/components/chart-svg"
 import KneeAreaChart from "@/components/knee-area-chart"
 import { PlatformIndicator } from "@/components/platform-indicator"
 import { ProfileSelector } from "@/components/ProfileSelector"
-import { TopNavTabs } from "@/components/TopNavTabs"
+import { TopNavTabs, type NavTabId } from "@/components/TopNavTabs"
+import { DashboardView } from "@/components/dashboard"
 import { ActionBar, type ActionId } from "@/components/ActionBar"
 import { ActionModal } from "@/components/ActionModal"
 import { StorageSettingsModal } from "@/components/StorageSettingsModal"
@@ -178,6 +179,9 @@ function AppContent() {
 
   // Storage settings modal state
   const [isStorageSettingsOpen, setIsStorageSettingsOpen] = useState(false)
+
+  // Navigation tab state
+  const [activeNavTab, setActiveNavTab] = useState<NavTabId>('record')
 
   // Selected patient state
   const [selectedPatient, setSelectedPatient] = useState<{
@@ -1007,7 +1011,10 @@ function AppContent() {
           {/* Top Navigation Tabs - non-compact only */}
           {!isCompact && (
             <TopNavTabs
+              activeTab={activeNavTab}
+              onTabChange={setActiveNavTab}
               onViewRecording={(sessionId) => {
+                setActiveNavTab('record')
                 setInitialLoadSessionId(sessionId)
                 setActiveActionModal('load')
               }}
@@ -1015,6 +1022,24 @@ function AppContent() {
           )}
 
           <div className={isCompact ? "flex-1 flex relative" : "flex-1 flex items-center justify-center px-8 relative"}>
+            {/* Dashboard View */}
+            {activeNavTab === 'dashboard' && !isCompact && (
+              <div className="w-full max-w-5xl mx-auto h-[600px]">
+                <div
+                  className="bg-white h-full"
+                  style={{
+                    border: "1px solid #e5e5e5",
+                    borderRadius: "36px",
+                    overflow: "hidden",
+                  }}
+                >
+                  <DashboardView />
+                </div>
+              </div>
+            )}
+
+            {/* Record View (main app) */}
+            {(activeNavTab === 'record' || isCompact) && (
             <div className={isCompact ? "flex gap-0 w-full h-full" : "flex gap-6 w-[90%]"}>
               {/* Left Pane */}
               <div
@@ -1362,6 +1387,7 @@ function AppContent() {
                 )}
               </div>
             </div>
+            )}
           </div>
         </div>
 
