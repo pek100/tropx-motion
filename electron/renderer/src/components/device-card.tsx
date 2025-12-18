@@ -249,7 +249,7 @@ export function DeviceCard({
             isDragOver ? 'ring-2 ring-offset-2 ring-purple-500 scale-[1.02]' : ''
           }`}
         >
-          <div className={`bg-white rounded-full ${profile.sizing.touchTarget} flex items-center justify-center flex-shrink-0`}>
+          <div className={`bg-[var(--tropx-card)] rounded-full ${profile.sizing.touchTarget} flex items-center justify-center flex-shrink-0`}>
             <SignalIcon />
           </div>
 
@@ -275,7 +275,7 @@ export function DeviceCard({
                 <TooltipTrigger asChild>
                   <button
                     onClick={onRemove}
-                    className={`cursor-pointer bg-white rounded-full ${isCompact ? 'w-11 h-11' : 'px-3 py-2'} flex items-center justify-center gap-2`}
+                    className={`cursor-pointer bg-[var(--tropx-card)] rounded-full ${isCompact ? 'w-11 h-11' : 'px-3 py-2'} flex items-center justify-center gap-2`}
                   >
                     {isCompact ? (
                       <X className="w-6 h-6" style={{ color: "#6b7280" }} />
@@ -295,7 +295,7 @@ export function DeviceCard({
                 <TooltipTrigger asChild>
                   <button
                     onClick={onToggleConnection}
-                    className={`cursor-pointer bg-white rounded-full ${isCompact ? 'px-2 py-2' : 'px-3 py-2'} flex items-center justify-center gap-1`}
+                    className={`cursor-pointer bg-[var(--tropx-card)] rounded-full ${isCompact ? 'px-2 py-2' : 'px-3 py-2'} flex items-center justify-center gap-1`}
                   >
                     {isCompact ? (
                       <>
@@ -318,7 +318,7 @@ export function DeviceCard({
                 <TooltipTrigger asChild>
                   <button
                     disabled
-                    className={`cursor-not-allowed bg-white rounded-full ${isCompact ? 'w-11 h-11' : 'px-3 py-2'} flex items-center justify-center gap-2 opacity-50`}
+                    className={`cursor-not-allowed bg-[var(--tropx-card)] rounded-full ${isCompact ? 'w-11 h-11' : 'px-3 py-2'} flex items-center justify-center gap-2 opacity-50`}
                   >
                     <ConnectionIcon />
                     {!isCompact && (
@@ -335,7 +335,7 @@ export function DeviceCard({
                     <button
                       onClick={onToggleConnection}
                       disabled={disabled}
-                      className={`cursor-pointer bg-white rounded-full ${isCompact ? 'w-10 h-10' : 'px-3 py-2'} flex items-center justify-center gap-1 hover:bg-gray-50 disabled:opacity-50`}
+                      className={`cursor-pointer bg-[var(--tropx-card)] rounded-full ${isCompact ? 'w-10 h-10' : 'px-3 py-2'} flex items-center justify-center gap-1 hover:bg-[var(--tropx-muted)] disabled:opacity-50`}
                     >
                       <RefreshCw className={isCompact ? "w-5 h-5" : "w-4 h-4"} style={{ color: "#6b7280" }} />
                       {!isCompact && <span className="text-sm font-medium" style={{ color: "#6b7280" }}>Retry</span>}
@@ -347,7 +347,7 @@ export function DeviceCard({
                   <TooltipTrigger asChild>
                     <button
                       onClick={onRemove}
-                      className={`cursor-pointer bg-white rounded-full ${isCompact ? 'w-10 h-10' : 'px-3 py-2'} flex items-center justify-center gap-1 hover:bg-red-50`}
+                      className={`cursor-pointer bg-[var(--tropx-card)] rounded-full ${isCompact ? 'w-10 h-10' : 'px-3 py-2'} flex items-center justify-center gap-1 hover:bg-red-50 dark:hover:bg-red-950/30`}
                     >
                       <Trash2 className={isCompact ? "w-5 h-5" : "w-4 h-4"} style={{ color: "#ef4444" }} />
                       {!isCompact && <span className="text-sm font-medium" style={{ color: "#ef4444" }}>Clear</span>}
@@ -362,7 +362,7 @@ export function DeviceCard({
                   <button
                     onClick={onToggleConnection}
                     disabled={disabled}
-                    className={`disabled:cursor-not-allowed cursor-pointer bg-white rounded-full ${isCompact ? 'w-11 h-11' : 'px-3 py-2'} flex items-center justify-center gap-2 disabled:opacity-50`}
+                    className={`disabled:cursor-not-allowed cursor-pointer bg-[var(--tropx-card)] rounded-full ${isCompact ? 'w-11 h-11' : 'px-3 py-2'} flex items-center justify-center gap-2 disabled:opacity-50`}
                   >
                     <ConnectionIcon />
                     {!isCompact && connectionStatus === "disconnected" && (

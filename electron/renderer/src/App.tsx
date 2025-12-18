@@ -9,6 +9,7 @@ import { ActionBar, type ActionId } from "@/components/ActionBar"
 import { ActionModal } from "@/components/ActionModal"
 import { StorageSettingsModal } from "@/components/StorageSettingsModal"
 import { AuthModal } from "@/components/auth"
+import { ThemeToggle } from "@/components/ThemeToggle"
 import { isElectron, isWeb } from "@/lib/platform"
 import { platformInfo } from "@/lib/platform"
 import { useState, useRef, useEffect, useMemo, useCallback, lazy, Suspense } from "react"
@@ -952,7 +953,10 @@ function AppContent() {
   const isStoppingStreaming = pending.operations.has(PendingOp.STOP_STREAMING)
 
   const getFillStyle = () => {
-    if (connectedDevicesCount === 0) return { backgroundColor: "rgba(255, 255, 255, 0.3)" }
+    // Use CSS variable for base background that respects theme
+    const isDark = document.documentElement.classList.contains('dark')
+    const baseBg = isDark ? "rgba(39, 39, 42, 0.5)" : "rgba(255, 255, 255, 0.3)"
+    if (connectedDevicesCount === 0) return { backgroundColor: baseBg }
     if (connectedDevicesCount === 1) return { backgroundColor: "rgba(255, 77, 53, 0.15)" }
     if (connectedDevicesCount === 2) return { backgroundColor: "rgba(255, 77, 53, 0.3)" }
     if (connectedDevicesCount === 3) return { backgroundColor: "rgba(255, 77, 53, 0.6)" }
@@ -966,25 +970,31 @@ function AppContent() {
 
   return (
     <TooltipProvider delayDuration={1500}>
-      <div className={`${isCompact ? "h-screen bg-[#fff6f3] flex flex-col relative overflow-hidden" : "min-h-screen bg-[#fff6f3] flex flex-col relative"} ${showDynamicIsland ? "raspberry-pi" : ""}`}>
+      <div className={`${isCompact ? "h-screen bg-[var(--tropx-bg)] flex flex-col relative overflow-hidden" : "min-h-screen bg-[var(--tropx-bg)] flex flex-col relative"} ${showDynamicIsland ? "raspberry-pi" : ""}`}>
         {/* Content */}
         <div className={isCompact ? "relative h-screen flex flex-col" : "relative min-h-screen flex flex-col"}>
           {/* Window Controls - Desktop only, minimize/maximize hidden in kiosk mode */}
-          {isElectron() && (
+          {isElectron() ? (
             <div className="fixed top-4 right-4 flex items-center gap-1" style={{ zIndex: 9999, WebkitAppRegion: 'no-drag' } as any}>
+              <ThemeToggle />
               {!isCompact && (
                 <>
-                  <button onClick={() => window.electronAPI?.window.minimize()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm" title="Minimize">
+                  <button onClick={() => window.electronAPI?.window.minimize()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 dark:bg-zinc-800/80 backdrop-blur-sm hover:bg-gray-100 dark:hover:bg-zinc-600 hover:scale-105 transition-all shadow-sm dark:shadow-none border border-transparent dark:border-zinc-700" title="Minimize">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                   </button>
-                  <button onClick={() => window.electronAPI?.window.maximize()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-white transition-all shadow-sm" title="Maximize">
+                  <button onClick={() => window.electronAPI?.window.maximize()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 dark:bg-zinc-800/80 backdrop-blur-sm hover:bg-gray-100 dark:hover:bg-zinc-600 hover:scale-105 transition-all shadow-sm dark:shadow-none border border-transparent dark:border-zinc-700" title="Maximize">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
                   </button>
                 </>
               )}
-              <button onClick={() => window.electronAPI?.window.close()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 backdrop-blur-sm hover:bg-red-500 hover:text-white transition-all shadow-sm" title="Close">
+              <button onClick={() => window.electronAPI?.window.close()} className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/80 dark:bg-zinc-800/80 backdrop-blur-sm hover:bg-red-500 hover:text-white hover:scale-105 hover:border-red-500 transition-all shadow-sm dark:shadow-none border border-transparent dark:border-zinc-700" title="Close">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
               </button>
+            </div>
+          ) : (
+            /* Theme Toggle for web users */
+            <div className="fixed top-4 right-4 z-[9999]">
+              <ThemeToggle />
             </div>
           )}
 
@@ -993,15 +1003,15 @@ function AppContent() {
           {/* Header - hidden on compact layouts, draggable for window movement */}
           {showHeader && (
             <header className="p-8 pb-0 relative" style={{ WebkitAppRegion: 'drag' } as any}>
-              {/* Exclude top-right area from drag for window controls */}
-              <div className="absolute top-0 right-0 w-32 h-16" style={{ WebkitAppRegion: 'no-drag' } as any} />
+              {/* Exclude top-right area from drag for window controls and theme toggle */}
+              <div className="absolute top-0 right-0 w-48 h-20" style={{ WebkitAppRegion: 'no-drag' } as any} />
               <div className="flex items-start gap-3 mb-2">
                 <svg width="40" height="40" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" className="flex-shrink-0 mt-1">
                   <path d="M536.573 188.5C480.508 217.268 427.514 275.625 441.339 293.707C458.235 315.077 528.125 283.844 583.423 229.597C645.632 167.952 620.288 146.582 536.573 188.5Z" fill="var(--tropx-vibrant)" />
                   <path d="M753.405 396.365C627.93 499.319 494.412 599.86 487.977 595.838C484.76 594.229 480.738 549.187 478.325 497.71C471.89 367.409 452.587 326.388 397.892 326.388C348.828 326.388 279.656 410.038 191.985 575.73C116.378 718.9 98.6828 808.18 138.899 840.353C150.964 850.005 167.051 857.244 175.898 857.244C199.224 857.244 260.352 823.462 326.307 773.594L385.023 729.356L406.74 771.181C452.587 862.874 525.78 873.331 658.494 807.376C699.515 786.463 771.904 739.812 818.555 702.813C899.792 640.076 986.66 563.665 986.66 555.622C986.66 553.209 960.117 570.099 927.14 591.816C817.751 665.814 673.777 728.552 615.061 728.552C583.692 728.552 534.628 701.205 515.324 673.053L496.02 644.098L537.845 607.903C675.385 490.471 853.141 327.193 848.315 322.367C847.511 320.758 804.078 353.736 753.405 396.365ZM389.849 566.882C396.284 603.077 398.697 637.663 396.284 644.098C393.871 650.532 375.371 664.206 355.263 673.858C321.481 690.748 316.655 690.748 296.547 679.488C265.983 662.597 262.765 616.75 289.308 576.534C316.655 535.513 359.285 493.688 370.545 497.71C375.371 499.319 384.219 529.883 389.849 566.882Z" fill="var(--tropx-vibrant)" />
                 </svg>
                 <div>
-                  <h1 className="text-3xl font-semibold leading-tight"><span style={{ color: "var(--tropx-dark)" }} className="italic">TropX</span></h1>
+                  <h1 className="text-3xl font-semibold leading-tight"><span style={{ color: "var(--tropx-text-main)" }} className="italic">TropX</span></h1>
                   <p className="text-sm italic" style={{ color: "var(--tropx-shadow)" }}>Motion</p>
                 </div>
               </div>
@@ -1024,17 +1034,8 @@ function AppContent() {
           <div className={isCompact ? "flex-1 flex relative" : "flex-1 flex items-center justify-center px-8 relative"}>
             {/* Dashboard View */}
             {activeNavTab === 'dashboard' && !isCompact && (
-              <div className="w-full max-w-5xl mx-auto h-[600px]">
-                <div
-                  className="bg-white h-full"
-                  style={{
-                    border: "1px solid #e5e5e5",
-                    borderRadius: "36px",
-                    overflow: "hidden",
-                  }}
-                >
-                  <DashboardView />
-                </div>
+              <div className="w-full max-w-6xl mx-auto h-full py-6">
+                <DashboardView className="h-full" />
               </div>
             )}
 
@@ -1043,9 +1044,9 @@ function AppContent() {
             <div className={isCompact ? "flex gap-0 w-full h-full" : "flex gap-6 w-[90%]"}>
               {/* Left Pane */}
               <div
-                className={`flex-shrink-0 bg-white flex flex-col transition-all ${isFlashing ? "flash-pane" : ""} ${isCompact ? "w-1/2 h-full p-4" : "w-[470px] p-6"}`}
+                className={`flex-shrink-0 bg-[var(--tropx-card)] flex flex-col transition-all ${isFlashing ? "flash-pane" : ""} ${isCompact ? "w-1/2 h-full p-4" : "w-[470px] p-6"}`}
                 style={{
-                  border: isCompact ? "none" : "1px solid #e5e5e5",
+                  border: isCompact ? "none" : "1px solid var(--tropx-border)",
                   borderRadius: isCompact ? "0" : "36px",
                   height: isCompact ? "100%" : "550px",
                   position: 'relative',
@@ -1067,7 +1068,7 @@ function AppContent() {
                               onClick={handleLocate}
                               disabled={sortedDevices.some((d) => d.connectionStatus === "synchronizing") || isStreaming || isValidatingState || isValidatingLocate || isStoppingLocate}
                               className={`${btnClass} rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]`}
-                              style={{ backgroundColor: (isLocating || isStoppingLocate) ? "rgba(75, 175, 39, 0.15)" : "rgba(255, 255, 255, 0.5)", color: (isLocating || isStoppingLocate) ? "#4baf27" : "var(--tropx-shadow)", transition: "all 0.3s ease" }}
+                              style={{ backgroundColor: (isLocating || isStoppingLocate) ? "rgba(75, 175, 39, 0.15)" : "var(--tropx-muted)", color: (isLocating || isStoppingLocate) ? "#4baf27" : "var(--tropx-shadow)", transition: "all 0.3s ease" }}
                             >
                               {(isValidatingLocate || isStoppingLocate) ? (
                                 <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -1086,7 +1087,7 @@ function AppContent() {
                               onClick={handleSync}
                               disabled={isLocating || isStreaming || isValidatingState || isValidatingLocate}
                               className={`${btnClass} rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md text-tropx-shadow hover:text-purple-600 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]`}
-                              style={{ backgroundColor: "rgba(255, 255, 255, 0.5)", transition: "all 0.3s ease" }}
+                              style={{ backgroundColor: "var(--tropx-muted)", transition: "all 0.3s ease" }}
                             >
                               <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                               {profile.features.textLabels && "Sync"}
@@ -1102,7 +1103,7 @@ function AppContent() {
                             onClick={handleRefresh}
                             disabled={isLocating || isSyncing || isStreaming || isValidatingState || isValidatingLocate}
                             className={`${btnClass} rounded-full transition-all cursor-pointer backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] flex items-center gap-2`}
-                            style={{ backgroundColor: isRefreshing ? "rgba(255, 77, 53, 0.15)" : "rgba(255, 255, 255, 0.5)", transition: "all 0.3s ease" }}
+                            style={{ backgroundColor: isRefreshing ? "rgba(255, 77, 53, 0.15)" : "var(--tropx-muted)", transition: "all 0.3s ease" }}
                           >
                             <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`transition-transform ${isRefreshing ? "animate-spin" : ""}`} style={{ color: isRefreshing ? "var(--tropx-vibrant)" : "var(--tropx-shadow)" }}>
                               <path d="M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C14.8273 3 17.35 4.30367 19 6.34267" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -1171,7 +1172,7 @@ function AppContent() {
                     <div className={isCompact ? "flex gap-2 mt-4" : "flex gap-3 mt-6"}>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <button onClick={handleDisconnectAll} disabled={isLocating || isSyncing} className={`flex-1 ${btnClass} rounded-full border-2 border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] flex items-center justify-center gap-2`}>
+                          <button onClick={handleDisconnectAll} disabled={isLocating || isSyncing} className={`flex-1 ${btnClass} rounded-full border-2 border-[var(--tropx-border)] text-[var(--tropx-text-main)] font-medium hover:bg-[var(--tropx-muted)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] flex items-center justify-center gap-2`}>
                             <svg width={isCompact ? 18 : 14} height={isCompact ? 18 : 14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2" /><line x1="2" y1="2" x2="22" y2="22" /></svg>
                             {isCompact ? "Disconnect" : "Disconnect All"}
                           </button>
@@ -1180,7 +1181,7 @@ function AppContent() {
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <button onClick={handleConnectAll} disabled={isLocating || isSyncing} className={`flex-1 ${btnClass} rounded-full font-medium transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] flex items-center justify-center gap-2 ${allDevicesConnected ? "border-2 bg-transparent hover:bg-white/50" : "text-white hover:opacity-90"}`} style={allDevicesConnected ? { borderColor: "var(--tropx-vibrant)", color: "var(--tropx-vibrant)" } : { backgroundColor: "var(--tropx-vibrant)" }}>
+                          <button onClick={handleConnectAll} disabled={isLocating || isSyncing} className={`flex-1 ${btnClass} rounded-full font-medium transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] flex items-center justify-center gap-2 ${allDevicesConnected ? "border-2 bg-transparent hover:bg-[var(--tropx-vibrant)]/10" : "text-white hover:opacity-90"}`} style={allDevicesConnected ? { borderColor: "var(--tropx-vibrant)", color: "var(--tropx-vibrant)" } : { backgroundColor: "var(--tropx-vibrant)" }}>
                             <svg width={isCompact ? 18 : 14} height={isCompact ? 18 : 14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2" /><line x1="8" y1="12" x2="16" y2="12" /></svg>
                             {isCompact ? "Connect" : "Connect All"}
                           </button>
@@ -1216,9 +1217,9 @@ function AppContent() {
               >
                 {/* Right Pane */}
                 <div
-                  className={`bg-white gradient-diagonal flex flex-col ${clientDisplay === 'snapped-right' ? '' : 'items-center justify-center'} ${isCompact ? "h-full p-4" : "flex-1 p-6"}`}
+                  className={`bg-[var(--tropx-card)] gradient-diagonal flex flex-col ${clientDisplay === 'snapped-right' ? '' : 'items-center justify-center'} ${isCompact ? "h-full p-4" : "flex-1 p-6"}`}
                   style={{
-                    border: isCompact ? "none" : "1px solid #e5e5e5",
+                    border: isCompact ? "none" : "1px solid var(--tropx-border)",
                     borderRadius: isCompact ? "0" : "36px",
                     position: 'relative',
                     padding: clientDisplay === 'snapped-right' ? '0' : undefined,
@@ -1234,7 +1235,7 @@ function AppContent() {
                     {/* Auto-sync overlay for chart area */}
                     {autoSyncOverlay !== 'idle' && (
                       <>
-                        <div className="absolute inset-0 bg-white/60 z-20 pointer-events-none rounded-3xl" />
+                        <div className="absolute inset-0 bg-[var(--tropx-card)]/60 z-20 pointer-events-none rounded-3xl" />
                         <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none">
                           <div className="flex flex-col items-center gap-2">
                             <div
@@ -1311,7 +1312,7 @@ function AppContent() {
                           <button
                             onClick={handleToggleStreaming}
                             disabled={isLocating || isSyncing || isValidatingState || isValidatingLocate || isStoppingStreaming}
-                            className={`${isCompact ? "px-7 py-4 text-lg" : "px-6 py-3 text-base"} rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md border border-white/50 hover:border-white/60 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]`}
+                            className={`${isCompact ? "px-7 py-4 text-lg" : "px-6 py-3 text-base"} rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md border border-white/50 dark:border-[var(--tropx-border)] hover:border-white/60 dark:hover:border-[var(--tropx-shadow)]/50 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]`}
                             style={getFillStyle()}
                           >
                             {isValidatingState ? (
@@ -1348,7 +1349,7 @@ function AppContent() {
                               onMouseEnter={() => setIsTimerHovered(true)}
                               onMouseLeave={() => setIsTimerHovered(false)}
                               className={`${isCompact ? "px-5 py-4" : "px-4 py-3"} rounded-full font-medium flex items-center gap-2 backdrop-blur-md border transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.99]`}
-                              style={{ backgroundColor: isTimerHovered ? "rgba(239, 68, 68, 0.15)" : "rgba(255, 255, 255, 0.5)", color: isTimerHovered ? "#dc2626" : "var(--tropx-shadow)", borderColor: isTimerHovered ? "#ef4444" : "rgba(255, 255, 255, 0.5)" }}
+                              style={{ backgroundColor: isTimerHovered ? "rgba(239, 68, 68, 0.15)" : "var(--tropx-muted)", color: isTimerHovered ? "#dc2626" : "var(--tropx-shadow)", borderColor: isTimerHovered ? "#ef4444" : "var(--tropx-border)" }}
                             >
                               <svg width={isCompact ? 20 : 16} height={isCompact ? 20 : 16} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" /><path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
                               <span className={isCompact ? "text-lg" : "text-base"}>{isTimerHovered ? "Clear" : formatElapsedTime(streamElapsedTime)}</span>

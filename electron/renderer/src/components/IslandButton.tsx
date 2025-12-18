@@ -25,7 +25,7 @@ export const IslandButton = forwardRef<HTMLButtonElement, IslandButtonProps>(
           'inline-flex items-center gap-2.5 px-6 py-4 text-sm font-medium cursor-pointer whitespace-nowrap border-transparent',
           'text-[var(--tropx-shadow)]',
           'data-[highlighted=true]:text-[var(--tropx-vibrant)]',
-          !grouped && 'bg-white rounded-full island-shadow',
+          !grouped && 'bg-[var(--tropx-card)] rounded-full island-shadow',
           className
         )}
         {...props}

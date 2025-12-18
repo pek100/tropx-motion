@@ -196,7 +196,7 @@ export function TagsInput({
       <div
         className={cn(
           'flex flex-wrap items-center gap-1.5 p-2 min-h-[42px]',
-          'border border-gray-200 rounded-lg bg-white',
+          'border border-[var(--tropx-border)] rounded-lg bg-[var(--tropx-card)]',
           'focus-within:ring-2 focus-within:ring-[var(--tropx-vibrant)] focus-within:border-transparent',
           disabled && 'opacity-50 cursor-not-allowed'
         )}
@@ -302,7 +302,7 @@ export function TagsInput({
             disabled={disabled}
             className={cn(
               'flex-1 min-w-[100px] bg-transparent outline-none text-sm',
-              'text-[var(--tropx-dark)] placeholder-gray-400'
+              'text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)]'
             )}
           />
         )}
@@ -312,8 +312,8 @@ export function TagsInput({
       {showDropdown && (
         <div className="relative">
           <div className={cn(
-            'absolute z-10 w-full bg-white rounded-xl shadow-lg max-h-48 overflow-y-auto',
-            'border border-gray-100 backdrop-blur-sm'
+            'absolute z-10 w-full bg-[var(--tropx-card)] rounded-xl shadow-lg max-h-48 overflow-y-auto',
+            'border border-[var(--tropx-border)] backdrop-blur-sm'
           )}>
             {suggestions.map((suggestion, idx) => (
               <button
@@ -322,20 +322,20 @@ export function TagsInput({
                 onClick={() => addTag(suggestion.tag)}
                 className={cn(
                   'w-full text-left px-3 py-2.5 text-sm transition-all',
-                  'hover:bg-gradient-to-r hover:from-gray-50 hover:to-transparent',
-                  idx === highlightIndex && 'bg-gray-50',
+                  'hover:bg-gradient-to-r hover:from-[var(--tropx-muted)] hover:to-transparent',
+                  idx === highlightIndex && 'bg-[var(--tropx-muted)]',
                   idx === 0 && 'rounded-t-xl',
                   idx === suggestions.length - 1 && 'rounded-b-xl'
                 )}
               >
-                <span className="text-[var(--tropx-dark)] font-medium">{suggestion.tag}</span>
+                <span className="text-[var(--tropx-text-main)] font-medium">{suggestion.tag}</span>
                 {suggestion.isDefault ? (
                   <span className="text-[var(--tropx-vibrant)] text-xs ml-2 inline-flex items-center gap-1">
                     <Sparkles className="size-3" />
                     suggested
                   </span>
                 ) : (
-                  <span className="text-gray-400 text-xs ml-2">
+                  <span className="text-[var(--tropx-text-sub)] text-xs ml-2">
                     used {suggestion.usageCount}x
                   </span>
                 )}
@@ -356,7 +356,7 @@ export function TagsInput({
       >
         <div className="overflow-hidden">
           <div className="flex flex-wrap items-center gap-1.5 pt-2">
-            <span className="text-xs text-gray-400 flex items-center gap-1">
+            <span className="text-xs text-[var(--tropx-text-sub)] flex items-center gap-1">
               <Sparkles className="size-3" />
             </span>
             {suggestedTags.map((tag, idx) => (
@@ -390,7 +390,7 @@ export function TagsInput({
 
       {/* Tag count indicator */}
       {value.length > 0 && (
-        <div className="text-xs text-gray-400 text-right">
+        <div className="text-xs text-[var(--tropx-text-sub)] text-right">
           {value.length}/{MAX_TAGS} tags
         </div>
       )}

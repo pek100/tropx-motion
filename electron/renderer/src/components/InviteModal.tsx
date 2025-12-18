@@ -73,7 +73,7 @@ export function InviteModal({ open, onOpenChange }: InviteModalProps) {
           className={cn(
             "fixed inset-0 z-[51] m-auto",
             "w-full max-w-md h-fit p-6",
-            "bg-white rounded-2xl shadow-lg border border-gray-100",
+            "bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]",
             "data-[state=open]:animate-[modal-bubble-in_0.2s_var(--spring-bounce)_forwards]",
             "data-[state=closed]:animate-[modal-bubble-out_0.12s_var(--spring-smooth)_forwards]",
             "pointer-events-auto"
@@ -87,14 +87,14 @@ export function InviteModal({ open, onOpenChange }: InviteModalProps) {
               <div className="p-2 rounded-full bg-[var(--tropx-hover)]">
                 <UserPlus className="size-5 text-[var(--tropx-vibrant)]" />
               </div>
-              <DialogPrimitive.Title className="text-lg font-semibold text-[var(--tropx-dark)]">
+              <DialogPrimitive.Title className="text-lg font-semibold text-[var(--tropx-text-main)]">
                 Invite Patient
               </DialogPrimitive.Title>
             </div>
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-full p-1.5 hover:bg-gray-100 transition-colors cursor-pointer"
+              className="rounded-full p-1.5 hover:bg-[var(--tropx-muted)] transition-colors cursor-pointer"
             >
               <XIcon className="size-4 text-[var(--tropx-shadow)]" />
               <span className="sr-only">Close</span>
@@ -107,10 +107,10 @@ export function InviteModal({ open, onOpenChange }: InviteModalProps) {
 
           {success ? (
             <div className="flex flex-col items-center justify-center py-8">
-              <div className="p-3 rounded-full bg-green-100 mb-4">
+              <div className="p-3 rounded-full bg-green-100 dark:bg-green-900/30 mb-4">
                 <Check className="size-8 text-green-600" />
               </div>
-              <p className="text-[var(--tropx-dark)] font-medium">Invite sent!</p>
+              <p className="text-[var(--tropx-text-main)] font-medium">Invite sent!</p>
               <p className="text-sm text-[var(--tropx-shadow)] mt-1">
                 We'll notify them via email.
               </p>
@@ -121,7 +121,7 @@ export function InviteModal({ open, onOpenChange }: InviteModalProps) {
               <div>
                 <label
                   htmlFor="invite-email"
-                  className="block text-sm font-medium text-[var(--tropx-dark)] mb-1.5"
+                  className="block text-sm font-medium text-[var(--tropx-text-main)] mb-1.5"
                 >
                   Email address
                 </label>
@@ -136,11 +136,11 @@ export function InviteModal({ open, onOpenChange }: InviteModalProps) {
                     disabled={isSubmitting}
                     className={cn(
                       "w-full pl-10 pr-4 py-2.5 rounded-xl border-2 transition-all",
-                      "text-[var(--tropx-dark)] placeholder:text-[var(--tropx-ivory-dark)]",
+                      "text-[var(--tropx-text-main)] placeholder:text-[var(--tropx-text-sub)]",
                       "focus:outline-none focus:border-[var(--tropx-vibrant)] focus:ring-2 focus:ring-[var(--tropx-vibrant)]/20",
                       error
-                        ? "border-red-300 bg-red-50"
-                        : "border-gray-200 bg-white hover:border-[var(--tropx-coral)]",
+                        ? "border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30"
+                        : "border-[var(--tropx-border)] bg-[var(--tropx-card)] hover:border-[var(--tropx-coral)]",
                       isSubmitting && "opacity-50 cursor-not-allowed"
                     )}
                   />
@@ -151,9 +151,9 @@ export function InviteModal({ open, onOpenChange }: InviteModalProps) {
               <div>
                 <label
                   htmlFor="invite-alias"
-                  className="block text-sm font-medium text-[var(--tropx-dark)] mb-1.5"
+                  className="block text-sm font-medium text-[var(--tropx-text-main)] mb-1.5"
                 >
-                  Nickname <span className="text-[var(--tropx-shadow)] font-normal">(optional)</span>
+                  Nickname <span className="text-[var(--tropx-text-sub)] font-normal">(optional)</span>
                 </label>
                 <input
                   id="invite-alias"
@@ -164,9 +164,9 @@ export function InviteModal({ open, onOpenChange }: InviteModalProps) {
                   disabled={isSubmitting}
                   className={cn(
                     "w-full px-4 py-2.5 rounded-xl border-2 transition-all",
-                    "text-[var(--tropx-dark)] placeholder:text-[var(--tropx-ivory-dark)]",
+                    "text-[var(--tropx-text-main)] placeholder:text-[var(--tropx-text-sub)]",
                     "focus:outline-none focus:border-[var(--tropx-vibrant)] focus:ring-2 focus:ring-[var(--tropx-vibrant)]/20",
-                    "border-gray-200 bg-white hover:border-[var(--tropx-coral)]",
+                    "border-[var(--tropx-border)] bg-[var(--tropx-card)] hover:border-[var(--tropx-coral)]",
                     isSubmitting && "opacity-50 cursor-not-allowed"
                   )}
                 />
@@ -174,7 +174,7 @@ export function InviteModal({ open, onOpenChange }: InviteModalProps) {
 
               {/* Error message */}
               {error && (
-                <div className="p-3 rounded-xl bg-red-50 border border-red-200">
+                <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
                   <p className="text-sm text-red-600">{error}</p>
                 </div>
               )}

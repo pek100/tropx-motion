@@ -41,11 +41,11 @@ export function StorageSettingsModal({
 
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">
+            <label className="text-sm font-medium text-[var(--tropx-text-main)]">
               Default Export Location
             </label>
             <div className="flex items-center gap-2">
-              <div className="flex-1 px-3 py-2 text-sm bg-gray-50 rounded-lg border border-gray-200 truncate">
+              <div className="flex-1 px-3 py-2 text-sm bg-[var(--tropx-muted)] rounded-lg border border-[var(--tropx-border)] truncate text-[var(--tropx-text-main)]">
                 {currentPath}
               </div>
             </div>
@@ -74,15 +74,15 @@ export function StorageSettingsModal({
             <button
               onClick={handleReset}
               className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium
-                border border-gray-300 text-gray-700 rounded-lg
-                hover:bg-gray-50 transition-all"
+                border border-[var(--tropx-border)] text-[var(--tropx-text-main)] rounded-lg
+                hover:bg-[var(--tropx-muted)] transition-all"
             >
               <RotateCcw className="size-4" />
               Reset
             </button>
           </div>
 
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-[var(--tropx-text-sub)]">
             Recordings will be saved as CSV files with timestamps in the filename.
           </p>
         </div>

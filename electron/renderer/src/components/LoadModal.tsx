@@ -126,17 +126,17 @@ function RecordingCard({
     return (
       <div
         className={cn(
-          'relative w-full p-3 rounded-xl border-2 border-red-300 bg-red-50',
+          'relative w-full p-3 rounded-xl border-2 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30',
           'transition-all'
         )}
       >
-        <p className="text-sm font-medium text-red-700 mb-2">Delete this recording?</p>
-        <p className="text-xs text-red-600 mb-3 line-clamp-1">{title}</p>
+        <p className="text-sm font-medium text-red-700 dark:text-red-400 mb-2">Delete this recording?</p>
+        <p className="text-xs text-red-600 dark:text-red-500 mb-3 line-clamp-1">{title}</p>
         <div className="flex gap-2">
           <button
             onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(false); }}
             disabled={isDeleting}
-            className="flex-1 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+            className="flex-1 py-1.5 text-xs font-medium text-[var(--tropx-text-main)] bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-lg hover:bg-[var(--tropx-muted)] disabled:opacity-50"
           >
             Cancel
           </button>
@@ -160,8 +160,8 @@ function RecordingCard({
         'relative w-full text-left p-3 rounded-xl transition-all cursor-pointer group',
         'border-2',
         isSelected
-          ? 'bg-white border-[var(--tropx-vibrant)] shadow-sm'
-          : 'bg-white hover:bg-gray-50/80 border-transparent hover:border-gray-200'
+          ? 'bg-[var(--tropx-card)] border-[var(--tropx-vibrant)] shadow-sm'
+          : 'bg-[var(--tropx-card)] hover:bg-[var(--tropx-muted)]/80 border-transparent hover:border-[var(--tropx-border)]'
       )}
     >
       {/* Delete button - top right corner */}
@@ -173,7 +173,7 @@ function RecordingCard({
         )}>
           <button
             onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(true); }}
-            className="p-1.5 rounded-lg bg-white/80 backdrop-blur-sm border border-gray-200 text-[var(--tropx-shadow)] hover:text-red-500 hover:border-red-300 hover:bg-red-50 transition-all shadow-sm"
+            className="p-1.5 rounded-lg bg-[var(--tropx-card)]/80 backdrop-blur-sm border border-[var(--tropx-border)] text-[var(--tropx-shadow)] hover:text-red-500 hover:border-red-300 dark:hover:border-red-700 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all shadow-sm"
             title="Delete"
           >
             <Trash2 className="size-3" />
@@ -182,7 +182,7 @@ function RecordingCard({
       )}
 
       {/* Title */}
-      <h4 className="text-sm font-semibold text-[var(--tropx-dark)] line-clamp-1 pr-16 mb-2">
+      <h4 className="text-sm font-semibold text-[var(--tropx-text-main)] line-clamp-1 pr-16 mb-2">
         {title}
       </h4>
 
@@ -190,10 +190,10 @@ function RecordingCard({
       <div className="flex items-center gap-3 mb-2 text-xs">
         <div className="flex items-center gap-1 text-[var(--tropx-shadow)]">
           <Clock className="size-3" />
-          <span className="text-[var(--tropx-dark)] font-medium">{formatDuration(session.durationMs)}</span>
+          <span className="text-[var(--tropx-text-main)] font-medium">{formatDuration(session.durationMs)}</span>
         </div>
         <span className="text-[var(--tropx-shadow)]">{session.totalSampleCount.toLocaleString()} samples</span>
-        <span className="text-muted-foreground">{formatDate(session.recordedAt)}</span>
+        <span className="text-[var(--tropx-text-sub)]">{formatDate(session.recordedAt)}</span>
       </div>
 
       {/* Bottom row: Subject, Owner, Tags */}
@@ -201,29 +201,29 @@ function RecordingCard({
         {/* Subject badge */}
         <div className={cn(
           "flex items-center gap-1.5 px-2 py-0.5 rounded-md",
-          session.isSubjectMe ? "bg-violet-100" : "bg-gray-100"
+          session.isSubjectMe ? "bg-violet-100 dark:bg-violet-900/30" : "bg-[var(--tropx-muted)]"
         )}>
           {session.subjectImage ? (
             <img src={session.subjectImage} alt="" className="size-4 rounded-full object-cover" />
           ) : (
-            <User className={cn("size-3.5", session.isSubjectMe ? "text-violet-600" : "text-gray-500")} />
+            <User className={cn("size-3.5", session.isSubjectMe ? "text-violet-600" : "text-[var(--tropx-text-sub)]")} />
           )}
           <span className={cn(
             "truncate max-w-[70px]",
-            session.isSubjectMe ? "text-violet-700 font-medium" : session.subjectName ? "text-gray-700" : "text-gray-400 italic"
+            session.isSubjectMe ? "text-violet-700 dark:text-violet-300 font-medium" : session.subjectName ? "text-[var(--tropx-text-main)]" : "text-[var(--tropx-text-sub)] italic"
           )}>
             {session.isSubjectMe ? 'Me' : session.subjectName || 'Anon'}
           </span>
         </div>
 
         {/* Owner badge */}
-        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gray-50 border border-gray-100">
+        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[var(--tropx-muted)] border border-[var(--tropx-border)]">
           {session.ownerImage ? (
             <img src={session.ownerImage} alt="" className="size-4 rounded-full object-cover" />
           ) : (
-            <User className="size-3.5 text-gray-400" />
+            <User className="size-3.5 text-[var(--tropx-text-sub)]" />
           )}
-          <span className="text-gray-600 truncate max-w-[60px]">{session.ownerName}</span>
+          <span className="text-[var(--tropx-text-sub)] truncate max-w-[60px]">{session.ownerName}</span>
         </div>
 
         {/* Spacer */}
@@ -286,7 +286,7 @@ function SubjectNoteInput({
           onChange={(e) => setNote(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
           placeholder="Type your note..."
-          className="flex-1 px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-[var(--tropx-vibrant)] focus:ring-1 focus:ring-[var(--tropx-vibrant)]"
+          className="flex-1 px-2.5 py-1.5 text-sm text-[var(--tropx-text-main)] border border-[var(--tropx-border)] rounded-lg bg-[var(--tropx-card)] focus:outline-none focus:border-[var(--tropx-vibrant)] focus:ring-1 focus:ring-[var(--tropx-vibrant)]"
           disabled={isSending}
         />
         <button
@@ -296,7 +296,7 @@ function SubjectNoteInput({
             'p-1.5 rounded-lg transition-colors',
             note.trim() && !isSending
               ? 'text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-hover)]'
-              : 'text-gray-300 cursor-not-allowed'
+              : 'text-[var(--tropx-text-sub)] cursor-not-allowed'
           )}
         >
           {isSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
@@ -437,11 +437,11 @@ function RecordingPreview({
       {/* Stats row */}
       <div className="flex items-center justify-between text-xs px-1">
         <div className="flex items-center gap-1.5">
-          <Clock className="size-3 text-[var(--tropx-shadow)]" />
-          <span className="text-[var(--tropx-dark)] font-medium">{formatDuration(session.durationMs)}</span>
+          <Clock className="size-3 text-[var(--tropx-text-sub)]" />
+          <span className="text-[var(--tropx-text-main)] font-medium">{formatDuration(session.durationMs)}</span>
         </div>
-        <div className="text-[var(--tropx-dark)]">{session.totalSampleCount.toLocaleString()} samples</div>
-        <div className="text-[var(--tropx-shadow)]">{formatDate(session.recordedAt)}</div>
+        <div className="text-[var(--tropx-text-main)]">{session.totalSampleCount.toLocaleString()} samples</div>
+        <div className="text-[var(--tropx-text-sub)]">{formatDate(session.recordedAt)}</div>
       </div>
 
       {/* Chart */}
@@ -510,16 +510,16 @@ function RecordingPreview({
               <div className="flex items-center justify-between">
                 <div>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold text-[var(--tropx-dark)]">
+                    <span className="text-2xl font-bold text-[var(--tropx-text-main)]">
                       {Math.round(metricsStatus.opiResult.overallScore)}
                     </span>
                     <span className={cn(
                       "text-sm font-semibold px-1.5 py-0.5 rounded",
-                      metricsStatus.opiResult.grade === 'A' && "bg-green-100 text-green-700",
-                      metricsStatus.opiResult.grade === 'B' && "bg-blue-100 text-blue-700",
-                      metricsStatus.opiResult.grade === 'C' && "bg-yellow-100 text-yellow-700",
-                      metricsStatus.opiResult.grade === 'D' && "bg-orange-100 text-orange-700",
-                      metricsStatus.opiResult.grade === 'F' && "bg-red-100 text-red-700",
+                      metricsStatus.opiResult.grade === 'A' && "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400",
+                      metricsStatus.opiResult.grade === 'B' && "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400",
+                      metricsStatus.opiResult.grade === 'C' && "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400",
+                      metricsStatus.opiResult.grade === 'D' && "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400",
+                      metricsStatus.opiResult.grade === 'F' && "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400",
                     )}>
                       {metricsStatus.opiResult.grade}
                     </span>
@@ -553,7 +553,7 @@ function RecordingPreview({
                       <button
                         onClick={() => setShowDeleteMetricsConfirm(true)}
                         disabled={isRecomputing || isDeletingMetrics}
-                        className="p-1.5 text-[var(--tropx-shadow)] hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                        className="p-1.5 text-[var(--tropx-text-sub)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-colors disabled:opacity-50"
                         title="Delete metrics"
                       >
                         {isDeletingMetrics ? (
@@ -589,7 +589,7 @@ function RecordingPreview({
                       <button
                         onClick={() => setShowDeleteMetricsConfirm(true)}
                         disabled={isRecomputing || isDeletingMetrics}
-                        className="p-1.5 text-[var(--tropx-shadow)] hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                        className="p-1.5 text-[var(--tropx-text-sub)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-colors disabled:opacity-50"
                         title="Delete metrics"
                       >
                         {isDeletingMetrics ? (
@@ -609,12 +609,12 @@ function RecordingPreview({
 
       {/* Regenerate confirmation */}
       {showRegenConfirm && (
-        <div className="p-3 rounded-lg gradient-red-card">
-          <p className="text-sm text-[var(--tropx-dark)] mb-2">Regenerate metrics? This will overwrite existing data.</p>
+        <div className="p-3 rounded-lg gradient-diagonal border border-[var(--tropx-border)]">
+          <p className="text-sm text-[var(--tropx-text-main)] mb-2">Regenerate metrics? This will overwrite existing data.</p>
           <div className="flex gap-2">
             <button
               onClick={() => setShowRegenConfirm(false)}
-              className="flex-1 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+              className="flex-1 py-1.5 text-xs font-medium text-[var(--tropx-text-main)] bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-lg hover:bg-[var(--tropx-muted)]"
             >
               Cancel
             </button>
@@ -635,12 +635,12 @@ function RecordingPreview({
 
       {/* Delete metrics confirmation */}
       {showDeleteMetricsConfirm && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-sm text-red-700 mb-2">Delete all computed metrics for this recording?</p>
+        <div className="p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg">
+          <p className="text-sm text-red-700 dark:text-red-400 mb-2">Delete all computed metrics for this recording?</p>
           <div className="flex gap-2">
             <button
               onClick={() => setShowDeleteMetricsConfirm(false)}
-              className="flex-1 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+              className="flex-1 py-1.5 text-xs font-medium text-[var(--tropx-text-main)] bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-lg hover:bg-[var(--tropx-muted)]"
             >
               Cancel
             </button>
@@ -670,10 +670,10 @@ function RecordingPreview({
             value={editTitle}
             onChange={(e) => setEditTitle(e.target.value)}
             placeholder="Recording title..."
-            className="w-full text-sm font-medium text-[var(--tropx-dark)] bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 focus:border-[var(--tropx-vibrant)] focus:ring-1 focus:ring-[var(--tropx-vibrant)] outline-none"
+            className="w-full text-sm font-medium text-[var(--tropx-text-main)] bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-lg px-2.5 py-1.5 focus:border-[var(--tropx-vibrant)] focus:ring-1 focus:ring-[var(--tropx-vibrant)] outline-none"
           />
         ) : (
-          <p className="text-sm font-semibold text-[var(--tropx-dark)] truncate">{title}</p>
+          <p className="text-sm font-semibold text-[var(--tropx-text-main)] truncate">{title}</p>
         )}
       </div>
 
@@ -690,8 +690,8 @@ function RecordingPreview({
               className={cn(
                 'w-full flex items-center gap-2 px-2.5 py-1.5 border rounded-lg text-sm transition-colors text-left',
                 editSubject?.id || (editSubject === undefined && session.subjectId)
-                  ? 'border-violet-200 bg-violet-50 text-violet-700'
-                  : 'border-gray-200 text-[var(--tropx-shadow)] hover:bg-gray-50',
+                  ? 'border-violet-200 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300'
+                  : 'border-[var(--tropx-border)] text-[var(--tropx-text-sub)] hover:bg-[var(--tropx-muted)]',
                 isSaving && 'opacity-50 cursor-not-allowed'
               )}
             >
@@ -718,17 +718,17 @@ function RecordingPreview({
               ) : (
                 <div className={cn(
                   "size-6 rounded-full flex items-center justify-center",
-                  session.subjectName || session.isSubjectMe ? "bg-violet-100" : "bg-gray-100"
+                  session.subjectName || session.isSubjectMe ? "bg-violet-100 dark:bg-violet-900/30" : "bg-[var(--tropx-muted)]"
                 )}>
                   <User className={cn(
                     "size-3.5",
-                    session.subjectName || session.isSubjectMe ? "text-violet-600" : "text-gray-400"
+                    session.subjectName || session.isSubjectMe ? "text-violet-600 dark:text-violet-400" : "text-[var(--tropx-text-sub)]"
                   )} />
                 </div>
               )}
               <span className={cn(
                 "text-sm truncate",
-                session.subjectName || session.isSubjectMe ? "text-[var(--tropx-dark)]" : "text-gray-400 italic"
+                session.subjectName || session.isSubjectMe ? "text-[var(--tropx-text-main)]" : "text-[var(--tropx-text-sub)] italic"
               )}>
                 {session.isSubjectMe ? 'Me' : session.subjectName || 'Anonymous'}
               </span>
@@ -743,11 +743,11 @@ function RecordingPreview({
             {session.ownerImage ? (
               <img src={session.ownerImage} alt="" className="size-6 rounded-full object-cover" />
             ) : (
-              <div className="size-6 rounded-full flex items-center justify-center bg-gray-100">
-                <User className="size-3.5 text-gray-500" />
+              <div className="size-6 rounded-full flex items-center justify-center bg-[var(--tropx-muted)]">
+                <User className="size-3.5 text-[var(--tropx-text-sub)]" />
               </div>
             )}
-            <span className="text-sm text-[var(--tropx-dark)] truncate">{session.ownerName}</span>
+            <span className="text-sm text-[var(--tropx-text-main)] truncate">{session.ownerName}</span>
           </div>
         </div>
       </div>
@@ -762,10 +762,10 @@ function RecordingPreview({
               onChange={(e) => setEditNotes(e.target.value)}
               placeholder="Add notes..."
               rows={2}
-              className="w-full text-sm text-[var(--tropx-dark)] bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 focus:border-[var(--tropx-vibrant)] focus:ring-1 focus:ring-[var(--tropx-vibrant)] outline-none resize-none"
+              className="w-full text-sm text-[var(--tropx-text-main)] bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-lg px-2.5 py-1.5 focus:border-[var(--tropx-vibrant)] focus:ring-1 focus:ring-[var(--tropx-vibrant)] outline-none resize-none"
             />
           ) : (
-            <p className="text-sm text-[var(--tropx-dark)] line-clamp-2">{session.notes}</p>
+            <p className="text-sm text-[var(--tropx-text-main)] line-clamp-2">{session.notes}</p>
           )}
         </div>
       )}
@@ -809,9 +809,9 @@ function RecordingPreview({
             {session.subjectNotes.map((note, idx) => (
               <div
                 key={idx}
-                className="p-2 rounded-lg gradient-red-card"
+                className="p-2 rounded-lg gradient-diagonal border border-[var(--tropx-border)]"
               >
-                <p className="text-sm text-[var(--tropx-dark)]">{note.note}</p>
+                <p className="text-sm text-[var(--tropx-text-main)]">{note.note}</p>
                 <p className="text-[10px] text-[var(--tropx-shadow)] mt-1">
                   {formatDate(note.createdAt)} {formatTime(note.createdAt)}
                 </p>
@@ -834,12 +834,12 @@ function RecordingPreview({
 
       {/* Delete confirmation */}
       {showDeleteConfirm && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-sm text-red-700 mb-2">Delete this recording?</p>
+        <div className="p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg">
+          <p className="text-sm text-red-700 dark:text-red-400 mb-2">Delete this recording?</p>
           <div className="flex gap-2">
             <button
               onClick={() => setShowDeleteConfirm(false)}
-              className="flex-1 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+              className="flex-1 py-1.5 text-xs font-medium text-[var(--tropx-text-main)] bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-lg hover:bg-[var(--tropx-muted)]"
             >
               Cancel
             </button>
@@ -866,7 +866,7 @@ function RecordingPreview({
             <button
               onClick={handleCancelEdit}
               disabled={isSaving}
-              className="p-2 rounded-lg text-[var(--tropx-shadow)] hover:bg-gray-100 transition-colors disabled:opacity-50"
+              className="p-2 rounded-lg text-[var(--tropx-text-sub)] hover:bg-[var(--tropx-muted)] transition-colors disabled:opacity-50"
               title="Cancel"
             >
               <XIcon className="size-4" />
@@ -879,7 +879,7 @@ function RecordingPreview({
               className={cn(
                 'flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2',
                 isSaving
-                  ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  ? 'bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] cursor-not-allowed'
                   : 'bg-[var(--tropx-vibrant)] text-white hover:opacity-90'
               )}
             >
@@ -893,7 +893,7 @@ function RecordingPreview({
             {isOwner && (
               <button
                 onClick={handleStartEdit}
-                className="p-2 rounded-lg text-[var(--tropx-shadow)] hover:bg-gray-100 transition-colors"
+                className="p-2 rounded-lg text-[var(--tropx-text-sub)] hover:bg-[var(--tropx-muted)] transition-colors"
                 title="Edit"
               >
                 <Pencil className="size-4" />
@@ -904,7 +904,7 @@ function RecordingPreview({
             {isOwner && onDelete && (
               <button
                 onClick={() => setShowDeleteConfirm(true)}
-                className="p-2 rounded-lg text-[var(--tropx-shadow)] hover:bg-red-50 hover:text-red-500 transition-colors"
+                className="p-2 rounded-lg text-[var(--tropx-text-sub)] hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-500 transition-colors"
                 title="Delete"
               >
                 <Trash2 className="size-4" />
@@ -918,7 +918,7 @@ function RecordingPreview({
               className={cn(
                 'flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2',
                 isLoading
-                  ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  ? 'bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] cursor-not-allowed'
                   : 'bg-[var(--tropx-vibrant)] text-white hover:opacity-90'
               )}
             >
@@ -1231,7 +1231,7 @@ export function LoadModal({
           <DialogPrimitive.Content
             className={cn(
               'w-full max-w-3xl h-[85vh] max-h-[720px]',
-              'bg-white rounded-2xl shadow-lg border border-gray-100',
+              'bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]',
               'flex flex-col overflow-hidden',
               'pointer-events-auto'
             )}
@@ -1244,8 +1244,8 @@ export function LoadModal({
             }}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <DialogPrimitive.Title className="text-xl font-bold text-[var(--tropx-dark)]">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--tropx-border)]">
+              <DialogPrimitive.Title className="text-xl font-bold text-[var(--tropx-text-main)]">
                 Load Recording
               </DialogPrimitive.Title>
               <DialogPrimitive.Description className="sr-only">
@@ -1253,16 +1253,16 @@ export function LoadModal({
               </DialogPrimitive.Description>
               <button
                 onClick={handleClose}
-                className="rounded-full p-2 hover:bg-gray-100 transition-colors cursor-pointer"
+                className="rounded-full p-2 hover:bg-[var(--tropx-muted)] transition-colors cursor-pointer"
               >
                 <XIcon className="size-5 text-[var(--tropx-shadow)]" />
               </button>
             </div>
 
             {/* Search & Filter Bar */}
-            <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-100 bg-gray-50/50">
+            <div className="flex items-center gap-3 px-5 py-3 border-b border-[var(--tropx-border)] bg-[var(--tropx-muted)]/50">
               {/* Search input */}
-              <div className="flex-1 flex items-center gap-2.5 px-4 py-2.5 bg-white rounded-xl border border-gray-200 focus-within:border-[var(--tropx-vibrant)] focus-within:ring-2 focus-within:ring-[var(--tropx-vibrant)]/20 transition-all">
+              <div className="flex-1 flex items-center gap-2.5 px-4 py-2.5 bg-[var(--tropx-card)] rounded-xl border border-[var(--tropx-border)] focus-within:border-[var(--tropx-vibrant)] focus-within:ring-2 focus-within:ring-[var(--tropx-vibrant)]/20 transition-all">
                 <Search className="size-4 text-[var(--tropx-shadow)]" />
                 <input
                   ref={searchInputRef}
@@ -1270,7 +1270,7 @@ export function LoadModal({
                   placeholder="Search by title, tags, notes..."
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
-                  className="flex-1 bg-transparent text-sm outline-none placeholder-[var(--tropx-ivory-dark)]"
+                  className="flex-1 bg-transparent text-sm text-[var(--tropx-text-main)] outline-none placeholder-[var(--tropx-text-sub)]"
                 />
               </div>
 
@@ -1281,8 +1281,8 @@ export function LoadModal({
                   'flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all',
                   'hover:scale-[1.02] active:scale-[0.98]',
                   selectedSubjectId
-                    ? 'bg-violet-100 text-violet-700 border-2 border-violet-200'
-                    : 'bg-white text-[var(--tropx-shadow)] border-2 border-gray-200 hover:border-gray-300'
+                    ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border-2 border-violet-200 dark:border-violet-700'
+                    : 'bg-[var(--tropx-card)] text-[var(--tropx-shadow)] border-2 border-[var(--tropx-border)] hover:border-[var(--tropx-shadow)]/30'
                 )}
               >
                 {selectedSubjectImage ? (
@@ -1300,7 +1300,7 @@ export function LoadModal({
               {selectedSubjectId && (
                 <button
                   onClick={handleClearSubject}
-                  className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                  className="p-2 rounded-lg text-[var(--tropx-text-sub)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
                 >
                   <XIcon className="size-4" />
                 </button>
@@ -1312,8 +1312,8 @@ export function LoadModal({
                   onClick={onImportCSV}
                   className={cn(
                     'flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium',
-                    'bg-white text-[var(--tropx-shadow)] border-2 border-gray-200',
-                    'hover:border-gray-300 hover:scale-[1.02] active:scale-[0.98] transition-all'
+                    'bg-[var(--tropx-card)] text-[var(--tropx-shadow)] border-2 border-[var(--tropx-border)]',
+                    'hover:border-[var(--tropx-shadow)]/30 hover:scale-[1.02] active:scale-[0.98] transition-all'
                   )}
                 >
                   <Upload className="size-4" />
@@ -1328,7 +1328,7 @@ export function LoadModal({
               <div
                 ref={listRef}
                 onScroll={handleScroll}
-                className="w-1/2 border-r border-gray-100 overflow-y-auto p-4 space-y-3 bg-gray-50/30"
+                className="w-1/2 border-r border-[var(--tropx-border)] overflow-y-auto p-4 space-y-3 bg-[var(--tropx-muted)]/30"
               >
                 {searchResult === undefined ? (
                   <div className="flex items-center justify-center py-16">
@@ -1336,7 +1336,7 @@ export function LoadModal({
                   </div>
                 ) : sessions.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 text-[var(--tropx-shadow)]">
-                    <div className="size-16 rounded-full bg-gray-100 flex items-center justify-center mb-4">
+                    <div className="size-16 rounded-full bg-[var(--tropx-muted)] flex items-center justify-center mb-4">
                       <Search className="size-8 opacity-30" />
                     </div>
                     <p className="text-sm font-medium mb-1">No Recordings Found</p>

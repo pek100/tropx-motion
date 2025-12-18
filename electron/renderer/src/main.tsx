@@ -10,7 +10,7 @@ import { RoleSelectionModal } from './components/auth'
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ConvexClientProvider>
-      <ThemeProvider defaultTheme="light" storageKey="tropx-ui-theme">
+      <ThemeProvider attribute="class" defaultTheme="light" enableSystem storageKey="tropx-ui-theme">
         <App />
         <RoleSelectionModal />
         <Toaster />

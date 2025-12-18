@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TropX Dashboard Redesign - Chart Above Table Variant</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#FF4E36", 
+                        "background-light": "#FFF7F5", 
+                        "background-dark": "#09090b", // Darker background for shadcn feel
+                        "card-light": "#FFFFFF",
+                        "card-dark": "#18181b", // Zinc-900
+                        "text-main-light": "#0f172a", // Slate-900
+                        "text-main-dark": "#f8fafc", // Slate-50
+                        "text-sub-light": "#64748b", // Slate-500
+                        "text-sub-dark": "#94a3b8", // Slate-400
+                        "border-light": "#e2e8f0", // Slate-200
+                        "border-dark": "#27272a", // Zinc-800
+                        "success-bg": "#ECFDF5",
+                        "success-text": "#059669",
+                        "warning-bg": "#FFFBEB",
+                        "warning-text": "#D97706",
+                        "info-bg": "#EFF6FF",
+                        "info-text": "#2563EB",
+                        "muted-light": "#f1f5f9",
+                        "muted-dark": "#27272a",
+                    },
+                    fontFamily: {
+                        display: ["Inter", "sans-serif"],
+                    },
+                    borderRadius: {
+                        DEFAULT: "0.5rem",
+                        "lg": "0.75rem",
+                        "xl": "1rem",
+                    },
+                },
+            },
+        };
+    </script>
+<style type="text/tailwindcss">
+        @layer utilities {
+            .table-row-hover:hover td {
+                @apply bg-muted-light dark:bg-muted-dark/50;
+            }
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-text-main-light dark:text-text-main-dark transition-colors duration-200 min-h-screen">
+<nav class="fixed top-0 w-full z-50 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-transparent dark:border-border-dark">
+<div class="flex items-center gap-3">
+<div class="text-primary">
+<svg fill="none" height="32" viewBox="0 0 40 40" width="32" xmlns="http://www.w3.org/2000/svg">
+<path d="M20 0C8.954 0 0 8.954 0 20s8.954 20 20 20 20-8.954 20-20S31.046 0 20 0zm-2 29l-6-6 1.41-1.41L18 26.17l10.59-10.59L30 17l-12 12z" fill="currentColor" fill-opacity="0"></path>
+<path d="M10 28C10 28 8 20 18 10C22 18 10 28 10 28Z" fill="#FF4E36"></path>
+<path d="M14 32C14 32 12 24 22 14" stroke="#FF4E36" stroke-linecap="round" stroke-width="2"></path>
+</svg>
+</div>
+<div>
+<h1 class="text-2xl font-bold tracking-tight text-text-main-light dark:text-white leading-none">TropX</h1>
+<p class="text-xs text-text-sub-light dark:text-text-sub-dark font-medium tracking-wide uppercase">Motion</p>
+</div>
+</div>
+<div class="flex items-center gap-6 bg-card-light dark:bg-card-dark px-4 py-2 rounded-full shadow-sm border border-border-light dark:border-border-dark">
+<div class="flex items-center gap-3 pr-4 border-r border-border-light dark:border-border-dark">
+<div class="w-8 h-8 rounded-full bg-gray-200 overflow-hidden">
+<img alt="User Profile" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAD5RsYoXebP3zRcPSMvkhb-WpVM1rBGHxAVoGXwOlOjDj0RpiIWEQjkSMRb9cQP8C5GpmR96OwfMI34VZ-1yJZ2zEFZrAHLvFLTQQ_3XFsT7gJx9sHX4muO1KV86xA9ko6-Fluj3Wg9QtImZKvNGPN0b12Y1QqR_hiiTXWKR_FSS4zVqR3enzpr2wQQLDaWNn-dQZiGb5TeWchDWUmf8mtOBCqpA2YpiyLrYqWzxTb9gDIAPRGjfQ5QbOcIIOG6p28p6lyrZnFQWxC"/>
+</div>
+<span class="text-sm font-medium">Michael</span>
+<button class="text-text-sub-light dark:text-text-sub-dark hover:text-primary transition">
+<span class="material-icons text-[20px]">notifications_none</span>
+</button>
+</div>
+<div class="flex gap-4 text-sm font-medium">
+<button class="text-primary flex items-center gap-2">
+<span class="material-icons text-[18px]">dashboard</span>
+                Dashboard
+            </button>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<button class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-800 transition" onclick="document.documentElement.classList.toggle('dark')">
+<span class="material-icons dark:hidden">dark_mode</span>
+<span class="material-icons hidden dark:block text-white">light_mode</span>
+</button>
+</div>
+</nav>
+<main class="pt-24 pb-12 px-6 max-w-7xl mx-auto space-y-6">
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<div class="col-span-1 bg-card-light dark:bg-card-dark p-5 rounded-xl shadow-sm border border-border-light dark:border-border-dark flex flex-col justify-center h-full">
+<div class="flex items-center gap-4">
+<div class="w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xl border border-primary/20 shadow-sm shrink-0">
+                MP
+            </div>
+<div>
+<h2 class="text-lg font-bold text-text-main-light dark:text-white leading-tight">Michael Pekelis</h2>
+<p class="text-xs text-text-sub-light dark:text-text-sub-dark mb-1">ID: #8823-XA</p>
+<div class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success-bg dark:bg-success-text/10 border border-success-text/20">
+<span class="flex h-1.5 w-1.5 rounded-full bg-success-text animate-pulse"></span>
+<p class="text-[10px] uppercase font-bold tracking-wider text-success-text">Active Session</p>
+</div>
+</div>
+</div>
+</div>
+<div class="col-span-1 md:col-span-2 flex flex-col justify-between h-full space-y-3">
+<div class="flex items-center justify-between px-1">
+<div class="flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+<h3 class="text-sm font-semibold text-text-main-light dark:text-white">Recent Sessions</h3>
+</div>
+<div class="flex gap-1.5">
+<button class="w-6 h-6 flex items-center justify-center rounded-full border border-border-light dark:border-border-dark bg-card-light dark:bg-card-dark text-text-sub-light hover:text-primary hover:border-primary transition disabled:opacity-50">
+<span class="material-icons text-[14px]">chevron_left</span>
+</button>
+<button class="w-6 h-6 flex items-center justify-center rounded-full border border-border-light dark:border-border-dark bg-card-light dark:bg-card-dark text-text-sub-light hover:text-primary hover:border-primary transition">
+<span class="material-icons text-[14px]">chevron_right</span>
+</button>
+</div>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 h-full">
+<div class="bg-card-light dark:bg-card-dark p-4 rounded-xl shadow-sm border border-primary dark:border-primary relative overflow-hidden group">
+<div class="absolute -right-4 -top-4 w-20 h-20 bg-primary/5 rounded-full group-hover:scale-110 transition-transform duration-500"></div>
+<div class="relative flex flex-col h-full justify-between">
+<div class="flex justify-between items-start">
+<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-primary text-white">LATEST</span>
+<span class="text-[10px] text-text-sub-light dark:text-text-sub-dark">10:42 AM</span>
+</div>
+<div class="mt-2 flex items-center gap-1">
+<span class="material-symbols-outlined text-[18px] text-primary">fitness_center</span>
+<h4 class="font-bold text-text-main-light dark:text-white leading-tight">Squat</h4>
+</div>
+<p class="text-[10px] text-text-sub-light dark:text-text-sub-dark">Bilateral</p>
+<div class="mt-3 pt-3 border-t border-dashed border-border-light dark:border-border-dark flex items-center justify-between">
+<div class="flex flex-col">
+<span class="text-[10px] text-text-sub-light uppercase">OPI</span>
+<span class="text-xl font-bold text-primary">26</span>
+</div>
+<div class="flex flex-col items-end">
+<span class="text-[10px] text-text-sub-light uppercase">Grade</span>
+<span class="text-lg font-bold text-text-main-light dark:text-white">F</span>
+</div>
+</div>
+</div>
+</div>
+<div class="bg-card-light dark:bg-card-dark p-4 rounded-xl shadow-sm border border-border-light dark:border-border-dark relative overflow-hidden hover:border-primary/30 transition-colors">
+<div class="relative flex flex-col h-full justify-between">
+<div class="flex justify-between items-start">
+<span class="text-[10px] font-semibold text-text-sub-light uppercase">Yesterday</span>
+<span class="text-[10px] text-text-sub-light dark:text-text-sub-dark">04:15 PM</span>
+</div>
+<div class="mt-2 flex items-center gap-1">
+<span class="material-symbols-outlined text-[18px] text-primary">hiking</span>
+<h4 class="font-bold text-text-main-light dark:text-white leading-tight">Lunge</h4>
+</div>
+<p class="text-[10px] text-text-sub-light dark:text-text-sub-dark">Left Leg</p>
+<div class="mt-3 pt-3 border-t border-dashed border-border-light dark:border-border-dark flex items-center justify-between">
+<div class="flex flex-col">
+<span class="text-[10px] text-text-sub-light uppercase">OPI</span>
+<span class="text-xl font-bold text-text-main-light dark:text-white">84</span>
+</div>
+<div class="flex flex-col items-end">
+<span class="text-[10px] text-text-sub-light uppercase">Grade</span>
+<span class="text-lg font-bold text-success-text">B</span>
+</div>
+</div>
+</div>
+</div>
+<div class="bg-card-light dark:bg-card-dark p-4 rounded-xl shadow-sm border border-border-light dark:border-border-dark relative overflow-hidden hover:border-primary/30 transition-colors hidden lg:block">
+<div class="relative flex flex-col h-full justify-between">
+<div class="flex justify-between items-start">
+<span class="text-[10px] font-semibold text-text-sub-light uppercase">May 21</span>
+<span class="text-[10px] text-text-sub-light dark:text-text-sub-dark">09:00 AM</span>
+</div>
+<div class="mt-2 flex items-center gap-1">
+<span class="material-symbols-outlined text-[18px] text-primary">fitness_center</span>
+<h4 class="font-bold text-text-main-light dark:text-white leading-tight">Squat</h4>
+</div>
+<p class="text-[10px] text-text-sub-light dark:text-text-sub-dark">Bilateral</p>
+<div class="mt-3 pt-3 border-t border-dashed border-border-light dark:border-border-dark flex items-center justify-between">
+<div class="flex flex-col">
+<span class="text-[10px] text-text-sub-light uppercase">OPI</span>
+<span class="text-xl font-bold text-text-main-light dark:text-white">72</span>
+</div>
+<div class="flex flex-col items-end">
+<span class="text-[10px] text-text-sub-light uppercase">Grade</span>
+<span class="text-lg font-bold text-warning-text">C</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="bg-card-light dark:bg-card-dark rounded-xl shadow-sm border border-border-light dark:border-border-dark p-6">
+<div class="flex items-center justify-between mb-8">
+<div>
+<h3 class="font-bold text-lg text-text-main-light dark:text-white">Progress Over Time</h3>
+<p class="text-sm text-text-sub-light dark:text-text-sub-dark">Historical performance of key metrics.</p>
+</div>
+<div class="flex items-center gap-2">
+<select class="bg-background-light dark:bg-background-dark/50 border border-border-light dark:border-border-dark text-sm rounded-lg px-3 py-2 focus:ring-primary focus:border-primary outline-none cursor-pointer">
+<option>Last 7 Sessions</option>
+<option>Last 30 Days</option>
+<option>Last 3 Months</option>
+</select>
+</div>
+</div>
+<div class="relative w-full h-96">
+<div class="absolute inset-0 flex flex-col justify-between text-xs text-text-sub-light dark:text-text-sub-dark/50 pointer-events-none select-none pl-6 pb-6">
+<div class="border-b border-dashed border-border-light dark:border-border-dark w-full h-0 flex items-center"><span class="absolute left-0 w-6 text-right pr-2">100</span></div>
+<div class="border-b border-dashed border-border-light dark:border-border-dark w-full h-0 flex items-center"><span class="absolute left-0 w-6 text-right pr-2">80</span></div>
+<div class="border-b border-dashed border-border-light dark:border-border-dark w-full h-0 flex items-center"><span class="absolute left-0 w-6 text-right pr-2">60</span></div>
+<div class="border-b border-dashed border-border-light dark:border-border-dark w-full h-0 flex items-center"><span class="absolute left-0 w-6 text-right pr-2">40</span></div>
+<div class="border-b border-dashed border-border-light dark:border-border-dark w-full h-0 flex items-center"><span class="absolute left-0 w-6 text-right pr-2">20</span></div>
+<div class="border-b border-border-light dark:border-border-dark w-full h-0 flex items-center"><span class="absolute left-0 w-6 text-right pr-2">0</span></div>
+</div>
+<div class="absolute inset-0 pl-6 pb-6">
+<svg class="w-full h-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 1000 320">
+<defs>
+<linearGradient id="gradientPrimary" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="#FF4E36" stop-opacity="0.2"></stop>
+<stop offset="100%" stop-color="#FF4E36" stop-opacity="0"></stop>
+</linearGradient>
+</defs>
+<line class="stroke-border-light dark:stroke-border-dark" stroke-dasharray="2,2" x1="0" x2="0" y1="0" y2="320"></line>
+<line class="stroke-border-light dark:stroke-border-dark" stroke-dasharray="2,2" x1="166.66" x2="166.66" y1="0" y2="320"></line>
+<line class="stroke-border-light dark:stroke-border-dark" stroke-dasharray="2,2" x1="333.33" x2="333.33" y1="0" y2="320"></line>
+<line class="stroke-border-light dark:stroke-border-dark" stroke-dasharray="2,2" x1="500" x2="500" y1="0" y2="320"></line>
+<line class="stroke-border-light dark:stroke-border-dark" stroke-dasharray="2,2" x1="666.66" x2="666.66" y1="0" y2="320"></line>
+<line class="stroke-border-light dark:stroke-border-dark" stroke-dasharray="2,2" x1="833.33" x2="833.33" y1="0" y2="320"></line>
+<line class="stroke-border-light dark:stroke-border-dark" stroke-dasharray="2,2" x1="1000" x2="1000" y1="0" y2="320"></line>
+<path d="M0,320 L0,180 C100,165 150,225 250,150 C350,75 400,112.5 500,87.5 C600,62.5 650,125 750,100 C850,75 900,50 1000,62.5 L1000,320 Z" fill="url(#gradientPrimary)"></path>
+<path d="M0,180 C100,165 150,225 250,150 C350,75 400,112.5 500,87.5 C600,62.5 650,125 750,100 C850,75 900,50 1000,62.5" fill="none" stroke="#FF4E36" stroke-linecap="round" stroke-width="3"></path>
+<circle cx="250" cy="150" fill="#FFFFFF" r="5" stroke="#FF4E36" stroke-width="2.5"></circle>
+<circle cx="500" cy="87.5" fill="#FFFFFF" r="5" stroke="#FF4E36" stroke-width="2.5"></circle>
+<circle cx="750" cy="100" fill="#FFFFFF" r="5" stroke="#FF4E36" stroke-width="2.5"></circle>
+<g transform="translate(500, 45)">
+<rect fill="#1e293b" height="30" rx="4" width="60" x="-30"></rect>
+<text fill="white" font-size="12" font-weight="bold" text-anchor="middle" x="0" y="20">84%</text>
+<path d="M-5,30 L0,35 L5,30 Z" fill="#1e293b"></path>
+</g>
+</svg>
+</div>
+<div class="absolute bottom-0 left-0 w-full flex justify-between text-xs text-text-sub-light dark:text-text-sub-dark px-2 pl-8">
+<span>May 12</span>
+<span>May 15</span>
+<span>May 18</span>
+<span>May 21</span>
+<span>May 24</span>
+<span>Today</span>
+</div>
+</div>
+</div>
+<div class="bg-card-light dark:bg-card-dark rounded-xl shadow-sm border border-border-light dark:border-border-dark flex flex-col">
+<div class="px-6 py-5 border-b border-border-light dark:border-border-dark flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+<div>
+<h3 class="font-bold text-lg text-text-main-light dark:text-white">Session Analysis Data</h3>
+<p class="text-sm text-text-sub-light dark:text-text-sub-dark">Detailed breakdown of movement metrics for the current session.</p>
+</div>
+<div class="flex flex-wrap items-center gap-3 w-full md:w-auto">
+<div class="relative flex-grow md:flex-grow-0">
+<span class="material-icons absolute left-2.5 top-2.5 text-text-sub-light dark:text-text-sub-dark text-[18px]">search</span>
+<input class="pl-9 pr-4 py-2 text-sm bg-background-light dark:bg-background-dark/50 border border-border-light dark:border-border-dark rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all w-full md:w-64" placeholder="Filter metrics..." type="text"/>
+</div>
+<button class="px-3 py-2 bg-background-light dark:bg-background-dark/50 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium text-text-main-light dark:text-text-main-dark hover:bg-gray-100 dark:hover:bg-gray-800 transition flex items-center gap-2">
+<span class="material-icons text-[18px]">tune</span>
+<span class="hidden sm:inline">View</span>
+</button>
+<button class="px-3 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary/90 transition shadow-sm flex items-center gap-2">
+<span class="material-icons text-[18px]">download</span>
+<span class="hidden sm:inline">Export</span>
+</button>
+</div>
+</div>
+<div class="overflow-x-auto w-full">
+<table class="w-full text-sm text-left">
+<thead class="bg-muted-light dark:bg-muted-dark/50 text-xs font-medium text-text-sub-light dark:text-text-sub-dark uppercase tracking-wider border-b border-border-light dark:border-border-dark">
+<tr>
+<th class="h-10 px-6 align-middle font-semibold whitespace-nowrap">
+<div class="flex items-center gap-1 cursor-pointer hover:text-text-main-light dark:hover:text-white group">
+                                Metric
+                                <span class="material-icons text-[14px] opacity-0 group-hover:opacity-100 transition-opacity">arrow_downward</span>
+</div>
+</th>
+<th class="h-10 px-6 align-middle font-semibold whitespace-nowrap">Category</th>
+<th class="h-10 px-6 align-middle font-semibold text-right whitespace-nowrap">Value</th>
+<th class="h-10 px-6 align-middle font-semibold text-right whitespace-nowrap">Reference</th>
+<th class="h-10 px-6 align-middle font-semibold text-right whitespace-nowrap">Trend</th>
+<th class="h-10 px-6 align-middle font-semibold text-right w-[60px]"></th>
+</tr>
+</thead>
+<tbody class="divide-y divide-border-light dark:divide-border-dark">
+<tr class="group table-row-hover transition-colors">
+<td class="px-6 py-4 align-middle font-medium text-text-main-light dark:text-white">
+                            Velocity Asymmetry
+                        </td>
+<td class="px-6 py-4 align-middle">
+<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                                Symmetry
+                            </div>
+</td>
+<td class="px-6 py-4 align-middle text-right font-mono text-text-main-light dark:text-gray-300">61.6%</td>
+<td class="px-6 py-4 align-middle text-right font-mono text-text-sub-light dark:text-text-sub-dark">78.2%</td>
+<td class="px-6 py-4 align-middle text-right">
+<span class="text-success-text dark:text-green-400 font-medium flex items-center justify-end gap-1 text-xs bg-success-bg dark:bg-success-text/10 px-2 py-1 rounded-md w-fit ml-auto">
+<span class="material-icons text-[14px]">trending_up</span> 35%
+                            </span>
+</td>
+<td class="px-6 py-4 align-middle text-right">
+<button class="text-text-sub-light dark:text-text-sub-dark hover:text-text-main-light dark:hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800">
+<span class="material-icons text-[18px]">more_horiz</span>
+</button>
+</td>
+</tr>
+<tr class="group table-row-hover transition-colors">
+<td class="px-6 py-4 align-middle font-medium text-text-main-light dark:text-white">
+                            Cross Correlation
+                        </td>
+<td class="px-6 py-4 align-middle">
+<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                                Symmetry
+                            </div>
+</td>
+<td class="px-6 py-4 align-middle text-right font-mono text-text-main-light dark:text-gray-300">0.93</td>
+<td class="px-6 py-4 align-middle text-right font-mono text-text-sub-light dark:text-text-sub-dark">0.37</td>
+<td class="px-6 py-4 align-middle text-right">
+<span class="text-success-text dark:text-green-400 font-medium flex items-center justify-end gap-1 text-xs bg-success-bg dark:bg-success-text/10 px-2 py-1 rounded-md w-fit ml-auto">
+<span class="material-icons text-[14px]">trending_up</span> 593%
+                            </span>
+</td>
+<td class="px-6 py-4 align-middle text-right">
+<button class="text-text-sub-light dark:text-text-sub-dark hover:text-text-main-light dark:hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800">
+<span class="material-icons text-[18px]">more_horiz</span>
+</button>
+</td>
+</tr>
+<tr class="group table-row-hover transition-colors">
+<td class="px-6 py-4 align-middle font-medium text-text-main-light dark:text-white">
+                            Peak Ang. Velocity
+                        </td>
+<td class="px-6 py-4 align-middle">
+<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300 border border-orange-200 dark:border-orange-800">
+                                Power
+                            </div>
+</td>
+<td class="px-6 py-4 align-middle text-right font-mono text-text-main-light dark:text-gray-300">515 °/s</td>
+<td class="px-6 py-4 align-middle text-right font-mono text-text-sub-light dark:text-text-sub-dark">315</td>
+<td class="px-6 py-4 align-middle text-right">
+<span class="text-success-text dark:text-green-400 font-medium flex items-center justify-end gap-1 text-xs bg-success-bg dark:bg-success-text/10 px-2 py-1 rounded-md w-fit ml-auto">
+<span class="material-icons text-[14px]">trending_up</span> 351%
+                            </span>
+</td>
+<td class="px-6 py-4 align-middle text-right">
+<button class="text-text-sub-light dark:text-text-sub-dark hover:text-text-main-light dark:hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800">
+<span class="material-icons text-[18px]">more_horiz</span>
+</button>
+</td>
+</tr>
+<tr class="group table-row-hover transition-colors">
+<td class="px-6 py-4 align-middle font-medium text-text-main-light dark:text-white">
+                            SPARC
+                        </td>
+<td class="px-6 py-4 align-middle">
+<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                Control
+                            </div>
+</td>
+<td class="px-6 py-4 align-middle text-right font-mono text-text-main-light dark:text-gray-300">-3.90</td>
+<td class="px-6 py-4 align-middle text-right font-mono text-text-sub-light dark:text-text-sub-dark">-4.67</td>
+<td class="px-6 py-4 align-middle text-right">
+<span class="text-success-text dark:text-green-400 font-medium flex items-center justify-end gap-1 text-xs bg-success-bg dark:bg-success-text/10 px-2 py-1 rounded-md w-fit ml-auto">
+<span class="material-icons text-[14px]">trending_up</span> 28%
+                            </span>
+</td>
+<td class="px-6 py-4 align-middle text-right">
+<button class="text-text-sub-light dark:text-text-sub-dark hover:text-text-main-light dark:hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800">
+<span class="material-icons text-[18px]">more_horiz</span>
+</button>
+</td>
+</tr>
+<tr class="group table-row-hover transition-colors">
+<td class="px-6 py-4 align-middle font-medium text-text-main-light dark:text-white">
+                            ROM CoV
+                        </td>
+<td class="px-6 py-4 align-middle">
+<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                Stability
+                            </div>
+</td>
+<td class="px-6 py-4 align-middle text-right font-mono text-text-main-light dark:text-gray-300">335.9%</td>
+<td class="px-6 py-4 align-middle text-right font-mono text-text-sub-light dark:text-text-sub-dark">278.8%</td>
+<td class="px-6 py-4 align-middle text-right">
+<span class="text-primary font-medium flex items-center justify-end gap-1 text-xs bg-primary/10 px-2 py-1 rounded-md w-fit ml-auto">
+<span class="material-icons text-[14px]">trending_down</span> 51%
+                            </span>
+</td>
+<td class="px-6 py-4 align-middle text-right">
+<button class="text-text-sub-light dark:text-text-sub-dark hover:text-text-main-light dark:hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800">
+<span class="material-icons text-[18px]">more_horiz</span>
+</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="px-6 py-4 border-t border-border-light dark:border-border-dark flex items-center justify-between">
+<div class="text-sm text-text-sub-light dark:text-text-sub-dark">
+                Showing <span class="font-medium text-text-main-light dark:text-white">1</span> to <span class="font-medium text-text-main-light dark:text-white">5</span> of <span class="font-medium text-text-main-light dark:text-white">24</span> metrics
+            </div>
+<div class="flex items-center gap-2">
+<button class="px-3 py-1 text-sm border border-border-light dark:border-border-dark rounded-md text-text-sub-light dark:text-text-sub-dark hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed" disabled="">
+                    Previous
+                </button>
+<button class="px-3 py-1 text-sm border border-border-light dark:border-border-dark rounded-md text-text-main-light dark:text-white hover:bg-gray-100 dark:hover:bg-gray-800">
+                    Next
+                </button>
+</div>
+</div>
+</div>
+</main>
+</body></html>

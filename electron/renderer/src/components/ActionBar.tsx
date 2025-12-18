@@ -58,7 +58,7 @@ export function ActionBar({
       className="size-4 rounded-full object-cover"
     />
   ) : selectedPatientName ? (
-    <div className="size-4 rounded-full bg-violet-100 flex items-center justify-center">
+    <div className="size-4 rounded-full bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center">
       <User className="size-2.5 text-violet-600" />
     </div>
   ) : (
@@ -102,7 +102,7 @@ export function ActionBar({
         <div
           className={cn(
             "flex items-center gap-2.5 px-4 py-2.5",
-            "border-l border-gray-200/50",
+            "border-l border-[var(--tropx-border)]/50",
             "min-w-[200px] max-w-[280px]"
           )}
         >
@@ -126,13 +126,13 @@ export function ActionBar({
             placeholder="Recording title..."
             className={cn(
               "flex-1 text-sm font-medium",
-              "text-[var(--tropx-shadow)] placeholder-[var(--tropx-ivory-dark)]",
+              "text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)]",
               "outline-none min-w-0",
               "px-2 py-1 rounded-md transition-all duration-300",
               titleJustSaved
-                ? "bg-green-50 border-2 border-green-500"
+                ? "bg-green-50 dark:bg-green-950/30 border-2 border-green-500"
                 : titleDirty
-                  ? "bg-orange-50 border-2 border-orange-400"
+                  ? "bg-orange-50 dark:bg-orange-950/30 border-2 border-orange-400"
                   : "bg-transparent border-2 border-transparent"
             )}
           />
@@ -143,7 +143,7 @@ export function ActionBar({
               className={cn(
                 "p-1 rounded-full transition-all duration-300 flex-shrink-0",
                 "cursor-pointer",
-                "text-gray-400 hover:text-red-500 hover:bg-red-50"
+                "text-[var(--tropx-text-sub)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
               )}
             >
               <X className="size-4" />
@@ -157,10 +157,10 @@ export function ActionBar({
               "p-1 rounded-full transition-all duration-300 flex-shrink-0",
               "cursor-pointer disabled:cursor-default",
               titleJustSaved
-                ? "text-green-500 bg-green-50"
+                ? "text-green-500 bg-green-50 dark:bg-green-950/30"
                 : titleDirty
-                  ? "text-orange-500 hover:text-orange-600 hover:bg-orange-50"
-                  : "text-gray-300"
+                  ? "text-orange-500 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950/30"
+                  : "text-[var(--tropx-text-sub)]"
             )}
           >
             <Check className="size-4" />

@@ -140,7 +140,7 @@ export function ActionModal({
           className={cn(
             'fixed inset-0 z-[51] m-auto',
             'w-full max-w-md h-fit p-6',
-            'bg-white rounded-2xl shadow-lg border border-gray-100',
+            'bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]',
             'data-[state=open]:animate-[modal-bubble-in_0.2s_var(--spring-bounce)_forwards]',
             'data-[state=closed]:animate-[modal-bubble-out_0.12s_var(--spring-smooth)_forwards]',
             'pointer-events-auto'
@@ -150,13 +150,13 @@ export function ActionModal({
         >
           {/* Header */}
           <div className="flex items-center justify-between mb-4">
-            <DialogPrimitive.Title className="text-lg font-semibold text-[var(--tropx-dark)]">
+            <DialogPrimitive.Title className="text-lg font-semibold text-[var(--tropx-text-main)]">
               {MODAL_TITLES[actionId]}
             </DialogPrimitive.Title>
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-full p-1.5 hover:bg-gray-100 transition-colors cursor-pointer"
+              className="rounded-full p-1.5 hover:bg-[var(--tropx-muted)] transition-colors cursor-pointer"
             >
               <XIcon className="size-4 text-[var(--tropx-shadow)]" />
               <span className="sr-only">Close</span>

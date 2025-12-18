@@ -80,39 +80,39 @@ const NOTIFICATION_TEMPLATES: Record<string, NotificationTemplate> = {
   invite: {
     icon: UserPlus,
     iconColor: "text-blue-500",
-    bgColor: "bg-blue-50",
+    bgColor: "bg-blue-50 dark:bg-blue-900/30",
   },
   // Subject added a note to your recording
   [NOTIFICATION_TYPES.SUBJECT_NOTE]: {
     icon: MessageSquare,
     iconColor: "text-violet-500",
-    bgColor: "bg-violet-50",
+    bgColor: "bg-violet-50 dark:bg-violet-900/30",
   },
   // Recording shared with you
   [NOTIFICATION_TYPES.RECORDING_SHARED]: {
     icon: Share2,
     iconColor: "text-green-500",
-    bgColor: "bg-green-50",
+    bgColor: "bg-green-50 dark:bg-green-900/30",
   },
   // Invite was accepted
   [NOTIFICATION_TYPES.INVITE_ACCEPTED]: {
     icon: CheckCircle,
     iconColor: "text-emerald-500",
-    bgColor: "bg-emerald-50",
+    bgColor: "bg-emerald-50 dark:bg-emerald-900/30",
   },
   // Added as subject to a recording
   [NOTIFICATION_TYPES.ADDED_AS_SUBJECT]: {
     icon: Activity,
     iconColor: "text-orange-500",
-    bgColor: "bg-orange-50",
+    bgColor: "bg-orange-50 dark:bg-orange-900/30",
   },
 };
 
 // Fallback template for unknown types
 const DEFAULT_TEMPLATE: NotificationTemplate = {
   icon: Bell,
-  iconColor: "text-gray-500",
-  bgColor: "bg-gray-50",
+  iconColor: "text-[var(--tropx-text-sub)]",
+  bgColor: "bg-[var(--tropx-muted)]",
 };
 
 function getTemplate(type: string): NotificationTemplate {
@@ -141,7 +141,7 @@ function InviteNotificationItem({
   return (
     <div
       className={cn(
-        "p-4 transition-colors border-b border-gray-100 last:border-b-0",
+        "p-4 transition-colors border-b border-[var(--tropx-border)] last:border-b-0",
         isProcessing && "opacity-50"
       )}
     >
@@ -166,7 +166,7 @@ function InviteNotificationItem({
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-[var(--tropx-dark)]">
+          <p className="text-sm text-[var(--tropx-text-main)]">
             <span className="font-medium">
               {invite.inviter?.name || "Someone"}
             </span>{" "}
@@ -207,8 +207,8 @@ function InviteNotificationItem({
               disabled={processingId !== null}
               className={cn(
                 "flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg",
-                "border-2 border-gray-200 text-[var(--tropx-shadow)] text-sm font-medium",
-                "hover:border-red-300 hover:text-red-500 hover:bg-red-50 transition-all",
+                "border-2 border-[var(--tropx-border)] text-[var(--tropx-shadow)] text-sm font-medium",
+                "hover:border-red-300 dark:hover:border-red-700 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all",
                 "disabled:opacity-50 disabled:cursor-not-allowed",
                 "hover:scale-[1.02] active:scale-[0.98]"
               )}
@@ -258,19 +258,19 @@ function GenericNotificationItem({
     return (
       <div
         className={cn(
-          "px-3 py-2.5 flex items-center gap-2.5 border-b border-gray-100 last:border-b-0 transition-all hover:bg-gray-50/50",
-          notification.read ? "bg-white" : "bg-orange-50/30"
+          "px-3 py-2.5 flex items-center gap-2.5 border-b border-[var(--tropx-border)] last:border-b-0 transition-all hover:bg-[var(--tropx-muted)]/50",
+          notification.read ? "bg-[var(--tropx-card)]" : "bg-orange-50/30 dark:bg-orange-950/20"
         )}
       >
         {/* Avatar with badge */}
         <div className="relative flex-shrink-0">
           <Avatar className="size-8">
             <AvatarImage src={ownerImage} alt={ownerName || ""} />
-            <AvatarFallback className="bg-orange-100 text-orange-600 text-xs">
+            <AvatarFallback className="bg-orange-100 dark:bg-orange-900/30 text-orange-600 text-xs">
               {(ownerName || "?")[0].toUpperCase()}
             </AvatarFallback>
           </Avatar>
-          <div className="absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full bg-orange-500 flex items-center justify-center ring-1.5 ring-white">
+          <div className="absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full bg-orange-500 flex items-center justify-center ring-1.5 ring-[var(--tropx-card)]">
             <Activity className="size-2 text-white" />
           </div>
         </div>
@@ -279,7 +279,7 @@ function GenericNotificationItem({
         <div className="flex-1 min-w-0">
           <p className={cn(
             "text-xs leading-tight",
-            notification.read ? "text-[var(--tropx-shadow)]" : "text-[var(--tropx-dark)]"
+            notification.read ? "text-[var(--tropx-shadow)]" : "text-[var(--tropx-text-main)]"
           )}>
             <span className="font-medium">{ownerName || "Someone"}</span>
             {" "}added you to{" "}
@@ -289,7 +289,7 @@ function GenericNotificationItem({
               "a recording"
             )}
           </p>
-          <p className="text-[10px] text-gray-400 mt-0.5">
+          <p className="text-[10px] text-[var(--tropx-text-sub)] mt-0.5">
             {formatTimeAgo(notification.createdAt)}
           </p>
         </div>
@@ -318,7 +318,7 @@ function GenericNotificationItem({
               e.stopPropagation();
               onDelete(notification._id);
             }}
-            className="size-6 text-gray-400 hover:text-red-500 hover:bg-red-50"
+            className="size-6 text-[var(--tropx-text-sub)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
             title="Delete"
           >
             <X className="size-3" />
@@ -332,8 +332,8 @@ function GenericNotificationItem({
   return (
     <div
       className={cn(
-        "px-3 py-2.5 flex items-start gap-2.5 border-b border-gray-100 last:border-b-0 transition-all hover:bg-gray-50/50",
-        notification.read ? "bg-white" : "bg-blue-50/30"
+        "px-3 py-2.5 flex items-start gap-2.5 border-b border-[var(--tropx-border)] last:border-b-0 transition-all hover:bg-[var(--tropx-muted)]/50",
+        notification.read ? "bg-[var(--tropx-card)]" : "bg-blue-50/30 dark:bg-blue-950/20"
       )}
     >
       {/* Icon */}
@@ -353,7 +353,7 @@ function GenericNotificationItem({
             "text-xs leading-tight",
             notification.read
               ? "text-[var(--tropx-shadow)]"
-              : "text-[var(--tropx-dark)] font-medium"
+              : "text-[var(--tropx-text-main)] font-medium"
           )}
         >
           {notification.title}
@@ -361,7 +361,7 @@ function GenericNotificationItem({
         <p className="text-[10px] text-[var(--tropx-shadow)] mt-0.5 line-clamp-2">
           {notification.body}
         </p>
-        <p className="text-[10px] text-gray-400 mt-0.5">
+        <p className="text-[10px] text-[var(--tropx-text-sub)] mt-0.5">
           {formatTimeAgo(notification.createdAt)}
         </p>
       </div>
@@ -391,7 +391,7 @@ function GenericNotificationItem({
               e.stopPropagation();
               onMarkRead(notification._id);
             }}
-            className="size-6 text-gray-400 hover:text-green-500 hover:bg-green-50"
+            className="size-6 text-[var(--tropx-text-sub)] hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-950/30"
             title="Mark as read"
           >
             <Check className="size-3" />
@@ -404,7 +404,7 @@ function GenericNotificationItem({
             e.stopPropagation();
             onDelete(notification._id);
           }}
-          className="size-6 text-gray-400 hover:text-red-500 hover:bg-red-50"
+          className="size-6 text-[var(--tropx-text-sub)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
           title="Delete"
         >
           <X className="size-3" />
@@ -593,13 +593,13 @@ export function NotificationBell({
   const dropdownContent = (
     <div
       className={cn(
-        "w-80 bg-white border border-gray-200 rounded-2xl shadow-lg overflow-hidden",
+        "w-80 bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-2xl shadow-lg overflow-hidden",
         "animate-[modal-bubble-in_0.15s_var(--spring-bounce)_forwards]"
       )}
     >
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-        <h3 className="font-semibold text-[var(--tropx-dark)]">
+      <div className="px-4 py-3 border-b border-[var(--tropx-border)] flex items-center justify-between">
+        <h3 className="font-semibold text-[var(--tropx-text-main)]">
           Notifications
         </h3>
         {unreadNotificationCount > 0 && (
@@ -623,11 +623,11 @@ export function NotificationBell({
 
         {!isLoading && unifiedItems.length === 0 && (
           <div className="py-8 text-center">
-            <Bell className="size-8 text-[var(--tropx-ivory-dark)] mx-auto mb-2" />
+            <Bell className="size-8 text-[var(--tropx-text-sub)] mx-auto mb-2" />
             <p className="text-sm text-[var(--tropx-shadow)]">
               No notifications
             </p>
-            <p className="text-xs text-gray-400 mt-1">You're all caught up!</p>
+            <p className="text-xs text-[var(--tropx-text-sub)] mt-1">You're all caught up!</p>
           </div>
         )}
 

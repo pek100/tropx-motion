@@ -167,10 +167,10 @@ function MiniRecordingChart({ samples }: { samples: QuaternionSample[] }) {
   };
 
   return (
-    <div className="h-14 bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+    <div className="h-14 bg-[var(--tropx-muted)] rounded-lg border border-[var(--tropx-border)] overflow-hidden">
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
         {/* Grid line at center */}
-        <line x1={padding} y1={height/2} x2={width-padding} y2={height/2} stroke="#e5e7eb" strokeWidth="0.5" />
+        <line x1={padding} y1={height/2} x2={width-padding} y2={height/2} stroke="var(--tropx-border)" strokeWidth="0.5" />
         {/* Left knee (coral/red) */}
         {createPath(points.map(p => p.left), 'var(--tropx-coral, #f97066)')}
         {/* Right knee (blue) */}
@@ -195,10 +195,10 @@ function ModificationHistory({
   if (history.length === 0) return null;
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
+    <div className="border border-[var(--tropx-border)] rounded-lg overflow-hidden">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+        className="w-full flex items-center justify-between p-3 bg-[var(--tropx-muted)] hover:bg-[var(--tropx-hover)] transition-colors"
       >
         <div className="flex items-center gap-2 text-sm text-[var(--tropx-shadow)]">
           <History className="size-4" />
@@ -224,7 +224,7 @@ function ModificationHistory({
                 <ul className="space-y-1">
                   {entry.diffs.map((diff, diffIdx) => (
                     <li key={diffIdx} className="flex items-start gap-2">
-                      <span className="font-medium text-[var(--tropx-dark)]">
+                      <span className="font-medium text-[var(--tropx-text-main)]">
                         {diff.field}:
                       </span>
                       <span className="text-red-500 line-through">
@@ -276,8 +276,8 @@ function SubjectNotesSection({
   };
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <div className="flex items-center gap-2 p-3 bg-gray-50 text-sm text-[var(--tropx-shadow)]">
+    <div className="border border-[var(--tropx-border)] rounded-lg overflow-hidden">
+      <div className="flex items-center gap-2 p-3 bg-[var(--tropx-muted)] text-sm text-[var(--tropx-shadow)]">
         <MessageSquare className="size-4" />
         <span>Subject Notes ({notes.length})</span>
       </div>
@@ -285,8 +285,8 @@ function SubjectNotesSection({
       {notes.length > 0 && (
         <div className="p-3 space-y-2 max-h-32 overflow-y-auto">
           {notes.map((note, idx) => (
-            <div key={idx} className="text-xs p-2 bg-gray-50 rounded">
-              <p className="text-[var(--tropx-dark)]">{note.note}</p>
+            <div key={idx} className="text-xs p-2 bg-[var(--tropx-muted)] rounded">
+              <p className="text-[var(--tropx-text-main)]">{note.note}</p>
               <p className="text-[var(--tropx-shadow)] mt-1">
                 {formatDateTime(note.createdAt)}
               </p>
@@ -296,14 +296,14 @@ function SubjectNotesSection({
       )}
 
       {isSubject && (
-        <div className="p-3 border-t border-gray-100">
+        <div className="p-3 border-t border-[var(--tropx-border)]">
           <div className="flex gap-2">
             <input
               type="text"
               value={newNote}
               onChange={(e) => setNewNote(e.target.value)}
               placeholder="Add a note..."
-              className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
+              className="flex-1 px-3 py-2 text-sm border border-[var(--tropx-border)] bg-[var(--tropx-card)] rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)]"
               disabled={isSubmitting}
             />
             <button
@@ -313,7 +313,7 @@ function SubjectNotesSection({
                 'px-3 py-2 rounded-lg text-sm font-medium',
                 newNote.trim() && !isSubmitting
                   ? 'bg-violet-500 text-white hover:bg-violet-600'
-                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  : 'bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] cursor-not-allowed'
               )}
             >
               {isSubmitting ? <Loader2 className="size-4 animate-spin" /> : 'Add'}
@@ -576,7 +576,7 @@ export function SaveModal({
           <DialogPrimitive.Content
             className={cn(
               'w-full max-w-sm h-fit max-h-[85vh] overflow-y-auto p-5',
-              'bg-white rounded-2xl shadow-lg border border-gray-100',
+              'bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]',
               'pointer-events-auto',
               'transition-transform duration-200 ease-out'
             )}
@@ -591,7 +591,7 @@ export function SaveModal({
           >
           {/* Header */}
           <div className="flex items-center justify-between mb-4">
-            <DialogPrimitive.Title className="text-lg font-semibold text-[var(--tropx-dark)]">
+            <DialogPrimitive.Title className="text-lg font-semibold text-[var(--tropx-text-main)]">
               {title}
             </DialogPrimitive.Title>
             <DialogPrimitive.Description className="sr-only">
@@ -599,7 +599,7 @@ export function SaveModal({
             </DialogPrimitive.Description>
             <button
               onClick={handleClose}
-              className="rounded-full p-1.5 hover:bg-gray-100 transition-colors cursor-pointer"
+              className="rounded-full p-1.5 hover:bg-[var(--tropx-muted)] transition-colors cursor-pointer"
             >
               <XIcon className="size-4 text-[var(--tropx-shadow)]" />
             </button>
@@ -622,7 +622,7 @@ export function SaveModal({
                   <Loader2 className="size-5 animate-spin text-[var(--tropx-shadow)]" />
                 </div>
               ) : recordingInfo ? (
-                <div className="p-3 bg-gray-50 rounded-lg">
+                <div className="p-3 bg-[var(--tropx-muted)] rounded-lg">
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div>
                       <span className="text-[var(--tropx-shadow)]">Samples:</span>
@@ -639,7 +639,7 @@ export function SaveModal({
                   </div>
                 </div>
               ) : (
-                <div className="p-4 bg-gray-50 rounded-lg text-center text-[var(--tropx-shadow)] text-sm">
+                <div className="p-4 bg-[var(--tropx-muted)] rounded-lg text-center text-[var(--tropx-shadow)] text-sm">
                   No recording data available
                 </div>
               )
@@ -647,7 +647,7 @@ export function SaveModal({
 
             {/* Session Info (edit mode) */}
             {mode === 'edit' && sessionData && (
-              <div className="p-3 bg-gray-50 rounded-lg">
+              <div className="p-3 bg-[var(--tropx-muted)] rounded-lg">
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div>
                     <span className="text-[var(--tropx-shadow)]">Duration:</span>
@@ -673,11 +673,11 @@ export function SaveModal({
             {/* Activity Profile Selector */}
             {mode === 'save' && (
               <div>
-                <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--tropx-dark)] mb-1.5">
+                <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--tropx-text-main)] mb-1.5">
                   <Activity className="size-3.5" />
                   Activity Profile
                 </label>
-                <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                <div className="flex rounded-lg border border-[var(--tropx-border)] overflow-hidden">
                   {ACTIVITY_PROFILE_OPTIONS.map((option) => (
                     <button
                       key={option.value}
@@ -688,7 +688,7 @@ export function SaveModal({
                         'flex-1 px-3 py-1.5 text-sm font-medium transition-colors',
                         activityProfile === option.value
                           ? 'bg-[var(--tropx-vibrant)] text-white'
-                          : 'bg-white text-[var(--tropx-shadow)] hover:bg-gray-50',
+                          : 'bg-[var(--tropx-card)] text-[var(--tropx-shadow)] hover:bg-[var(--tropx-muted)]',
                         isProcessing && 'opacity-50 cursor-not-allowed'
                       )}
                     >
@@ -710,7 +710,7 @@ export function SaveModal({
                     value={recordingTitle}
                     onChange={(e) => onRecordingTitleChange?.(e.target.value)}
                     placeholder="Title..."
-                    className="w-full pl-8 pr-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--tropx-vibrant)] focus:border-transparent"
+                    className="w-full pl-8 pr-2.5 py-1.5 border border-[var(--tropx-border)] bg-[var(--tropx-card)] rounded-lg text-sm text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)] focus:outline-none focus:ring-2 focus:ring-[var(--tropx-vibrant)] focus:border-transparent"
                     disabled={isProcessing}
                   />
                 </div>
@@ -723,8 +723,8 @@ export function SaveModal({
                   className={cn(
                     'flex items-center gap-1.5 px-2.5 py-1.5 border rounded-lg text-sm transition-colors',
                     selectedPatientId
-                      ? 'border-violet-200 bg-violet-50 text-violet-700'
-                      : 'border-gray-200 text-[var(--tropx-shadow)] hover:bg-gray-50',
+                      ? 'border-violet-200 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300'
+                      : 'border-[var(--tropx-border)] text-[var(--tropx-shadow)] hover:bg-[var(--tropx-muted)]',
                     isProcessing && 'opacity-50 cursor-not-allowed'
                   )}
                 >
@@ -747,13 +747,13 @@ export function SaveModal({
 
             {/* Subject Info (edit mode - read only) */}
             {mode === 'edit' && sessionData?.subject && (
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-gray-50">
-                <div className="size-8 rounded-full bg-violet-100 flex items-center justify-center">
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-[var(--tropx-muted)]">
+                <div className="size-8 rounded-full bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center">
                   <User className="size-4 text-violet-600" />
                 </div>
                 <div>
                   <p className="text-xs text-[var(--tropx-shadow)]">Subject</p>
-                  <p className="text-sm font-medium text-[var(--tropx-dark)]">
+                  <p className="text-sm font-medium text-[var(--tropx-text-main)]">
                     {sessionData.subject.name}
                   </p>
                 </div>
@@ -763,7 +763,7 @@ export function SaveModal({
 
             {/* Tags */}
             <div>
-              <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--tropx-dark)] mb-1">
+              <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--tropx-text-main)] mb-1">
                 <Tag className="size-3.5" />
                 Tags
               </label>
@@ -777,7 +777,7 @@ export function SaveModal({
 
             {/* Notes */}
             <div>
-              <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--tropx-dark)] mb-1">
+              <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--tropx-text-main)] mb-1">
                 <StickyNote className="size-3.5" />
                 Notes
               </label>
@@ -786,7 +786,7 @@ export function SaveModal({
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Optional notes..."
                 rows={3}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--tropx-vibrant)] focus:border-transparent resize-none"
+                className="w-full px-3 py-2 border border-[var(--tropx-border)] bg-[var(--tropx-card)] rounded-lg text-sm text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)] focus:outline-none focus:ring-2 focus:ring-[var(--tropx-vibrant)] focus:border-transparent resize-none"
                 disabled={isProcessing || (mode === 'edit' && !isOwner)}
               />
             </div>
@@ -878,7 +878,7 @@ export function SaveModal({
           <div className="flex gap-3 mt-4">
             <button
               onClick={handleClose}
-              className="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium text-[var(--tropx-shadow)] hover:bg-gray-50 transition-colors"
+              className="flex-1 px-4 py-2 border border-[var(--tropx-border)] rounded-lg text-sm font-medium text-[var(--tropx-shadow)] hover:bg-[var(--tropx-muted)] transition-colors"
               disabled={isProcessing}
             >
               Cancel
@@ -893,7 +893,7 @@ export function SaveModal({
                   'flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2',
                   (mode === 'save' ? canSave : canEdit)
                     ? 'bg-[var(--tropx-vibrant)] text-white hover:opacity-90'
-                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] cursor-not-allowed'
                 )}
               >
                 {isProcessing ? (

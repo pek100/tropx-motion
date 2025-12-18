@@ -181,13 +181,13 @@ export function TopNavTabs({
         <div
           key={item.id}
           ref={pillRef}
-          className="relative inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white/80 border border-[var(--tropx-coral)]/30 shadow-sm"
+          className="relative inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--tropx-card)]/80 border border-[var(--tropx-border)] shadow-sm"
         >
           {/* Profile button */}
           <button
             onClick={toggleProfilePanel}
             className={cn(
-              "inline-flex items-center gap-2 px-2 py-1 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-dark)] hover:text-[var(--tropx-vibrant)]",
+              "inline-flex items-center gap-2 px-2 py-1 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-text-main)] hover:text-[var(--tropx-vibrant)]",
               profilePanelOpen && "text-[var(--tropx-vibrant)]"
             )}
           >
@@ -195,7 +195,7 @@ export function TopNavTabs({
             <span>{item.label}</span>
           </button>
 
-          <div className="w-px h-4 bg-[var(--tropx-coral)]/30" />
+          <div className="w-px h-4 bg-[var(--tropx-border)]" />
 
           {/* Notification bell (controlled by parent - dropdown positions relative to pill) */}
           <NotificationBell
@@ -219,12 +219,12 @@ export function TopNavTabs({
             <div
               className={cn(
                 "absolute top-full left-1/2 ml-[-9rem] mt-2 w-72 z-50",
-                "bg-white border border-gray-200 rounded-2xl shadow-lg overflow-hidden",
+                "bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-2xl shadow-lg overflow-hidden",
                 "animate-[modal-bubble-in_0.15s_var(--spring-bounce)_forwards]"
               )}
             >
               {/* Profile Header */}
-              <div className="px-4 py-4 border-b border-gray-100">
+              <div className="px-4 py-4 border-b border-[var(--tropx-border)]">
                 <div className="flex items-center gap-3">
                   {user.image ? (
                     <img
@@ -238,10 +238,10 @@ export function TopNavTabs({
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-[var(--tropx-dark)] truncate">
+                    <p className="font-semibold text-[var(--tropx-text-main)] truncate">
                       {user.name || 'User'}
                     </p>
-                    <p className="text-sm text-[var(--tropx-shadow)] truncate">
+                    <p className="text-sm text-[var(--tropx-text-sub)] truncate">
                       {user.email}
                     </p>
                     {user.role && (
@@ -263,7 +263,7 @@ export function TopNavTabs({
                   className={cn(
                     "w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl",
                     "text-sm font-medium text-red-600",
-                    "border-2 border-red-200 hover:bg-red-50 hover:border-red-300",
+                    "border-2 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/30 hover:border-red-300 dark:hover:border-red-700",
                     "transition-all hover:scale-[1.02] active:scale-[0.98]"
                   )}
                 >

@@ -53,6 +53,32 @@
   --tropx-green: #4baf27;
   --tropx-red: #ff3535;
   --tropx-hover: #ffe5de;
+
+  /* Semantic dark mode colors - Light mode values */
+  --tropx-bg: #FFF7F5;
+  --tropx-card: #FFFFFF;
+  --tropx-text-main: #0f172a;
+  --tropx-text-sub: #64748b;
+  --tropx-border: #e2e8f0;
+  --tropx-muted: #f1f5f9;
+
+  /* Leg SVG colors */
+  --leg-left-fill: #86C8ED;
+  --leg-left-band: #0080C0;
+  --leg-right-fill: #FFA4A4;
+  --leg-right-band: #BF0000;
+  --leg-gray-fill: #D1D5DB;
+  --leg-gray-band: #9CA3AF;
+  --leg-purple-fill: #D8B4FE;
+  --leg-purple-band: #9333EA;
+
+  /* Status colors */
+  --tropx-success-bg: #ECFDF5;
+  --tropx-success-text: #059669;
+  --tropx-warning-bg: #FFFBEB;
+  --tropx-warning-text: #D97706;
+  --tropx-info-bg: #EFF6FF;
+  --tropx-info-text: #2563EB;
 }
 
 .dark {
@@ -89,6 +115,34 @@
   --sidebar-accent-foreground: 0 0% 98%;
   --sidebar-border: 0 0% 14.9%;
   --sidebar-ring: 0 0% 83.1%;
+
+  /* Tropx dark mode overrides */
+  --tropx-bg: #111114; /* tropx-night */
+  --tropx-card: #1F1E24; /* tropx-dark */
+  --tropx-text-main: #f8fafc;
+  --tropx-text-sub: #94a3b8;
+  --tropx-border: #2e2d33;
+  --tropx-muted: #232327; /* tropx-slate */
+  --tropx-hover: #232327;
+  --tropx-ivory: #18181b;
+  --tropx-ivory-blue: #1f1e24;
+  --tropx-shadow: #94a3b8;
+  --tropx-white: #18181b;
+
+  /* Status colors - dark mode variants */
+  --tropx-success-bg: rgba(5, 150, 105, 0.1);
+  --tropx-warning-bg: rgba(217, 119, 6, 0.1);
+  --tropx-info-bg: rgba(37, 99, 235, 0.1);
+
+  /* Leg SVG colors - dark mode (muted to match card gradients) */
+  --leg-left-fill: #4A90B8;
+  --leg-left-band: #3B82F6;
+  --leg-right-fill: #B87070;
+  --leg-right-band: #EF4444;
+  --leg-gray-fill: #4B5563;
+  --leg-gray-band: #6B7280;
+  --leg-purple-fill: #A78BFA;
+  --leg-purple-band: #8B5CF6;
 }
 
 /* Tailwind v3 doesn't use @theme - colors are defined in tailwind.config.ts */
@@ -123,6 +177,15 @@
   }
 }
 
+.leg-band {
+  stroke: var(--tropx-text-main);
+  stroke-width: 0;
+}
+
+.dark .leg-band {
+  stroke-width: 0.8;
+}
+
 .group:hover .leg-band {
   animation: pulsate-color 1s ease-in-out infinite, pulsate-scale 1s ease-in-out infinite;
   transform-origin: center;
@@ -133,13 +196,34 @@
   background: linear-gradient(111deg, rgba(252, 106, 111, 0.25) 0%, rgba(238, 229, 255, 0.25) 100%);
 }
 
+.dark .gradient-diagonal {
+  background: linear-gradient(111deg, rgba(200, 80, 140, 0.08) 0%, rgba(138, 129, 175, 0.08) 100%);
+}
+
+/* Subtle selection gradient for table rows */
+.gradient-selection {
+  background: #f6f2f2;
+}
+
+.dark .gradient-selection {
+  background: linear-gradient(111deg, rgba(200, 80, 140, 0.06) 0%, rgba(138, 129, 175, 0.06) 100%);
+}
+
 /* Adding gradient classes for device cards */
 .gradient-blue-card {
   background: linear-gradient(135deg, #dfecff 0%, #b8d9ff 100%);
 }
 
+.dark .gradient-blue-card {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.08) 100%);
+}
+
 .gradient-red-card {
   background: linear-gradient(135deg, #ffd5d5 0%, #ffe5e5 100%);
+}
+
+.dark .gradient-red-card {
+  background: linear-gradient(135deg, rgba(255, 77, 53, 0.15) 0%, rgba(255, 77, 53, 0.08) 100%);
 }
 
 /* Adding purple gradient for synchronizing state */
@@ -147,16 +231,24 @@
   background: linear-gradient(135deg, #e9d5ff 0%, #d8b4fe 100%);
 }
 
+.dark .gradient-purple-card {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.15) 0%, rgba(168, 85, 247, 0.08) 100%);
+}
+
 /* Adding gray gradient for unavailable state */
 .gradient-gray-card {
   background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%);
+}
+
+.dark .gradient-gray-card {
+  background: linear-gradient(135deg, rgba(100, 100, 100, 0.15) 0%, rgba(100, 100, 100, 0.08) 100%);
 }
 
 /* Adding flash animation for left pane validation feedback */
 @keyframes flash-border {
   0%,
   100% {
-    border-color: #e5e5e5;
+    border-color: var(--tropx-border);
     box-shadow: 0 0 0 0 rgba(255, 77, 53, 0);
   }
   50% {
@@ -235,6 +327,15 @@
   filter: blur(8px);
 }
 
+.dark .visor-scan {
+  background: linear-gradient(
+    to bottom,
+    rgba(100, 100, 100, 0) 0%,
+    rgba(100, 100, 100, 0.3) 50%,
+    rgba(100, 100, 100, 0) 100%
+  );
+}
+
 /* Adding radial gradient overlay for locate instruction with green tint */
 .locate-overlay {
   background: radial-gradient(
@@ -257,6 +358,16 @@
     rgba(255, 255, 255, 0) 100%
   );
   backdrop-filter: blur(0.5px);
+}
+
+.dark .locate-overlay-light {
+  background: radial-gradient(
+    circle at center,
+    rgba(39, 39, 42, 0.7) 0%,
+    rgba(39, 39, 42, 0.5) 50%,
+    rgba(39, 39, 42, 0.3) 70%,
+    rgba(39, 39, 42, 0) 100%
+  );
 }
 
 /* Smooth drag-and-drop transitions */
@@ -300,6 +411,10 @@
   transition: transform 0.2s ease;
 }
 
+.dark .island-shadow {
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
 .island-shadow:hover {
   transform: scale(1.03);
 }
@@ -316,9 +431,18 @@
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
+.dark .island-group {
+  background: var(--tropx-card);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
 .island-group:hover {
   transform: scale(1.03);
   box-shadow: 0 8px 12px #EDE6E4;
+}
+
+.dark .island-group:hover {
+  box-shadow: 0 8px 12px rgba(0, 0, 0, 0.4);
 }
 
 .island-group > button {
@@ -333,6 +457,10 @@
 .island-group > button:hover {
   transform: scale(1.05);
   box-shadow: inset 0 0 0 2px white;
+}
+
+.dark .island-group > button:hover {
+  box-shadow: inset 0 0 0 2px var(--tropx-border);
 }
 
 /* Action bar container */
@@ -350,6 +478,10 @@
   background: rgba(255, 246, 243, 0.7);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+}
+
+.dark .modal-blur-overlay {
+  background: rgba(9, 9, 11, 0.8);
 }
 
 /* Bubbly modal animations (inspired by NeuraWeave) */

@@ -57,10 +57,10 @@ export function MiniRecordingChart({
   if (isLoading) {
     return (
       <div
-        className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden animate-pulse"
+        className="bg-[var(--tropx-muted)] rounded-lg border border-[var(--tropx-border)] overflow-hidden animate-pulse"
         style={{ height }}
       >
-        <div className="w-full h-full bg-gradient-to-r from-gray-100 via-gray-50 to-gray-100" />
+        <div className="w-full h-full bg-gradient-to-r from-[var(--tropx-muted)] via-[var(--tropx-card)] to-[var(--tropx-muted)]" />
       </div>
     );
   }
@@ -69,10 +69,10 @@ export function MiniRecordingChart({
   if (points.length === 0) {
     return (
       <div
-        className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden flex items-center justify-center"
+        className="bg-[var(--tropx-muted)] rounded-lg border border-[var(--tropx-border)] overflow-hidden flex items-center justify-center"
         style={{ height }}
       >
-        <span className="text-xs text-gray-400">No data</span>
+        <span className="text-xs text-[var(--tropx-text-sub)]">No data</span>
       </div>
     );
   }
@@ -138,7 +138,7 @@ export function MiniRecordingChart({
 
   return (
     <div
-      className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden"
+      className="bg-[var(--tropx-muted)] rounded-lg border border-[var(--tropx-border)] overflow-hidden"
       style={{ height }}
     >
       <svg
@@ -152,7 +152,7 @@ export function MiniRecordingChart({
           y1={padding + ((0 - rangeMin) / range) * chartHeight}
           x2={width - padding}
           y2={padding + ((0 - rangeMin) / range) * chartHeight}
-          stroke="#e5e7eb"
+          stroke="var(--tropx-border)"
           strokeWidth="0.5"
         />
         {/* Left knee (coral/red) */}

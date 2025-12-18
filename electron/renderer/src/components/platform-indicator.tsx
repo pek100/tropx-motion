@@ -86,7 +86,7 @@ export function PlatformIndicator() {
     if (platformInfo.isRaspberryPi) {
       return 'text-[#c51a4a]'; // Raspberry Pi red
     }
-    return 'text-gray-700';
+    return 'text-gray-700 dark:text-gray-300';
   };
 
   const formatMemory = (mb: number) => {
@@ -100,7 +100,7 @@ export function PlatformIndicator() {
     <Tooltip>
       <TooltipTrigger asChild>
         <div
-          className="fixed bottom-4 left-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-white/80 backdrop-blur-sm shadow-sm transition-all hover:bg-white pointer-events-auto cursor-help"
+          className="fixed bottom-4 left-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-white/80 dark:bg-zinc-800/80 backdrop-blur-sm shadow-sm dark:shadow-none border border-transparent dark:border-zinc-700 transition-all hover:bg-gray-100 dark:hover:bg-zinc-600 hover:scale-105 pointer-events-auto cursor-help"
           style={{
             zIndex: 50,
             WebkitAppRegion: 'no-drag' as any,
@@ -109,7 +109,7 @@ export function PlatformIndicator() {
           <div className={getColorClass()}>
             {getPlatformIcon()}
           </div>
-          <span className="text-xs font-medium text-gray-700">{getPlatformLabel()}</span>
+          <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{getPlatformLabel()}</span>
         </div>
       </TooltipTrigger>
       <TooltipContent side="right" className="max-w-xs">
@@ -118,31 +118,31 @@ export function PlatformIndicator() {
             {platformInfo.isRaspberryPi ? platformInfo.model : `${getPlatformLabel()} Desktop`}
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-            <span className="text-gray-500">Memory:</span>
+            <span className="text-gray-500 dark:text-gray-400">Memory:</span>
             <span className="font-mono">{formatMemory(platformInfo.totalMemoryMB)}</span>
 
-            <span className="text-gray-500">CPU Cores:</span>
+            <span className="text-gray-500 dark:text-gray-400">CPU Cores:</span>
             <span className="font-mono">{platformInfo.cpuCount}</span>
 
-            <span className="text-gray-500">Architecture:</span>
+            <span className="text-gray-500 dark:text-gray-400">Architecture:</span>
             <span className="font-mono">{platformInfo.architecture}</span>
 
             {optimizationConfig && (
               <>
-                <span className="text-gray-500">Max Heap:</span>
+                <span className="text-gray-500 dark:text-gray-400">Max Heap:</span>
                 <span className="font-mono">{optimizationConfig.maxOldSpaceSize}MB</span>
 
-                <span className="text-gray-500">GPU:</span>
+                <span className="text-gray-500 dark:text-gray-400">GPU:</span>
                 <span className={optimizationConfig.useGPU ? 'text-green-600' : 'text-gray-400'}>
                   {optimizationConfig.useGPU ? 'Enabled' : 'Disabled'}
                 </span>
 
-                <span className="text-gray-500">Max Devices:</span>
+                <span className="text-gray-500 dark:text-gray-400">Max Devices:</span>
                 <span className="font-mono">{optimizationConfig.maxDevices}</span>
               </>
             )}
           </div>
-          <div className="pt-1 mt-1 border-t text-[10px] text-gray-400">
+          <div className="pt-1 mt-1 border-t border-[var(--tropx-border)] text-[10px] text-gray-400 dark:text-gray-500">
             {platformInfo.isRaspberryPi ? '🍓 Optimized for Raspberry Pi' : '🖥️ Desktop Performance Mode'}
           </div>
         </div>

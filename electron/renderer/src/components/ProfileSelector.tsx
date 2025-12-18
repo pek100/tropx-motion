@@ -115,17 +115,17 @@ export function ProfileSelector({ isOpen, onClose }: ProfileSelectorProps) {
       {/* Modal */}
       <div
         ref={modalRef}
-        className="relative bg-white rounded-2xl shadow-2xl w-[320px] overflow-hidden"
+        className="relative bg-[var(--tropx-card)] rounded-2xl shadow-2xl w-[320px] overflow-hidden"
         role="dialog"
         aria-modal="true"
         aria-label="UI Profile Selector"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <h2 className="text-base font-semibold text-gray-900">UI Profile</h2>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--tropx-border)]">
+          <h2 className="text-base font-semibold text-[var(--tropx-text-main)]">UI Profile</h2>
           <button
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
+            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--tropx-muted)] transition-colors"
             aria-label="Close"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -149,14 +149,14 @@ export function ProfileSelector({ isOpen, onClose }: ProfileSelectorProps) {
                 key={option.id ?? 'auto'}
                 data-profile-option
                 onClick={() => handleSelect(option.id)}
-                className={`w-full px-5 py-3 flex items-center gap-3 text-left transition-colors focus:outline-none focus:bg-gray-50
-                  ${isSelected ? 'bg-orange-50' : 'hover:bg-gray-50'}
-                  ${isAuto ? 'border-b border-gray-100' : ''}
+                className={`w-full px-5 py-3 flex items-center gap-3 text-left transition-colors focus:outline-none focus:bg-[var(--tropx-muted)]
+                  ${isSelected ? 'bg-orange-50 dark:bg-orange-950/30' : 'hover:bg-[var(--tropx-muted)]'}
+                  ${isAuto ? 'border-b border-[var(--tropx-border)]' : ''}
                 `}
               >
                 {/* Radio indicator */}
                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0
-                  ${isSelected ? 'border-orange-500' : 'border-gray-300'}
+                  ${isSelected ? 'border-orange-500' : 'border-[var(--tropx-border)]'}
                 `}>
                   {isSelected && (
                     <div className="w-2.5 h-2.5 rounded-full bg-orange-500" />
@@ -164,7 +164,7 @@ export function ProfileSelector({ isOpen, onClose }: ProfileSelectorProps) {
                 </div>
 
                 {/* Label */}
-                <span className={`text-sm ${isSelected ? 'font-medium text-gray-900' : 'text-gray-700'}`}>
+                <span className={`text-sm ${isSelected ? 'font-medium text-[var(--tropx-text-main)]' : 'text-[var(--tropx-text-sub)]'}`}>
                   {option.label}
                 </span>
 
@@ -180,17 +180,17 @@ export function ProfileSelector({ isOpen, onClose }: ProfileSelectorProps) {
         </div>
 
         {/* Footer with shortcuts */}
-        <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
+        <div className="px-5 py-3 bg-[var(--tropx-muted)] border-t border-[var(--tropx-border)] flex items-center justify-between text-xs text-[var(--tropx-text-sub)]">
           <span>
-            <kbd className="px-1.5 py-0.5 bg-white rounded border border-gray-200 font-mono">↑↓</kbd>
+            <kbd className="px-1.5 py-0.5 bg-[var(--tropx-card)] rounded border border-[var(--tropx-border)] font-mono">↑↓</kbd>
             {' '}Navigate
           </span>
           <span>
-            <kbd className="px-1.5 py-0.5 bg-white rounded border border-gray-200 font-mono">Enter</kbd>
+            <kbd className="px-1.5 py-0.5 bg-[var(--tropx-card)] rounded border border-[var(--tropx-border)] font-mono">Enter</kbd>
             {' '}Select
           </span>
           <span>
-            <kbd className="px-1.5 py-0.5 bg-white rounded border border-gray-200 font-mono">Esc</kbd>
+            <kbd className="px-1.5 py-0.5 bg-[var(--tropx-card)] rounded border border-[var(--tropx-border)] font-mono">Esc</kbd>
             {' '}Close
           </span>
         </div>

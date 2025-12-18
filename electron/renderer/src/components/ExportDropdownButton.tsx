@@ -100,7 +100,7 @@ export function ExportDropdownButton({ onExportCSV, disabled, isExporting, hideL
       {/* Dropdown menu - opens upward */}
       {isOpen && (
         <div
-          className="absolute right-0 bottom-full mb-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
+          className="absolute right-0 bottom-full mb-2 w-56 bg-[var(--tropx-card)] rounded-xl shadow-lg border border-[var(--tropx-border)] py-1 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
           onClick={(e) => e.stopPropagation()}
         >
           {MENU_ITEMS.map((item) => (
@@ -115,19 +115,19 @@ export function ExportDropdownButton({ onExportCSV, disabled, isExporting, hideL
               disabled={item.disabled}
               className={cn(
                 'w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors',
-                item.disabled ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-50 cursor-pointer',
-                item.id === defaultAction && !item.disabled && 'bg-gray-50'
+                item.disabled ? 'text-[var(--tropx-text-sub)] cursor-not-allowed' : 'text-[var(--tropx-text-main)] hover:bg-[var(--tropx-muted)] cursor-pointer',
+                item.id === defaultAction && !item.disabled && 'bg-[var(--tropx-muted)]'
               )}
             >
               {item.icon}
               <div className="flex-1">
                 <div>{item.label}</div>
                 {item.description && (
-                  <div className="text-xs text-gray-400">{item.description}</div>
+                  <div className="text-xs text-[var(--tropx-text-sub)]">{item.description}</div>
                 )}
               </div>
               {item.badge && (
-                <span className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">
+                <span className="text-xs px-1.5 py-0.5 bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] rounded">
                   {item.badge}
                 </span>
               )}

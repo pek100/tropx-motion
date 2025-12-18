@@ -215,8 +215,8 @@ export function PatientSearchModal({
           // "Me" gets violet styling
           isMe
             ? isSelected
-              ? "bg-violet-100 border border-violet-300"
-              : "bg-violet-50 border border-violet-200 hover:bg-violet-100"
+              ? "bg-violet-100 dark:bg-violet-900/30 border border-violet-300 dark:border-violet-700"
+              : "bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/40"
             : isSelected
               ? "bg-[var(--tropx-hover)]"
               : "hover:bg-[var(--tropx-ivory)]"
@@ -238,7 +238,7 @@ export function PatientSearchModal({
               className={cn(
                 "size-9 rounded-full flex items-center justify-center",
                 isMe
-                  ? "bg-violet-200 ring-2 ring-violet-400"
+                  ? "bg-violet-200 dark:bg-violet-800 ring-2 ring-violet-400"
                   : "bg-[var(--tropx-ivory)]"
               )}
             >
@@ -258,7 +258,7 @@ export function PatientSearchModal({
             <span
               className={cn(
                 "text-sm font-medium truncate",
-                isMe ? "text-violet-900" : "text-[var(--tropx-dark)]"
+                isMe ? "text-violet-900 dark:text-violet-200" : "text-[var(--tropx-text-main)]"
               )}
             >
               {contact.name}
@@ -292,8 +292,8 @@ export function PatientSearchModal({
             className={cn(
               "p-1.5 rounded-full transition-colors",
               contact.starred
-                ? "text-amber-500 hover:bg-amber-50"
-                : "text-gray-300 hover:text-amber-400 hover:bg-gray-100 opacity-0 group-hover:opacity-100"
+                ? "text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                : "text-[var(--tropx-text-sub)] hover:text-amber-400 hover:bg-[var(--tropx-muted)] opacity-0 group-hover:opacity-100"
             )}
           >
             <Star
@@ -344,7 +344,7 @@ export function PatientSearchModal({
     <>
       {/* Search input box */}
       <div
-        className="bg-white border border-gray-200 rounded-2xl shadow-lg"
+        className="bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-2xl shadow-lg"
         style={{ backfaceVisibility: "hidden" }}
       >
         <div className="flex items-center gap-3 px-4 py-3">
@@ -355,7 +355,7 @@ export function PatientSearchModal({
             placeholder="Search patients..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="flex-1 bg-transparent text-sm text-[var(--tropx-dark)] placeholder-[var(--tropx-ivory-dark)] outline-none"
+            className="flex-1 bg-transparent text-sm text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)] outline-none"
             autoFocus
             onKeyDown={(e) => {
               if (e.key === "Escape") handleClose();
@@ -363,7 +363,7 @@ export function PatientSearchModal({
           />
           <button
             onClick={handleClose}
-            className="rounded-full p-1 hover:bg-gray-100 transition-colors cursor-pointer"
+            className="rounded-full p-1 hover:bg-[var(--tropx-muted)] transition-colors cursor-pointer"
           >
             <XIcon className="h-4 w-4 text-[var(--tropx-shadow)]" />
           </button>
@@ -372,11 +372,11 @@ export function PatientSearchModal({
 
       {/* Tabs */}
       <div
-        className="bg-white border border-gray-200 rounded-2xl shadow-lg overflow-hidden mt-2"
+        className="bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-2xl shadow-lg overflow-hidden mt-2"
         style={{ backfaceVisibility: "hidden" }}
       >
         {/* Tab buttons */}
-        <div className="flex border-b border-gray-100">
+        <div className="flex border-b border-[var(--tropx-border)]">
           {([
             { id: "recent" as TabType, label: "Recent", icon: Clock },
             { id: "starred" as TabType, label: "Starred", icon: Star },
@@ -389,7 +389,7 @@ export function PatientSearchModal({
                 "flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors cursor-pointer",
                 activeTab === tab.id
                   ? "text-[var(--tropx-vibrant)] border-b-2 border-[var(--tropx-vibrant)] -mb-px"
-                  : "text-[var(--tropx-shadow)] hover:text-[var(--tropx-dark)]"
+                  : "text-[var(--tropx-shadow)] hover:text-[var(--tropx-text-main)]"
               )}
             >
               <tab.icon className="size-3.5" />
@@ -462,7 +462,7 @@ export function PatientSearchModal({
 
         {/* Invite button - always visible when not loading */}
         {!isLoading && (
-          <div className="p-3 border-t border-gray-100">
+          <div className="p-3 border-t border-[var(--tropx-border)]">
             <button
               onClick={handleOpenInvite}
               className={cn(
