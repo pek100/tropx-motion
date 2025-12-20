@@ -294,7 +294,7 @@ export function TopNavTabs({
 
   return (
     <>
-      <nav className="flex items-center justify-center gap-6 -mt-2 pointer-events-auto">
+      <nav className="flex items-center justify-center gap-4 sm:gap-6 -mt-2 px-4 sm:px-0 pointer-events-auto">
         {NAV_ITEMS.map((item) => {
           if (item.id === 'profile') {
             return renderProfileTab(item)

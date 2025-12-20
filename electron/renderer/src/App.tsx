@@ -1055,11 +1055,11 @@ function AppContent() {
 
           <PlatformIndicator />
 
-          {/* Header - hidden on compact layouts, draggable for window movement */}
+          {/* Header - hidden on compact layouts, draggable for window movement (Electron only) */}
           {showHeader && (
-            <header className="p-3 sm:p-5 pb-0 relative" style={{ WebkitAppRegion: 'drag' } as any}>
+            <header className="p-3 sm:p-5 pb-0 relative" style={isElectron() ? { WebkitAppRegion: 'drag' } as any : undefined}>
               {/* Exclude top-right area from drag for window controls and theme toggle */}
-              <div className="absolute top-0 right-0 w-48 h-20" style={{ WebkitAppRegion: 'no-drag' } as any} />
+              {isElectron() && <div className="absolute top-0 right-0 w-48 h-20" style={{ WebkitAppRegion: 'no-drag' } as any} />}
               <div className="flex items-start gap-3 mb-2">
                 <svg width="40" height="40" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" className="hidden sm:block flex-shrink-0 mt-1">
                   <path d="M536.573 188.5C480.508 217.268 427.514 275.625 441.339 293.707C458.235 315.077 528.125 283.844 583.423 229.597C645.632 167.952 620.288 146.582 536.573 188.5Z" fill="var(--tropx-vibrant)" />
