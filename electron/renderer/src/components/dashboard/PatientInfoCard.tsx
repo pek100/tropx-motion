@@ -13,6 +13,7 @@ interface PatientInfoCardProps {
   isMe?: boolean;
   onClick?: () => void;
   onAddNote?: () => void;
+  borderless?: boolean;
   className?: string;
 }
 
@@ -33,6 +34,7 @@ export function PatientInfoCard({
   isMe,
   onClick,
   onAddNote,
+  borderless,
   className,
 }: PatientInfoCardProps) {
   const isClickable = !!onClick;
@@ -42,9 +44,12 @@ export function PatientInfoCard({
     <Component
       onClick={onClick}
       className={cn(
-        "w-full px-3 py-2.5 rounded-xl border border-[var(--tropx-border)] bg-[var(--tropx-card)]",
+        "w-full px-3 py-2.5 bg-[var(--tropx-card)]",
         "flex items-center gap-3",
         "transition-all",
+        borderless
+          ? "rounded-none border-0 sm:rounded-xl sm:border sm:border-[var(--tropx-border)]"
+          : "rounded-xl border border-[var(--tropx-border)]",
         isClickable && "hover:border-[var(--tropx-vibrant)]/30 hover:shadow-sm cursor-pointer",
         className
       )}

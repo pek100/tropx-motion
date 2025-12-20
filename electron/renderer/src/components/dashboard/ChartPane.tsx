@@ -112,7 +112,9 @@ export function ChartPane({
     <div
       className={cn(
         "flex flex-col bg-[var(--tropx-card)]",
-        !borderless && "rounded-xl border border-[var(--tropx-border)] shadow-sm",
+        borderless
+          ? "rounded-none border-0 shadow-none sm:rounded-xl sm:border sm:border-[var(--tropx-border)] sm:shadow-sm"
+          : "rounded-xl border border-[var(--tropx-border)] shadow-sm",
         className
       )}
     >
@@ -122,7 +124,7 @@ export function ChartPane({
         className="flex flex-col h-full"
       >
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-start sm:justify-between gap-3 px-4 sm:px-5 py-3 sm:py-4 border-b border-[var(--tropx-border)]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-3 sm:py-4 border-b border-[var(--tropx-border)]">
           <div className="min-w-0">
             <h3 className="font-bold text-base sm:text-lg text-[var(--tropx-text-main)] truncate">
               {activeTab === "progress" ? "Progress Over Time" : sessionTitle}

@@ -45,6 +45,7 @@ interface MetricsDataTableProps {
   sessionTitle?: string;
   selectedMetrics?: Set<string>;
   onSelectionChange?: (selected: Set<string>) => void;
+  borderless?: boolean;
   className?: string;
 }
 
@@ -69,6 +70,7 @@ export function MetricsDataTable({
   sessionTitle,
   selectedMetrics,
   onSelectionChange,
+  borderless,
   className,
 }: MetricsDataTableProps) {
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -161,8 +163,10 @@ export function MetricsDataTable({
   return (
     <div
       className={cn(
-        "bg-[var(--tropx-card)] rounded-xl border border-[var(--tropx-border)] shadow-sm",
-        "flex flex-col",
+        "bg-[var(--tropx-card)] flex flex-col",
+        borderless
+          ? "rounded-none border-0 shadow-none sm:rounded-xl sm:border sm:border-[var(--tropx-border)] sm:shadow-sm"
+          : "rounded-xl border border-[var(--tropx-border)] shadow-sm",
         className
       )}
     >

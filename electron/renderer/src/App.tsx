@@ -1095,17 +1095,17 @@ function AppContent() {
             />
           )}
 
-          <div className={isCompact ? "flex-1 flex relative" : "flex-1 flex items-center justify-center relative"}>
-            {/* Dashboard View - full width, no outer margins */}
+          <div className={isCompact ? "flex-1 flex relative" : `flex-1 flex items-center justify-center relative ${activeNavTab === 'record' ? 'px-page sm:px-page-sm' : ''}`}>
+            {/* Dashboard View */}
             {activeNavTab === 'dashboard' && !isCompact && (
-              <div className="w-full h-full">
+              <div className="w-full max-w-7xl mx-auto h-full sm:py-6">
                 <DashboardView className="h-full" />
               </div>
             )}
 
             {/* Record View (main app) - with page margins */}
             {(activeNavTab === 'record' || isCompact) && (
-            <div className={isCompact ? "flex gap-0 w-full h-full" : `flex ${showConnectivity ? 'gap-6' : 'gap-0'} w-full sm:w-[90%] px-page sm:px-page-sm`}>
+            <div className={isCompact ? "flex gap-0 w-full h-full" : `flex ${showConnectivity ? 'gap-6' : 'gap-0'} w-full sm:w-[90%]`}>
               {/* Left Pane - only shown when showConnectivity is true */}
               {showConnectivity && <div
                 className={`flex-shrink-0 bg-[var(--tropx-card)] flex flex-col transition-all ${isFlashing ? "flash-pane" : ""} ${isCompact ? "w-1/2 h-full p-4" : "w-[470px] p-6"}`}
