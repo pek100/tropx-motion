@@ -5,6 +5,7 @@
   "main": "dist/main/electron/main/main.js",
   "scripts": {
     "dev": "npm run build:main && concurrently \"npm run dev:main\" \"npm run dev:renderer\" \"wait-on http://localhost:3000 && wait-on dist/main/electron/main/main.js && electron .\"",
+    "full": "powershell.exe -Command \"Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }\" & concurrently \"npx convex dev\" \"npm run build && npm run dev\"",
     "dev:manual": "npm run build:main && npm run dev:renderer",
     "start": "npm run build && node scripts/start-smart.js",
     "start:smart": "node scripts/start-smart.js",

@@ -1,8 +1,9 @@
 /**
  * Chunker - Splits uniform samples into chunks for Convex upload.
  *
- * Chunk size: 6000 samples (1 minute @ 100Hz)
- * Each chunk: ~384KB of quaternion data
+ * Chunk size is derived from Convex's 8192 element limit per array argument.
+ * With 4 floats per quaternion sample: 8192 / 4 = 2048 max samples.
+ * Using 2000 for safety margin.
  */
 
 import { UniformSample, pack, PackedChunkData } from '../../shared/QuaternionCodec';
@@ -11,7 +12,7 @@ import { UniformSample, pack, PackedChunkData } from '../../shared/QuaternionCod
 // Constants
 // ─────────────────────────────────────────────────────────────────
 
-export const SAMPLES_PER_CHUNK = 6000;
+export const SAMPLES_PER_CHUNK = 2000;
 
 // ─────────────────────────────────────────────────────────────────
 // Types

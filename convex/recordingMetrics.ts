@@ -46,6 +46,75 @@ export const getMetricsStatus = query({
   },
 });
 
+/** Get asymmetry events and phase alignment for session chart overlay. */
+export const getSessionAsymmetryEvents = query({
+  args: { sessionId: v.string() },
+  handler: async (ctx, args) => {
+    const metrics = await ctx.db
+      .query("recordingMetrics")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+
+    if (!metrics || metrics.status !== "complete") return null;
+
+    // Get session timing info from first chunk
+    const firstChunk = await ctx.db
+      .query("recordings")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .filter((q) => q.eq(q.field("chunkIndex"), 0))
+      .first();
+
+    if (!firstChunk) return null;
+
+    // Extract asymmetry events with time window data
+    const advancedAsymmetry = metrics.advancedAsymmetry as {
+      asymmetryEvents?: Array<{
+        startTimeMs: number;
+        endTimeMs: number;
+        durationMs: number;
+        peakAsymmetry: number;
+        avgAsymmetry: number;
+        direction: "left_dominant" | "right_dominant";
+        area: number;
+      }>;
+      avgRealAsymmetry?: number;
+      maxRealAsymmetry?: number;
+      asymmetryPercentage?: number;
+    } | null;
+
+    // Extract phase alignment data
+    const phaseAlignment = metrics.phaseAlignment as {
+      optimalOffsetSamples?: number;
+      optimalOffsetMs?: number;
+      optimalOffsetDegrees?: number;
+      alignedCorrelation?: number;
+      unalignedCorrelation?: number;
+      correlationImprovement?: number;
+    } | null;
+
+    // Return data even if no asymmetry events (phase alignment still useful)
+    return {
+      sessionId: args.sessionId,
+      sessionStartTime: firstChunk.startTime,
+      sampleRate: firstChunk.sampleRate,
+      events: advancedAsymmetry?.asymmetryEvents ?? [],
+      summary: {
+        avgRealAsymmetry: advancedAsymmetry?.avgRealAsymmetry ?? 0,
+        maxRealAsymmetry: advancedAsymmetry?.maxRealAsymmetry ?? 0,
+        asymmetryPercentage: advancedAsymmetry?.asymmetryPercentage ?? 0,
+      },
+      phaseAlignment: phaseAlignment ? {
+        optimalOffsetSamples: phaseAlignment.optimalOffsetSamples ?? 0,
+        optimalOffsetMs: phaseAlignment.optimalOffsetMs ?? 0,
+        optimalOffsetDegrees: phaseAlignment.optimalOffsetDegrees ?? 0,
+        alignedCorrelation: phaseAlignment.alignedCorrelation ?? 0,
+        unalignedCorrelation: phaseAlignment.unalignedCorrelation ?? 0,
+        correlationImprovement: phaseAlignment.correlationImprovement ?? 0,
+      } : null,
+    };
+  },
+});
+
 // ─────────────────────────────────────────────────────────────────
 // Mutations
 // ─────────────────────────────────────────────────────────────────

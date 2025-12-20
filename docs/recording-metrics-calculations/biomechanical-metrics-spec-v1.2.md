@@ -4,7 +4,7 @@
 
 This document defines all biomechanical metrics for the IMU-based movement analysis system, including mathematical formulas and TypeScript implementations.
 
-**Total Metrics: 42**
+**Total Metrics: 43**
 - Computed Parameters: 11
 - Bilateral Analysis: 5
 - Unilateral Analysis: 3
@@ -16,6 +16,7 @@ This document defines all biomechanical metrics for the IMU-based movement analy
 - Gait Cycle: 3
 - Movement Classification: 2
 - Advanced Asymmetry: 3 (with phase correction)
+- Overall Performance: 1 (composite index)
 
 ---
 
@@ -837,12 +838,13 @@ function calculateRSI(jumpHeightCm: number, groundContactTimeMs: number): number
 
 ### Category 5: Force/Power Metrics
 
-#### 24. eRFD (Estimated Rate of Force Development)
-**Description:** Rate of acceleration change during concentric phase  
-**Formula:** $\frac{\Delta a}{\Delta t}$ (m/s³ or g/s)
+#### 24. RMD (Rate of Motion Development)
+**Description:** Rate of acceleration change during concentric phase - measures how quickly motion develops  
+**Formula:** $\frac{\Delta a}{\Delta t}$ (g/s)  
+**Note:** Renamed from eRFD. Unlike RFD (Rate of Force Development) which requires force plates, RMD measures motion kinematics from IMU acceleration.
 
 ```typescript
-function calculateERFD(
+function calculateRMD(
     accel: number[], 
     timeStep: number, 
     phaseStartIdx: number, 
@@ -857,8 +859,8 @@ function calculateERFD(
     return deltaTime > 0 ? deltaAccel / deltaTime : 0;
 }
 
-// Auto-detect concentric phase and calculate eRFD
-function calculateERFDAuto(accel: number[], timeStep: number): number {
+// Auto-detect concentric phase and calculate RMD
+function calculateRMDAuto(accel: number[], timeStep: number): number {
     // Find the steepest positive slope in acceleration
     let maxRFD = 0;
     const windowSize = Math.max(5, Math.floor(0.05 / timeStep)); // 50ms window
@@ -2078,6 +2080,1060 @@ function calculateOptimalPhaseAlignment(
 
 ---
 
+### Category 12: Overall Performance Index
+
+#### 42. overall_performance_index
+**Description:** Single composite score (0-100) synthesizing all relevant metrics  
+**Method:** Domain-based normalization with activity-aware weighting
+
+##### Literature-Informed Enhancements (v1.2.1)
+
+Based on analysis of FMS, PCA, GSi, CGAM, and wUSI methodologies:
+
+| Enhancement | Source Inspiration | Benefit |
+|-------------|-------------------|---------|
+| Percentile ranking | GSi | Context vs population |
+| Reliability weighting | CGAM | More reliable metrics count more |
+| Confidence intervals | Statistical best practice | Uncertainty quantification |
+| Age/sex-adjusted thresholds | FMS limitations | Population-appropriate |
+| Minimal detectable change | FMS validation | Clinically meaningful change |
+| Metric contribution breakdown | PCA loadings | Actionable insights |
+
+```typescript
+// ===== Enhanced Configuration =====
+
+interface MetricNormConfig {
+    name: string;
+    domain: PerformanceDomain;
+    direction: 'higher_better' | 'lower_better' | 'optimal_range';
+    optimalMin?: number;
+    optimalMax?: number;
+    goodThreshold: number;
+    poorThreshold: number;
+    weight: number;
+    bilateral: boolean;
+    unilateral: boolean;
+    
+    // NEW: Enhanced properties
+    reliability: number;              // ICC or test-retest r (0-1)
+    populationMean?: number;          // For percentile calculation
+    populationSD?: number;            // For percentile calculation
+    ageAdjustment?: (age: number) => { good: number; poor: number };
+    sexAdjustment?: (sex: 'M' | 'F') => { good: number; poor: number };
+    minDataPoints?: number;           // Minimum samples for reliable metric
+}
+
+// ===== Normative Data (when available) =====
+
+interface NormativeDatabase {
+    population: string;               // e.g., "NCAA Division I Athletes"
+    n: number;                        // Sample size
+    metrics: Map<string, {
+        mean: number;
+        sd: number;
+        percentiles: Map<number, number>;  // 5th, 25th, 50th, 75th, 95th
+        byAge?: Map<string, { mean: number; sd: number }>;  // "18-25", "26-35", etc.
+        bySex?: { M: { mean: number; sd: number }; F: { mean: number; sd: number } };
+    }>;
+}
+
+// ===== Enhanced Normalization =====
+
+interface NormalizationResult {
+    score: number;                    // 0-100 normalized score
+    percentile?: number;              // Percentile rank if normative data available
+    zScore?: number;                  // Z-score if normative data available
+    confidence: number;               // Confidence in this metric (0-100)
+    dataQuality: 'excellent' | 'good' | 'fair' | 'poor';
+}
+
+function normalizeMetricEnhanced(
+    value: number,
+    config: MetricNormConfig,
+    normativeData?: NormativeDatabase,
+    subjectAge?: number,
+    subjectSex?: 'M' | 'F',
+    sampleCount?: number
+): NormalizationResult {
+    if (value === null || value === undefined || isNaN(value)) {
+        return { score: -1, confidence: 0, dataQuality: 'poor' };
+    }
+
+    // 1. Adjust thresholds for age/sex if available
+    let goodThreshold = config.goodThreshold;
+    let poorThreshold = config.poorThreshold;
+    
+    if (subjectAge && config.ageAdjustment) {
+        const adj = config.ageAdjustment(subjectAge);
+        goodThreshold = adj.good;
+        poorThreshold = adj.poor;
+    }
+    
+    if (subjectSex && config.sexAdjustment) {
+        const adj = config.sexAdjustment(subjectSex);
+        goodThreshold = adj.good;
+        poorThreshold = adj.poor;
+    }
+
+    // 2. Calculate threshold-based score (our original approach)
+    let score: number;
+    if (config.direction === 'higher_better') {
+        if (value >= goodThreshold) score = 100;
+        else if (value <= poorThreshold) score = 0;
+        else score = ((value - poorThreshold) / (goodThreshold - poorThreshold)) * 100;
+    } else if (config.direction === 'lower_better') {
+        if (value <= goodThreshold) score = 100;
+        else if (value >= poorThreshold) score = 0;
+        else score = ((poorThreshold - value) / (poorThreshold - goodThreshold)) * 100;
+    } else {
+        const optMin = config.optimalMin!;
+        const optMax = config.optimalMax!;
+        const optRange = optMax - optMin;
+        if (value >= optMin && value <= optMax) score = 100;
+        else if (value < optMin) score = Math.max(0, 100 - ((optMin - value) / optRange) * 100);
+        else score = Math.max(0, 100 - ((value - optMax) / optRange) * 100);
+    }
+    score = Math.max(0, Math.min(100, score));
+
+    // 3. Calculate percentile if normative data available
+    let percentile: number | undefined;
+    let zScore: number | undefined;
+    
+    if (normativeData) {
+        const normMetric = normativeData.metrics.get(config.name);
+        if (normMetric) {
+            let mean = normMetric.mean;
+            let sd = normMetric.sd;
+            
+            // Use age/sex-specific norms if available
+            if (subjectAge && normMetric.byAge) {
+                const ageGroup = getAgeGroup(subjectAge);
+                const ageNorm = normMetric.byAge.get(ageGroup);
+                if (ageNorm) { mean = ageNorm.mean; sd = ageNorm.sd; }
+            }
+            if (subjectSex && normMetric.bySex) {
+                const sexNorm = normMetric.bySex[subjectSex];
+                if (sexNorm) { mean = sexNorm.mean; sd = sexNorm.sd; }
+            }
+            
+            zScore = (value - mean) / sd;
+            
+            // Convert z-score to percentile (approximate)
+            percentile = normalCDF(zScore) * 100;
+            
+            // For "lower_better" metrics, invert percentile
+            if (config.direction === 'lower_better') {
+                percentile = 100 - percentile;
+            }
+        }
+    }
+
+    // 4. Assess data quality
+    let dataQuality: 'excellent' | 'good' | 'fair' | 'poor' = 'good';
+    const minPoints = config.minDataPoints || 10;
+    
+    if (sampleCount !== undefined) {
+        if (sampleCount >= minPoints * 2) dataQuality = 'excellent';
+        else if (sampleCount >= minPoints) dataQuality = 'good';
+        else if (sampleCount >= minPoints / 2) dataQuality = 'fair';
+        else dataQuality = 'poor';
+    }
+
+    // 5. Calculate confidence based on reliability and data quality
+    const reliabilityFactor = config.reliability || 0.8;
+    const dataQualityFactor = { excellent: 1.0, good: 0.85, fair: 0.6, poor: 0.3 }[dataQuality];
+    const confidence = reliabilityFactor * dataQualityFactor * 100;
+
+    return { score, percentile, zScore, confidence, dataQuality };
+}
+
+// Helper: Normal CDF approximation
+function normalCDF(z: number): number {
+    const a1 =  0.254829592;
+    const a2 = -0.284496736;
+    const a3 =  1.421413741;
+    const a4 = -1.453152027;
+    const a5 =  1.061405429;
+    const p  =  0.3275911;
+    
+    const sign = z < 0 ? -1 : 1;
+    z = Math.abs(z) / Math.sqrt(2);
+    const t = 1.0 / (1.0 + p * z);
+    const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-z * z);
+    return 0.5 * (1.0 + sign * y);
+}
+
+function getAgeGroup(age: number): string {
+    if (age < 18) return '<18';
+    if (age < 26) return '18-25';
+    if (age < 36) return '26-35';
+    if (age < 46) return '36-45';
+    if (age < 56) return '46-55';
+    return '56+';
+}
+```
+
+---
+
+##### Enhanced Domain Scoring with Reliability Weighting
+
+```typescript
+// IMPROVEMENT: Weight metrics by their reliability (CGAM-inspired)
+
+interface EnhancedDomainScore {
+    domain: PerformanceDomain;
+    score: number;                    // 0-100
+    confidence: number;               // 0-100
+    percentileScore?: number;         // If normative data available
+    contributors: MetricContribution[];
+    flags: string[];
+    
+    // NEW: Enhanced outputs
+    effectiveWeight: number;          // Actual weight after reliability adjustment
+    measurementError: number;         // Estimated SEM
+    minDetectableChange: number;      // MDC95 for this domain
+}
+
+interface MetricContribution {
+    name: string;
+    rawValue: number;
+    normalizedScore: number;
+    weight: number;
+    reliabilityAdjustedWeight: number;
+    contribution: number;             // % of domain score from this metric
+    flag?: string;
+}
+
+function calculateEnhancedDomainScore(
+    metrics: Map<string, number>,
+    domain: PerformanceDomain,
+    movementType: MovementType,
+    normativeData?: NormativeDatabase,
+    subjectAge?: number,
+    subjectSex?: 'M' | 'F'
+): EnhancedDomainScore {
+    const domainConfigs = METRIC_CONFIGS.filter(c => c.domain === domain);
+    const isBilateral = movementType === 'bilateral';
+    const isUnilateral = movementType === 'unilateral';
+    
+    const contributors: MetricContribution[] = [];
+    const flags: string[] = [];
+    
+    let weightedSum = 0;
+    let totalWeight = 0;
+    let totalReliabilityWeight = 0;
+    let sumSquaredSEM = 0;  // For combined measurement error
+    
+    for (const config of domainConfigs) {
+        if (isBilateral && !config.bilateral) continue;
+        if (isUnilateral && !config.unilateral) continue;
+        
+        const value = metrics.get(config.name);
+        if (value === undefined || value === null) continue;
+        
+        const normResult = normalizeMetricEnhanced(
+            value, config, normativeData, subjectAge, subjectSex
+        );
+        
+        if (normResult.score < 0) continue;
+        
+        // IMPROVEMENT: Reliability-adjusted weighting (CGAM-inspired)
+        const reliability = config.reliability || 0.8;
+        const reliabilityAdjustedWeight = config.weight * reliability;
+        
+        weightedSum += normResult.score * reliabilityAdjustedWeight;
+        totalWeight += config.weight;
+        totalReliabilityWeight += reliabilityAdjustedWeight;
+        
+        // Track measurement error
+        const metricSEM = (1 - reliability) * normResult.score * 0.1;  // Simplified SEM estimate
+        sumSquaredSEM += metricSEM ** 2;
+        
+        contributors.push({
+            name: config.name,
+            rawValue: value,
+            normalizedScore: normResult.score,
+            weight: config.weight,
+            reliabilityAdjustedWeight,
+            contribution: 0  // Calculate after totals known
+        });
+        
+        if (normResult.score < 30) {
+            flags.push(`${config.name}: poor (${value.toFixed(1)})`);
+        }
+    }
+    
+    const score = totalReliabilityWeight > 0 ? weightedSum / totalReliabilityWeight : 0;
+    
+    // Calculate contribution percentages
+    for (const c of contributors) {
+        c.contribution = totalReliabilityWeight > 0 
+            ? (c.normalizedScore * c.reliabilityAdjustedWeight / weightedSum) * 100 
+            : 0;
+    }
+    
+    // Sort by contribution (highest first)
+    contributors.sort((a, b) => b.contribution - a.contribution);
+    
+    // Calculate measurement error and MDC
+    const combinedSEM = Math.sqrt(sumSquaredSEM);
+    const MDC95 = combinedSEM * 1.96 * Math.sqrt(2);  // 95% confidence
+    
+    const possibleMetrics = domainConfigs.filter(c => 
+        (isBilateral && c.bilateral) || (isUnilateral && c.unilateral)
+    ).length;
+    const confidence = possibleMetrics > 0 
+        ? (contributors.length / possibleMetrics) * 100 * (totalReliabilityWeight / totalWeight)
+        : 0;
+
+    return {
+        domain,
+        score,
+        confidence,
+        contributors,
+        flags,
+        effectiveWeight: totalReliabilityWeight,
+        measurementError: combinedSEM,
+        minDetectableChange: MDC95
+    };
+}
+```
+
+---
+
+##### Enhanced Overall Score with Uncertainty
+
+```typescript
+interface EnhancedPerformanceResult {
+    // Core outputs
+    overallScore: number;
+    grade: 'A' | 'B' | 'C' | 'D' | 'F';
+    domainScores: EnhancedDomainScore[];
+    
+    // NEW: Uncertainty quantification
+    confidenceInterval: { lower: number; upper: number };  // 95% CI
+    measurementError: number;         // Combined SEM
+    minDetectableChange: number;      // MDC95 for overall score
+    scoreReliability: number;         // Estimated reliability coefficient
+    
+    // NEW: Percentile ranking (if normative data)
+    percentileRank?: number;
+    percentileInterpretation?: string;  // "Above average", "Top 10%", etc.
+    
+    // NEW: Trend analysis (if historical data)
+    trend?: {
+        direction: 'improving' | 'stable' | 'declining';
+        changeFromLast: number;
+        isSignificant: boolean;       // > MDC95
+        sessionsAnalyzed: number;
+    };
+    
+    // NEW: Top contributors (actionable insights)
+    topStrengths: MetricContribution[];   // Top 3 positive contributors
+    topWeaknesses: MetricContribution[];  // Top 3 negative contributors
+    
+    // Existing
+    movementType: MovementType;
+    activityProfile: 'power' | 'endurance' | 'rehabilitation' | 'general';
+    strengthAreas: string[];
+    improvementAreas: string[];
+    clinicalFlags: string[];
+    dataCompleteness: number;
+    scoreConfidence: number;
+}
+
+function calculateEnhancedOverallPerformance(
+    analysisResult: FullAnalysisResult,
+    options?: {
+        normativeData?: NormativeDatabase;
+        subjectAge?: number;
+        subjectSex?: 'M' | 'F';
+        previousScores?: number[];      // For trend analysis
+        activityOverride?: 'power' | 'endurance' | 'rehabilitation' | 'general';
+    }
+): EnhancedPerformanceResult {
+    
+    const opts = options || {};
+    
+    // Build metrics map (same as before)
+    const metrics = buildMetricsMap(analysisResult);
+    
+    // Determine movement type and activity profile
+    const movementType = analysisResult.movementClassification?.type || 'unknown';
+    const activityProfile = opts.activityOverride || detectActivityProfile(metrics, movementType);
+    
+    // Calculate enhanced domain scores
+    const domains: PerformanceDomain[] = ['symmetry', 'power', 'control', 'stability', 'efficiency'];
+    const domainScores = domains.map(d => 
+        calculateEnhancedDomainScore(metrics, d, movementType, opts.normativeData, opts.subjectAge, opts.subjectSex)
+    );
+    
+    // Calculate weighted overall score with reliability adjustment
+    const weights = DOMAIN_WEIGHTS[activityProfile];
+    let overallScore = 0;
+    let totalWeight = 0;
+    let sumSquaredSEM = 0;
+    
+    for (const ds of domainScores) {
+        if (ds.confidence > 0) {
+            const w = weights[ds.domain] * (ds.confidence / 100);
+            overallScore += ds.score * w;
+            totalWeight += w;
+            sumSquaredSEM += (ds.measurementError * w) ** 2;
+        }
+    }
+    
+    if (totalWeight > 0) {
+        overallScore = overallScore / totalWeight;
+    }
+    
+    // Calculate overall uncertainty
+    const combinedSEM = Math.sqrt(sumSquaredSEM) / totalWeight;
+    const MDC95 = combinedSEM * 1.96 * Math.sqrt(2);
+    const confidenceInterval = {
+        lower: Math.max(0, overallScore - 1.96 * combinedSEM),
+        upper: Math.min(100, overallScore + 1.96 * combinedSEM)
+    };
+    
+    // Estimate overall reliability (weighted average of domain reliabilities)
+    const scoreReliability = domainScores.reduce((sum, ds) => 
+        sum + (ds.effectiveWeight / ds.contributors.length) * weights[ds.domain], 0
+    );
+    
+    // Grade assignment
+    let grade: 'A' | 'B' | 'C' | 'D' | 'F';
+    if (overallScore >= 90) grade = 'A';
+    else if (overallScore >= 80) grade = 'B';
+    else if (overallScore >= 70) grade = 'C';
+    else if (overallScore >= 60) grade = 'D';
+    else grade = 'F';
+    
+    // Trend analysis (if previous scores available)
+    let trend: EnhancedPerformanceResult['trend'];
+    if (opts.previousScores && opts.previousScores.length > 0) {
+        const lastScore = opts.previousScores[opts.previousScores.length - 1];
+        const change = overallScore - lastScore;
+        const isSignificant = Math.abs(change) > MDC95;
+        
+        trend = {
+            direction: change > MDC95 ? 'improving' : change < -MDC95 ? 'declining' : 'stable',
+            changeFromLast: change,
+            isSignificant,
+            sessionsAnalyzed: opts.previousScores.length + 1
+        };
+    }
+    
+    // Percentile interpretation
+    let percentileRank: number | undefined;
+    let percentileInterpretation: string | undefined;
+    if (opts.normativeData) {
+        // Simplified: use overall score as proxy for percentile
+        // In practice, would need population-specific overall scores
+        percentileRank = normalCDF((overallScore - 70) / 15) * 100;  // Assuming mean=70, SD=15
+        
+        if (percentileRank >= 95) percentileInterpretation = 'Elite (Top 5%)';
+        else if (percentileRank >= 90) percentileInterpretation = 'Excellent (Top 10%)';
+        else if (percentileRank >= 75) percentileInterpretation = 'Above Average (Top 25%)';
+        else if (percentileRank >= 50) percentileInterpretation = 'Average';
+        else if (percentileRank >= 25) percentileInterpretation = 'Below Average';
+        else percentileInterpretation = 'Needs Improvement';
+    }
+    
+    // Extract top contributors across all domains
+    const allContributors = domainScores.flatMap(ds => ds.contributors);
+    const topStrengths = allContributors
+        .filter(c => c.normalizedScore >= 80)
+        .sort((a, b) => b.normalizedScore - a.normalizedScore)
+        .slice(0, 3);
+    const topWeaknesses = allContributors
+        .filter(c => c.normalizedScore < 50)
+        .sort((a, b) => a.normalizedScore - b.normalizedScore)
+        .slice(0, 3);
+    
+    // Collect flags and identify areas
+    const clinicalFlags: string[] = [];
+    const strengthAreas: string[] = [];
+    const improvementAreas: string[] = [];
+    
+    for (const ds of domainScores) {
+        clinicalFlags.push(...ds.flags);
+        if (ds.score >= 75 && ds.confidence > 50) {
+            strengthAreas.push(`${ds.domain}: ${ds.score.toFixed(0)}/100`);
+        }
+        if (ds.score < 60 && ds.confidence > 50) {
+            improvementAreas.push(`${ds.domain}: ${ds.score.toFixed(0)}/100`);
+        }
+    }
+    
+    // Add critical flags
+    const asymmetry = metrics.get('net_global_asymmetry') || 0;
+    if (asymmetry > 25) clinicalFlags.push('⚠️ HIGH ASYMMETRY - injury risk');
+    const sparc = metrics.get('SPARC') || 0;
+    if (sparc < -3) clinicalFlags.push('⚠️ POOR SMOOTHNESS - coordination concern');
+    
+    const dataCompleteness = (metrics.size / METRIC_CONFIGS.length) * 100;
+    
+    return {
+        overallScore: Math.round(overallScore * 10) / 10,
+        grade,
+        domainScores,
+        confidenceInterval,
+        measurementError: combinedSEM,
+        minDetectableChange: MDC95,
+        scoreReliability,
+        percentileRank,
+        percentileInterpretation,
+        trend,
+        topStrengths,
+        topWeaknesses,
+        movementType,
+        activityProfile,
+        strengthAreas,
+        improvementAreas,
+        clinicalFlags,
+        dataCompleteness: Math.round(dataCompleteness),
+        scoreConfidence: Math.round(totalWeight * 100)
+    };
+}
+```
+
+---
+
+##### Example Enhanced Output
+
+```json
+{
+  "overallScore": 76.4,
+  "grade": "C",
+  "confidenceInterval": { "lower": 71.2, "upper": 81.6 },
+  "measurementError": 2.7,
+  "minDetectableChange": 7.5,
+  "scoreReliability": 0.82,
+  
+  "percentileRank": 68,
+  "percentileInterpretation": "Above Average (Top 25%)",
+  
+  "trend": {
+    "direction": "improving",
+    "changeFromLast": 8.2,
+    "isSignificant": true,
+    "sessionsAnalyzed": 5
+  },
+  
+  "domainScores": [
+    {
+      "domain": "symmetry",
+      "score": 82,
+      "confidence": 95,
+      "measurementError": 1.8,
+      "minDetectableChange": 5.0,
+      "contributors": [
+        { "name": "real_asymmetry_avg", "normalizedScore": 88, "contribution": 42 },
+        { "name": "cross_correlation", "normalizedScore": 79, "contribution": 31 }
+      ]
+    }
+  ],
+  
+  "topStrengths": [
+    { "name": "RSI", "normalizedScore": 92, "rawValue": 2.3 },
+    { "name": "real_asymmetry_avg", "normalizedScore": 88, "rawValue": 4.2 }
+  ],
+  
+  "topWeaknesses": [
+    { "name": "SPARC", "normalizedScore": 45, "rawValue": -2.8 },
+    { "name": "rom_cov", "normalizedScore": 52, "rawValue": 12.3 }
+  ],
+  
+  "clinicalFlags": ["SPARC: poor (-2.8)"]
+}
+```
+
+```typescript
+// ===== Domain Definitions =====
+
+type PerformanceDomain = 
+    | 'symmetry'      // Bilateral balance
+    | 'power'         // Force production & explosiveness
+    | 'control'       // Smoothness & coordination
+    | 'stability'     // Consistency & variability
+    | 'efficiency';   // Movement economy
+
+interface DomainScore {
+    domain: PerformanceDomain;
+    score: number;           // 0-100
+    confidence: number;      // 0-100 (based on data availability)
+    contributors: string[];  // Which metrics contributed
+    flags: string[];         // Clinical concerns
+}
+
+interface OverallPerformanceResult {
+    overallScore: number;              // 0-100 composite
+    grade: 'A' | 'B' | 'C' | 'D' | 'F'; // Letter grade
+    domainScores: DomainScore[];
+    movementType: MovementType;
+    activityProfile: 'power' | 'endurance' | 'rehabilitation' | 'general';
+    
+    // Breakdown
+    strengthAreas: string[];           // Top performing domains
+    improvementAreas: string[];        // Domains needing work
+    clinicalFlags: string[];           // Red flags requiring attention
+    
+    // Confidence
+    dataCompleteness: number;          // % of metrics available
+    scoreConfidence: number;           // Overall confidence in score
+}
+
+// ===== Metric Normalization =====
+
+interface MetricNormConfig {
+    name: string;
+    domain: PerformanceDomain;
+    direction: 'higher_better' | 'lower_better' | 'optimal_range';
+    optimalMin?: number;
+    optimalMax?: number;
+    goodThreshold: number;
+    poorThreshold: number;
+    weight: number;           // Relative importance within domain
+    bilateral: boolean;       // Applies to bilateral movements
+    unilateral: boolean;      // Applies to unilateral movements
+}
+
+const METRIC_CONFIGS: MetricNormConfig[] = [
+    // === SYMMETRY DOMAIN ===
+    { name: 'rom_asymmetry', domain: 'symmetry', direction: 'lower_better',
+      goodThreshold: 5, poorThreshold: 25, weight: 1.0, bilateral: true, unilateral: true },
+    { name: 'velocity_asymmetry', domain: 'symmetry', direction: 'lower_better',
+      goodThreshold: 8, poorThreshold: 25, weight: 1.0, bilateral: true, unilateral: true },
+    { name: 'net_global_asymmetry', domain: 'symmetry', direction: 'lower_better',
+      goodThreshold: 10, poorThreshold: 25, weight: 1.2, bilateral: true, unilateral: true },
+    { name: 'temporal_lag', domain: 'symmetry', direction: 'lower_better',
+      goodThreshold: 15, poorThreshold: 50, weight: 0.8, bilateral: true, unilateral: false },
+    { name: 'cross_correlation', domain: 'symmetry', direction: 'higher_better',
+      goodThreshold: 0.9, poorThreshold: 0.7, weight: 1.0, bilateral: true, unilateral: false },
+    { name: 'real_asymmetry_avg', domain: 'symmetry', direction: 'lower_better',
+      goodThreshold: 5, poorThreshold: 20, weight: 1.5, bilateral: true, unilateral: true },
+    
+    // === POWER DOMAIN ===
+    { name: 'peak_angular_velocity', domain: 'power', direction: 'higher_better',
+      goodThreshold: 300, poorThreshold: 100, weight: 1.0, bilateral: true, unilateral: true },
+    { name: 'explosiveness_concentric', domain: 'power', direction: 'higher_better',
+      goodThreshold: 500, poorThreshold: 150, weight: 1.2, bilateral: true, unilateral: true },
+    { name: 'RSI', domain: 'power', direction: 'higher_better',
+      goodThreshold: 2.0, poorThreshold: 1.0, weight: 1.5, bilateral: true, unilateral: false },
+    { name: 'jump_height_cm', domain: 'power', direction: 'higher_better',
+      goodThreshold: 35, poorThreshold: 15, weight: 1.3, bilateral: true, unilateral: false },
+    { name: 'RMD', domain: 'power', direction: 'higher_better',
+      goodThreshold: 50, poorThreshold: 20, weight: 1.0, bilateral: true, unilateral: true },
+    { name: 'peak_resultant_accel', domain: 'power', direction: 'higher_better',
+      goodThreshold: 500, poorThreshold: 150, weight: 0.8, bilateral: true, unilateral: true },
+    
+    // === CONTROL DOMAIN ===
+    { name: 'SPARC', domain: 'control', direction: 'higher_better',  // less negative = better
+      goodThreshold: -1.5, poorThreshold: -3.0, weight: 1.2, bilateral: true, unilateral: true },
+    { name: 'LDLJ', domain: 'control', direction: 'higher_better',   // less negative = better
+      goodThreshold: -20, poorThreshold: -30, weight: 1.0, bilateral: true, unilateral: true },
+    { name: 'n_velocity_peaks', domain: 'control', direction: 'lower_better',
+      goodThreshold: 3, poorThreshold: 8, weight: 0.8, bilateral: true, unilateral: true },
+    { name: 'rms_jerk', domain: 'control', direction: 'lower_better',
+      goodThreshold: 500, poorThreshold: 2000, weight: 1.0, bilateral: true, unilateral: true },
+    { name: 'shock_absorption_score', domain: 'control', direction: 'higher_better',
+      goodThreshold: 70, poorThreshold: 40, weight: 1.0, bilateral: true, unilateral: true },
+    
+    // === STABILITY DOMAIN ===
+    { name: 'rom_cov', domain: 'stability', direction: 'lower_better',
+      goodThreshold: 5, poorThreshold: 15, weight: 1.0, bilateral: true, unilateral: true },
+    { name: 'baseline_stability', domain: 'stability', direction: 'lower_better',
+      goodThreshold: 2, poorThreshold: 5, weight: 0.8, bilateral: true, unilateral: true },
+    { name: 'movement_confidence', domain: 'stability', direction: 'higher_better',
+      goodThreshold: 80, poorThreshold: 50, weight: 0.7, bilateral: true, unilateral: true },
+    
+    // === EFFICIENCY DOMAIN ===
+    { name: 'duty_factor', domain: 'efficiency', direction: 'optimal_range',
+      optimalMin: 0.30, optimalMax: 0.40, goodThreshold: 0.35, poorThreshold: 0.50, 
+      weight: 1.0, bilateral: false, unilateral: true },
+    { name: 'stance_phase_pct', domain: 'efficiency', direction: 'optimal_range',
+      optimalMin: 58, optimalMax: 62, goodThreshold: 60, poorThreshold: 65,
+      weight: 1.0, bilateral: false, unilateral: true },
+    { name: 'ground_contact_time', domain: 'efficiency', direction: 'lower_better',
+      goodThreshold: 200, poorThreshold: 350, weight: 1.0, bilateral: true, unilateral: false },
+    { name: 'leg_stiffness', domain: 'efficiency', direction: 'optimal_range',
+      optimalMin: 8000, optimalMax: 15000, goodThreshold: 10000, poorThreshold: 5000,
+      weight: 1.0, bilateral: true, unilateral: true },
+];
+
+// ===== Normalization Functions =====
+
+function normalizeMetric(value: number, config: MetricNormConfig): number {
+    if (value === null || value === undefined || isNaN(value)) return -1; // Missing
+    
+    let score: number;
+    
+    if (config.direction === 'higher_better') {
+        // Linear scale: poorThreshold=0, goodThreshold=100
+        if (value >= config.goodThreshold) {
+            score = 100;
+        } else if (value <= config.poorThreshold) {
+            score = 0;
+        } else {
+            score = ((value - config.poorThreshold) / (config.goodThreshold - config.poorThreshold)) * 100;
+        }
+    } else if (config.direction === 'lower_better') {
+        // Inverted: poorThreshold=0, goodThreshold=100
+        if (value <= config.goodThreshold) {
+            score = 100;
+        } else if (value >= config.poorThreshold) {
+            score = 0;
+        } else {
+            score = ((config.poorThreshold - value) / (config.poorThreshold - config.goodThreshold)) * 100;
+        }
+    } else {
+        // optimal_range: peak at middle of range, drops off outside
+        const optMin = config.optimalMin!;
+        const optMax = config.optimalMax!;
+        const optMid = (optMin + optMax) / 2;
+        const optRange = optMax - optMin;
+        
+        if (value >= optMin && value <= optMax) {
+            score = 100;
+        } else if (value < optMin) {
+            const dist = optMin - value;
+            score = Math.max(0, 100 - (dist / optRange) * 100);
+        } else {
+            const dist = value - optMax;
+            score = Math.max(0, 100 - (dist / optRange) * 100);
+        }
+    }
+    
+    return Math.max(0, Math.min(100, score));
+}
+
+// ===== Domain Scoring =====
+
+function calculateDomainScore(
+    metrics: Map<string, number>,
+    domain: PerformanceDomain,
+    movementType: MovementType
+): DomainScore {
+    const domainConfigs = METRIC_CONFIGS.filter(c => c.domain === domain);
+    const isBilateral = movementType === 'bilateral';
+    const isUnilateral = movementType === 'unilateral';
+    
+    let weightedSum = 0;
+    let totalWeight = 0;
+    let availableCount = 0;
+    const contributors: string[] = [];
+    const flags: string[] = [];
+    
+    for (const config of domainConfigs) {
+        // Skip if not applicable to movement type
+        if (isBilateral && !config.bilateral) continue;
+        if (isUnilateral && !config.unilateral) continue;
+        
+        const value = metrics.get(config.name);
+        if (value === undefined || value === null) continue;
+        
+        const score = normalizeMetric(value, config);
+        if (score < 0) continue; // Missing data
+        
+        weightedSum += score * config.weight;
+        totalWeight += config.weight;
+        availableCount++;
+        contributors.push(config.name);
+        
+        // Flag poor scores
+        if (score < 30) {
+            flags.push(`${config.name}: poor (${value.toFixed(1)})`);
+        }
+    }
+    
+    const score = totalWeight > 0 ? weightedSum / totalWeight : 0;
+    const possibleMetrics = domainConfigs.filter(c => 
+        (isBilateral && c.bilateral) || (isUnilateral && c.unilateral)
+    ).length;
+    const confidence = possibleMetrics > 0 ? (availableCount / possibleMetrics) * 100 : 0;
+    
+    return { domain, score, confidence, contributors, flags };
+}
+
+// ===== Activity Profile Detection =====
+
+function detectActivityProfile(
+    metrics: Map<string, number>,
+    movementType: MovementType
+): 'power' | 'endurance' | 'rehabilitation' | 'general' {
+    const rsi = metrics.get('RSI') || 0;
+    const jumpHeight = metrics.get('jump_height_cm') || 0;
+    const asymmetry = metrics.get('net_global_asymmetry') || 0;
+    const sparc = metrics.get('SPARC') || -2;
+    
+    // High asymmetry or poor smoothness suggests rehabilitation
+    if (asymmetry > 20 || sparc < -2.5) return 'rehabilitation';
+    
+    // High RSI and jump height suggests power athlete
+    if (rsi > 2.0 && jumpHeight > 35) return 'power';
+    
+    // Unilateral with good efficiency suggests endurance
+    if (movementType === 'unilateral') return 'endurance';
+    
+    return 'general';
+}
+
+// ===== Domain Weights by Activity =====
+
+const DOMAIN_WEIGHTS: Record<string, Record<PerformanceDomain, number>> = {
+    power: {
+        symmetry: 0.15,
+        power: 0.35,
+        control: 0.20,
+        stability: 0.15,
+        efficiency: 0.15
+    },
+    endurance: {
+        symmetry: 0.25,
+        power: 0.10,
+        control: 0.20,
+        stability: 0.20,
+        efficiency: 0.25
+    },
+    rehabilitation: {
+        symmetry: 0.35,
+        power: 0.10,
+        control: 0.25,
+        stability: 0.20,
+        efficiency: 0.10
+    },
+    general: {
+        symmetry: 0.20,
+        power: 0.20,
+        control: 0.20,
+        stability: 0.20,
+        efficiency: 0.20
+    }
+};
+
+// ===== Main Calculation =====
+
+function calculateOverallPerformanceIndex(
+    analysisResult: FullAnalysisResult,
+    activityOverride?: 'power' | 'endurance' | 'rehabilitation' | 'general'
+): OverallPerformanceResult {
+    
+    // 1. Build metrics map from analysis result
+    const metrics = new Map<string, number>();
+    
+    // From bilateral analysis
+    if (analysisResult.bilateralAnalysis) {
+        const ba = analysisResult.bilateralAnalysis;
+        metrics.set('rom_asymmetry', ba.asymmetryIndices.overallMaxROM);
+        metrics.set('velocity_asymmetry', ba.asymmetryIndices.peakAngularVelocity);
+        metrics.set('net_global_asymmetry', ba.netGlobalAsymmetry);
+        metrics.set('temporal_lag', ba.temporalAsymmetry.temporalLag);
+        metrics.set('cross_correlation', ba.temporalAsymmetry.crossCorrelation);
+    }
+    
+    // From per-leg metrics (average of both legs)
+    if (analysisResult.leftLeg && analysisResult.rightLeg) {
+        const L = analysisResult.leftLeg;
+        const R = analysisResult.rightLeg;
+        metrics.set('peak_angular_velocity', (L.peakAngularVelocity + R.peakAngularVelocity) / 2);
+        metrics.set('explosiveness_concentric', (L.explosivenessConcentric + R.explosivenessConcentric) / 2);
+        metrics.set('rms_jerk', (L.rmsJerk + R.rmsJerk) / 2);
+        metrics.set('rom_cov', (L.romCoV + R.romCoV) / 2);
+        metrics.set('peak_resultant_accel', (L.peakResultantAcceleration + R.peakResultantAcceleration) / 2);
+    }
+    
+    // From jump metrics
+    if (analysisResult.jumpMetrics) {
+        const jm = analysisResult.jumpMetrics;
+        metrics.set('RSI', jm.RSI);
+        metrics.set('jump_height_cm', jm.jumpHeightCm);
+        metrics.set('RMD', jm.RMD);
+        metrics.set('ground_contact_time', jm.groundContactTimeMs);
+        metrics.set('leg_stiffness', jm.legStiffness);
+    }
+    
+    // From smoothness metrics
+    if (analysisResult.smoothnessMetrics) {
+        const sm = analysisResult.smoothnessMetrics;
+        metrics.set('SPARC', sm.SPARC);
+        metrics.set('LDLJ', sm.LDLJ);
+        metrics.set('n_velocity_peaks', sm.nVelocityPeaks);
+    }
+    
+    // From gait metrics
+    if (analysisResult.gaitCycleMetrics) {
+        const gm = analysisResult.gaitCycleMetrics;
+        metrics.set('duty_factor', gm.dutyFactor);
+        metrics.set('stance_phase_pct', gm.stancePhasePct);
+    }
+    
+    // From temporal coordination
+    if (analysisResult.temporalCoordination) {
+        metrics.set('shock_absorption_score', analysisResult.temporalCoordination.shockAbsorption?.score || 0);
+    }
+    
+    // From advanced asymmetry
+    if (analysisResult.advancedAsymmetry) {
+        const aa = analysisResult.advancedAsymmetry;
+        metrics.set('real_asymmetry_avg', aa.avgRealAsymmetry);
+        metrics.set('baseline_stability', aa.baselineStability);
+    }
+    
+    // From movement classification
+    if (analysisResult.movementClassification) {
+        metrics.set('movement_confidence', analysisResult.movementClassification.confidence);
+    }
+    
+    // 2. Determine movement type and activity profile
+    const movementType = analysisResult.movementClassification?.type || 'unknown';
+    const activityProfile = activityOverride || detectActivityProfile(metrics, movementType);
+    
+    // 3. Calculate domain scores
+    const domains: PerformanceDomain[] = ['symmetry', 'power', 'control', 'stability', 'efficiency'];
+    const domainScores = domains.map(d => calculateDomainScore(metrics, d, movementType));
+    
+    // 4. Calculate weighted overall score
+    const weights = DOMAIN_WEIGHTS[activityProfile];
+    let overallScore = 0;
+    let totalConfidence = 0;
+    
+    for (const ds of domainScores) {
+        const weight = weights[ds.domain];
+        overallScore += ds.score * weight * (ds.confidence / 100);
+        totalConfidence += ds.confidence * weight;
+    }
+    
+    // Normalize by actual available weights
+    const availableWeight = domainScores.reduce((sum, ds) => {
+        return sum + (ds.confidence > 0 ? weights[ds.domain] : 0);
+    }, 0);
+    
+    if (availableWeight > 0) {
+        overallScore = overallScore / availableWeight;
+    }
+    
+    // 5. Determine grade
+    let grade: 'A' | 'B' | 'C' | 'D' | 'F';
+    if (overallScore >= 90) grade = 'A';
+    else if (overallScore >= 80) grade = 'B';
+    else if (overallScore >= 70) grade = 'C';
+    else if (overallScore >= 60) grade = 'D';
+    else grade = 'F';
+    
+    // 6. Identify strengths and improvement areas
+    const sortedDomains = [...domainScores]
+        .filter(d => d.confidence > 30)
+        .sort((a, b) => b.score - a.score);
+    
+    const strengthAreas = sortedDomains
+        .filter(d => d.score >= 75)
+        .map(d => `${d.domain}: ${d.score.toFixed(0)}/100`);
+    
+    const improvementAreas = sortedDomains
+        .filter(d => d.score < 60)
+        .map(d => `${d.domain}: ${d.score.toFixed(0)}/100`);
+    
+    // 7. Collect clinical flags
+    const clinicalFlags: string[] = [];
+    for (const ds of domainScores) {
+        clinicalFlags.push(...ds.flags);
+    }
+    
+    // Add critical flags
+    const asymmetry = metrics.get('net_global_asymmetry') || 0;
+    if (asymmetry > 25) clinicalFlags.push('⚠️ HIGH ASYMMETRY - injury risk');
+    
+    const sparc = metrics.get('SPARC') || 0;
+    if (sparc < -3) clinicalFlags.push('⚠️ POOR SMOOTHNESS - coordination concern');
+    
+    // 8. Calculate data completeness
+    const totalPossibleMetrics = METRIC_CONFIGS.filter(c => 
+        (movementType === 'bilateral' && c.bilateral) ||
+        (movementType === 'unilateral' && c.unilateral) ||
+        movementType === 'mixed' || movementType === 'unknown'
+    ).length;
+    const dataCompleteness = (metrics.size / totalPossibleMetrics) * 100;
+    
+    // 9. Overall confidence
+    const scoreConfidence = Math.min(100, (dataCompleteness + totalConfidence / domains.length) / 2);
+    
+    return {
+        overallScore: Math.round(overallScore * 10) / 10,
+        grade,
+        domainScores,
+        movementType,
+        activityProfile,
+        strengthAreas,
+        improvementAreas,
+        clinicalFlags,
+        dataCompleteness: Math.round(dataCompleteness),
+        scoreConfidence: Math.round(scoreConfidence)
+    };
+}
+```
+
+---
+
+#### Interpretation Guide
+
+| Overall Score | Grade | Interpretation |
+|---------------|-------|----------------|
+| 90-100 | A | Excellent - Elite/optimal performance |
+| 80-89 | B | Good - Above average, minor improvements possible |
+| 70-79 | C | Average - Room for improvement |
+| 60-69 | D | Below Average - Significant work needed |
+| 0-59 | F | Poor - Rehabilitation/intervention recommended |
+
+#### Metric Reliability Values (Literature-Based)
+
+| Metric | ICC/Reliability | Source |
+|--------|-----------------|--------|
+| ROM measures | 0.90-0.95 | Goniometry literature |
+| Peak angular velocity | 0.85-0.90 | IMU validation studies |
+| RSI | 0.85-0.92 | Jump testing literature |
+| Jump height | 0.90-0.95 | Force plate validation |
+| SPARC | 0.80-0.88 | Smoothness metric studies |
+| LDLJ | 0.78-0.85 | Jerk-based measures |
+| Cross-correlation | 0.85-0.90 | Signal processing |
+| Asymmetry indices | 0.75-0.85 | Bilateral comparison |
+| Ground contact time | 0.88-0.93 | Contact mat validation |
+| Gait cycle metrics | 0.82-0.90 | Wearable validation |
+
+*Default reliability = 0.80 when specific data unavailable*
+
+#### Minimal Detectable Change (MDC95) Guidelines
+
+| Domain | Typical MDC | Interpretation |
+|--------|-------------|----------------|
+| Overall Score | 5-8 points | Change < MDC = within measurement error |
+| Domain Score | 8-12 points | Larger due to fewer metrics |
+| Individual Metric | Varies | See metric-specific literature |
+
+**Clinical Decision Rule:**
+- Change > MDC95 → Likely real change (95% confidence)
+- Change ≤ MDC95 → Could be measurement error
+
+#### Domain Breakdown
+
+| Domain | What It Measures | Key Metrics |
+|--------|------------------|-------------|
+| **Symmetry** | Bilateral balance | Asymmetry indices, cross-correlation, real asymmetry |
+| **Power** | Force production | RSI, jump height, explosiveness, angular velocity |
+| **Control** | Movement quality | SPARC, LDLJ, jerk, velocity peaks |
+| **Stability** | Consistency | ROM CoV, baseline stability, confidence |
+| **Efficiency** | Movement economy | Duty factor, stance phase, stiffness |
+
+#### Activity Profile Weights
+
+```
+POWER (Jumpers/Sprinters):    Power 35%, Control 20%, Symmetry 15%, Stability 15%, Efficiency 15%
+ENDURANCE (Runners/Cyclists): Efficiency 25%, Symmetry 25%, Stability 20%, Control 20%, Power 10%
+REHABILITATION:               Symmetry 35%, Control 25%, Stability 20%, Power 10%, Efficiency 10%
+GENERAL:                      Equal weights (20% each)
+```
+
+---
+
 ## Complete Type Definitions
 
 ```typescript
@@ -2123,7 +3179,7 @@ interface JumpMetrics {
     flightTimeMs: number;
     jumpHeightCm: number;
     RSI: number;
-    eRFD: number;
+    RMD: number;
     peakNormalizedForce: number;
     impulseEstimate: number;
     legStiffness: number;
@@ -2253,6 +3309,75 @@ interface PhaseAlignmentResult {
     alignedRight: number[];
 }
 
+// ===== Overall Performance Index (ENHANCED) =====
+
+type PerformanceDomain = 'symmetry' | 'power' | 'control' | 'stability' | 'efficiency';
+
+interface MetricContribution {
+    name: string;
+    rawValue: number;
+    normalizedScore: number;
+    weight: number;
+    reliabilityAdjustedWeight: number;
+    contribution: number;
+    flag?: string;
+}
+
+interface EnhancedDomainScore {
+    domain: PerformanceDomain;
+    score: number;
+    confidence: number;
+    percentileScore?: number;
+    contributors: MetricContribution[];
+    flags: string[];
+    effectiveWeight: number;
+    measurementError: number;
+    minDetectableChange: number;
+}
+
+interface TrendAnalysis {
+    direction: 'improving' | 'stable' | 'declining';
+    changeFromLast: number;
+    isSignificant: boolean;
+    sessionsAnalyzed: number;
+}
+
+interface OverallPerformanceResult {
+    // Core
+    overallScore: number;
+    grade: 'A' | 'B' | 'C' | 'D' | 'F';
+    domainScores: EnhancedDomainScore[];
+    
+    // Uncertainty quantification (NEW)
+    confidenceInterval: { lower: number; upper: number };
+    measurementError: number;
+    minDetectableChange: number;
+    scoreReliability: number;
+    
+    // Population comparison (NEW)
+    percentileRank?: number;
+    percentileInterpretation?: string;
+    
+    // Temporal tracking (NEW)
+    trend?: TrendAnalysis;
+    
+    // Actionable insights (NEW)
+    topStrengths: MetricContribution[];
+    topWeaknesses: MetricContribution[];
+    
+    // Context
+    movementType: MovementType;
+    activityProfile: 'power' | 'endurance' | 'rehabilitation' | 'general';
+    strengthAreas: string[];
+    improvementAreas: string[];
+    clinicalFlags: string[];
+    dataCompleteness: number;
+    scoreConfidence: number;
+}
+
+// Legacy support
+type DomainScore = EnhancedDomainScore;
+
 // ===== Full Analysis Result =====
 
 interface FullAnalysisResult {
@@ -2282,6 +3407,9 @@ interface FullAnalysisResult {
     advancedAsymmetry: AdvancedAsymmetryResult;
     rollingAsymmetry: RollingAsymmetryResult;
     phaseAlignment: PhaseAlignmentResult;
+    
+    // Overall performance (NEW)
+    overallPerformance: OverallPerformanceResult;
 }
 ```
 
@@ -2343,7 +3471,7 @@ interface FullAnalysisResult {
 | 21 | flight_time_ms | Ground/Flight | No | ms |
 | 22 | jump_height_cm | Ground/Flight | No | cm |
 | 23 | RSI | Ground/Flight | No | m/s |
-| 24 | eRFD | Force/Power | No | g/s |
+| 24 | RMD | Force/Power | No | g/s |
 | 25 | normalized_force | Force/Power | Yes | BW |
 | 26 | impulse_estimate | Force/Power | No | m/s |
 | 27 | leg_stiffness | Stiffness | No | N/m |
@@ -2362,6 +3490,7 @@ interface FullAnalysisResult {
 | 40 | advanced_asymmetry | Adv. Asymmetry | No | complex |
 | 40b | rolling_advanced_asymmetry | Adv. Asymmetry | No | complex |
 | 41 | optimal_phase_alignment | Adv. Asymmetry | No | complex |
+| 42 | overall_performance_index | Performance | No | 0-100 + grade |
 
 ### Processing Pipeline
 
@@ -2400,5 +3529,6 @@ interface FullAnalysisResult {
 |---------|------|---------|
 | 1.0 | 2025-01-XX | Initial specification |
 | 1.1 | 2025-01-XX | Fixed: adaptive robust peak (all peaks, not fixed N); butterworth 4th order; explosiveness index offset; cross-correlation normalization; detectGroundContacts freefall logic; SPARC implementation; category counts; SPARC/LDLJ interpretation (less negative = smoother) |
-| 1.2 | 2025-01-XX | Added: Movement Classification (#38-39) - bilateral/unilateral detection, rolling phase offset with transition detection; Advanced Asymmetry (#40-41) - phase correction for unilateral movements, convolution-based separation of placement offset from real asymmetry, asymmetry event detection, rolling windowed analysis, optimal phase alignment; Processing pipeline documentation |
+| 1.2 | 2025-01-XX | Added: Movement Classification (#38-39) - bilateral/unilateral detection, rolling phase offset with transition detection; Advanced Asymmetry (#40-41) - phase correction for unilateral movements, convolution-based separation of placement offset from real asymmetry, asymmetry event detection, rolling windowed analysis, optimal phase alignment; Overall Performance Index (#42) - composite 0-100 score with 5 domains (symmetry, power, control, stability, efficiency), activity-aware weighting, letter grades, clinical flags; Processing pipeline documentation |
+| 1.2.1 | 2025-01-XX | **Enhanced OPI based on literature review (FMS, PCA, GSi, CGAM, wUSI):** Added reliability-adjusted weighting (CGAM-inspired) - more reliable metrics contribute more; Confidence intervals (95% CI) for score uncertainty; Minimal Detectable Change (MDC95) for clinically meaningful change detection; Percentile ranking with interpretation when normative data available; Trend analysis (improving/stable/declining) with significance testing; Age/sex-adjusted thresholds for population-appropriate scoring; Metric contribution breakdown showing top strengths/weaknesses; Enhanced type definitions with full uncertainty quantification |
 

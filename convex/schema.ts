@@ -18,7 +18,8 @@ export const JOINTS = {
 } as const;
 
 export const RECORDING_CONSTANTS = {
-  SAMPLES_PER_CHUNK: 6000,
+  // Convex has 8192 element limit per array. With 4 floats per quaternion: 8192/4 = 2048 max.
+  SAMPLES_PER_CHUNK: 2000,
   DEFAULT_SAMPLE_RATE: 100,
   RAW_RECORDING_TTL_MS: 14 * 24 * 60 * 60 * 1000, // 14 days
 } as const;

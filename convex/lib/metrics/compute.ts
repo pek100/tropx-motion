@@ -206,7 +206,7 @@ function runAnalysisPipeline(
   // Step 2: Rolling Phase Analysis
   const rollingPhase = calculateRollingPhaseOffset(leftAngles, rightAngles, timeStep);
 
-  // Step 3: Phase Alignment
+  // Step 3: Phase Alignment (global)
   const phaseAlignmentFull = calculateOptimalPhaseAlignment(leftAngles, rightAngles, timeStep);
   const phaseAlignment: PhaseAlignmentResult = {
     optimalOffsetSamples: phaseAlignmentFull.optimalOffsetSamples,

@@ -260,10 +260,260 @@ export function calculateRollingPhaseOffset(
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Optimal Phase Alignment (#41)
+// Optimal Phase Alignment (#41) - Laplacian of Gaussian (LoG) Method
 // ─────────────────────────────────────────────────────────────────
 
-/** #41: optimal_phase_alignment - Calculate optimal phase offset for signal alignment. */
+/**
+ * Generate a 1D Gaussian kernel with specified sigma.
+ * Kernel size is automatically determined (6*sigma + 1 for 99.7% coverage).
+ */
+function generateGaussianKernelWithSigma(sigma: number): number[] {
+  const size = Math.floor(6 * sigma) + 1;
+  const kernel: number[] = new Array(size);
+  const mid = Math.floor(size / 2);
+  let sum = 0;
+
+  for (let i = 0; i < size; i++) {
+    const x = i - mid;
+    const val = Math.exp(-0.5 * (x / sigma) ** 2);
+    kernel[i] = val;
+    sum += val;
+  }
+
+  // Normalize
+  for (let i = 0; i < size; i++) {
+    kernel[i] /= sum;
+  }
+  return kernel;
+}
+
+/**
+ * Convolve signal with kernel (same-size output with edge handling).
+ */
+function convolve1D(signal: number[], kernel: number[]): number[] {
+  const n = signal.length;
+  const k = kernel.length;
+  const half = Math.floor(k / 2);
+  const result: number[] = new Array(n);
+
+  for (let i = 0; i < n; i++) {
+    let sum = 0;
+    let weightSum = 0;
+
+    for (let j = 0; j < k; j++) {
+      const idx = i + j - half;
+      if (idx >= 0 && idx < n) {
+        sum += signal[idx] * kernel[j];
+        weightSum += kernel[j];
+      }
+    }
+
+    result[i] = weightSum > 0 ? sum / weightSum : signal[i];
+  }
+
+  return result;
+}
+
+/**
+ * Apply Laplacian (second derivative) using central differences.
+ * Laplacian[i] = signal[i+1] - 2*signal[i] + signal[i-1]
+ */
+function applyLaplacian(signal: number[]): number[] {
+  const n = signal.length;
+  if (n < 3) return new Array(n).fill(0);
+
+  const result: number[] = new Array(n);
+
+  // Edge handling: extend with boundary values
+  result[0] = signal[1] - 2 * signal[0] + signal[0]; // Use signal[0] for out-of-bounds
+  result[n - 1] = signal[n - 1] - 2 * signal[n - 1] + signal[n - 2];
+
+  for (let i = 1; i < n - 1; i++) {
+    result[i] = signal[i + 1] - 2 * signal[i] + signal[i - 1];
+  }
+
+  return result;
+}
+
+/**
+ * Apply Laplacian of Gaussian (LoG) to signal.
+ * 1. Smooth with Gaussian (removes noise)
+ * 2. Apply Laplacian (second derivative)
+ * Zero-crossings of LoG = inflection points (max velocity moments)
+ */
+function applyLoG(signal: number[], sigma: number = 8): number[] {
+  // Step 1: Gaussian smoothing
+  const gaussianKernel = generateGaussianKernelWithSigma(sigma);
+  const smoothed = convolve1D(signal, gaussianKernel);
+
+  // Step 2: Laplacian (second derivative)
+  const log = applyLaplacian(smoothed);
+
+  return log;
+}
+
+/**
+ * Find inflection points using Laplacian of Gaussian (LoG).
+ * Inflection points are where the second derivative (LoG) crosses zero.
+ * These correspond to moments of maximum velocity (fastest movement).
+ */
+function findInflectionPoints(signal: number[], sigma: number = 8, minDistance: number = 5): number[] {
+  const n = signal.length;
+  if (n < 10) return [];
+
+  // Apply LoG
+  const log = applyLoG(signal, sigma);
+
+  const inflectionPoints: number[] = [];
+
+  // Find zero-crossings of LoG
+  for (let i = 1; i < n; i++) {
+    // Check for sign change (zero crossing)
+    if (log[i - 1] * log[i] < 0) {
+      // Interpolate to find more precise crossing point
+      const idx = Math.abs(log[i - 1]) < Math.abs(log[i]) ? i - 1 : i;
+
+      // Enforce minimum distance between inflection points
+      if (inflectionPoints.length === 0 ||
+          idx - inflectionPoints[inflectionPoints.length - 1] >= minDistance) {
+        inflectionPoints.push(idx);
+      }
+    }
+  }
+
+  return inflectionPoints;
+}
+
+/**
+ * Calculate alignment score for a given lag by measuring how well
+ * inflection points in left align with inflection points in right.
+ * Lower score = better alignment.
+ */
+function calculateInflectionPointAlignmentScore(
+  leftInflectionPoints: number[],
+  rightInflectionPoints: number[],
+  lag: number,
+  maxMatchDistance: number
+): { score: number; matchedCount: number } {
+  if (leftInflectionPoints.length === 0 || rightInflectionPoints.length === 0) {
+    return { score: Infinity, matchedCount: 0 };
+  }
+
+  let totalDistance = 0;
+  let matchedCount = 0;
+
+  // For each inflection point in left, find nearest in right (with lag applied)
+  for (const leftIdx of leftInflectionPoints) {
+    let minDist = Infinity;
+
+    for (const rightIdx of rightInflectionPoints) {
+      // Apply lag: if lag > 0, right is shifted forward, so we compare leftIdx to rightIdx - lag
+      const alignedRightIdx = rightIdx - lag;
+      const dist = Math.abs(leftIdx - alignedRightIdx);
+
+      if (dist < minDist) {
+        minDist = dist;
+      }
+    }
+
+    // Only count as a match if within reasonable distance
+    if (minDist <= maxMatchDistance) {
+      totalDistance += minDist;
+      matchedCount++;
+    } else {
+      // Penalize unmatched inflection points
+      totalDistance += maxMatchDistance * 2;
+    }
+  }
+
+  // Score favors more matches and smaller total distance
+  const score = matchedCount > 0
+    ? totalDistance / matchedCount - matchedCount * 0.1 // Bonus for more matches
+    : Infinity;
+
+  return { score, matchedCount };
+}
+
+/**
+ * Compute first derivative (velocity) using simple differences.
+ * derivative[i] = signal[i+1] - signal[i]
+ */
+function computeFirstDerivative(signal: number[]): number[] {
+  const n = signal.length;
+  if (n < 2) return [];
+
+  const derivative: number[] = new Array(n - 1);
+  for (let i = 0; i < n - 1; i++) {
+    derivative[i] = signal[i + 1] - signal[i];
+  }
+  return derivative;
+}
+
+/**
+ * Find local maxima indices in a signal.
+ */
+function findLocalMaximaIndices(signal: number[]): number[] {
+  const maxima: number[] = [];
+  for (let i = 1; i < signal.length - 1; i++) {
+    if (signal[i] > signal[i - 1] && signal[i] > signal[i + 1]) {
+      maxima.push(i);
+    }
+  }
+  return maxima;
+}
+
+/**
+ * Calculate phase alignment for a single segment using velocity overlap.
+ */
+function calculateSegmentPhaseAlignment(
+  leftSegment: number[],
+  rightSegment: number[],
+  maxSearchSamples: number
+): number {
+  const n = Math.min(leftSegment.length, rightSegment.length);
+  if (n < 10) return 0;
+
+  const velLeft = computeFirstDerivative(leftSegment);
+  const velRight = computeFirstDerivative(rightSegment);
+  const velLen = Math.min(velLeft.length, velRight.length);
+
+  if (velLen < 5) return 0;
+
+  let bestAreaDiff = Infinity;
+  let bestLag = 0;
+
+  // Limit search to segment size
+  const searchRange = Math.min(maxSearchSamples, Math.floor(velLen / 2));
+
+  for (let lag = -searchRange; lag <= searchRange; lag++) {
+    let areaDiff = 0;
+    let count = 0;
+
+    for (let i = 0; i < velLen; i++) {
+      const j = i + lag;
+      if (j >= 0 && j < velLen) {
+        areaDiff += Math.abs(velLeft[i] - velRight[j]);
+        count++;
+      }
+    }
+
+    const normalizedArea = count > 0 ? areaDiff / count : Infinity;
+
+    if (normalizedArea < bestAreaDiff) {
+      bestAreaDiff = normalizedArea;
+      bestLag = lag;
+    }
+  }
+
+  return bestLag;
+}
+
+
+/**
+ * #41: optimal_phase_alignment - Calculate optimal phase offset using velocity overlap.
+ * Computes the first derivative (velocity) of both signals and finds the lag
+ * that minimizes the area between the velocity curves.
+ */
 export function calculateOptimalPhaseAlignment(
   left: number[],
   right: number[],
@@ -284,57 +534,35 @@ export function calculateOptimalPhaseAlignment(
     };
   }
 
-  // Calculate means and stds
-  let meanL = 0,
-    meanR = 0;
-  for (let i = 0; i < n; i++) {
-    meanL += left[i];
-    meanR += right[i];
-  }
-  meanL /= n;
-  meanR /= n;
+  // Compute first derivatives (velocity) of both signals
+  const velLeft = computeFirstDerivative(left.slice(0, n));
+  const velRight = computeFirstDerivative(right.slice(0, n));
+  const velLen = Math.min(velLeft.length, velRight.length);
 
-  let sumSqL = 0,
-    sumSqR = 0;
-  for (let i = 0; i < n; i++) {
-    sumSqL += (left[i] - meanL) ** 2;
-    sumSqR += (right[i] - meanR) ** 2;
-  }
-  const stdL = Math.sqrt(sumSqL / n);
-  const stdR = Math.sqrt(sumSqR / n);
-
-  if (stdL < 1e-10 || stdR < 1e-10) {
-    return {
-      optimalOffsetSamples: 0,
-      optimalOffsetMs: 0,
-      optimalOffsetDegrees: 0,
-      alignedCorrelation: 1,
-      unalignedCorrelation: 1,
-      correlationImprovement: 0,
-      alignedRight: [...right],
-    };
-  }
-
-  // Find optimal lag
-  let bestCorr = -Infinity;
+  // Find best lag by minimizing area between velocity curves
+  let bestAreaDiff = Infinity;
+  let areaAtZero = 0;
   let bestLag = 0;
-  let corrAtZero = 0;
 
   for (let lag = -maxSearchSamples; lag <= maxSearchSamples; lag++) {
-    let sum = 0,
-      count = 0;
-    for (let i = 0; i < n; i++) {
+    let areaDiff = 0;
+    let count = 0;
+
+    for (let i = 0; i < velLen; i++) {
       const j = i + lag;
-      if (j >= 0 && j < n) {
-        sum += (left[i] - meanL) * (right[j] - meanR);
+      if (j >= 0 && j < velLen) {
+        areaDiff += Math.abs(velLeft[i] - velRight[j]);
         count++;
       }
     }
-    const corr = count > 0 ? sum / (count * stdL * stdR) : 0;
 
-    if (lag === 0) corrAtZero = corr;
-    if (corr > bestCorr) {
-      bestCorr = corr;
+    // Normalize by count to make comparable across different lags
+    const normalizedArea = count > 0 ? areaDiff / count : Infinity;
+
+    if (lag === 0) areaAtZero = normalizedArea;
+
+    if (normalizedArea < bestAreaDiff) {
+      bestAreaDiff = normalizedArea;
       bestLag = lag;
     }
   }
@@ -352,17 +580,61 @@ export function calculateOptimalPhaseAlignment(
     }
   }
 
+  // Calculate correlation on original signals for reporting
+  let origMeanL = 0, origMeanR = 0;
+  for (let i = 0; i < n; i++) {
+    origMeanL += left[i];
+    origMeanR += right[i];
+  }
+  origMeanL /= n;
+  origMeanR /= n;
+
+  let origSumSqL = 0, origSumSqR = 0;
+  for (let i = 0; i < n; i++) {
+    origSumSqL += (left[i] - origMeanL) ** 2;
+    origSumSqR += (right[i] - origMeanR) ** 2;
+  }
+  const origStdL = Math.sqrt(origSumSqL / n);
+  const origStdR = Math.sqrt(origSumSqR / n);
+
+  // Correlation at zero lag (original signals)
+  let corrAtZero = 0;
+  if (origStdL > 1e-10 && origStdR > 1e-10) {
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      sum += (left[i] - origMeanL) * (right[i] - origMeanR);
+    }
+    corrAtZero = sum / (n * origStdL * origStdR);
+  }
+
+  // Correlation at best lag (original signals)
+  let corrAtBest = 0;
+  if (origStdL > 1e-10 && origStdR > 1e-10) {
+    let sum = 0, count = 0;
+    for (let i = 0; i < n; i++) {
+      const j = i + bestLag;
+      if (j >= 0 && j < n) {
+        sum += (left[i] - origMeanL) * (right[j] - origMeanR);
+        count++;
+      }
+    }
+    corrAtBest = count > 0 ? sum / (count * origStdL * origStdR) : 0;
+  }
+
   // Estimate cycle length for degree conversion
   const cycleSamples = estimateCycleLength(left, n);
   const optimalOffsetDegrees = Math.abs((bestLag * 360) / cycleSamples) % 360;
+
+  // Calculate improvement based on area reduction (positive = better alignment)
+  const improvement = areaAtZero > 0 ? (areaAtZero - bestAreaDiff) / areaAtZero : 0;
 
   return {
     optimalOffsetSamples: bestLag,
     optimalOffsetMs: bestLag * timeStep * 1000,
     optimalOffsetDegrees,
-    alignedCorrelation: bestCorr,
+    alignedCorrelation: corrAtBest,
     unalignedCorrelation: corrAtZero,
-    correlationImprovement: bestCorr - corrAtZero,
+    correlationImprovement: improvement,
     alignedRight,
   };
 }

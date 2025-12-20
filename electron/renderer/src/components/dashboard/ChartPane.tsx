@@ -25,6 +25,41 @@ import type { PackedChunkData } from "../../../../../shared/QuaternionCodec";
 type ChartTab = "progress" | "session";
 type TimeFilter = "7" | "30" | "90" | "all";
 
+// Asymmetry event type from backend
+export interface AsymmetryEvent {
+  startTimeMs: number;
+  endTimeMs: number;
+  durationMs: number;
+  peakAsymmetry: number;
+  avgAsymmetry: number;
+  direction: "left_dominant" | "right_dominant";
+  area: number;
+}
+
+// Phase alignment data from backend
+export interface PhaseAlignmentData {
+  optimalOffsetSamples: number;
+  optimalOffsetMs: number;
+  optimalOffsetDegrees: number;
+  alignedCorrelation: number;
+  unalignedCorrelation: number;
+  correlationImprovement: number;
+}
+
+
+export interface AsymmetryEventsData {
+  sessionId: string;
+  sessionStartTime: number;
+  sampleRate: number;
+  events: AsymmetryEvent[];
+  summary: {
+    avgRealAsymmetry: number;
+    maxRealAsymmetry: number;
+    asymmetryPercentage: number;
+  };
+  phaseAlignment: PhaseAlignmentData | null;
+}
+
 interface ChartPaneProps {
   sessions: SessionData[];
   selectedSessionId: string | null;
@@ -32,6 +67,7 @@ interface ChartPaneProps {
   sessionPreviewData: PackedChunkData | null;
   isSessionLoading?: boolean;
   selectedMetrics?: Set<string>;
+  asymmetryEvents?: AsymmetryEventsData | null;
   className?: string;
 }
 
@@ -57,6 +93,7 @@ export function ChartPane({
   sessionPreviewData,
   isSessionLoading,
   selectedMetrics,
+  asymmetryEvents,
   className,
 }: ChartPaneProps) {
   const [activeTab, setActiveTab] = useState<ChartTab>("progress");
@@ -159,6 +196,7 @@ export function ChartPane({
               packedData={sessionPreviewData}
               isLoading={isSessionLoading}
               sessionTitle={sessionTitle}
+              asymmetryEvents={asymmetryEvents ?? undefined}
               className="h-full"
             />
           </TabsContent>

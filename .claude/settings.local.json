@@ -61,7 +61,10 @@
       "Read(//home/pek/**)",
       "Bash(git log:*)",
       "Bash(git ls-tree:*)",
-      "Bash(npx:*)"
+      "Bash(npx:*)",
+      "Bash(git stash:*)",
+      "WebFetch(domain:www.mathworks.com)",
+      "WebFetch(domain:www.jospt.org)"
     ],
     "deny": [],
     "ask": [],

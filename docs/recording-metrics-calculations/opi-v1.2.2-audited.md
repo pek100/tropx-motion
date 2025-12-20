@@ -63,7 +63,7 @@ const POWER_NORMS = {
         // "RSI values of 1.0-1.5 = moderate, >2.0 = well-developed reactive strength"
         citation: "Flanagan EP, Comyns TM. The use of contact time and RSI to optimize fast SSC training. Strength Cond J. 2008;30(5):32-38"
     },
-    
+
     RSImod: {
         // RSImod = jump_height / time_to_takeoff (from CMJ)
         good: 0.50,  // 75th percentile males
@@ -76,7 +76,7 @@ const POWER_NORMS = {
         population: "NCAA Division I athletes",
         citation: "Sole CJ, Suchomel TJ, Stone MH. Preliminary scale of reference values for RSImod. Sports. 2018;6(4):133. doi:10.3390/sports6040133"
     },
-    
+
     jump_height_cm: {
         good: 35,    // Athletic threshold
         poor: 20,    // Below average
@@ -86,12 +86,24 @@ const POWER_NORMS = {
         sd_female: 5.2,
         citation: "Sole CJ et al. Sports. 2018;6(4):133"
     },
-    
+
     peak_angular_velocity: {
         // Knee extension velocity during jumping/squatting
         good: 400,   // deg/s - athletic movement
         poor: 200,   // deg/s - limited mobility
         citation: "Estimated from biomechanics literature; sport-specific norms vary"
+    },
+
+    RMD: {
+        // Rate of Motion Development (renamed from eRFD)
+        // = max(Δaccel/Δt) during concentric phase
+        // Units: g/s (from vertical accelerometer)
+        good: 15,    // g/s - rapid motion development
+        poor: 5,     // g/s - slow motion development
+        note: "Novel metric analogous to RFD but measures motion kinematics, not force",
+        formula: "RMD = max(Δa/Δt) over 50ms sliding window during concentric phase",
+        rationale: "Higher RMD indicates faster transition from eccentric to concentric, reflecting explosive movement initiation",
+        citation: "Novel metric. Thresholds empirically derived. Conceptually related to RFD literature (Maffiuletti et al. Eur J Appl Physiol. 2016) but distinct measurement."
     }
 };
 ```
@@ -167,12 +179,16 @@ const SYMMETRY_NORMS = {
     },
     
     temporal_lag: {
-        // Phase offset between limbs
-        good: 50,     // ms - small timing difference  
-        poor: 150,    // ms - significant desynchronization
+        // Phase offset between limbs (for bilateral symmetric movement)
+        good: 30,     // ms - minimal timing difference
+        poor: 100,    // ms - significant desynchronization
         
-        unilateral_expected: "~50% of cycle (180° phase offset)",
-        citation: "Unilateral/alternating gait shows ~50% phase offset between limbs"
+        note_bilateral: "For bilateral symmetric movement (e.g., bilateral squat), expect near-zero lag",
+        note_unilateral: "For unilateral/alternating gait, expect ~50% of cycle (180° phase offset)",
+        
+        PCI_reference: "Phase Coordination Index (PCI) quantifies bilateral coordination accuracy",
+        citation: "Plotnik M et al. Gait Posture. 2007;25(1):127-134. 'PCI measures accuracy of anti-phase stepping pattern'",
+        citation2: "Yogev G et al. Eur J Neurosci. 2007;25(11):3474-3478. 'Bilateral coordination deteriorates with dual-tasking'"
     }
 };
 ```
@@ -349,6 +365,18 @@ const METRIC_CONFIGS: MetricConfig[] = [
         unilateral: false
     },
     {
+        name: 'temporal_lag',  // Phase offset between limbs
+        domain: 'symmetry',
+        direction: 'lower_better',  // For bilateral symmetric movement
+        goodThreshold: 30,    // ms - minimal timing difference
+        poorThreshold: 100,   // ms - significant desynchronization
+        weight: 1.0,
+        icc: 0.85,
+        citation: "Plotnik et al. 2007 (PCI); Hausdorff lab bilateral coordination studies. Healthy gait shows stable anti-phase coordination.",
+        bilateral: true,
+        unilateral: false     // For unilateral, expected lag is ~50% cycle
+    },
+    {
         name: 'real_asymmetry_avg',
         domain: 'symmetry',
         direction: 'lower_better',
@@ -407,6 +435,18 @@ const METRIC_CONFIGS: MetricConfig[] = [
         weight: 1.0,
         icc: 0.83,
         citation: "Acceleration during concentric phase",
+        bilateral: true,
+        unilateral: true
+    },
+    {
+        name: 'RMD',  // Rate of Motion Development (renamed from eRFD)
+        domain: 'power',
+        direction: 'higher_better',
+        goodThreshold: 15,    // g/s - rapid motion development
+        poorThreshold: 5,     // g/s - slow motion development
+        weight: 1.1,
+        icc: 0.80,            // Estimated - derivative measure, moderate reliability
+        citation: "Novel metric: max Δaccel/Δt during concentric phase. Analogous to RFD concept but measures motion, not force. Thresholds empirically derived.",
         bilateral: true,
         unilateral: true
     },
@@ -508,13 +548,13 @@ function normalizeMetric(
     value: number,
     config: MetricConfig
 ): { score: number; confidence: number } {
-    
+
     if (value === null || value === undefined || isNaN(value)) {
         return { score: -1, confidence: 0 };
     }
-    
+
     let score: number;
-    
+
     if (config.direction === 'higher_better') {
         // Higher value = better score
         if (value >= config.goodThreshold) {
@@ -522,8 +562,8 @@ function normalizeMetric(
         } else if (value <= config.poorThreshold) {
             score = 0;
         } else {
-            score = ((value - config.poorThreshold) / 
-                     (config.goodThreshold - config.poorThreshold)) * 100;
+            score = ((value - config.poorThreshold) /
+                (config.goodThreshold - config.poorThreshold)) * 100;
         }
     } else if (config.direction === 'lower_better') {
         // Lower value = better score
@@ -532,8 +572,8 @@ function normalizeMetric(
         } else if (value >= config.poorThreshold) {
             score = 0;
         } else {
-            score = ((config.poorThreshold - value) / 
-                     (config.poorThreshold - config.goodThreshold)) * 100;
+            score = ((config.poorThreshold - value) /
+                (config.poorThreshold - config.goodThreshold)) * 100;
         }
     } else {
         // Optimal range
@@ -547,13 +587,13 @@ function normalizeMetric(
             score = Math.max(0, 100 - (distance / range) * 100);
         }
     }
-    
+
     // Confidence based on reliability (ICC)
     const confidence = config.icc * 100;
-    
-    return { 
-        score: Math.max(0, Math.min(100, score)), 
-        confidence 
+
+    return {
+        score: Math.max(0, Math.min(100, score)),
+        confidence
     };
 }
 ```
@@ -582,36 +622,36 @@ function calculateDomainScore(
     domain: string,
     movementType: 'bilateral' | 'unilateral'
 ): DomainScore {
-    
+
     const configs = METRIC_CONFIGS.filter(c => c.domain === domain);
     const contributors: DomainScore['contributors'] = [];
-    
+
     let weightedSum = 0;
     let totalWeight = 0;
     let sumSquaredSEM = 0;
-    
+
     for (const config of configs) {
         // Skip metrics not applicable to movement type
         if (movementType === 'bilateral' && !config.bilateral) continue;
         if (movementType === 'unilateral' && !config.unilateral) continue;
-        
+
         const value = metrics.get(config.name);
         if (value === undefined) continue;
-        
+
         const { score, confidence } = normalizeMetric(value, config);
         if (score < 0) continue;
-        
+
         // Reliability-weighted contribution (CGAM-inspired)
         // Source: Daryabeygi-Khotbehsara et al. Appl Bionics Biomech. 2019
         const reliabilityWeight = config.weight * config.icc;
-        
+
         weightedSum += score * reliabilityWeight;
         totalWeight += reliabilityWeight;
-        
+
         // Estimate SEM contribution
         const metricSEM = (1 - config.icc) * score * 0.1;
         sumSquaredSEM += metricSEM ** 2;
-        
+
         contributors.push({
             name: config.name,
             raw: value,
@@ -620,14 +660,14 @@ function calculateDomainScore(
             citation: config.citation
         });
     }
-    
+
     const domainScore = totalWeight > 0 ? weightedSum / totalWeight : 0;
     const combinedSEM = Math.sqrt(sumSquaredSEM);
-    const avgConfidence = contributors.length > 0 
-        ? contributors.reduce((s, c) => s + c.weight, 0) / contributors.length * 100 / 
-          configs.filter(c => movementType === 'bilateral' ? c.bilateral : c.unilateral).length
+    const avgConfidence = contributors.length > 0
+        ? contributors.reduce((s, c) => s + c.weight, 0) / contributors.length * 100 /
+        configs.filter(c => movementType === 'bilateral' ? c.bilateral : c.unilateral).length
         : 0;
-    
+
     return {
         domain,
         score: Math.round(domainScore * 10) / 10,
@@ -646,25 +686,25 @@ function calculateDomainScore(
 interface OPIResult {
     overallScore: number;
     grade: 'A' | 'B' | 'C' | 'D' | 'F';
-    
+
     // Uncertainty quantification
     confidenceInterval: { lower: number; upper: number };
     sem: number;                    // Standard error of measurement
     mdc95: number;                  // Minimal detectable change
-    
+
     // Domain breakdown
     domainScores: DomainScore[];
-    
+
     // Actionable insights
     strengths: string[];            // Metrics scoring ≥80
     weaknesses: string[];           // Metrics scoring <50
     clinicalFlags: string[];
-    
+
     // Context
     movementType: 'bilateral' | 'unilateral';
     activityProfile: string;
     dataCompleteness: number;
-    
+
     // Citations for transparency
     methodologyCitations: string[];
 }
@@ -674,45 +714,45 @@ function calculateOPI(
     movementType: 'bilateral' | 'unilateral',
     activityProfile: 'power' | 'endurance' | 'rehabilitation' | 'general' = 'general'
 ): OPIResult {
-    
+
     // 1. Calculate domain scores
     const domains = ['symmetry', 'power', 'control', 'stability'];
-    const domainScores = domains.map(d => 
+    const domainScores = domains.map(d =>
         calculateDomainScore(metrics, d, movementType)
     );
-    
+
     // 2. Calculate weighted overall score
     const weights = DOMAIN_WEIGHTS[activityProfile];
     let overallScore = 0;
     let totalWeight = 0;
     let sumSquaredSEM = 0;
-    
+
     for (const ds of domainScores) {
         const w = weights[ds.domain as keyof typeof weights] || 0.25;
         const effectiveW = w * (ds.confidence / 100);
-        
+
         overallScore += ds.score * effectiveW;
         totalWeight += effectiveW;
         sumSquaredSEM += (ds.sem * effectiveW) ** 2;
     }
-    
+
     if (totalWeight > 0) {
         overallScore /= totalWeight;
     }
-    
+
     // 3. Uncertainty calculations
     // Source: Weir JP. J Strength Cond Res. 2005;19(1):231-240
     const sem = Math.sqrt(sumSquaredSEM) / Math.max(totalWeight, 0.01);
-    
+
     // MDC95 = SEM × 1.96 × √2
     // Source: Haley SM, Fragala-Pinkham MA. Phys Ther. 2006;86(5):735-743
     const mdc95 = sem * 2.77;
-    
+
     const confidenceInterval = {
         lower: Math.max(0, overallScore - 1.96 * sem),
         upper: Math.min(100, overallScore + 1.96 * sem)
     };
-    
+
     // 4. Grade assignment
     let grade: 'A' | 'B' | 'C' | 'D' | 'F';
     if (overallScore >= 90) grade = 'A';
@@ -720,7 +760,7 @@ function calculateOPI(
     else if (overallScore >= 70) grade = 'C';
     else if (overallScore >= 60) grade = 'D';
     else grade = 'F';
-    
+
     // 5. Extract insights
     const allContributors = domainScores.flatMap(ds => ds.contributors);
     const strengths = allContributors
@@ -729,7 +769,7 @@ function calculateOPI(
     const weaknesses = allContributors
         .filter(c => c.normalized < 50)
         .map(c => `${c.name}: ${c.normalized.toFixed(0)}/100`);
-    
+
     // 6. Clinical flags with thresholds
     const clinicalFlags: string[] = [];
     const asymmetry = metrics.get('real_asymmetry_avg') || metrics.get('rom_asymmetry') || 0;
@@ -744,13 +784,13 @@ function calculateOPI(
     if (rsi > 0 && rsi < 1.0) {
         clinicalFlags.push(`⚠️ Low reactive strength (RSI=${rsi.toFixed(2)}) - <1.0 threshold [Flanagan 2008]`);
     }
-    
+
     // 7. Data completeness
-    const possibleMetrics = METRIC_CONFIGS.filter(c => 
+    const possibleMetrics = METRIC_CONFIGS.filter(c =>
         movementType === 'bilateral' ? c.bilateral : c.unilateral
     ).length;
     const dataCompleteness = (allContributors.length / possibleMetrics) * 100;
-    
+
     return {
         overallScore: Math.round(overallScore * 10) / 10,
         grade,
@@ -788,7 +828,7 @@ function calculateOPI(
   "confidenceInterval": { "lower": 69.8, "upper": 78.6 },
   "sem": 2.2,
   "mdc95": 6.1,
-  
+
   "domainScores": [
     {
       "domain": "symmetry",
@@ -796,7 +836,7 @@ function calculateOPI(
       "confidence": 82,
       "sem": 1.8,
       "contributors": [
-        { "name": "cross_correlation", "raw": 0.92, "normalized": 85, 
+        { "name": "cross_correlation", "raw": 0.92, "normalized": 85,
           "citation": "Signal processing; >0.9 = high similarity" },
         { "name": "rom_asymmetry", "raw": 6.2, "normalized": 78,
           "citation": "Sadeghi et al. Gait Posture 2000" }
@@ -815,16 +855,16 @@ function calculateOPI(
       ]
     }
   ],
-  
+
   "strengths": ["cross_correlation: 85/100", "RSI: 82/100"],
   "weaknesses": ["SPARC: 53/100 - consider smoothness training"],
-  
+
   "clinicalFlags": [],
-  
+
   "movementType": "bilateral",
   "activityProfile": "general",
   "dataCompleteness": 85,
-  
+
   "methodologyCitations": [
     "Reliability weighting: Daryabeygi-Khotbehsara et al. Appl Bionics Biomech. 2019",
     "SEM calculation: Weir JP. J Strength Cond Res. 2005;19(1):231-240",

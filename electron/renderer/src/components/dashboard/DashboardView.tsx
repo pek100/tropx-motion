@@ -161,6 +161,12 @@ export function DashboardView({ className }: DashboardViewProps) {
     selectedSessionId ? { sessionId: selectedSessionId } : "skip"
   ) as PackedChunkData | null | undefined;
 
+  // Query for asymmetry events (for SessionChart overlay)
+  const asymmetryEvents = useQuery(
+    api.recordingMetrics.getSessionAsymmetryEvents,
+    selectedSessionId ? { sessionId: selectedSessionId } : "skip"
+  );
+
   // Session type
   type Session = NonNullable<typeof metricsHistory>["sessions"][number];
 
@@ -430,6 +436,7 @@ export function DashboardView({ className }: DashboardViewProps) {
               sessionPreviewData={sessionPreviewData ?? null}
               isSessionLoading={isSessionLoading}
               selectedMetrics={selectedMetrics}
+              asymmetryEvents={asymmetryEvents ?? null}
               className="h-[400px]"
             />
 
