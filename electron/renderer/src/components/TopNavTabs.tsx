@@ -192,7 +192,7 @@ export function TopNavTabs({
             )}
           >
             {item.icon}
-            <span>{item.label}</span>
+            <span className="hidden sm:inline">{item.label}</span>
           </button>
 
           <div className="w-px h-4 bg-[var(--tropx-border)]" />
@@ -287,7 +287,7 @@ export function TopNavTabs({
         disabled={isLoading}
       >
         {item.icon}
-        <span>{item.label}</span>
+        <span className="hidden sm:inline">{item.label}</span>
       </button>
     )
   }
@@ -308,7 +308,7 @@ export function TopNavTabs({
               onClick={() => setActiveTab(item.id as NavTabId)}
             >
               {item.icon}
-              <span>{item.label}</span>
+              <span className="hidden sm:inline">{item.label}</span>
             </button>
           )
         })}
