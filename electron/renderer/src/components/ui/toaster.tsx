@@ -19,7 +19,7 @@ export function Toaster() {
                 </Toast>
             ))}
             <ToastViewport
-                className="fixed bottom-0 right-0 z-[9999] flex flex-col gap-2 w-full max-w-[420px] p-4 pointer-events-auto"
+                className="fixed bottom-0 right-0 z-[9999] flex flex-col gap-2 w-full max-w-[420px] p-4 pointer-events-none"
                 style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             />
         </ToastProvider>
