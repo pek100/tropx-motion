@@ -377,8 +377,8 @@ export function DashboardView({ className }: DashboardViewProps) {
 
   return (
     <div className={cn("flex flex-col h-full overflow-hidden", className)}>
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-page sm:px-page-sm py-4 sm:py-6 space-y-4 sm:space-y-6">
+      {/* Content - full width sections */}
+      <div className="flex-1 overflow-y-auto py-4 sm:py-6 space-y-0">
         {isLoading ? (
           <div className="flex items-center justify-center h-64">
             <Loader2 className="size-8 animate-spin text-[var(--tropx-vibrant)]" />
@@ -396,7 +396,7 @@ export function DashboardView({ className }: DashboardViewProps) {
         ) : (
           <>
             {/* Patient Info - visible on mobile at top */}
-            <div className="md:hidden">
+            <div className="md:hidden px-page sm:px-page-sm pb-4 border-b border-[var(--tropx-border)]">
               <PatientInfoCard
                 name={selectedPatient?.name || "Patient"}
                 image={selectedPatient?.image}
@@ -413,57 +413,64 @@ export function DashboardView({ className }: DashboardViewProps) {
             </div>
 
             {/* Top Row: Patient Info/Notes + Sessions Carousel - desktop layout */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:h-[204px] mb-2 sm:mb-0">
-              {/* Left Column: Patient Info + Notes - hidden on mobile */}
-              <div className="hidden md:flex col-span-1 flex-col gap-2 h-full overflow-hidden">
-                <PatientInfoCard
-                  name={selectedPatient?.name || "Patient"}
-                  image={selectedPatient?.image}
-                  sessionCount={metricsHistory?.totalSessions ?? 0}
-                  isMe={selectedPatient?.isMe}
-                  onClick={isPatient ? undefined : () => setIsPatientModalOpen(true)}
-                  className="shrink-0"
-                />
-                <PatientNotes
-                  notes={patientNotes}
-                  onAddNote={handleAddNote}
-                  onEditNote={handleEditNote}
-                  onDeleteNote={handleDeleteNote}
-                  className="flex-1 min-h-0 overflow-hidden"
-                />
-              </div>
+            <div className="px-page sm:px-page-sm py-4 border-b border-[var(--tropx-border)]">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:h-[204px]">
+                {/* Left Column: Patient Info + Notes - hidden on mobile */}
+                <div className="hidden md:flex col-span-1 flex-col gap-2 h-full overflow-hidden">
+                  <PatientInfoCard
+                    name={selectedPatient?.name || "Patient"}
+                    image={selectedPatient?.image}
+                    sessionCount={metricsHistory?.totalSessions ?? 0}
+                    isMe={selectedPatient?.isMe}
+                    onClick={isPatient ? undefined : () => setIsPatientModalOpen(true)}
+                    className="shrink-0"
+                  />
+                  <PatientNotes
+                    notes={patientNotes}
+                    onAddNote={handleAddNote}
+                    onEditNote={handleEditNote}
+                    onDeleteNote={handleDeleteNote}
+                    className="flex-1 min-h-0 overflow-hidden"
+                  />
+                </div>
 
-              {/* Sessions Carousel */}
-              <div className="col-span-1 md:col-span-2 min-h-[100px] max-h-[140px] md:max-h-none md:h-full">
-                <SessionsCarousel
-                  sessions={sessions}
-                  selectedSessionId={selectedSessionId}
-                  onSelectSession={handleSelectSession}
-                  onApiReady={setCarouselApi}
-                  className="h-full"
-                />
+                {/* Sessions Carousel */}
+                <div className="col-span-1 md:col-span-2 min-h-[100px] max-h-[140px] md:max-h-none md:h-full">
+                  <SessionsCarousel
+                    sessions={sessions}
+                    selectedSessionId={selectedSessionId}
+                    onSelectSession={handleSelectSession}
+                    onApiReady={setCarouselApi}
+                    className="h-full"
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Chart Pane */}
-            <ChartPane
-              sessions={sessions}
-              selectedSessionId={selectedSessionId}
-              onSelectSession={handleSelectSession}
-              sessionPreviewData={sessionPreviewData ?? null}
-              isSessionLoading={isSessionLoading}
-              selectedMetrics={selectedMetrics}
-              asymmetryEvents={asymmetryEvents ?? null}
-              className="h-[350px] sm:h-[400px]"
-            />
+            {/* Chart Pane - full width section */}
+            <div className="py-4 border-b border-[var(--tropx-border)]">
+              <ChartPane
+                sessions={sessions}
+                selectedSessionId={selectedSessionId}
+                onSelectSession={handleSelectSession}
+                sessionPreviewData={sessionPreviewData ?? null}
+                isSessionLoading={isSessionLoading}
+                selectedMetrics={selectedMetrics}
+                asymmetryEvents={asymmetryEvents ?? null}
+                className="h-[350px] sm:h-[400px]"
+                borderless
+              />
+            </div>
 
-            {/* Metrics Data Table */}
-            <MetricsDataTable
-              data={metricsTableData}
-              sessionTitle={selectedSession?.tags[0]}
-              selectedMetrics={selectedMetrics}
-              onSelectionChange={setSelectedMetrics}
-            />
+            {/* Metrics Data Table - full width section */}
+            <div className="px-page sm:px-page-sm py-4">
+              <MetricsDataTable
+                data={metricsTableData}
+                sessionTitle={selectedSession?.tags[0]}
+                selectedMetrics={selectedMetrics}
+                onSelectionChange={setSelectedMetrics}
+              />
+            </div>
           </>
         )}
       </div>
