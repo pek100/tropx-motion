@@ -1,192 +1,39 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requireUser, getCurrentUser } from "./lib/auth";
-import { JOINTS, RECORDING_SOURCES, ACTIVITY_PROFILES } from "./schema";
-
-// Quaternion object validator
-const quaternionValidator = v.object({
-  w: v.float64(),
-  x: v.float64(),
-  y: v.float64(),
-  z: v.float64(),
-});
-
-// ─────────────────────────────────────────────────────────────────
-// Chunk Creation
-// ─────────────────────────────────────────────────────────────────
-
-export const createChunk = mutation({
-  args: {
-    // Session info
-    sessionId: v.string(),
-    chunkIndex: v.number(),
-    totalChunks: v.number(),
-
-    // Timing
-    startTime: v.number(),
-    endTime: v.number(),
-    sampleRate: v.number(),
-    sampleCount: v.number(),
-
-    // Active joints
-    activeJoints: v.array(v.string()),
-
-    // Quaternion data (flat arrays)
-    leftKneeQ: v.array(v.float64()),
-    rightKneeQ: v.array(v.float64()),
-
-    // Sparse flags
-    leftKneeInterpolated: v.array(v.number()),
-    leftKneeMissing: v.array(v.number()),
-    rightKneeInterpolated: v.array(v.number()),
-    rightKneeMissing: v.array(v.number()),
-
-    // Optional metadata (only on first chunk)
-    subjectId: v.optional(v.id("users")),
-    subjectAlias: v.optional(v.string()),
-    notes: v.optional(v.string()),
-    tags: v.optional(v.array(v.string())),
-    activityProfile: v.optional(v.union(
-      v.literal(ACTIVITY_PROFILES.POWER),
-      v.literal(ACTIVITY_PROFILES.ENDURANCE),
-      v.literal(ACTIVITY_PROFILES.REHABILITATION),
-      v.literal(ACTIVITY_PROFILES.GENERAL)
-    )),
-
-    // Source tracking (only on first chunk)
-    recordedAt: v.optional(v.number()), // Original capture time
-    systemTags: v.optional(v.array(v.string())), // source:app, source:csv
-  },
-  handler: async (ctx, args) => {
-    const user = await requireUser(ctx);
-
-    // Validate quaternion array lengths
-    const leftActive = args.activeJoints.includes(JOINTS.LEFT_KNEE);
-    const rightActive = args.activeJoints.includes(JOINTS.RIGHT_KNEE);
-
-    if (leftActive && args.leftKneeQ.length !== args.sampleCount * 4) {
-      throw new Error(
-        `Left knee quaternion array length mismatch: expected ${args.sampleCount * 4}, got ${args.leftKneeQ.length}`
-      );
-    }
-    if (rightActive && args.rightKneeQ.length !== args.sampleCount * 4) {
-      throw new Error(
-        `Right knee quaternion array length mismatch: expected ${args.sampleCount * 4}, got ${args.rightKneeQ.length}`
-      );
-    }
-
-    // Validate subject if provided
-    if (args.subjectId) {
-      const subject = await ctx.db.get(args.subjectId);
-      if (!subject || subject.isArchived) {
-        throw new Error("Subject user not found");
-      }
-      if (args.subjectId !== user._id) {
-        const isContact = (user.contacts ?? []).some(
-          (c) => c.userId === args.subjectId
-        );
-        if (!isContact) {
-          throw new Error("Subject must be yourself or a contact");
-        }
-      }
-    }
-
-    const now = Date.now();
-
-    const chunkId = await ctx.db.insert("recordings", {
-      ownerId: user._id,
-      subjectId: args.subjectId,
-      subjectAlias: args.subjectAlias,
-      sharedWith: [],
-      sessionId: args.sessionId,
-      chunkIndex: args.chunkIndex,
-      totalChunks: args.totalChunks,
-      startTime: args.startTime,
-      endTime: args.endTime,
-      sampleRate: args.sampleRate,
-      sampleCount: args.sampleCount,
-      activeJoints: args.activeJoints,
-      leftKneeQ: leftActive ? args.leftKneeQ : [],
-      rightKneeQ: rightActive ? args.rightKneeQ : [],
-      leftKneeInterpolated: leftActive ? args.leftKneeInterpolated : [],
-      leftKneeMissing: leftActive ? args.leftKneeMissing : [],
-      rightKneeInterpolated: rightActive ? args.rightKneeInterpolated : [],
-      rightKneeMissing: rightActive ? args.rightKneeMissing : [],
-      notes: args.notes,
-      tags: args.tags,
-      activityProfile: args.activityProfile,
-      // Source tracking fields
-      recordedAt: args.recordedAt ?? args.startTime,
-      systemTags: args.systemTags ?? [RECORDING_SOURCES.APP],
-    });
-
-    // Notify subject if they are not the owner (only on first chunk)
-    if (args.chunkIndex === 0 && args.subjectId && args.subjectId !== user._id) {
-      const title = args.tags?.[0] || "Untitled Recording";
-      await ctx.db.insert("notifications", {
-        userId: args.subjectId,
-        type: "added_as_subject",
-        title: "You were added to a recording",
-        body: `${user.name ?? "Someone"} recorded "${title}" with you as the subject`,
-        data: {
-          sessionId: args.sessionId,
-          ownerId: user._id,
-          ownerName: user.name,
-          ownerImage: user.image,
-          recordingTitle: title,
-        },
-        read: false,
-      });
-    }
-
-    // Trigger metrics computation when last chunk is saved
-    if (args.chunkIndex === args.totalChunks - 1) {
-      await ctx.scheduler.runAfter(0, internal.recordingMetrics.triggerMetricComputation, {
-        sessionId: args.sessionId,
-      });
-    }
-
-    return chunkId;
-  },
-});
 
 // ─────────────────────────────────────────────────────────────────
 // Session Queries
 // ─────────────────────────────────────────────────────────────────
 
-// Get full session (all chunks)
+// Get full session (metadata only - use recordingChunks.getSessionWithChunks for data)
 export const getSession = query({
   args: { sessionId: v.string() },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
     if (!user) return null;
 
-    const chunks = await ctx.db
-      .query("recordings")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .first();
 
-    if (chunks.length === 0) return null;
+    if (!session) return null;
 
-    // Check access (use first chunk for ownership check)
-    const firstChunk = chunks.find((c) => c.chunkIndex === 0) ?? chunks[0];
+    // Check access
     const hasAccess =
-      firstChunk.ownerId === user._id ||
-      firstChunk.subjectId === user._id ||
-      (firstChunk.sharedWith ?? []).includes(user._id);
+      session.ownerId === user._id ||
+      session.subjectId === user._id ||
+      (session.sharedWith ?? []).includes(user._id);
 
     if (!hasAccess) return null;
 
-    // Sort by chunk index
-    const sortedChunks = chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
-
     // Get owner/subject info
-    const owner = await ctx.db.get(firstChunk.ownerId);
+    const owner = await ctx.db.get(session.ownerId);
     let subject = null;
-    if (firstChunk.subjectId) {
-      const subjectUser = await ctx.db.get(firstChunk.subjectId);
+    if (session.subjectId) {
+      const subjectUser = await ctx.db.get(session.subjectId);
       if (subjectUser && !subjectUser.isArchived) {
         subject = {
           _id: subjectUser._id,
@@ -199,29 +46,28 @@ export const getSession = query({
 
     return {
       sessionId: args.sessionId,
-      chunks: sortedChunks,
-      totalChunks: firstChunk.totalChunks,
+      totalChunks: session.totalChunks,
       owner: owner
         ? { _id: owner._id, name: owner.name, email: owner.email, image: owner.image }
         : null,
       subject,
-      // Aggregate metadata from first chunk
-      subjectAlias: firstChunk.subjectAlias,
-      notes: firstChunk.notes,
-      tags: firstChunk.tags,
-      activeJoints: firstChunk.activeJoints,
-      sampleRate: firstChunk.sampleRate,
-      // Aggregate timing from all chunks
-      startTime: sortedChunks[0].startTime,
-      endTime: sortedChunks[sortedChunks.length - 1].endTime,
-      totalSampleCount: sortedChunks.reduce((sum, c) => sum + c.sampleCount, 0),
-      _creationTime: firstChunk._creationTime,
-      isArchived: firstChunk.isArchived,
+      subjectAlias: session.subjectAlias,
+      notes: session.notes,
+      tags: session.tags,
+      activeJoints: session.activeJoints,
+      sampleRate: session.sampleRate,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      totalSampleCount: session.totalSamples,
+      _creationTime: session._creationTime,
+      isArchived: session.isArchived,
+      activityProfile: session.activityProfile,
+      subjectNotes: session.subjectNotes,
     };
   },
 });
 
-// List sessions owned by me (returns session summaries, not full data)
+// List sessions owned by me
 export const listMySessions = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -230,53 +76,38 @@ export const listMySessions = query({
 
     const limit = args.limit ?? 50;
 
-    // Get first chunk of each session (chunkIndex === 0)
-    const firstChunks = await ctx.db
-      .query("recordings")
+    const sessions = await ctx.db
+      .query("sessions")
       .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("chunkIndex"), 0),
-          q.neq(q.field("isArchived"), true)
-        )
-      )
+      .filter((q) => q.neq(q.field("isArchived"), true))
       .order("desc")
       .take(limit);
 
     return Promise.all(
-      firstChunks.map(async (chunk) => {
-        let subjectName = chunk.subjectAlias ?? "Self";
-        if (chunk.subjectId) {
-          const subject = await ctx.db.get(chunk.subjectId);
+      sessions.map(async (session) => {
+        let subjectName = session.subjectAlias ?? "Self";
+        if (session.subjectId) {
+          const subject = await ctx.db.get(session.subjectId);
           if (subject && !subject.isArchived) {
             subjectName = subject.name ?? subjectName;
           }
         }
 
-        // Get all chunks to calculate total duration and samples
-        const allChunks = await ctx.db
-          .query("recordings")
-          .withIndex("by_session", (q) => q.eq("sessionId", chunk.sessionId))
-          .collect();
-
-        const sortedChunks = allChunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
-        const lastChunk = sortedChunks[sortedChunks.length - 1];
-
         return {
-          sessionId: chunk.sessionId,
-          subjectId: chunk.subjectId,
+          sessionId: session.sessionId,
+          subjectId: session.subjectId,
           subjectName,
-          subjectAlias: chunk.subjectAlias,
-          notes: chunk.notes,
-          tags: chunk.tags,
-          activeJoints: chunk.activeJoints,
-          sampleRate: chunk.sampleRate,
-          totalChunks: chunk.totalChunks,
-          startTime: chunk.startTime,
-          endTime: lastChunk?.endTime ?? chunk.endTime,
-          totalSampleCount: sortedChunks.reduce((sum, c) => sum + c.sampleCount, 0),
-          durationMs: (lastChunk?.endTime ?? chunk.endTime) - chunk.startTime,
-          _creationTime: chunk._creationTime,
+          subjectAlias: session.subjectAlias,
+          notes: session.notes,
+          tags: session.tags,
+          activeJoints: session.activeJoints,
+          sampleRate: session.sampleRate,
+          totalChunks: session.totalChunks,
+          startTime: session.startTime,
+          endTime: session.endTime,
+          totalSampleCount: session.totalSamples,
+          durationMs: session.endTime - session.startTime,
+          _creationTime: session._creationTime,
         };
       })
     );
@@ -292,32 +123,32 @@ export const listSessionsOfMe = query({
 
     const limit = args.limit ?? 50;
 
-    const firstChunks = await ctx.db
-      .query("recordings")
+    const sessions = await ctx.db
+      .query("sessions")
       .withIndex("by_subject", (q) => q.eq("subjectId", user._id))
       .filter((q) =>
         q.and(
-          q.eq(q.field("chunkIndex"), 0),
-          q.neq(q.field("isArchived"), true)
+          q.neq(q.field("isArchived"), true),
+          q.neq(q.field("ownerId"), user._id)
         )
       )
       .order("desc")
       .take(limit);
 
     return Promise.all(
-      firstChunks.map(async (chunk) => {
-        const owner = await ctx.db.get(chunk.ownerId);
+      sessions.map(async (session) => {
+        const owner = await ctx.db.get(session.ownerId);
         return {
-          sessionId: chunk.sessionId,
+          sessionId: session.sessionId,
           ownerName: owner?.name ?? "Unknown",
-          notes: chunk.notes,
-          tags: chunk.tags,
-          activeJoints: chunk.activeJoints,
-          sampleRate: chunk.sampleRate,
-          totalChunks: chunk.totalChunks,
-          startTime: chunk.startTime,
-          durationMs: chunk.endTime - chunk.startTime,
-          _creationTime: chunk._creationTime,
+          notes: session.notes,
+          tags: session.tags,
+          activeJoints: session.activeJoints,
+          sampleRate: session.sampleRate,
+          totalChunks: session.totalChunks,
+          startTime: session.startTime,
+          durationMs: session.endTime - session.startTime,
+          _creationTime: session._creationTime,
         };
       })
     );
@@ -328,13 +159,13 @@ export const listSessionsOfMe = query({
 // Search & Filter Queries
 // ─────────────────────────────────────────────────────────────────
 
-// Paginated search across recordings
+// Paginated search across sessions
 export const searchSessions = query({
   args: {
     search: v.optional(v.string()),
     subjectId: v.optional(v.id("users")),
-    includeMe: v.optional(v.boolean()), // Include recordings where I'm the subject
-    cursor: v.optional(v.number()), // Timestamp cursor for pagination
+    includeMe: v.optional(v.boolean()),
+    cursor: v.optional(v.number()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -343,66 +174,67 @@ export const searchSessions = query({
 
     const limit = Math.min(args.limit ?? 20, 50);
     const searchTerm = args.search?.toLowerCase().trim();
+    const cursor = args.cursor;
 
-    // Build base query for owned sessions
-    let query = ctx.db
-      .query("recordings")
+    // Query sessions owned by user
+    let ownedQuery = ctx.db
+      .query("sessions")
       .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("chunkIndex"), 0),
-          q.neq(q.field("isArchived"), true)
-        )
-      );
+      .filter((q) => q.neq(q.field("isArchived"), true));
 
-    // Apply cursor
-    if (args.cursor) {
-      query = query.filter((q) => q.lt(q.field("_creationTime"), args.cursor));
+    if (cursor !== undefined) {
+      ownedQuery = ownedQuery.filter((q) => q.lt(q.field("_creationTime"), cursor));
     }
 
-    // Get sessions
-    const ownedChunks = await query.order("desc").take(limit + 10);
+    const ownedSessions = await ownedQuery.order("desc").take(limit + 10);
 
     // If includeMe, also get sessions where I'm the subject
-    let subjectChunks: typeof ownedChunks = [];
+    let subjectSessions: typeof ownedSessions = [];
     if (args.includeMe) {
       let subjectQuery = ctx.db
-        .query("recordings")
+        .query("sessions")
         .withIndex("by_subject", (q) => q.eq("subjectId", user._id))
         .filter((q) =>
           q.and(
-            q.eq(q.field("chunkIndex"), 0),
             q.neq(q.field("isArchived"), true),
-            q.neq(q.field("ownerId"), user._id) // Don't duplicate owned
+            q.neq(q.field("ownerId"), user._id)
           )
         );
 
-      if (args.cursor) {
+      if (cursor !== undefined) {
         subjectQuery = subjectQuery.filter((q) =>
-          q.lt(q.field("_creationTime"), args.cursor)
+          q.lt(q.field("_creationTime"), cursor)
         );
       }
 
-      subjectChunks = await subjectQuery.order("desc").take(limit + 10);
+      subjectSessions = await subjectQuery.order("desc").take(limit + 10);
     }
 
     // Combine and sort by _creationTime
-    let allChunks = [...ownedChunks, ...subjectChunks].sort(
+    let allSessions = [...ownedSessions, ...subjectSessions].sort(
       (a, b) => b._creationTime - a._creationTime
     );
 
+    // Deduplicate by sessionId
+    const seenSessionIds = new Set<string>();
+    allSessions = allSessions.filter((session) => {
+      if (seenSessionIds.has(session.sessionId)) return false;
+      seenSessionIds.add(session.sessionId);
+      return true;
+    });
+
     // Apply subject filter
     if (args.subjectId) {
-      allChunks = allChunks.filter((c) => c.subjectId === args.subjectId);
+      allSessions = allSessions.filter((s) => s.subjectId === args.subjectId);
     }
 
-    // Apply search filter (client-side for flexibility)
+    // Apply search filter
     if (searchTerm) {
-      allChunks = allChunks.filter((chunk) => {
+      allSessions = allSessions.filter((session) => {
         const searchFields = [
-          chunk.notes,
-          chunk.subjectAlias,
-          ...(chunk.tags ?? []),
+          session.notes,
+          session.subjectAlias,
+          ...(session.tags ?? []),
         ]
           .filter(Boolean)
           .map((s) => s!.toLowerCase());
@@ -412,18 +244,18 @@ export const searchSessions = query({
     }
 
     // Limit results
-    const limited = allChunks.slice(0, limit);
+    const limited = allSessions.slice(0, limit);
 
     // Build session summaries
     const sessions = await Promise.all(
-      limited.map(async (chunk) => {
+      limited.map(async (session) => {
         // Get subject info
-        let subjectName = chunk.subjectAlias ?? "Self";
+        let subjectName = session.subjectAlias ?? "Self";
         let subjectImage: string | undefined;
-        const isMe = chunk.subjectId === user._id;
+        const isMe = session.subjectId === user._id;
 
-        if (chunk.subjectId) {
-          const subject = await ctx.db.get(chunk.subjectId);
+        if (session.subjectId) {
+          const subject = await ctx.db.get(session.subjectId);
           if (subject && !subject.isArchived) {
             subjectName = subject.name ?? subjectName;
             subjectImage = subject.image;
@@ -431,46 +263,35 @@ export const searchSessions = query({
         }
 
         // Get owner info
-        const owner = await ctx.db.get(chunk.ownerId);
-        const ownerName = chunk.ownerId === user._id ? "Me" : (owner?.name ?? "Unknown");
+        const owner = await ctx.db.get(session.ownerId);
+        const ownerName = session.ownerId === user._id ? "Me" : (owner?.name ?? "Unknown");
         const ownerImage = owner?.image;
 
-        // Get all chunks to calculate totals
-        const allSessionChunks = await ctx.db
-          .query("recordings")
-          .withIndex("by_session", (q) => q.eq("sessionId", chunk.sessionId))
-          .collect();
-
-        const sortedChunks = allSessionChunks.sort(
-          (a, b) => a.chunkIndex - b.chunkIndex
-        );
-        const lastChunk = sortedChunks[sortedChunks.length - 1];
-
         return {
-          sessionId: chunk.sessionId,
-          ownerId: chunk.ownerId,
+          sessionId: session.sessionId,
+          ownerId: session.ownerId,
           ownerName,
           ownerImage,
-          isOwner: chunk.ownerId === user._id,
-          subjectId: chunk.subjectId,
+          isOwner: session.ownerId === user._id,
+          subjectId: session.subjectId,
           subjectName,
           subjectImage,
-          subjectAlias: chunk.subjectAlias,
+          subjectAlias: session.subjectAlias,
           isSubjectMe: isMe,
-          notes: chunk.notes,
-          tags: chunk.tags ?? [],
-          systemTags: chunk.systemTags ?? [],
-          activeJoints: chunk.activeJoints,
-          sampleRate: chunk.sampleRate,
-          totalChunks: chunk.totalChunks,
-          startTime: chunk.startTime,
-          endTime: lastChunk?.endTime ?? chunk.endTime,
-          recordedAt: chunk.recordedAt ?? chunk.startTime,
-          totalSampleCount: sortedChunks.reduce((sum, c) => sum + c.sampleCount, 0),
-          durationMs: (lastChunk?.endTime ?? chunk.endTime) - chunk.startTime,
-          _creationTime: chunk._creationTime,
-          modifiedAt: chunk.modifiedAt,
-          subjectNotes: chunk.subjectNotes ?? [],
+          notes: session.notes,
+          tags: session.tags ?? [],
+          systemTags: session.systemTags ?? [],
+          activeJoints: session.activeJoints,
+          sampleRate: session.sampleRate,
+          totalChunks: session.totalChunks,
+          startTime: session.startTime,
+          endTime: session.endTime,
+          recordedAt: session.recordedAt ?? session.startTime,
+          totalSampleCount: session.totalSamples,
+          durationMs: session.endTime - session.startTime,
+          createdAt: session._creationTime,
+          modifiedAt: session.modifiedAt,
+          subjectNotes: session.subjectNotes ?? [],
         };
       })
     );
@@ -483,189 +304,41 @@ export const searchSessions = query({
   },
 });
 
-// Get session preview (all chunks - for LoadModal chart, with server-side downsampling)
-export const getSessionPreview = query({
-  args: {
-    sessionId: v.string(),
-    downsampleFactor: v.optional(v.number()), // Only include every Nth sample (default: 10)
-  },
-  handler: async (ctx, args) => {
-    const user = await getCurrentUser(ctx);
-    if (!user) return null;
-
-    const downsample = Math.max(1, args.downsampleFactor ?? 10);
-
-    // Get all chunks for this session
-    const chunks = await ctx.db
-      .query("recordings")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
-
-    if (chunks.length === 0) return null;
-
-    // Sort by chunk index
-    const sortedChunks = chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
-    const firstChunk = sortedChunks[0];
-    const lastChunk = sortedChunks[sortedChunks.length - 1];
-
-    // Check access
-    const hasAccess =
-      firstChunk.ownerId === user._id ||
-      firstChunk.subjectId === user._id ||
-      (firstChunk.sharedWith ?? []).includes(user._id);
-
-    if (!hasAccess) return null;
-
-    // Merge and downsample quaternion data
-    const mergedLeftKneeQ: number[] = [];
-    const mergedRightKneeQ: number[] = [];
-    const mergedLeftKneeInterpolated: number[] = [];
-    const mergedLeftKneeMissing: number[] = [];
-    const mergedRightKneeInterpolated: number[] = [];
-    const mergedRightKneeMissing: number[] = [];
-
-    let globalSampleIndex = 0; // Tracks position across all chunks
-    let downsampledIndex = 0;  // Tracks position in downsampled output
-
-    for (const chunk of sortedChunks) {
-      // Build sets for O(1) flag lookup within this chunk
-      const leftInterpSet = new Set(chunk.leftKneeInterpolated);
-      const leftMissingSet = new Set(chunk.leftKneeMissing);
-      const rightInterpSet = new Set(chunk.rightKneeInterpolated);
-      const rightMissingSet = new Set(chunk.rightKneeMissing);
-
-      for (let i = 0; i < chunk.sampleCount; i++) {
-        // Only include every Nth sample (based on global position)
-        if (globalSampleIndex % downsample === 0) {
-          const qIdx = i * 4;
-
-          // Push quaternion (4 floats per sample)
-          if (chunk.leftKneeQ.length >= qIdx + 4) {
-            mergedLeftKneeQ.push(
-              chunk.leftKneeQ[qIdx],
-              chunk.leftKneeQ[qIdx + 1],
-              chunk.leftKneeQ[qIdx + 2],
-              chunk.leftKneeQ[qIdx + 3]
-            );
-          }
-          if (chunk.rightKneeQ.length >= qIdx + 4) {
-            mergedRightKneeQ.push(
-              chunk.rightKneeQ[qIdx],
-              chunk.rightKneeQ[qIdx + 1],
-              chunk.rightKneeQ[qIdx + 2],
-              chunk.rightKneeQ[qIdx + 3]
-            );
-          }
-
-          // Map flags to downsampled index
-          if (leftInterpSet.has(i)) mergedLeftKneeInterpolated.push(downsampledIndex);
-          if (leftMissingSet.has(i)) mergedLeftKneeMissing.push(downsampledIndex);
-          if (rightInterpSet.has(i)) mergedRightKneeInterpolated.push(downsampledIndex);
-          if (rightMissingSet.has(i)) mergedRightKneeMissing.push(downsampledIndex);
-
-          downsampledIndex++;
-        }
-        globalSampleIndex++;
-      }
-    }
-
-    // Return downsampled packed chunk data
-    return {
-      sessionId: args.sessionId,
-      startTime: firstChunk.startTime,
-      endTime: lastChunk.endTime,
-      sampleRate: Math.round(firstChunk.sampleRate / downsample),
-      sampleCount: downsampledIndex,
-      activeJoints: firstChunk.activeJoints,
-      leftKneeQ: mergedLeftKneeQ,
-      rightKneeQ: mergedRightKneeQ,
-      leftKneeInterpolated: mergedLeftKneeInterpolated,
-      leftKneeMissing: mergedLeftKneeMissing,
-      rightKneeInterpolated: mergedRightKneeInterpolated,
-      rightKneeMissing: mergedRightKneeMissing,
-    };
-  },
-});
-
-// Get session preview optimized for chart rendering (adaptive downsampling)
+// Get session preview optimized for chart rendering (uses pre-computed preview)
 export const getSessionPreviewForChart = query({
   args: {
     sessionId: v.string(),
-    maxPoints: v.optional(v.number()), // Target max points for chart (default: 100)
+    maxPoints: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
     if (!user) return null;
 
-    const maxPoints = args.maxPoints ?? 100;
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .first();
 
-    // Get all chunks for this session
-    const chunks = await ctx.db
-      .query("recordings")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
-
-    if (chunks.length === 0) return null;
-
-    // Sort by chunk index
-    const sortedChunks = chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
-    const firstChunk = sortedChunks[0];
-    const lastChunk = sortedChunks[sortedChunks.length - 1];
+    if (!session) return null;
 
     // Check access
     const hasAccess =
-      firstChunk.ownerId === user._id ||
-      firstChunk.subjectId === user._id ||
-      (firstChunk.sharedWith ?? []).includes(user._id);
+      session.ownerId === user._id ||
+      session.subjectId === user._id ||
+      (session.sharedWith ?? []).includes(user._id);
 
     if (!hasAccess) return null;
 
-    // Calculate total samples to determine downsample factor
-    const totalSamples = sortedChunks.reduce((sum, c) => sum + c.sampleCount, 0);
-    const downsample = Math.max(1, Math.ceil(totalSamples / maxPoints));
-
-    // Merge and downsample quaternion data
-    const mergedLeftKneeQ: number[] = [];
-    const mergedRightKneeQ: number[] = [];
-
-    let globalSampleIndex = 0;
-
-    for (const chunk of sortedChunks) {
-      for (let i = 0; i < chunk.sampleCount; i++) {
-        if (globalSampleIndex % downsample === 0) {
-          const qIdx = i * 4;
-
-          if (chunk.leftKneeQ.length >= qIdx + 4) {
-            mergedLeftKneeQ.push(
-              chunk.leftKneeQ[qIdx],
-              chunk.leftKneeQ[qIdx + 1],
-              chunk.leftKneeQ[qIdx + 2],
-              chunk.leftKneeQ[qIdx + 3]
-            );
-          }
-          if (chunk.rightKneeQ.length >= qIdx + 4) {
-            mergedRightKneeQ.push(
-              chunk.rightKneeQ[qIdx],
-              chunk.rightKneeQ[qIdx + 1],
-              chunk.rightKneeQ[qIdx + 2],
-              chunk.rightKneeQ[qIdx + 3]
-            );
-          }
-        }
-        globalSampleIndex++;
-      }
-    }
-
-    // Return minimal data for chart rendering (no flags needed for preview)
+    // Use pre-computed preview data (already downsampled to ~100 points)
     return {
       sessionId: args.sessionId,
-      startTime: firstChunk.startTime,
-      endTime: lastChunk.endTime,
-      sampleRate: Math.round(firstChunk.sampleRate / downsample),
-      sampleCount: Math.floor(mergedLeftKneeQ.length / 4),
-      activeJoints: firstChunk.activeJoints,
-      leftKneeQ: mergedLeftKneeQ,
-      rightKneeQ: mergedRightKneeQ,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      sampleRate: session.sampleRate,
+      sampleCount: Math.floor((session.leftKneePreview?.length ?? session.rightKneePreview?.length ?? 0) / 4),
+      activeJoints: session.activeJoints,
+      leftKneeQ: session.leftKneePreview ?? [],
+      rightKneeQ: session.rightKneePreview ?? [],
     };
   },
 });
@@ -677,27 +350,22 @@ export const getDistinctSubjects = query({
     const user = await getCurrentUser(ctx);
     if (!user) return [];
 
-    // Get all first chunks owned by user
-    const firstChunks = await ctx.db
-      .query("recordings")
+    // Get all sessions owned by user
+    const sessions = await ctx.db
+      .query("sessions")
       .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("chunkIndex"), 0),
-          q.neq(q.field("isArchived"), true)
-        )
-      )
+      .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();
 
     // Count recordings per subject
     const subjectCounts = new Map<string, number>();
     const subjectIds = new Set<string>();
 
-    for (const chunk of firstChunks) {
-      const key = chunk.subjectId ?? "self";
+    for (const session of sessions) {
+      const key = session.subjectId ?? "self";
       subjectCounts.set(key, (subjectCounts.get(key) ?? 0) + 1);
-      if (chunk.subjectId) {
-        subjectIds.add(chunk.subjectId);
+      if (session.subjectId) {
+        subjectIds.add(session.subjectId);
       }
     }
 
@@ -723,7 +391,7 @@ export const getDistinctSubjects = query({
 
     // Add other subjects
     for (const subjectId of subjectIds) {
-      if (subjectId === user._id) continue; // Already added as "Me"
+      if (subjectId === user._id) continue;
 
       const subject = await ctx.db.get(subjectId as Id<"users">);
       if (subject && !subject.isArchived) {
@@ -769,12 +437,10 @@ function computeDiffs(
     const oldVal = oldData[field];
     const newVal = newData[field];
 
-    // Compare arrays by JSON stringification
     const oldStr = JSON.stringify(oldVal);
     const newStr = JSON.stringify(newVal);
 
     if (oldStr !== newStr) {
-      // Convert undefined to null to satisfy schema (old field is required)
       diffs.push({
         field,
         old: oldVal === undefined ? null : oldVal,
@@ -786,7 +452,7 @@ function computeDiffs(
   return diffs;
 }
 
-// Update session metadata with diff tracking (updates first chunk only)
+// Update session metadata with diff tracking
 export const updateSession = mutation({
   args: {
     sessionId: v.string(),
@@ -798,17 +464,16 @@ export const updateSession = mutation({
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 
-    const firstChunk = await ctx.db
-      .query("recordings")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .filter((q) => q.eq(q.field("chunkIndex"), 0))
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
-    if (!firstChunk) {
+    if (!session) {
       throw new Error("Session not found");
     }
 
-    if (firstChunk.ownerId !== user._id) {
+    if (session.ownerId !== user._id) {
       throw new Error("Not authorized to update this session");
     }
 
@@ -825,10 +490,10 @@ export const updateSession = mutation({
 
     // Compute diffs for modification history
     const oldData: Record<string, unknown> = {
-      notes: firstChunk.notes,
-      tags: firstChunk.tags,
-      subjectId: firstChunk.subjectId,
-      subjectAlias: firstChunk.subjectAlias,
+      notes: session.notes,
+      tags: session.tags,
+      subjectId: session.subjectId,
+      subjectAlias: session.subjectAlias,
     };
 
     const diffs = computeDiffs(oldData, updates, EDITABLE_FIELDS);
@@ -842,14 +507,14 @@ export const updateSession = mutation({
         diffs,
       };
 
-      const currentHistory = firstChunk.modificationHistory ?? [];
+      const currentHistory = session.modificationHistory ?? [];
       updates.modificationHistory = [...currentHistory, historyEntry];
       updates.modifiedAt = now;
 
       // Check if subject was changed to a different user (not the owner)
       const subjectDiff = diffs.find(d => d.field === "subjectId");
-      if (subjectDiff && args.subjectId && args.subjectId !== user._id && args.subjectId !== firstChunk.subjectId) {
-        const title = args.tags?.[0] || firstChunk.tags?.[0] || "Untitled Recording";
+      if (subjectDiff && args.subjectId && args.subjectId !== user._id && args.subjectId !== session.subjectId) {
+        const title = args.tags?.[0] || session.tags?.[0] || "Untitled Recording";
         await ctx.db.insert("notifications", {
           userId: args.subjectId,
           type: "added_as_subject",
@@ -867,7 +532,7 @@ export const updateSession = mutation({
       }
     }
 
-    await ctx.db.patch(firstChunk._id, updates);
+    await ctx.db.patch(session._id, updates);
 
     return args.sessionId;
   },
@@ -886,23 +551,22 @@ export const addSubjectNote = mutation({
       throw new Error("Note cannot be empty");
     }
 
-    const firstChunk = await ctx.db
-      .query("recordings")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .filter((q) => q.eq(q.field("chunkIndex"), 0))
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
-    if (!firstChunk) {
+    if (!session) {
       throw new Error("Session not found");
     }
 
     // User must be the subject (not owner) to add subject notes
-    if (firstChunk.subjectId !== user._id) {
+    if (session.subjectId !== user._id) {
       throw new Error("Only the subject can add notes");
     }
 
     // Don't allow owner to add subject notes to their own recording
-    if (firstChunk.ownerId === user._id) {
+    if (session.ownerId === user._id) {
       throw new Error("Owner should edit notes directly");
     }
 
@@ -913,14 +577,14 @@ export const addSubjectNote = mutation({
       createdAt: now,
     };
 
-    const currentNotes = firstChunk.subjectNotes ?? [];
-    await ctx.db.patch(firstChunk._id, {
+    const currentNotes = session.subjectNotes ?? [];
+    await ctx.db.patch(session._id, {
       subjectNotes: [...currentNotes, newNote],
     });
 
     // Create notification for owner
     await ctx.db.insert("notifications", {
-      userId: firstChunk.ownerId,
+      userId: session.ownerId,
       type: "subject_note",
       title: "New note on recording",
       body: `${user.name ?? "A subject"} added a note to a recording`,
@@ -937,7 +601,7 @@ export const addSubjectNote = mutation({
   },
 });
 
-// Share session with user (updates all chunks)
+// Share session with user
 export const shareSession = mutation({
   args: {
     sessionId: v.string(),
@@ -946,16 +610,16 @@ export const shareSession = mutation({
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 
-    const chunks = await ctx.db
-      .query("recordings")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .first();
 
-    if (chunks.length === 0) {
+    if (!session) {
       throw new Error("Session not found");
     }
 
-    if (chunks[0].ownerId !== user._id) {
+    if (session.ownerId !== user._id) {
       throw new Error("Not authorized to share this session");
     }
 
@@ -964,20 +628,18 @@ export const shareSession = mutation({
       throw new Error("User not found");
     }
 
-    for (const chunk of chunks) {
-      const currentShared = chunk.sharedWith ?? [];
-      if (!currentShared.includes(args.userId)) {
-        await ctx.db.patch(chunk._id, {
-          sharedWith: [...currentShared, args.userId],
-        });
-      }
+    const currentShared = session.sharedWith ?? [];
+    if (!currentShared.includes(args.userId)) {
+      await ctx.db.patch(session._id, {
+        sharedWith: [...currentShared, args.userId],
+      });
     }
 
     return args.sessionId;
   },
 });
 
-// Archive session (all chunks)
+// Archive session
 export const archiveSession = mutation({
   args: {
     sessionId: v.string(),
@@ -986,28 +648,24 @@ export const archiveSession = mutation({
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 
-    const chunks = await ctx.db
-      .query("recordings")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .first();
 
-    if (chunks.length === 0) {
+    if (!session) {
       throw new Error("Session not found");
     }
 
-    if (chunks[0].ownerId !== user._id) {
+    if (session.ownerId !== user._id) {
       throw new Error("Not authorized to archive this session");
     }
 
-    const archiveData = {
+    await ctx.db.patch(session._id, {
       isArchived: true,
       archivedAt: Date.now(),
       archiveReason: args.reason ?? "User deleted session",
-    };
-
-    for (const chunk of chunks) {
-      await ctx.db.patch(chunk._id, archiveData);
-    }
+    });
 
     return args.sessionId;
   },
@@ -1019,28 +677,24 @@ export const restoreSession = mutation({
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 
-    const chunks = await ctx.db
-      .query("recordings")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .collect();
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .first();
 
-    if (chunks.length === 0) {
+    if (!session) {
       throw new Error("Session not found");
     }
 
-    if (chunks[0].ownerId !== user._id) {
+    if (session.ownerId !== user._id) {
       throw new Error("Not authorized to restore this session");
     }
 
-    const restoreData = {
+    await ctx.db.patch(session._id, {
       isArchived: false,
       archivedAt: undefined,
       archiveReason: undefined,
-    };
-
-    for (const chunk of chunks) {
-      await ctx.db.patch(chunk._id, restoreData);
-    }
+    });
 
     return args.sessionId;
   },

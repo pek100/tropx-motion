@@ -23,28 +23,21 @@ export const getPatientMetricsHistory = query({
 
     const limit = args.limit ?? 50;
 
-    // Get all first chunks (session metadata) for this subject
-    // owned by current user or where current user is the subject
-    const chunks = await ctx.db
-      .query("recordings")
+    // Get all sessions for this subject
+    const sessions = await ctx.db
+      .query("sessions")
       .withIndex("by_subject", (q) => q.eq("subjectId", args.subjectId))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("chunkIndex"), 0),
-          q.neq(q.field("isArchived"), true)
-        )
-      )
+      .filter((q) => q.neq(q.field("isArchived"), true))
       .order("desc")
       .take(limit);
 
     // Also get sessions where user recorded themselves (subjectId might be undefined)
-    const selfChunks = args.subjectId === user._id
+    const selfSessions = args.subjectId === user._id
       ? await ctx.db
-          .query("recordings")
+          .query("sessions")
           .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
           .filter((q) =>
             q.and(
-              q.eq(q.field("chunkIndex"), 0),
               q.neq(q.field("isArchived"), true),
               q.or(
                 q.eq(q.field("subjectId"), user._id),
@@ -57,19 +50,19 @@ export const getPatientMetricsHistory = query({
       : [];
 
     // Combine and deduplicate by sessionId
-    const sessionMap = new Map<string, typeof chunks[0]>();
-    for (const chunk of [...chunks, ...selfChunks]) {
-      if (!sessionMap.has(chunk.sessionId)) {
-        sessionMap.set(chunk.sessionId, chunk);
+    const sessionMap = new Map<string, typeof sessions[0]>();
+    for (const session of [...sessions, ...selfSessions]) {
+      if (!sessionMap.has(session.sessionId)) {
+        sessionMap.set(session.sessionId, session);
       }
     }
 
     // Get metrics for each session
-    const sessions = await Promise.all(
-      Array.from(sessionMap.values()).map(async (chunk) => {
+    const results = await Promise.all(
+      Array.from(sessionMap.values()).map(async (session) => {
         const metrics = await ctx.db
           .query("recordingMetrics")
-          .withIndex("by_session", (q) => q.eq("sessionId", chunk.sessionId))
+          .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
           .first();
 
         // Skip sessions without completed metrics
@@ -77,18 +70,12 @@ export const getPatientMetricsHistory = query({
           return null;
         }
 
-        // Debug: log movement type sources
-        console.log("[Dashboard] Session", chunk.sessionId, {
-          opiMovementType: (metrics.opiResult as any).movementType,
-          classificationtype: (metrics.movementClassification as any)?.type,
-        });
-
         return {
-          sessionId: chunk.sessionId,
-          recordedAt: chunk.recordedAt ?? chunk.startTime,
-          activityProfile: chunk.activityProfile ?? "general",
-          tags: chunk.tags ?? [],
-          notes: chunk.notes,
+          sessionId: session.sessionId,
+          recordedAt: session.recordedAt ?? session.startTime,
+          activityProfile: session.activityProfile ?? "general",
+          tags: session.tags ?? [],
+          notes: session.notes,
 
           // OPI
           opiScore: metrics.opiResult.overallScore,
@@ -137,7 +124,7 @@ export const getPatientMetricsHistory = query({
     );
 
     // Filter out nulls and sort by date (oldest first for charting)
-    const validSessions = sessions
+    const validSessions = results
       .filter((s): s is NonNullable<typeof s> => s !== null)
       .sort((a, b) => a.recordedAt - b.recordedAt);
 
@@ -158,27 +145,22 @@ export const getPatientsList = query({
     const user = await getCurrentUser(ctx);
     if (!user) return [];
 
-    // Get distinct subjects from recordings owned by user
-    const chunks = await ctx.db
-      .query("recordings")
+    // Get distinct subjects from sessions owned by user
+    const sessions = await ctx.db
+      .query("sessions")
       .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("chunkIndex"), 0),
-          q.neq(q.field("isArchived"), true)
-        )
-      )
+      .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();
 
     // Count sessions per subject
     const subjectCounts = new Map<string, number>();
     const subjectIds = new Set<string>();
 
-    for (const chunk of chunks) {
-      const key = chunk.subjectId ?? user._id;
+    for (const session of sessions) {
+      const key = session.subjectId ?? user._id;
       subjectCounts.set(key, (subjectCounts.get(key) ?? 0) + 1);
-      if (chunk.subjectId) {
-        subjectIds.add(chunk.subjectId);
+      if (session.subjectId) {
+        subjectIds.add(session.subjectId);
       }
     }
 
@@ -208,11 +190,11 @@ export const getPatientsList = query({
       if (subjectId === user._id) continue;
 
       const subject = await ctx.db.get(subjectId as Id<"users">);
-      if (subject && "name" in subject && !("isArchived" in subject && subject.isArchived)) {
+      if (subject && !subject.isArchived) {
         patients.push({
           id: subjectId,
-          name: (subject as { name?: string }).name ?? "Unknown",
-          image: (subject as { image?: string }).image,
+          name: subject.name ?? "Unknown",
+          image: subject.image,
           isMe: false,
           sessionCount: subjectCounts.get(subjectId) ?? 0,
         });

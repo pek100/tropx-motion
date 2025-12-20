@@ -9,6 +9,7 @@ import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { METRIC_STATUS, ACTIVITY_PROFILES } from "./schema";
 import { computeAllMetrics, type RecordingChunk, type ActivityProfile } from "./lib/metrics";
+import { decompressQuaternions } from "../shared/compression";
 
 // ─────────────────────────────────────────────────────────────────
 // Queries
@@ -57,14 +58,16 @@ export const getSessionAsymmetryEvents = query({
 
     if (!metrics || metrics.status !== "complete") return null;
 
-    // Get session timing info from first chunk
-    const firstChunk = await ctx.db
-      .query("recordings")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .filter((q) => q.eq(q.field("chunkIndex"), 0))
+    // Get session timing info from sessions table
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
-    if (!firstChunk) return null;
+    if (!session) return null;
+
+    const sessionStartTime = session.startTime;
+    const sampleRate = session.sampleRate;
 
     // Extract asymmetry events with time window data
     const advancedAsymmetry = metrics.advancedAsymmetry as {
@@ -95,8 +98,8 @@ export const getSessionAsymmetryEvents = query({
     // Return data even if no asymmetry events (phase alignment still useful)
     return {
       sessionId: args.sessionId,
-      sessionStartTime: firstChunk.startTime,
-      sampleRate: firstChunk.sampleRate,
+      sessionStartTime,
+      sampleRate,
       events: advancedAsymmetry?.asymmetryEvents ?? [],
       summary: {
         avgRealAsymmetry: advancedAsymmetry?.avgRealAsymmetry ?? 0,
@@ -215,33 +218,57 @@ export const computeMetricsInternal = internalAction({
     });
 
     try {
-      // Fetch all chunks for the session
-      const chunks = await ctx.runQuery(internal.recordingMetrics.getSessionChunks, {
-        sessionId: args.sessionId,
-      });
+      let recordingChunks: RecordingChunk[] = [];
+      let activityProfile: ActivityProfile = ACTIVITY_PROFILES.GENERAL;
 
-      if (!chunks || chunks.length === 0) {
+      // First, try new compressed format (sessions + recordingChunks tables)
+      const compressedData = await ctx.runQuery(
+        internal.recordingMetrics.getCompressedSessionData,
+        { sessionId: args.sessionId }
+      );
+
+      if (!compressedData || compressedData.chunks.length === 0) {
         throw new Error("No chunks found for session");
       }
 
-      // Get activity profile from recording (stored in first chunk)
-      const activityProfile: ActivityProfile =
-        (chunks[0].activityProfile as ActivityProfile) || ACTIVITY_PROFILES.GENERAL;
+      // Decompress chunks
+      const { session, chunks } = compressedData;
 
-      // Convert to RecordingChunk format
-      const recordingChunks: RecordingChunk[] = chunks.map((chunk) => ({
-        sessionId: chunk.sessionId,
-        chunkIndex: chunk.chunkIndex,
-        totalChunks: chunk.totalChunks,
-        sampleRate: chunk.sampleRate,
-        sampleCount: chunk.sampleCount,
-        leftKneeQ: chunk.leftKneeQ,
-        rightKneeQ: chunk.rightKneeQ,
-        leftKneeInterpolated: chunk.leftKneeInterpolated,
-        leftKneeMissing: chunk.leftKneeMissing,
-        rightKneeInterpolated: chunk.rightKneeInterpolated,
-        rightKneeMissing: chunk.rightKneeMissing,
-      }));
+      activityProfile =
+        (session.activityProfile as ActivityProfile) || ACTIVITY_PROFILES.GENERAL;
+
+      // Decompress each chunk
+      recordingChunks = chunks.map((chunk) => {
+        // Decompress quaternion data
+        let leftKneeQ: number[] = [];
+        let rightKneeQ: number[] = [];
+
+        if (chunk.leftKneeCompressed) {
+          const bytes = new Uint8Array(chunk.leftKneeCompressed);
+          const decompressed = decompressQuaternions(bytes);
+          leftKneeQ = Array.from(decompressed);
+        }
+
+        if (chunk.rightKneeCompressed) {
+          const bytes = new Uint8Array(chunk.rightKneeCompressed);
+          const decompressed = decompressQuaternions(bytes);
+          rightKneeQ = Array.from(decompressed);
+        }
+
+        return {
+          sessionId: chunk.sessionId,
+          chunkIndex: chunk.chunkIndex,
+          totalChunks: session.totalChunks,
+          sampleRate: session.sampleRate,
+          sampleCount: chunk.sampleCount,
+          leftKneeQ,
+          rightKneeQ,
+          leftKneeInterpolated: chunk.leftKneeInterpolated,
+          leftKneeMissing: chunk.leftKneeMissing,
+          rightKneeInterpolated: chunk.rightKneeInterpolated,
+          rightKneeMissing: chunk.rightKneeMissing,
+        };
+      });
 
       // Compute all metrics with activity profile
       const result = computeAllMetrics(recordingChunks, args.sessionId, activityProfile);
@@ -267,16 +294,30 @@ export const computeMetricsInternal = internalAction({
   },
 });
 
-/** Get session chunks (internal query). */
-export const getSessionChunks = internalQuery({
+/** Get session and compressed chunks (internal query). */
+export const getCompressedSessionData = internalQuery({
   args: { sessionId: v.string() },
   handler: async (ctx, args) => {
+    // Check if session exists in new sessions table
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+
+    if (!session) {
+      return null;
+    }
+
+    // Get compressed chunks
     const chunks = await ctx.db
-      .query("recordings")
+      .query("recordingChunks")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .collect();
 
-    return chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+    return {
+      session,
+      chunks: chunks.sort((a, b) => a.chunkIndex - b.chunkIndex),
+    };
   },
 });
 

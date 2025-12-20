@@ -52,23 +52,27 @@ export async function requireRole(
   return user;
 }
 
-// Check if user has access to a recording
-export async function canAccessRecording(
+// Check if user has access to a session
+export async function canAccessSession(
   ctx: QueryCtx | MutationCtx,
-  recordingId: Id<"recordings">,
+  sessionId: string,
   userId: Id<"users">
 ): Promise<boolean> {
-  const recording = await ctx.db.get(recordingId);
-  if (!recording || recording.isArchived) return false;
+  const session = await ctx.db
+    .query("sessions")
+    .withIndex("by_sessionId", (q) => q.eq("sessionId", sessionId))
+    .first();
+
+  if (!session || session.isArchived) return false;
 
   // Owner can always access
-  if (recording.ownerId === userId) return true;
+  if (session.ownerId === userId) return true;
 
   // Subject can access
-  if (recording.subjectId === userId) return true;
+  if (session.subjectId === userId) return true;
 
   // Check if shared
-  if (recording.sharedWith?.includes(userId)) return true;
+  if (session.sharedWith?.includes(userId)) return true;
 
   return false;
 }

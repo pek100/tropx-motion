@@ -31,7 +31,7 @@ export const listAllUsers = query({
       name: user.name,
       image: user.image,
       role: user.role,
-      contactsCount: user.contacts.length,
+      contactsCount: (user.contacts ?? []).length,
       isArchived: user.isArchived,
       archivedAt: user.archivedAt,
       archiveReason: user.archiveReason,
@@ -71,9 +71,9 @@ export const getStats = query({
       }
     }
 
-    // Count recordings
-    const allRecordings = await ctx.db
-      .query("recordings")
+    // Count sessions
+    const allSessions = await ctx.db
+      .query("sessions")
       .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();
 
@@ -89,14 +89,14 @@ export const getStats = query({
       .withIndex("by_archived", (q) => q.eq("isArchived", true))
       .collect();
 
-    const archivedRecordings = await ctx.db
-      .query("recordings")
+    const archivedSessions = await ctx.db
+      .query("sessions")
       .withIndex("by_archived", (q) => q.eq("isArchived", true))
       .collect();
 
     // Calculate total recording duration
-    const totalRecordingMs = allRecordings.reduce(
-      (sum, r) => sum + (r.durationMs || 0),
+    const totalRecordingMs = allSessions.reduce(
+      (sum, s) => sum + (s.endTime - s.startTime),
       0
     );
 
@@ -107,8 +107,8 @@ export const getStats = query({
         archived: archivedUsers.length,
       },
       recordings: {
-        total: allRecordings.length,
-        archived: archivedRecordings.length,
+        total: allSessions.length,
+        archived: archivedSessions.length,
         totalDurationMs: totalRecordingMs,
         totalDurationHours: Math.round(totalRecordingMs / 3600000 * 10) / 10,
       },
@@ -225,14 +225,34 @@ export const permanentlyDeleteUser = mutation({
       throw new Error("User not found");
     }
 
-    // Delete all recordings owned by this user
-    const userRecordings = await ctx.db
-      .query("recordings")
+    // Delete all sessions owned by this user
+    const userSessions = await ctx.db
+      .query("sessions")
       .withIndex("by_owner", (q) => q.eq("ownerId", args.userId))
       .collect();
 
-    for (const recording of userRecordings) {
-      await ctx.db.delete(recording._id);
+    for (const session of userSessions) {
+      // Delete associated recording chunks
+      const chunks = await ctx.db
+        .query("recordingChunks")
+        .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
+        .collect();
+
+      for (const chunk of chunks) {
+        await ctx.db.delete(chunk._id);
+      }
+
+      // Delete recording metrics
+      const metrics = await ctx.db
+        .query("recordingMetrics")
+        .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
+        .first();
+
+      if (metrics) {
+        await ctx.db.delete(metrics._id);
+      }
+
+      await ctx.db.delete(session._id);
     }
 
     // Delete all invites from this user
@@ -249,9 +269,9 @@ export const permanentlyDeleteUser = mutation({
     const allUsers = await ctx.db.query("users").collect();
     for (const otherUser of allUsers) {
       if (otherUser._id === args.userId) continue;
-      const hasContact = otherUser.contacts.some((c) => c.userId === args.userId);
+      const hasContact = (otherUser.contacts ?? []).some((c) => c.userId === args.userId);
       if (hasContact) {
-        const updatedContacts = otherUser.contacts.filter(
+        const updatedContacts = (otherUser.contacts ?? []).filter(
           (c) => c.userId !== args.userId
         );
         await ctx.db.patch(otherUser._id, { contacts: updatedContacts });

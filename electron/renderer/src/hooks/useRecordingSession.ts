@@ -3,13 +3,13 @@
  *
  * Features:
  * - Fetch session from Convex
- * - Reassemble chunks
+ * - Decompress and reassemble chunks
  * - Decode to angles
  * - Apply flag metadata
  */
 
 import { useState, useCallback, useMemo } from 'react';
-import { useQuery } from 'convex/react';
+import { useQuery, useConvex } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
 import {
   PackedChunkData,
@@ -18,8 +18,12 @@ import {
   mergeChunks,
   unpack,
   toAngles,
-  unpackToAngles,
 } from '../../../../shared/QuaternionCodec';
+import {
+  decompressAllChunks,
+  type CompressedChunk,
+  type SessionMetadata as CompressionSessionMeta,
+} from '../../../../shared/compression/decompressSession';
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -69,10 +73,10 @@ export interface UseRecordingSessionReturn {
 // ─────────────────────────────────────────────────────────────────
 
 export function useRecordingSession(): UseRecordingSessionReturn {
+  const convex = useConvex();
   const [loadedSession, setLoadedSession] = useState<LoadedSession | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   // Fetch session list
   const sessionsQuery = useQuery(api.recordings.listMySessions, { limit: 50 });
@@ -95,23 +99,44 @@ export function useRecordingSession(): UseRecordingSessionReturn {
       endTime: s.endTime,
       totalSampleCount: s.totalSampleCount,
       durationMs: s.durationMs,
-      createdAt: s.createdAt,
+      createdAt: s._creationTime,
     }));
   }, [sessionsQuery]);
 
-  // Fetch single session (triggered by loadSession)
-  const sessionQuery = useQuery(
-    api.recordings.getSession,
-    currentSessionId ? { sessionId: currentSessionId } : 'skip'
-  );
-
-  // Process session data when it loads
-  useMemo(() => {
-    if (!sessionQuery || !currentSessionId) return;
+  const loadSession = useCallback(async (sessionId: string) => {
+    setIsLoadingSession(true);
+    setLoadError(null);
+    setLoadedSession(null);
 
     try {
-      // Convert chunks to PackedChunkData format
-      const packedChunks: PackedChunkData[] = sessionQuery.chunks.map((chunk) => ({
+      // Fetch session with compressed chunks
+      const result = await convex.query(api.recordingChunks.getSessionWithChunks, { sessionId });
+
+      if (!result || result.chunks.length === 0) {
+        throw new Error('Session not found or empty');
+      }
+
+      const { session, chunks } = result;
+
+      // Build session metadata for decompression
+      const sessionMeta: CompressionSessionMeta = {
+        sessionId: session.sessionId,
+        sampleRate: session.sampleRate,
+        totalSamples: session.totalSamples,
+        totalChunks: session.totalChunks,
+        activeJoints: session.activeJoints,
+        startTime: session.startTime,
+        endTime: session.endTime,
+      };
+
+      // Decompress all chunks
+      const decompressedChunks = decompressAllChunks(
+        chunks as CompressedChunk[],
+        sessionMeta
+      );
+
+      // Convert to PackedChunkData format
+      const packedChunks: PackedChunkData[] = decompressedChunks.map((chunk) => ({
         startTime: chunk.startTime,
         endTime: chunk.endTime,
         sampleRate: chunk.sampleRate,
@@ -136,21 +161,21 @@ export function useRecordingSession(): UseRecordingSessionReturn {
 
       // Build metadata
       const metadata: SessionMetadata = {
-        sessionId: sessionQuery.sessionId,
-        owner: sessionQuery.owner,
-        subject: sessionQuery.subject,
-        subjectAlias: sessionQuery.subjectAlias,
-        notes: sessionQuery.notes,
-        tags: sessionQuery.tags,
-        activeJoints: sessionQuery.activeJoints,
-        sampleRate: sessionQuery.sampleRate,
-        totalChunks: sessionQuery.totalChunks,
-        startTime: sessionQuery.startTime,
-        endTime: sessionQuery.endTime,
-        totalSampleCount: sessionQuery.totalSampleCount,
-        durationMs: sessionQuery.endTime - sessionQuery.startTime,
-        createdAt: sessionQuery.createdAt,
-        isArchived: sessionQuery.isArchived,
+        sessionId: session.sessionId,
+        owner: null, // Would need separate query
+        subject: null,
+        subjectAlias: session.subjectAlias,
+        notes: session.notes,
+        tags: session.tags,
+        activeJoints: session.activeJoints,
+        sampleRate: session.sampleRate,
+        totalChunks: session.totalChunks,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        totalSampleCount: session.totalSamples,
+        durationMs: session.endTime - session.startTime,
+        createdAt: session._creationTime,
+        isArchived: session.isArchived,
       };
 
       setLoadedSession({
@@ -158,25 +183,17 @@ export function useRecordingSession(): UseRecordingSessionReturn {
         samples,
         angles,
       });
-      setIsLoadingSession(false);
       setLoadError(null);
     } catch (error) {
       setLoadError(
-        error instanceof Error ? error.message : 'Failed to decode session'
+        error instanceof Error ? error.message : 'Failed to load session'
       );
+    } finally {
       setIsLoadingSession(false);
     }
-  }, [sessionQuery, currentSessionId]);
-
-  const loadSession = useCallback(async (sessionId: string) => {
-    setCurrentSessionId(sessionId);
-    setIsLoadingSession(true);
-    setLoadError(null);
-    setLoadedSession(null);
-  }, []);
+  }, [convex]);
 
   const clearSession = useCallback(() => {
-    setCurrentSessionId(null);
     setLoadedSession(null);
     setLoadError(null);
   }, []);

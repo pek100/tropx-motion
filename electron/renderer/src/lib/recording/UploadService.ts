@@ -1,32 +1,26 @@
 /**
- * UploadService - Orchestrates recording upload to Convex.
+ * UploadService - Orchestrates recording upload to Convex with compression.
  *
  * Pipeline:
  * 1. Get samples from RecordingBuffer
  * 2. Resample to uniform rate (fill gaps)
- * 3. Pack into chunks
- * 4. Upload chunks to Convex
- * 5. Upload raw chunks (for debugging)
+ * 3. Compress and chunk
+ * 4. Create session with preview
+ * 5. Upload compressed chunks
  */
 
 import { ConvexClient } from 'convex/browser';
 import { api } from '../../../../../convex/_generated/api';
 import { Id } from '../../../../../convex/_generated/dataModel';
-import {
-  QuaternionSample,
-  UniformSample,
-  pack,
-  PackedChunkData,
-} from '../../../../../shared/QuaternionCodec';
+import { QuaternionSample } from '../../../../../shared/QuaternionCodec';
 import {
   resample,
   ResampleResult,
 } from '../../../../../motionProcessing/recording/GapFiller';
 import {
-  chunkSamples,
+  chunkAndCompress,
   generateSessionId,
-  PreparedChunk,
-  SAMPLES_PER_CHUNK,
+  getCompressionStats,
 } from '../../../../../motionProcessing/recording/Chunker';
 
 // ─────────────────────────────────────────────────────────────────
@@ -45,10 +39,11 @@ export interface UploadOptions {
 }
 
 export interface UploadProgress {
-  phase: 'processing' | 'uploading' | 'complete' | 'error';
+  phase: 'processing' | 'compressing' | 'uploading' | 'complete' | 'error';
   currentChunk: number;
   totalChunks: number;
   message: string;
+  compressionRatio?: number;
 }
 
 export type ProgressCallback = (progress: UploadProgress) => void;
@@ -60,6 +55,11 @@ export interface UploadResult {
   totalSamples?: number;
   error?: string;
   stats?: ResampleResult['stats'];
+  compressionStats?: {
+    rawSizeBytes: number;
+    compressedSizeBytes: number;
+    compressionRatio: number;
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ export class UploadService {
   }
 
   /**
-   * Upload a recording to Convex.
+   * Upload a recording to Convex with compression.
    * @param rawSamples Raw quaternion samples from RecordingBuffer
    * @param options Upload options (metadata)
    * @param onProgress Optional progress callback
@@ -120,82 +120,118 @@ export class UploadService {
         };
       }
 
-      // Chunk the samples
-      const { chunks, totalChunks, totalSamples } = chunkSamples(
-        uniformSamples,
-        sessionId
-      );
+      // Phase 2: Compress and chunk
+      onProgress?.({
+        phase: 'compressing',
+        currentChunk: 0,
+        totalChunks: 0,
+        message: 'Compressing data...',
+      });
 
-      if (chunks.length === 0) {
+      const compressed = chunkAndCompress(uniformSamples, sessionId);
+      const compressionStats = getCompressionStats(compressed);
+
+      if (compressed.chunks.length === 0) {
         return {
           success: false,
-          error: 'Chunking produced no chunks',
+          error: 'Compression produced no chunks',
         };
       }
 
-      // Phase 2: Upload processed chunks
+      onProgress?.({
+        phase: 'compressing',
+        currentChunk: 0,
+        totalChunks: compressed.session.totalChunks,
+        message: `Compressed ${compressionStats.compressionRatio.toFixed(1)}x`,
+        compressionRatio: compressionStats.compressionRatio,
+      });
+
+      // Phase 3: Create session first
       onProgress?.({
         phase: 'uploading',
         currentChunk: 0,
-        totalChunks,
-        message: `Uploading chunk 1 of ${totalChunks}...`,
+        totalChunks: compressed.session.totalChunks,
+        message: 'Creating session...',
       });
 
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
+      await this.convex.mutation(api.sessions.createSession, {
+        sessionId: compressed.session.sessionId,
+        sampleRate: compressed.session.sampleRate,
+        totalSamples: compressed.session.totalSamples,
+        totalChunks: compressed.session.totalChunks,
+        activeJoints: compressed.session.activeJoints,
+        startTime: compressed.session.startTime,
+        endTime: compressed.session.endTime,
+        leftKneePreview: compressed.session.leftKneePreview ?? undefined,
+        rightKneePreview: compressed.session.rightKneePreview ?? undefined,
+        notes: options.notes,
+        tags: options.tags,
+        subjectId: options.subjectId,
+        subjectAlias: options.subjectAlias,
+        activityProfile: options.activityProfile,
+      });
 
-        await this.convex.mutation(api.recordings.createChunk, {
-          sessionId: chunk.sessionId,
-          chunkIndex: chunk.chunkIndex,
-          totalChunks: chunk.totalChunks,
-          startTime: chunk.startTime,
-          endTime: chunk.endTime,
-          sampleRate: chunk.sampleRate,
-          sampleCount: chunk.sampleCount,
-          activeJoints: chunk.activeJoints,
-          leftKneeQ: chunk.leftKneeQ,
-          rightKneeQ: chunk.rightKneeQ,
-          leftKneeInterpolated: chunk.leftKneeInterpolated,
-          leftKneeMissing: chunk.leftKneeMissing,
-          rightKneeInterpolated: chunk.rightKneeInterpolated,
-          rightKneeMissing: chunk.rightKneeMissing,
-          // Metadata only on first chunk
-          ...(i === 0
-            ? {
-                subjectId: options.subjectId,
-                subjectAlias: options.subjectAlias,
-                notes: options.notes,
-                tags: options.tags,
-                activityProfile: options.activityProfile,
-              }
-            : {}),
-        });
+      // Phase 4: Upload compressed chunks
+      for (let i = 0; i < compressed.chunks.length; i++) {
+        const chunk = compressed.chunks[i];
 
         onProgress?.({
           phase: 'uploading',
           currentChunk: i + 1,
-          totalChunks,
-          message: `Uploaded chunk ${i + 1} of ${totalChunks}`,
+          totalChunks: compressed.session.totalChunks,
+          message: `Uploading chunk ${i + 1} of ${compressed.session.totalChunks}...`,
+          compressionRatio: compressionStats.compressionRatio,
+        });
+
+        // Convert Uint8Array to ArrayBuffer for Convex bytes type
+        let leftBytes: ArrayBuffer | undefined;
+        if (chunk.leftKneeCompressed) {
+          const copy = new Uint8Array(chunk.leftKneeCompressed.length);
+          copy.set(chunk.leftKneeCompressed);
+          leftBytes = copy.buffer;
+        }
+        let rightBytes: ArrayBuffer | undefined;
+        if (chunk.rightKneeCompressed) {
+          const copy = new Uint8Array(chunk.rightKneeCompressed.length);
+          copy.set(chunk.rightKneeCompressed);
+          rightBytes = copy.buffer;
+        }
+
+        await this.convex.mutation(api.recordingChunks.createChunk, {
+          sessionId: chunk.sessionId,
+          chunkIndex: chunk.chunkIndex,
+          startTime: chunk.startTime,
+          endTime: chunk.endTime,
+          sampleCount: chunk.sampleCount,
+          leftKneeCompressed: leftBytes,
+          rightKneeCompressed: rightBytes,
+          leftKneeInterpolated: chunk.leftKneeInterpolated,
+          leftKneeMissing: chunk.leftKneeMissing,
+          rightKneeInterpolated: chunk.rightKneeInterpolated,
+          rightKneeMissing: chunk.rightKneeMissing,
         });
       }
-
-      // Phase 3: Upload raw chunks (for debugging)
-      await this.uploadRawChunks(rawSamples, sessionId);
 
       // Complete
       onProgress?.({
         phase: 'complete',
-        currentChunk: totalChunks,
-        totalChunks,
+        currentChunk: compressed.session.totalChunks,
+        totalChunks: compressed.session.totalChunks,
         message: 'Upload complete',
+        compressionRatio: compressionStats.compressionRatio,
       });
 
       return {
         success: true,
         sessionId,
-        totalChunks,
-        totalSamples,
+        totalChunks: compressed.session.totalChunks,
+        totalSamples: compressed.session.totalSamples,
         stats: resampleResult.stats,
+        compressionStats: {
+          rawSizeBytes: compressionStats.rawSizeBytes,
+          compressedSizeBytes: compressionStats.compressedSizeBytes,
+          compressionRatio: compressionStats.compressionRatio,
+        },
       };
     } catch (error) {
       const errorMessage =
@@ -213,36 +249,6 @@ export class UploadService {
         sessionId,
         error: errorMessage,
       };
-    }
-  }
-
-  /**
-   * Upload raw samples for debugging (2-week TTL).
-   */
-  private async uploadRawChunks(
-    rawSamples: QuaternionSample[],
-    sessionId: string
-  ): Promise<void> {
-    const totalChunks = Math.ceil(rawSamples.length / SAMPLES_PER_CHUNK);
-
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * SAMPLES_PER_CHUNK;
-      const end = Math.min(start + SAMPLES_PER_CHUNK, rawSamples.length);
-      const chunkSamples = rawSamples.slice(start, end);
-
-      // Convert to raw format
-      const samples = chunkSamples.map((s) => ({
-        t: s.t,
-        lq: s.lq ?? undefined,
-        rq: s.rq ?? undefined,
-      }));
-
-      await this.convex.mutation(api.rawRecordings.createChunk, {
-        sessionId,
-        chunkIndex: i,
-        totalChunks,
-        samples,
-      });
     }
   }
 }

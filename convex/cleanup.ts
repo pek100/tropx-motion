@@ -4,13 +4,14 @@ import { internalMutation } from "./_generated/server";
 const ARCHIVE_RETENTION_DAYS = 30;
 const ARCHIVE_RETENTION_MS = ARCHIVE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
-// Cleanup archived users and recordings after retention period
+// Cleanup archived users and sessions after retention period
 export const cleanupArchivedData = internalMutation({
   args: {},
   handler: async (ctx) => {
     const cutoffTime = Date.now() - ARCHIVE_RETENTION_MS;
     let deletedUsers = 0;
-    let deletedRecordings = 0;
+    let deletedSessions = 0;
+    let deletedChunks = 0;
 
     // Find archived users past retention
     const archivedUsers = await ctx.db
@@ -20,15 +21,36 @@ export const cleanupArchivedData = internalMutation({
 
     for (const user of archivedUsers) {
       if (user.archivedAt && user.archivedAt < cutoffTime) {
-        // Delete all recordings owned by this user
-        const userRecordings = await ctx.db
-          .query("recordings")
+        // Delete all sessions owned by this user
+        const userSessions = await ctx.db
+          .query("sessions")
           .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
           .collect();
 
-        for (const recording of userRecordings) {
-          await ctx.db.delete(recording._id);
-          deletedRecordings++;
+        for (const session of userSessions) {
+          // Delete associated recording chunks
+          const chunks = await ctx.db
+            .query("recordingChunks")
+            .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
+            .collect();
+
+          for (const chunk of chunks) {
+            await ctx.db.delete(chunk._id);
+            deletedChunks++;
+          }
+
+          // Delete recording metrics
+          const metrics = await ctx.db
+            .query("recordingMetrics")
+            .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
+            .first();
+
+          if (metrics) {
+            await ctx.db.delete(metrics._id);
+          }
+
+          await ctx.db.delete(session._id);
+          deletedSessions++;
         }
 
         // Delete all invites from this user
@@ -45,11 +67,11 @@ export const cleanupArchivedData = internalMutation({
         const allUsers = await ctx.db.query("users").collect();
         for (const otherUser of allUsers) {
           if (otherUser._id === user._id) continue;
-          const hasContact = otherUser.contacts.some(
+          const hasContact = (otherUser.contacts ?? []).some(
             (c) => c.userId === user._id
           );
           if (hasContact) {
-            const updatedContacts = otherUser.contacts.filter(
+            const updatedContacts = (otherUser.contacts ?? []).filter(
               (c) => c.userId !== user._id
             );
             await ctx.db.patch(otherUser._id, { contacts: updatedContacts });
@@ -62,26 +84,48 @@ export const cleanupArchivedData = internalMutation({
       }
     }
 
-    // Find archived recordings past retention (not already deleted with user)
-    const archivedRecordings = await ctx.db
-      .query("recordings")
+    // Find archived sessions past retention (not already deleted with user)
+    const archivedSessions = await ctx.db
+      .query("sessions")
       .withIndex("by_archived", (q) => q.eq("isArchived", true))
       .collect();
 
-    for (const recording of archivedRecordings) {
-      if (recording.archivedAt && recording.archivedAt < cutoffTime) {
-        await ctx.db.delete(recording._id);
-        deletedRecordings++;
+    for (const session of archivedSessions) {
+      if (session.archivedAt && session.archivedAt < cutoffTime) {
+        // Delete associated recording chunks
+        const chunks = await ctx.db
+          .query("recordingChunks")
+          .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
+          .collect();
+
+        for (const chunk of chunks) {
+          await ctx.db.delete(chunk._id);
+          deletedChunks++;
+        }
+
+        // Delete recording metrics
+        const metrics = await ctx.db
+          .query("recordingMetrics")
+          .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
+          .first();
+
+        if (metrics) {
+          await ctx.db.delete(metrics._id);
+        }
+
+        await ctx.db.delete(session._id);
+        deletedSessions++;
       }
     }
 
     console.log(
-      `Cleanup completed: ${deletedUsers} users, ${deletedRecordings} recordings deleted`
+      `Cleanup completed: ${deletedUsers} users, ${deletedSessions} sessions, ${deletedChunks} chunks deleted`
     );
 
     return {
       deletedUsers,
-      deletedRecordings,
+      deletedSessions,
+      deletedChunks,
       cutoffDate: new Date(cutoffTime).toISOString(),
     };
   },

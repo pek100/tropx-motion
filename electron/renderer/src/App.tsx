@@ -24,6 +24,7 @@ import { UIProfileProvider, useUIProfile } from "@/lib/ui-profiles"
 import { useConvex } from "convex/react"
 import { api } from "../../../convex/_generated/api"
 import { mergeChunks, unpackToAngles, type PackedChunkData } from "../../../shared/QuaternionCodec"
+import { decompressAllChunks, type CompressedChunk, type SessionMetadata } from "../../../shared/compression/decompressSession"
 import type { ImportedSample } from "@/lib/recording"
 
 // Pending Operations - Optimistic UI State
@@ -627,10 +628,48 @@ function AppContent() {
     setIsLoadingSession(true)
 
     try {
-      // Fetch session data from Convex
-      const session = await convex.query(api.recordings.getSession, { sessionId })
+      let packedChunks: PackedChunkData[] = []
+      let totalSampleCount = 0
 
-      if (!session || !session.chunks || session.chunks.length === 0) {
+      // First, try new compressed format (sessions + recordingChunks tables)
+      const compressedResult = await convex.query(api.recordingChunks.getSessionWithChunks, { sessionId })
+
+      if (compressedResult && compressedResult.chunks.length > 0) {
+        // New compressed format found - decompress
+        const session = compressedResult.session
+        const chunks = compressedResult.chunks as CompressedChunk[]
+
+        const sessionMeta: SessionMetadata = {
+          sessionId: session.sessionId,
+          sampleRate: session.sampleRate,
+          totalSamples: session.totalSamples,
+          totalChunks: session.totalChunks,
+          activeJoints: session.activeJoints,
+          startTime: session.startTime,
+          endTime: session.endTime,
+        }
+
+        // Decompress all chunks
+        const decompressedChunks = decompressAllChunks(chunks, sessionMeta)
+
+        // Convert to PackedChunkData format
+        packedChunks = decompressedChunks.map(chunk => ({
+          startTime: chunk.startTime,
+          endTime: chunk.endTime,
+          sampleRate: chunk.sampleRate,
+          sampleCount: chunk.sampleCount,
+          activeJoints: chunk.activeJoints,
+          leftKneeQ: chunk.leftKneeQ,
+          rightKneeQ: chunk.rightKneeQ,
+          leftKneeInterpolated: chunk.leftKneeInterpolated,
+          leftKneeMissing: chunk.leftKneeMissing,
+          rightKneeInterpolated: chunk.rightKneeInterpolated,
+          rightKneeMissing: chunk.rightKneeMissing,
+        }))
+
+        totalSampleCount = session.totalSamples
+      } else {
+        // Session not found or no chunks
         toast({
           title: "Load Failed",
           description: "Recording not found or empty",
@@ -640,21 +679,6 @@ function AppContent() {
         setIsLoadingSession(false)
         return
       }
-
-      // Extract packed chunk data from session chunks
-      const packedChunks: PackedChunkData[] = session.chunks.map(chunk => ({
-        startTime: chunk.startTime,
-        endTime: chunk.endTime,
-        sampleRate: chunk.sampleRate,
-        sampleCount: chunk.sampleCount,
-        activeJoints: chunk.activeJoints,
-        leftKneeQ: chunk.leftKneeQ,
-        rightKneeQ: chunk.rightKneeQ,
-        leftKneeInterpolated: chunk.leftKneeInterpolated,
-        leftKneeMissing: chunk.leftKneeMissing,
-        rightKneeInterpolated: chunk.rightKneeInterpolated,
-        rightKneeMissing: chunk.rightKneeMissing,
-      }))
 
       // Merge all chunks and convert to angles (Y-axis by default)
       const mergedData = mergeChunks(packedChunks)
@@ -680,7 +704,7 @@ function AppContent() {
 
       toast({
         title: "Recording Loaded",
-        description: `${session.totalSampleCount} samples loaded from cloud`,
+        description: `${totalSampleCount} samples loaded from cloud`,
         duration: 4000,
       })
     } catch (error) {

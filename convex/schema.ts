@@ -18,10 +18,15 @@ export const JOINTS = {
 } as const;
 
 export const RECORDING_CONSTANTS = {
-  // Convex has 8192 element limit per array. With 4 floats per quaternion: 8192/4 = 2048 max.
-  SAMPLES_PER_CHUNK: 2000,
+  // With compression (~23x), we can fit much more data per chunk.
+  // 5000 samples × 8 floats × 8 bytes = 320KB raw → ~14KB compressed
+  SAMPLES_PER_CHUNK: 5000,
+  PREVIEW_POINTS: 100, // Downsampled preview quaternions per leg
   DEFAULT_SAMPLE_RATE: 100,
-  RAW_RECORDING_TTL_MS: 14 * 24 * 60 * 60 * 1000, // 14 days
+} as const;
+
+export const COMPRESSION = {
+  VERSION: "quant-delta-gzip-v1",
 } as const;
 
 export const INVITE_STATUS = {
@@ -444,12 +449,10 @@ export default defineSchema({
     .index("by_role", ["role"])
     .index("by_archived", ["isArchived"]),
 
-  // ─── Recordings ───
-  recordings: defineTable({
+  // ─── Sessions (New - Session Metadata + Preview) ───
+  sessions: defineTable({
     // Session Identity
     sessionId: v.string(),
-    chunkIndex: v.number(),
-    totalChunks: v.number(),
 
     // Ownership & Access
     ownerId: v.id("users"),
@@ -457,25 +460,24 @@ export default defineSchema({
     subjectAlias: v.optional(v.string()),
     sharedWith: v.optional(v.array(v.id("users"))),
 
-    // Sample Data
+    // Recording Metadata
     sampleRate: v.number(),
-    sampleCount: v.number(),
+    totalSamples: v.number(),
+    totalChunks: v.number(),
     activeJoints: v.array(v.string()),
-
-    // Quaternions (flat arrays: [w,x,y,z, w,x,y,z, ...])
-    leftKneeQ: v.array(v.float64()),
-    rightKneeQ: v.array(v.float64()),
-
-    // Sparse flag indices (only non-real samples listed)
-    leftKneeInterpolated: v.array(v.number()),
-    leftKneeMissing: v.array(v.number()),
-    rightKneeInterpolated: v.array(v.number()),
-    rightKneeMissing: v.array(v.number()),
 
     // Timing
     startTime: v.number(),
     endTime: v.number(),
     recordedAt: v.optional(v.number()), // Original capture time (for imports)
+
+    // Preview Quaternions (downsampled for instant chart display)
+    // 100 quaternions × 4 floats = 400 floats per leg
+    leftKneePreview: v.optional(v.array(v.float64())),
+    rightKneePreview: v.optional(v.array(v.float64())),
+
+    // Compression info
+    compressionVersion: v.string(),
 
     // User Metadata
     notes: v.optional(v.string()),
@@ -486,6 +488,9 @@ export default defineSchema({
     // System Metadata
     systemTags: v.optional(v.array(v.string())),
 
+    // Metrics status (denormalized for fast list queries)
+    metricsStatus: v.optional(metricStatusValidator),
+
     // Audit Trail
     modifiedAt: v.optional(v.number()),
     modificationHistory: v.optional(v.array(modificationHistoryEntryValidator)),
@@ -493,14 +498,40 @@ export default defineSchema({
     // Soft Delete
     ...softDeleteFields,
   })
+    .index("by_sessionId", ["sessionId"])
     .index("by_owner", ["ownerId"])
-    .index("by_session", ["sessionId", "chunkIndex"])
     .index("by_subject", ["subjectId"])
     .index("by_archived", ["isArchived"])
-    .searchIndex("search_recordings", {
+    .searchIndex("search_sessions", {
       searchField: "notes",
       filterFields: ["ownerId", "subjectId", "isArchived"],
     }),
+
+  // ─── Recording Chunks (New - Compressed Quaternion Data) ───
+  recordingChunks: defineTable({
+    // Session link
+    sessionId: v.string(),
+    chunkIndex: v.number(),
+
+    // Chunk timing
+    startTime: v.number(),
+    endTime: v.number(),
+    sampleCount: v.number(),
+
+    // Compressed quaternion data (quant-delta-gzip-v1)
+    leftKneeCompressed: v.optional(v.bytes()),
+    rightKneeCompressed: v.optional(v.bytes()),
+
+    // Sparse flags (still small, keep uncompressed)
+    leftKneeInterpolated: v.array(v.number()),
+    leftKneeMissing: v.array(v.number()),
+    rightKneeInterpolated: v.array(v.number()),
+    rightKneeMissing: v.array(v.number()),
+
+    // Compression version for this chunk
+    compressionVersion: v.string(),
+  })
+    .index("by_session", ["sessionId", "chunkIndex"]),
 
   // ─── Recording Metrics ───
   recordingMetrics: defineTable({
@@ -554,39 +585,6 @@ export default defineSchema({
   })
     .index("by_session", ["sessionId"])
     .index("by_status", ["status"]),
-
-  // ─── Raw Recordings (TTL debug data) ───
-  rawRecordings: defineTable({
-    sessionId: v.string(),
-    chunkIndex: v.number(),
-    totalChunks: v.number(),
-
-    samples: v.array(
-      v.object({
-        t: v.number(),
-        lq: v.optional(
-          v.object({
-            w: v.float64(),
-            x: v.float64(),
-            y: v.float64(),
-            z: v.float64(),
-          })
-        ),
-        rq: v.optional(
-          v.object({
-            w: v.float64(),
-            x: v.float64(),
-            y: v.float64(),
-            z: v.float64(),
-          })
-        ),
-      })
-    ),
-
-    expiresAt: v.number(),
-  })
-    .index("by_session", ["sessionId", "chunkIndex"])
-    .index("by_expires", ["expiresAt"]),
 
   // ─── Invites ───
   invites: defineTable({

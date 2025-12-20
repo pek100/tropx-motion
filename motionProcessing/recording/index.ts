@@ -34,11 +34,17 @@ export {
 
 export {
     chunkSamples,
+    chunkAndCompress,
     generateSessionId,
-    estimateChunkSize,
+    estimateCompressedSize,
     calculateChunkCount,
+    getCompressionStats,
     SAMPLES_PER_CHUNK,
+    PREVIEW_POINTS,
     type ChunkMetadata,
     type PreparedChunk,
-    type ChunkingResult
+    type ChunkingResult,
+    type CompressedChunk,
+    type SessionData,
+    type CompressedChunkingResult
 } from './Chunker';

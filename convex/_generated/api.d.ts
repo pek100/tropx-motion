@@ -27,11 +27,11 @@ import type * as lib_metrics_opi from "../lib/metrics/opi.js";
 import type * as lib_metrics_quaternionUtils from "../lib/metrics/quaternionUtils.js";
 import type * as lib_metrics_smoothness from "../lib/metrics/smoothness.js";
 import type * as lib_metrics_types from "../lib/metrics/types.js";
-import type * as migrations_cleanupCreatedAt from "../migrations/cleanupCreatedAt.js";
 import type * as notifications from "../notifications.js";
-import type * as rawRecordings from "../rawRecordings.js";
+import type * as recordingChunks from "../recordingChunks.js";
 import type * as recordingMetrics from "../recordingMetrics.js";
 import type * as recordings from "../recordings.js";
+import type * as sessions from "../sessions.js";
 import type * as tags from "../tags.js";
 import type * as users from "../users.js";
 
@@ -61,11 +61,11 @@ declare const fullApi: ApiFromModules<{
   "lib/metrics/quaternionUtils": typeof lib_metrics_quaternionUtils;
   "lib/metrics/smoothness": typeof lib_metrics_smoothness;
   "lib/metrics/types": typeof lib_metrics_types;
-  "migrations/cleanupCreatedAt": typeof migrations_cleanupCreatedAt;
   notifications: typeof notifications;
-  rawRecordings: typeof rawRecordings;
+  recordingChunks: typeof recordingChunks;
   recordingMetrics: typeof recordingMetrics;
   recordings: typeof recordings;
+  sessions: typeof sessions;
   tags: typeof tags;
   users: typeof users;
 }>;
