@@ -69,7 +69,7 @@ export function SessionsCarousel({
   return (
     <div className={cn("flex flex-col h-full", className)}>
       {/* Header */}
-      <div className="flex items-center justify-between px-1 mb-3">
+      <div className="flex items-center justify-between px-1 mb-1.5 sm:mb-3">
         <div className="flex items-center gap-2">
           <span className="size-1.5 rounded-full bg-[var(--tropx-vibrant)]" />
           <h3 className="text-sm font-semibold text-[var(--tropx-text-main)]">
@@ -116,11 +116,11 @@ export function SessionsCarousel({
         setApi={handleApiReady}
         className="w-full overflow-visible"
       >
-        <CarouselContent className="-ml-4 px-1 py-2">
+        <CarouselContent className="-ml-2 sm:-ml-4 px-1 py-2">
           {orderedSessions.map((session, index) => (
             <CarouselItem
               key={session.sessionId}
-              className="pl-4 basis-full sm:basis-1/2 lg:basis-1/3"
+              className="pl-2 sm:pl-4 basis-1/3 sm:basis-1/2 lg:basis-1/3"
             >
               <SessionCard
                 session={session}

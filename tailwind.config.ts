@@ -7,6 +7,10 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      spacing: {
+        'page': '1rem',      // Mobile page margin (16px)
+        'page-sm': '2rem',   // Desktop page margin (32px) - use with sm:px-page-sm
+      },
       colors: {
         // Standard shadcn/ui colors with HSL format for Tailwind v3 opacity modifiers
         background: 'hsl(var(--background))',

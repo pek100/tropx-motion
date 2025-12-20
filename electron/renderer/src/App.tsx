@@ -185,6 +185,15 @@ function AppContent() {
 
   // Navigation tab state - use profile's default page
   const [activeNavTab, setActiveNavTab] = useState<NavTabId>(profile.layout.defaultPage)
+  const hasInitializedNavTab = useRef(false)
+
+  // Sync activeNavTab with profile's defaultPage on initial profile detection
+  useEffect(() => {
+    if (!hasInitializedNavTab.current) {
+      setActiveNavTab(profile.layout.defaultPage)
+      hasInitializedNavTab.current = true
+    }
+  }, [profile.layout.defaultPage])
 
   // Selected patient state
   const [selectedPatient, setSelectedPatient] = useState<{
@@ -1086,7 +1095,7 @@ function AppContent() {
             />
           )}
 
-          <div className={isCompact ? "flex-1 flex relative" : "flex-1 flex items-center justify-center px-4 sm:px-8 relative"}>
+          <div className={isCompact ? "flex-1 flex relative" : "flex-1 flex items-center justify-center px-page sm:px-page-sm relative"}>
             {/* Dashboard View */}
             {activeNavTab === 'dashboard' && !isCompact && (
               <div className="w-full max-w-6xl mx-auto h-full py-6">

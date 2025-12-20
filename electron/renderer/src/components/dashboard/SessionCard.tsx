@@ -90,7 +90,7 @@ export function SessionCard({
     <button
       onClick={onClick}
       className={cn(
-        "relative w-full p-4 rounded-xl border-2 bg-[var(--tropx-card)] text-left",
+        "relative w-full p-2 sm:p-4 rounded-lg sm:rounded-xl border-2 bg-[var(--tropx-card)] text-left",
         "transition-all duration-200",
         "group overflow-hidden",
         isActive
@@ -99,62 +99,60 @@ export function SessionCard({
         className
       )}
     >
-      {/* Background accent */}
+      {/* Background accent - hidden on mobile */}
       <div
         className={cn(
-          "absolute -right-4 -top-4 size-20 rounded-full",
+          "absolute -right-4 -top-4 size-16 sm:size-20 rounded-full",
           "bg-[var(--tropx-vibrant)]/5",
-          "group-hover:scale-110 transition-transform duration-500"
+          "group-hover:scale-110 transition-transform duration-500",
+          "hidden sm:block"
         )}
       />
 
       {/* Content */}
-      <div className="relative flex flex-col h-full justify-between">
-        {/* Header */}
+      <div className="relative flex flex-col h-full justify-between gap-1 sm:gap-0">
+        {/* Header - compact on mobile */}
         <div className="flex justify-between items-start">
           {isLatest ? (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[var(--tropx-vibrant)] text-white">
-              LATEST
+            <span className="inline-flex items-center px-1 sm:px-1.5 py-0.5 rounded text-[8px] sm:text-[10px] font-bold bg-[var(--tropx-vibrant)] text-white">
+              NEW
             </span>
           ) : (
-            <span className="text-[10px] font-semibold text-[var(--tropx-text-sub)] uppercase">
+            <span className="text-[8px] sm:text-[10px] font-semibold text-[var(--tropx-text-sub)] uppercase truncate">
               {getDateLabel(session.recordedAt)}
             </span>
           )}
-          <span className="text-[10px] text-[var(--tropx-text-sub)]">
+          <span className="text-[8px] sm:text-[10px] text-[var(--tropx-text-sub)] hidden sm:inline">
             {formatTime(session.recordedAt)}
           </span>
         </div>
 
-        {/* Exercise info */}
-        <div className="mt-2 flex items-center gap-1.5">
-          <Icon className="size-4 text-[var(--tropx-vibrant)]" />
-          <h4 className="font-bold text-[var(--tropx-text-main)] leading-tight truncate">
+        {/* Exercise info - compact on mobile */}
+        <div className="sm:mt-2 flex items-center gap-1 sm:gap-1.5">
+          <Icon className="size-3 sm:size-4 text-[var(--tropx-vibrant)] flex-shrink-0" />
+          <h4 className="font-bold text-[10px] sm:text-sm text-[var(--tropx-text-main)] leading-tight truncate">
             {title}
           </h4>
         </div>
-        <p className="text-[10px] text-[var(--tropx-text-sub)]">{config.label}</p>
+        <p className="text-[8px] sm:text-[10px] text-[var(--tropx-text-sub)] hidden sm:block">{config.label}</p>
 
-        {/* OPI + Grade */}
-        <div className="mt-3 pt-3 border-t border-dashed border-[var(--tropx-border)] flex items-center justify-between">
-          <div className="flex flex-col">
-            <span className="text-[10px] text-[var(--tropx-text-sub)] uppercase">
+        {/* OPI + Grade - inline on mobile, stacked on desktop */}
+        <div className="sm:mt-3 sm:pt-3 sm:border-t sm:border-dashed sm:border-[var(--tropx-border)] flex items-center justify-between">
+          <div className="flex items-center sm:flex-col gap-1 sm:gap-0">
+            <span className="text-[8px] sm:text-[10px] text-[var(--tropx-text-sub)] uppercase hidden sm:inline">
               OPI
             </span>
             <span
               className={cn(
-                "text-xl font-bold",
+                "text-sm sm:text-xl font-bold",
                 isLatest ? "text-[var(--tropx-vibrant)]" : "text-[var(--tropx-text-main)]"
               )}
             >
               {Math.round(session.opiScore)}
             </span>
           </div>
-          <div className="flex flex-col items-end">
-            <span className="text-[10px] text-[var(--tropx-text-sub)] uppercase">
-              Grade
-            </span>
-            <span className={cn("text-lg font-bold", gradeColor)}>
+          <div className="flex items-center sm:flex-col sm:items-end gap-0.5 sm:gap-0">
+            <span className={cn("text-sm sm:text-lg font-bold", gradeColor)}>
               {session.opiGrade}
             </span>
           </div>
