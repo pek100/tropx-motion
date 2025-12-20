@@ -154,7 +154,7 @@ export class UploadService {
         message: 'Creating session...',
       });
 
-      await this.convex.mutation(api.sessions.createSession, {
+      await this.convex.mutation(api.recordingSessions.createSession, {
         sessionId: compressed.session.sessionId,
         sampleRate: compressed.session.sampleRate,
         totalSamples: compressed.session.totalSamples,

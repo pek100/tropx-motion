@@ -4,6 +4,7 @@
 
 import type { ProfileMatcher, DetectionContext, ProfileId, MatcherCondition } from './types';
 import { DEFAULT_PROFILE_ID } from './profiles';
+import { isWeb } from '@/lib/platform';
 
 // Matchers ordered by priority (highest first)
 export const PROFILE_MATCHERS: ProfileMatcher[] = [
@@ -13,9 +14,9 @@ export const PROFILE_MATCHERS: ProfileMatcher[] = [
     priority: 100,
   },
   {
-    profile: 'compact',
-    conditions: { maxWidth: 480 },
-    priority: 50,
+    profile: 'web',
+    conditions: { isWeb: true },
+    priority: 90,
   },
   {
     profile: 'tablet',
@@ -55,6 +56,10 @@ export function evaluateMatcher(matcher: ProfileMatcher, context: DetectionConte
   }
 
   if (conditions.isRaspberryPi !== undefined && conditions.isRaspberryPi !== context.isRaspberryPi) {
+    return false;
+  }
+
+  if (conditions.isWeb !== undefined && conditions.isWeb !== context.isWeb) {
     return false;
   }
 
@@ -99,6 +104,7 @@ export async function buildDetectionContext(): Promise<DetectionContext> {
   return {
     platform: platformInfo.platform,
     isRaspberryPi: platformInfo.isRaspberryPi,
+    isWeb: isWeb(),
     windowWidth: dimensions.width,
     windowHeight: dimensions.height,
   };

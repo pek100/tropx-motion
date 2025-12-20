@@ -73,7 +73,7 @@ export const getStats = query({
 
     // Count sessions
     const allSessions = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();
 
@@ -90,7 +90,7 @@ export const getStats = query({
       .collect();
 
     const archivedSessions = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_archived", (q) => q.eq("isArchived", true))
       .collect();
 
@@ -227,7 +227,7 @@ export const permanentlyDeleteUser = mutation({
 
     // Delete all sessions owned by this user
     const userSessions = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_owner", (q) => q.eq("ownerId", args.userId))
       .collect();
 

@@ -25,7 +25,7 @@ export const getPatientMetricsHistory = query({
 
     // Get all sessions for this subject
     const sessions = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_subject", (q) => q.eq("subjectId", args.subjectId))
       .filter((q) => q.neq(q.field("isArchived"), true))
       .order("desc")
@@ -34,7 +34,7 @@ export const getPatientMetricsHistory = query({
     // Also get sessions where user recorded themselves (subjectId might be undefined)
     const selfSessions = args.subjectId === user._id
       ? await ctx.db
-          .query("sessions")
+          .query("recordingSessions")
           .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
           .filter((q) =>
             q.and(
@@ -147,7 +147,7 @@ export const getPatientsList = query({
 
     // Get distinct subjects from sessions owned by user
     const sessions = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
       .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();

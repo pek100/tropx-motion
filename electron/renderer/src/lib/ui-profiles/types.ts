@@ -3,7 +3,7 @@
  */
 
 // Available profile identifiers
-export type ProfileId = 'desktop' | 'compact' | 'kiosk' | 'tablet';
+export type ProfileId = 'desktop' | 'compact' | 'kiosk' | 'tablet' | 'web';
 
 // Complete UI profile specification
 export interface UIProfile {
@@ -15,6 +15,8 @@ export interface UIProfile {
     showHeader: boolean;
     showBorders: boolean;
     fullscreen: boolean;
+    showConnectivity: boolean;
+    defaultPage: 'record' | 'dashboard';
   };
 
   spacing: {
@@ -48,6 +50,7 @@ export interface UIProfile {
 export interface MatcherCondition {
   platform?: 'linux' | 'darwin' | 'win32';
   isRaspberryPi?: boolean;
+  isWeb?: boolean;
   maxWidth?: number;
   minWidth?: number;
   maxHeight?: number;
@@ -65,6 +68,7 @@ export interface ProfileMatcher {
 export interface DetectionContext {
   platform: string;
   isRaspberryPi: boolean;
+  isWeb: boolean;
   windowWidth: number;
   windowHeight: number;
 }

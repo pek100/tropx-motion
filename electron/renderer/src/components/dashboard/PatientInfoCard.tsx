@@ -4,7 +4,7 @@
 
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, StickyNote } from "lucide-react";
 
 interface PatientInfoCardProps {
   name: string;
@@ -12,6 +12,7 @@ interface PatientInfoCardProps {
   sessionCount: number;
   isMe?: boolean;
   onClick?: () => void;
+  onAddNote?: () => void;
   className?: string;
 }
 
@@ -31,6 +32,7 @@ export function PatientInfoCard({
   sessionCount,
   isMe,
   onClick,
+  onAddNote,
   className,
 }: PatientInfoCardProps) {
   const isClickable = !!onClick;
@@ -78,6 +80,25 @@ export function PatientInfoCard({
           {sessionCount} session{sessionCount !== 1 ? "s" : ""}
         </p>
       </div>
+
+      {/* Add Note button - only show if handler provided */}
+      {onAddNote && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onAddNote();
+          }}
+          className={cn(
+            "size-8 flex items-center justify-center rounded-lg shrink-0",
+            "bg-[var(--tropx-muted)] text-[var(--tropx-shadow)]",
+            "hover:bg-[var(--tropx-vibrant)]/10 hover:text-[var(--tropx-vibrant)]",
+            "transition-colors"
+          )}
+        >
+          <StickyNote className="size-4" />
+        </button>
+      )}
 
       {/* Chevron - only show if clickable */}
       {isClickable && (

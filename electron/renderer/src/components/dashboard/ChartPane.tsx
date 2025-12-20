@@ -119,26 +119,26 @@ export function ChartPane({
         className="flex flex-col h-full"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--tropx-border)]">
-          <div>
-            <h3 className="font-bold text-lg text-[var(--tropx-text-main)]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-3 sm:py-4 border-b border-[var(--tropx-border)]">
+          <div className="min-w-0">
+            <h3 className="font-bold text-base sm:text-lg text-[var(--tropx-text-main)] truncate">
               {activeTab === "progress" ? "Progress Over Time" : sessionTitle}
             </h3>
-            <p className="text-sm text-[var(--tropx-text-sub)]">
+            <p className="hidden sm:block text-sm text-[var(--tropx-text-sub)]">
               {activeTab === "progress"
                 ? "Historical performance of OPI scores"
                 : "Knee angle waveforms for selected session"}
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
             {/* Time filter (only for Progress tab) */}
             {activeTab === "progress" && (
               <Select
                 value={timeFilter}
                 onValueChange={(v) => setTimeFilter(v as TimeFilter)}
               >
-                <SelectTrigger className="w-[160px] h-9 text-sm">
+                <SelectTrigger className="w-[130px] sm:w-[160px] h-8 sm:h-9 text-xs sm:text-sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -152,28 +152,28 @@ export function ChartPane({
             )}
 
             {/* Tabs */}
-            <TabsList className="h-9 bg-[var(--tropx-muted)]">
+            <TabsList className="h-8 sm:h-9 bg-[var(--tropx-muted)]">
               <TabsTrigger
                 value="progress"
                 className={cn(
-                  "gap-1.5 text-xs transition-all",
+                  "gap-1 sm:gap-1.5 text-xs px-2 sm:px-3 transition-all",
                   activeTab === "progress" &&
                     "bg-[var(--tropx-vibrant)] text-white data-[state=active]:bg-[var(--tropx-vibrant)] data-[state=active]:text-white"
                 )}
               >
-                <TrendingUp className="size-3.5" />
-                Progress
+                <TrendingUp className="size-3 sm:size-3.5" />
+                <span className="hidden xs:inline">Progress</span>
               </TabsTrigger>
               <TabsTrigger
                 value="session"
                 className={cn(
-                  "gap-1.5 text-xs transition-all",
+                  "gap-1 sm:gap-1.5 text-xs px-2 sm:px-3 transition-all",
                   activeTab === "session" &&
                     "bg-[var(--tropx-vibrant)] text-white data-[state=active]:bg-[var(--tropx-vibrant)] data-[state=active]:text-white"
                 )}
               >
-                <Activity className="size-3.5" />
-                Session
+                <Activity className="size-3 sm:size-3.5" />
+                <span className="hidden xs:inline">Session</span>
               </TabsTrigger>
             </TabsList>
           </div>

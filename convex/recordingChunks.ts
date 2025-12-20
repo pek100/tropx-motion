@@ -40,7 +40,7 @@ export const createChunk = mutation({
 
     // Verify session exists and is owned by user
     const session = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
@@ -184,7 +184,7 @@ export const getSessionWithChunks = query({
   args: { sessionId: v.string() },
   handler: async (ctx, args) => {
     const session = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 

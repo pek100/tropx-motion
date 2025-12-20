@@ -59,7 +59,7 @@ export async function canAccessSession(
   userId: Id<"users">
 ): Promise<boolean> {
   const session = await ctx.db
-    .query("sessions")
+    .query("recordingSessions")
     .withIndex("by_sessionId", (q) => q.eq("sessionId", sessionId))
     .first();
 

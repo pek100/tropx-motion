@@ -14,6 +14,8 @@ export const DESKTOP: UIProfile = {
     showHeader: true,
     showBorders: true,
     fullscreen: false,
+    showConnectivity: true,
+    defaultPage: 'record',
   },
 
   spacing: {
@@ -52,6 +54,8 @@ export const COMPACT: UIProfile = {
     showHeader: false,
     showBorders: false,
     fullscreen: false,
+    showConnectivity: true,
+    defaultPage: 'record',
   },
 
   spacing: {
@@ -90,6 +94,8 @@ export const KIOSK: UIProfile = {
     showHeader: false,
     showBorders: false,
     fullscreen: true,
+    showConnectivity: true,
+    defaultPage: 'record',
   },
 
   spacing: {
@@ -128,6 +134,8 @@ export const TABLET: UIProfile = {
     showHeader: true,
     showBorders: true,
     fullscreen: false,
+    showConnectivity: true,
+    defaultPage: 'record',
   },
 
   spacing: {
@@ -157,12 +165,53 @@ export const TABLET: UIProfile = {
   },
 };
 
+export const WEB: UIProfile = {
+  id: 'web',
+  label: 'Web',
+
+  layout: {
+    mode: 'centered',
+    showHeader: true,
+    showBorders: true,
+    fullscreen: false,
+    showConnectivity: false,
+    defaultPage: 'dashboard',
+  },
+
+  spacing: {
+    buttonPx: 'px-4',
+    buttonPy: 'py-2',
+    gap: 'gap-3',
+    gapSm: 'gap-2',
+    cardPadding: 'p-6',
+    sectionMargin: 'mb-4',
+  },
+
+  sizing: {
+    iconSize: 16,
+    iconSizeLg: 20,
+    touchTarget: 'w-10 h-10',
+    touchTargetSm: 'w-8 h-8',
+    fontSize: 'text-sm',
+    fontSizeLg: 'text-base',
+  },
+
+  features: {
+    textLabels: true,
+    dynamicIsland: false,
+    clientLauncher: false,
+    animations: true,
+    tooltips: true,
+  },
+};
+
 // All profiles indexed by ID
 export const PROFILES: Record<ProfileId, UIProfile> = {
   desktop: DESKTOP,
   compact: COMPACT,
   kiosk: KIOSK,
   tablet: TABLET,
+  web: WEB,
 };
 
 // Default profile when no matcher hits and no override set

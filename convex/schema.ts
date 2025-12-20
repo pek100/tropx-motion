@@ -449,8 +449,8 @@ export default defineSchema({
     .index("by_role", ["role"])
     .index("by_archived", ["isArchived"]),
 
-  // ─── Sessions (New - Session Metadata + Preview) ───
-  sessions: defineTable({
+  // ─── Recording Sessions (Session Metadata + Preview) ───
+  recordingSessions: defineTable({
     // Session Identity
     sessionId: v.string(),
 
@@ -507,7 +507,7 @@ export default defineSchema({
       filterFields: ["ownerId", "subjectId", "isArchived"],
     }),
 
-  // ─── Recording Chunks (New - Compressed Quaternion Data) ───
+  // ─── Recording Chunks (Compressed Quaternion Data) ───
   recordingChunks: defineTable({
     // Session link
     sessionId: v.string(),

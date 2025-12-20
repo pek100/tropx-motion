@@ -1,4 +1,4 @@
-import { CircleUser, Save, Upload, User, Tag, Check, X } from 'lucide-react'
+import { CircleUser, Save, Upload, User, Tag } from 'lucide-react'
 import { IslandButton } from './IslandButton'
 import { IslandButtonGroup } from './IslandButtonGroup'
 import { AtomSpin } from './AtomSpin'
@@ -11,6 +11,24 @@ export type ActionId =
   | 'patient-name'
   | 'save'
   | 'load'
+
+// ─────────────────────────────────────────────────────────────────
+// Title Input Styling Constants
+// ─────────────────────────────────────────────────────────────────
+
+const TITLE_ICON_STYLES = {
+  base: "size-4 flex-shrink-0 transition-colors duration-300",
+  typing: "text-orange-400",
+  saved: "text-green-500",
+  idle: "text-[var(--tropx-shadow)]",
+} as const
+
+const TITLE_INPUT_STYLES = {
+  base: "flex-1 text-sm font-medium text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)] outline-none min-w-0 px-2 py-1 rounded-md transition-all duration-300 border-2",
+  typing: "bg-orange-50 dark:bg-orange-950/30 border-orange-400",
+  saved: "bg-green-50 dark:bg-green-950/30 border-green-500",
+  idle: "bg-transparent border-transparent",
+} as const
 
 interface ActionBarProps {
   onActionClick: (actionId: ActionId) => void
@@ -26,12 +44,8 @@ interface ActionBarProps {
   recordingTitle?: string
   /** Recording title change handler */
   onRecordingTitleChange?: (title: string) => void
-  /** Recording title save handler */
-  onRecordingTitleSave?: () => void
-  /** Recording title revert handler */
-  onRecordingTitleRevert?: () => void
-  /** Whether title has unsaved changes */
-  titleDirty?: boolean
+  /** Whether user is actively typing */
+  isTyping?: boolean
   /** Whether title was just saved (for green flash) */
   titleJustSaved?: boolean
 }
@@ -45,9 +59,7 @@ export function ActionBar({
   selectedPatientImage,
   recordingTitle,
   onRecordingTitleChange,
-  onRecordingTitleSave,
-  onRecordingTitleRevert,
-  titleDirty,
+  isTyping,
   titleJustSaved,
 }: ActionBarProps) {
   // Patient button icon - show image if available, otherwise default icon
@@ -89,8 +101,8 @@ export function ActionBar({
         />
       </IslandButtonGroup>
 
-      {/* Middle group: Patient Name + Recording Title Input */}
-      <IslandButtonGroup>
+      {/* Middle group: Patient Name + Recording Title Input - hidden below 1300px */}
+      <IslandButtonGroup className="!hidden min-[1300px]:!flex">
         <IslandButton
           icon={patientIcon}
           label={selectedPatientName || "Patient Name"}
@@ -107,64 +119,19 @@ export function ActionBar({
           )}
         >
           <Tag className={cn(
-            "size-4 flex-shrink-0 transition-colors duration-300",
-            titleJustSaved ? "text-green-500" : titleDirty ? "text-orange-400" : "text-[var(--tropx-shadow)]"
+            TITLE_ICON_STYLES.base,
+            titleJustSaved ? TITLE_ICON_STYLES.saved : isTyping ? TITLE_ICON_STYLES.typing : TITLE_ICON_STYLES.idle
           )} />
           <input
             type="text"
             value={recordingTitle ?? ''}
             onChange={(e) => onRecordingTitleChange?.(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && titleDirty) {
-                e.preventDefault()
-                onRecordingTitleSave?.()
-              } else if (e.key === 'Escape' && titleDirty) {
-                e.preventDefault()
-                onRecordingTitleRevert?.()
-              }
-            }}
             placeholder="Recording title..."
             className={cn(
-              "flex-1 text-sm font-medium",
-              "text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)]",
-              "outline-none min-w-0",
-              "px-2 py-1 rounded-md transition-all duration-300",
-              titleJustSaved
-                ? "bg-green-50 dark:bg-green-950/30 border-2 border-green-500"
-                : titleDirty
-                  ? "bg-orange-50 dark:bg-orange-950/30 border-2 border-orange-400"
-                  : "bg-transparent border-2 border-transparent"
+              TITLE_INPUT_STYLES.base,
+              titleJustSaved ? TITLE_INPUT_STYLES.saved : isTyping ? TITLE_INPUT_STYLES.typing : TITLE_INPUT_STYLES.idle
             )}
           />
-          {titleDirty && (
-            <button
-              type="button"
-              onClick={onRecordingTitleRevert}
-              className={cn(
-                "p-1 rounded-full transition-all duration-300 flex-shrink-0",
-                "cursor-pointer",
-                "text-[var(--tropx-text-sub)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-              )}
-            >
-              <X className="size-4" />
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={onRecordingTitleSave}
-            disabled={!titleDirty && !titleJustSaved}
-            className={cn(
-              "p-1 rounded-full transition-all duration-300 flex-shrink-0",
-              "cursor-pointer disabled:cursor-default",
-              titleJustSaved
-                ? "text-green-500 bg-green-50 dark:bg-green-950/30"
-                : titleDirty
-                  ? "text-orange-500 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950/30"
-                  : "text-[var(--tropx-text-sub)]"
-            )}
-          >
-            <Check className="size-4" />
-          </button>
         </div>
       </IslandButtonGroup>
 

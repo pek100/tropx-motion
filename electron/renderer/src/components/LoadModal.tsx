@@ -260,7 +260,7 @@ function SubjectNoteInput({
 }) {
   const [note, setNote] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const addSubjectNote = useMutation(api.recordings.addSubjectNote);
+  const addSubjectNote = useMutation(api.recordingSessions.addSubjectNote);
 
   const handleSend = async () => {
     if (!note.trim() || isSending) return;
@@ -370,7 +370,7 @@ function RecordingPreview({
   const [editTags, setEditTags] = useState<string[]>([]);
 
   // Mutation for updating session
-  const updateSession = useMutation(api.recordings.updateSession);
+  const updateSession = useMutation(api.recordingSessions.updateSession);
 
   // Reset edit state when session changes
   useEffect(() => {
@@ -964,7 +964,7 @@ export function LoadModal({
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Mutations
-  const archiveSession = useMutation(api.recordings.archiveSession);
+  const archiveSession = useMutation(api.recordingSessions.archiveSession);
   const recomputeMetrics = useMutation(api.recordingMetrics.recomputeMetrics);
   const deleteMetricsMutation = useMutation(api.recordingMetrics.deleteMetrics);
 
@@ -991,7 +991,7 @@ export function LoadModal({
 
   // Query sessions list
   const searchResult = useQuery(
-    api.recordings.searchSessions,
+    api.recordingSessions.searchSessions,
     open
       ? {
           search: debouncedSearch || undefined,
@@ -1005,7 +1005,7 @@ export function LoadModal({
 
   // Query preview data for selected session (adaptive downsampling for chart)
   const previewResult = useQuery(
-    api.recordings.getSessionPreviewForChart,
+    api.recordingSessions.getSessionPreviewForChart,
     open && selectedSessionId
       ? { sessionId: selectedSessionId, maxPoints: 100 }
       : 'skip'

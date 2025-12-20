@@ -36,11 +36,13 @@ import {
   StickyNote,
   ChevronRight,
   Activity,
+  Sparkles,
 } from 'lucide-react';
 import { cn, formatDuration, formatDateTime } from '@/lib/utils';
 import { isWeb } from '@/lib/platform';
 import { useRecordingUpload, UseRecordingUploadOptions } from '@/hooks/useRecordingUpload';
 import { QuaternionSample, quaternionToAngle } from '../../../../shared/QuaternionCodec';
+import { detectActivityProfile } from '../../../../shared/classification';
 import { Id } from '../../../../convex/_generated/dataModel';
 import { TagsInput } from './TagsInput';
 import { PatientSearchModal } from './PatientSearchModal';
@@ -259,7 +261,7 @@ function SubjectNotesSection({
 }) {
   const [newNote, setNewNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const addSubjectNote = useMutation(api.recordings.addSubjectNote);
+  const addSubjectNote = useMutation(api.recordingSessions.addSubjectNote);
 
   const handleAddNote = async () => {
     if (!newNote.trim() || !isSubject) return;
@@ -349,6 +351,7 @@ export function SaveModal({
   const [notes, setNotes] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [activityProfile, setActivityProfile] = useState<ActivityProfile>('general');
+  const [isProfileAutoDetected, setIsProfileAutoDetected] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -364,14 +367,14 @@ export function SaveModal({
   } = useRecordingUpload();
 
   // Edit mutation
-  const updateSession = useMutation(api.recordings.updateSession);
+  const updateSession = useMutation(api.recordingSessions.updateSession);
 
   // Sync tags mutation
   const syncUserTags = useMutation(api.tags.syncUserTags);
 
   // Fetch session data for edit mode
   const sessionData = useQuery(
-    api.recordings.getSession,
+    api.recordingSessions.getSession,
     mode === 'edit' && sessionId ? { sessionId } : 'skip'
   );
 
@@ -423,6 +426,11 @@ export function SaveModal({
             startTime: firstTs,
             samples: sortedSamples,
           });
+
+          // Auto-detect activity profile from movement classification
+          const { profile } = detectActivityProfile(sortedSamples);
+          setActivityProfile(profile);
+          setIsProfileAutoDetected(true);
         } else {
           // Fallback to state if no samples
           const state = await window.electronAPI.recording.getState();
@@ -457,6 +465,7 @@ export function SaveModal({
       setNotes('');
       setTags([]);
       setActivityProfile('general');
+      setIsProfileAutoDetected(false);
       setSaveError(null);
       setSaveSuccess(false);
       setIsPatientSearchOpen(false);
@@ -481,18 +490,30 @@ export function SaveModal({
         rq: s.rq,
       }));
 
+      // Build tags array: title as first tag (if provided), followed by user tags
+      const allTags: string[] = [];
+      if (recordingTitle.trim()) {
+        allTags.push(recordingTitle.trim());
+      }
+      // Add user tags (avoiding duplicates with the title)
+      for (const tag of tags) {
+        if (tag.toLowerCase() !== recordingTitle.trim().toLowerCase()) {
+          allTags.push(tag);
+        }
+      }
+
       const options: UseRecordingUploadOptions = {
         subjectId: selectedPatientId || undefined,
         subjectAlias: selectedPatientName || undefined,
         notes: notes || undefined,
-        tags: tags.length > 0 ? tags : undefined,
+        tags: allTags.length > 0 ? allTags : undefined,
         activityProfile,
       };
 
       const result = await upload(samples, options);
 
       if (result.success) {
-        // Sync user tags for autocomplete history
+        // Sync user tags for autocomplete history (don't include title)
         if (tags.length > 0) {
           await syncUserTags({ tags });
         }
@@ -502,7 +523,7 @@ export function SaveModal({
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed');
     }
-  }, [mode, notes, tags, activityProfile, selectedPatientId, selectedPatientName, upload, syncUserTags, onOpenChange]);
+  }, [mode, notes, tags, recordingTitle, activityProfile, selectedPatientId, selectedPatientName, upload, syncUserTags, onOpenChange]);
 
   // Handle edit (update existing)
   const handleEdit = useCallback(async () => {
@@ -676,13 +697,22 @@ export function SaveModal({
                 <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--tropx-text-main)] mb-1.5">
                   <Activity className="size-3.5" />
                   Activity Profile
+                  {isProfileAutoDetected && (
+                    <span className="ml-auto flex items-center gap-1 text-xs font-normal text-[var(--tropx-vibrant)]">
+                      <Sparkles className="size-3" />
+                      Auto-Detected
+                    </span>
+                  )}
                 </label>
                 <div className="flex rounded-lg border border-[var(--tropx-border)] overflow-hidden">
                   {ACTIVITY_PROFILE_OPTIONS.map((option) => (
                     <button
                       key={option.value}
                       type="button"
-                      onClick={() => setActivityProfile(option.value)}
+                      onClick={() => {
+                        setActivityProfile(option.value);
+                        setIsProfileAutoDetected(false);
+                      }}
                       disabled={isProcessing}
                       className={cn(
                         'flex-1 px-3 py-1.5 text-sm font-medium transition-colors',
@@ -810,17 +840,27 @@ export function SaveModal({
 
             {/* Upload Progress (save mode) */}
             {mode === 'save' && isUploading && progress && (
-              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="flex items-center gap-2 mb-2">
-                  <Loader2 className="size-4 animate-spin text-blue-600" />
-                  <span className="text-sm font-medium text-blue-700">
-                    {progress.message}
-                  </span>
+              <div className="p-4 bg-[var(--tropx-muted)] border border-[var(--tropx-border)] rounded-xl">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="relative">
+                      <CloudUpload className="size-5 text-[var(--tropx-vibrant)]" />
+                      <div className="absolute -top-0.5 -right-0.5 size-2 bg-[var(--tropx-vibrant)] rounded-full animate-pulse" />
+                    </div>
+                    <span className="text-sm font-medium text-[var(--tropx-text-main)]">
+                      {progress.message}
+                    </span>
+                  </div>
+                  {progress.totalChunks > 0 && (
+                    <span className="text-xs font-medium text-[var(--tropx-shadow)] tabular-nums">
+                      {progress.currentChunk}/{progress.totalChunks}
+                    </span>
+                  )}
                 </div>
                 {progress.totalChunks > 0 && (
-                  <div className="w-full bg-blue-200 rounded-full h-1.5">
+                  <div className="w-full bg-[var(--tropx-border)] rounded-full h-2 overflow-hidden">
                     <div
-                      className="bg-blue-600 h-1.5 rounded-full transition-all"
+                      className="h-full rounded-full bg-gradient-to-r from-[var(--tropx-vibrant)] to-[var(--tropx-coral,#f97066)] transition-all duration-300 ease-out"
                       style={{
                         width: `${(progress.currentChunk / progress.totalChunks) * 100}%`,
                       }}
@@ -832,18 +872,34 @@ export function SaveModal({
 
             {/* Success/Error Messages */}
             {saveSuccess && (
-              <div className="p-3 rounded-lg flex items-center gap-2 bg-green-50 border border-green-200">
-                <CheckCircle2 className="size-4 text-green-600" />
-                <span className="text-sm text-green-700">
-                  {mode === 'save' ? 'Saved successfully' : 'Updated successfully'}
-                </span>
+              <div className="p-4 rounded-xl flex items-center gap-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+                <div className="size-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center">
+                  <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                    {mode === 'save' ? 'Saved successfully' : 'Updated successfully'}
+                  </span>
+                  <p className="text-xs text-emerald-600/70 dark:text-emerald-400/70">
+                    Your recording is now in the cloud
+                  </p>
+                </div>
               </div>
             )}
 
             {saveError && (
-              <div className="p-3 rounded-lg flex items-center gap-2 bg-red-50 border border-red-200">
-                <AlertCircle className="size-4 text-red-600" />
-                <span className="text-sm text-red-700">{saveError}</span>
+              <div className="p-4 rounded-xl flex items-center gap-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+                <div className="size-8 rounded-full bg-red-100 dark:bg-red-900/50 flex items-center justify-center">
+                  <AlertCircle className="size-5 text-red-600 dark:text-red-400" />
+                </div>
+                <div>
+                  <span className="text-sm font-medium text-red-700 dark:text-red-300">
+                    Upload failed
+                  </span>
+                  <p className="text-xs text-red-600/70 dark:text-red-400/70">
+                    {saveError}
+                  </p>
+                </div>
               </div>
             )}
 
@@ -851,23 +907,39 @@ export function SaveModal({
             {mode === 'save' && lastResult && !isUploading && !saveSuccess && (
               <div
                 className={cn(
-                  'p-3 rounded-lg flex items-center gap-2',
+                  'p-4 rounded-xl flex items-center gap-3',
                   lastResult.success
-                    ? 'bg-green-50 border border-green-200'
-                    : 'bg-red-50 border border-red-200'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800'
+                    : 'bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800'
                 )}
               >
                 {lastResult.success ? (
                   <>
-                    <CheckCircle2 className="size-4 text-green-600" />
-                    <span className="text-sm text-green-700">Saved successfully</span>
+                    <div className="size-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center">
+                      <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <div>
+                      <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                        Saved successfully
+                      </span>
+                      <p className="text-xs text-emerald-600/70 dark:text-emerald-400/70">
+                        Your recording is now in the cloud
+                      </p>
+                    </div>
                   </>
                 ) : (
                   <>
-                    <AlertCircle className="size-4 text-red-600" />
-                    <span className="text-sm text-red-700">
-                      {lastResult.error || 'Upload failed'}
-                    </span>
+                    <div className="size-8 rounded-full bg-red-100 dark:bg-red-900/50 flex items-center justify-center">
+                      <AlertCircle className="size-5 text-red-600 dark:text-red-400" />
+                    </div>
+                    <div>
+                      <span className="text-sm font-medium text-red-700 dark:text-red-300">
+                        Upload failed
+                      </span>
+                      <p className="text-xs text-red-600/70 dark:text-red-400/70">
+                        {lastResult.error || 'Something went wrong'}
+                      </p>
+                    </div>
                   </>
                 )}
               </div>

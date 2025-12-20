@@ -60,7 +60,7 @@ export const getSessionAsymmetryEvents = query({
 
     // Get session timing info from sessions table
     const session = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
@@ -300,7 +300,7 @@ export const getCompressedSessionData = internalQuery({
   handler: async (ctx, args) => {
     // Check if session exists in new sessions table
     const session = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 

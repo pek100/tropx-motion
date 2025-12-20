@@ -79,7 +79,7 @@ export function useRecordingSession(): UseRecordingSessionReturn {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // Fetch session list
-  const sessionsQuery = useQuery(api.recordings.listMySessions, { limit: 50 });
+  const sessionsQuery = useQuery(api.recordingSessions.listMySessions, { limit: 50 });
   const isLoadingSessions = sessionsQuery === undefined;
 
   const sessions: SessionMetadata[] = useMemo(() => {

@@ -2,7 +2,7 @@
  * SessionsCarousel - Horizontal carousel of session cards with navigation.
  */
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useState } from "react";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
@@ -39,11 +39,15 @@ export function SessionsCarousel({
   // Sessions ordered chronologically (oldest first, newest last)
   const orderedSessions = sessions;
 
+  // Local carousel API for navigation buttons
+  const [api, setApi] = useState<CarouselApi | null>(null);
+
   // Carousel API state
   const handleApiReady = useCallback(
-    (api: CarouselApi) => {
-      if (!api) return;
-      onApiReady?.(api);
+    (carouselApi: CarouselApi) => {
+      if (!carouselApi) return;
+      setApi(carouselApi);
+      onApiReady?.(carouselApi);
     },
     [onApiReady]
   );
@@ -74,8 +78,32 @@ export function SessionsCarousel({
         </div>
         {/* Navigation buttons */}
         <div className="flex gap-1.5">
-          <CarouselPrevButton />
-          <CarouselNextButton />
+          <button
+            className={cn(
+              "size-6 flex items-center justify-center rounded-full",
+              "border border-[var(--tropx-border)] bg-[var(--tropx-card)]",
+              "text-[var(--tropx-shadow)]",
+              "hover:text-[var(--tropx-vibrant)] hover:border-[var(--tropx-vibrant)]",
+              "transition-colors disabled:opacity-50"
+            )}
+            onClick={() => api?.scrollPrev()}
+            disabled={!api?.canScrollPrev()}
+          >
+            <ChevronLeft className="size-3.5" />
+          </button>
+          <button
+            className={cn(
+              "size-6 flex items-center justify-center rounded-full",
+              "border border-[var(--tropx-border)] bg-[var(--tropx-card)]",
+              "text-[var(--tropx-shadow)]",
+              "hover:text-[var(--tropx-vibrant)] hover:border-[var(--tropx-vibrant)]",
+              "transition-colors disabled:opacity-50"
+            )}
+            onClick={() => api?.scrollNext()}
+            disabled={!api?.canScrollNext()}
+          >
+            <ChevronRight className="size-3.5" />
+          </button>
         </div>
       </div>
 
@@ -88,7 +116,7 @@ export function SessionsCarousel({
         setApi={handleApiReady}
         className="w-full overflow-visible"
       >
-        <CarouselContent className="-ml-4 px-1 py-1">
+        <CarouselContent className="-ml-4 px-1 py-2">
           {orderedSessions.map((session, index) => (
             <CarouselItem
               key={session.sessionId}
@@ -105,52 +133,6 @@ export function SessionsCarousel({
         </CarouselContent>
       </Carousel>
     </div>
-  );
-}
-
-/** Custom prev button using carousel context */
-function CarouselPrevButton() {
-  return (
-    <button
-      className={cn(
-        "size-6 flex items-center justify-center rounded-full",
-        "border border-[var(--tropx-border)] bg-[var(--tropx-card)]",
-        "text-[var(--tropx-shadow)]",
-        "hover:text-[var(--tropx-vibrant)] hover:border-[var(--tropx-vibrant)]",
-        "transition-colors disabled:opacity-50",
-        "carousel-prev"
-      )}
-      onClick={() => {
-        const carousel = document.querySelector('[data-slot="carousel"]');
-        const prevBtn = carousel?.querySelector('[data-slot="carousel-previous"]') as HTMLButtonElement | null;
-        prevBtn?.click();
-      }}
-    >
-      <ChevronLeft className="size-3.5" />
-    </button>
-  );
-}
-
-/** Custom next button using carousel context */
-function CarouselNextButton() {
-  return (
-    <button
-      className={cn(
-        "size-6 flex items-center justify-center rounded-full",
-        "border border-[var(--tropx-border)] bg-[var(--tropx-card)]",
-        "text-[var(--tropx-shadow)]",
-        "hover:text-[var(--tropx-vibrant)] hover:border-[var(--tropx-vibrant)]",
-        "transition-colors disabled:opacity-50",
-        "carousel-next"
-      )}
-      onClick={() => {
-        const carousel = document.querySelector('[data-slot="carousel"]');
-        const nextBtn = carousel?.querySelector('[data-slot="carousel-next"]') as HTMLButtonElement | null;
-        nextBtn?.click();
-      }}
-    >
-      <ChevronRight className="size-3.5" />
-    </button>
   );
 }
 

@@ -154,7 +154,7 @@ export function PatientNotes({
       </div>
 
       {/* Content area - scrollable */}
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {sortedNotes.length === 0 ? (
           /* Empty state */
           <div className="h-full flex flex-col items-center justify-center p-3 text-center">
@@ -173,39 +173,37 @@ export function PatientNotes({
           </div>
         ) : (
           /* Scrollable notes list */
-          <ScrollArea className="h-full">
-            <div className="divide-y divide-[var(--tropx-border)]">
-              {sortedNotes.map((note) => (
-                <div
-                  key={note.id}
-                  className="px-3 py-2 group cursor-pointer hover:bg-[var(--tropx-muted)] transition-colors"
-                  onClick={() => setViewingNote(note)}
-                >
-                  <p className="text-[11px] text-[var(--tropx-text-main)] leading-relaxed">
-                    {truncateContent(note.content)}
+          <div className="divide-y divide-[var(--tropx-border)]">
+            {sortedNotes.map((note) => (
+              <div
+                key={note.id}
+                className="px-3 py-2 group cursor-pointer hover:bg-[var(--tropx-muted)] transition-colors"
+                onClick={() => setViewingNote(note)}
+              >
+                <p className="text-[11px] text-[var(--tropx-text-main)] leading-relaxed">
+                  {truncateContent(note.content)}
+                </p>
+                <div className="flex items-center justify-between mt-1">
+                  <p className="text-[9px] text-[var(--tropx-text-sub)]">
+                    {formatNoteDate(note.createdAt)}
                   </p>
-                  <div className="flex items-center justify-between mt-1">
-                    <p className="text-[9px] text-[var(--tropx-text-sub)]">
-                      {formatNoteDate(note.createdAt)}
-                    </p>
-                    {onDeleteNote && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-5 w-5 text-[var(--tropx-text-sub)] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(note.id);
-                        }}
-                      >
-                        <Trash2 className="size-3" />
-                      </Button>
-                    )}
-                  </div>
+                  {onDeleteNote && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 text-[var(--tropx-text-sub)] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(note.id);
+                      }}
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
+                  )}
                 </div>
-              ))}
-            </div>
-          </ScrollArea>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 

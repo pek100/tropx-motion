@@ -111,6 +111,7 @@ function AppContent() {
   // Derive layout flags from profile
   const isCompact = profile.layout.mode === 'split'
   const showHeader = profile.layout.showHeader
+  const showConnectivity = profile.layout.showConnectivity
   const showDynamicIsland = profile.features.dynamicIsland
   const showClientLauncher = profile.features.clientLauncher
 
@@ -182,8 +183,8 @@ function AppContent() {
   // Storage settings modal state
   const [isStorageSettingsOpen, setIsStorageSettingsOpen] = useState(false)
 
-  // Navigation tab state
-  const [activeNavTab, setActiveNavTab] = useState<NavTabId>('record')
+  // Navigation tab state - use profile's default page
+  const [activeNavTab, setActiveNavTab] = useState<NavTabId>(profile.layout.defaultPage)
 
   // Selected patient state
   const [selectedPatient, setSelectedPatient] = useState<{
@@ -200,8 +201,37 @@ function AppContent() {
 
   // Recording title for action bar input
   const [recordingTitle, setRecordingTitle] = useState('')
-  const [savedRecordingTitle, setSavedRecordingTitle] = useState('')
+  const [isTypingTitle, setIsTypingTitle] = useState(false)
   const [titleJustSaved, setTitleJustSaved] = useState(false)
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Debounce: detect when user stops typing title (orange → green → clear)
+  useEffect(() => {
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current)
+    }
+
+    if (recordingTitle.trim()) {
+      setIsTypingTitle(true)
+      setTitleJustSaved(false)
+
+      typingTimeoutRef.current = setTimeout(() => {
+        setIsTypingTitle(false)
+        setTitleJustSaved(true)
+        // Clear the green state after a moment
+        setTimeout(() => setTitleJustSaved(false), 600)
+      }, 500) // 500ms after user stops typing
+    } else {
+      setIsTypingTitle(false)
+      setTitleJustSaved(false)
+    }
+
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current)
+      }
+    }
+  }, [recordingTitle])
 
   // Cloud-loaded recording data for display
   const [loadedRecording, setLoadedRecording] = useState<ImportedSample[] | null>(null)
@@ -270,7 +300,6 @@ function AppContent() {
     const handleBeforeUnload = () => {
       persistence.saveStateImmediate({
         deviceOrder,
-        smallScreenOverride: null,
         clientDisplay,
       })
     }
@@ -513,9 +542,10 @@ function AppContent() {
             setStreamStartTime(Date.now())
             setStreamElapsedTime(0)
             setClearChartTrigger((prev) => prev + 1)
-            // Clear current recording - this is a new recording from app
+            // Clear current recording and any loaded/imported data - this is a new recording from app
             setCurrentRecording(null)
             setLoadedRecording(null)
+            clearImport()
             const sessionId = `session_${Date.now()}`
             const result = await startStreaming(sessionId, "test_exercise", 1)
             setAutoSyncOverlay('idle')
@@ -581,9 +611,10 @@ function AppContent() {
       setStreamStartTime(Date.now())
       setStreamElapsedTime(0)
       setClearChartTrigger((prev) => prev + 1)
-      // Clear current recording - this is a new recording from app
+      // Clear current recording and any loaded/imported data - this is a new recording from app
       setCurrentRecording(null)
       setLoadedRecording(null)
+      clearImport()
       const sessionId = `session_${Date.now()}`
       const result = await startStreaming(sessionId, "test_exercise", 1)
       setIsValidatingState(false)
@@ -1026,15 +1057,15 @@ function AppContent() {
 
           {/* Header - hidden on compact layouts, draggable for window movement */}
           {showHeader && (
-            <header className="p-8 pb-0 relative" style={{ WebkitAppRegion: 'drag' } as any}>
+            <header className="p-3 sm:p-5 pb-0 relative" style={{ WebkitAppRegion: 'drag' } as any}>
               {/* Exclude top-right area from drag for window controls and theme toggle */}
               <div className="absolute top-0 right-0 w-48 h-20" style={{ WebkitAppRegion: 'no-drag' } as any} />
               <div className="flex items-start gap-3 mb-2">
-                <svg width="40" height="40" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" className="flex-shrink-0 mt-1">
+                <svg width="40" height="40" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" className="hidden sm:block flex-shrink-0 mt-1">
                   <path d="M536.573 188.5C480.508 217.268 427.514 275.625 441.339 293.707C458.235 315.077 528.125 283.844 583.423 229.597C645.632 167.952 620.288 146.582 536.573 188.5Z" fill="var(--tropx-vibrant)" />
                   <path d="M753.405 396.365C627.93 499.319 494.412 599.86 487.977 595.838C484.76 594.229 480.738 549.187 478.325 497.71C471.89 367.409 452.587 326.388 397.892 326.388C348.828 326.388 279.656 410.038 191.985 575.73C116.378 718.9 98.6828 808.18 138.899 840.353C150.964 850.005 167.051 857.244 175.898 857.244C199.224 857.244 260.352 823.462 326.307 773.594L385.023 729.356L406.74 771.181C452.587 862.874 525.78 873.331 658.494 807.376C699.515 786.463 771.904 739.812 818.555 702.813C899.792 640.076 986.66 563.665 986.66 555.622C986.66 553.209 960.117 570.099 927.14 591.816C817.751 665.814 673.777 728.552 615.061 728.552C583.692 728.552 534.628 701.205 515.324 673.053L496.02 644.098L537.845 607.903C675.385 490.471 853.141 327.193 848.315 322.367C847.511 320.758 804.078 353.736 753.405 396.365ZM389.849 566.882C396.284 603.077 398.697 637.663 396.284 644.098C393.871 650.532 375.371 664.206 355.263 673.858C321.481 690.748 316.655 690.748 296.547 679.488C265.983 662.597 262.765 616.75 289.308 576.534C316.655 535.513 359.285 493.688 370.545 497.71C375.371 499.319 384.219 529.883 389.849 566.882Z" fill="var(--tropx-vibrant)" />
                 </svg>
-                <div>
+                <div className="hidden sm:block">
                   <h1 className="text-3xl font-semibold leading-tight"><span style={{ color: "var(--tropx-text-main)" }} className="italic">TropX</span></h1>
                   <p className="text-sm italic" style={{ color: "var(--tropx-shadow)" }}>Motion</p>
                 </div>
@@ -1055,7 +1086,7 @@ function AppContent() {
             />
           )}
 
-          <div className={isCompact ? "flex-1 flex relative" : "flex-1 flex items-center justify-center px-8 relative"}>
+          <div className={isCompact ? "flex-1 flex relative" : "flex-1 flex items-center justify-center px-4 sm:px-8 relative"}>
             {/* Dashboard View */}
             {activeNavTab === 'dashboard' && !isCompact && (
               <div className="w-full max-w-6xl mx-auto h-full py-6">
@@ -1065,9 +1096,9 @@ function AppContent() {
 
             {/* Record View (main app) */}
             {(activeNavTab === 'record' || isCompact) && (
-            <div className={isCompact ? "flex gap-0 w-full h-full" : "flex gap-6 w-[90%]"}>
-              {/* Left Pane */}
-              <div
+            <div className={isCompact ? "flex gap-0 w-full h-full" : `flex ${showConnectivity ? 'gap-6' : 'gap-0'} w-full sm:w-[90%]`}>
+              {/* Left Pane - only shown when showConnectivity is true */}
+              {showConnectivity && <div
                 className={`flex-shrink-0 bg-[var(--tropx-card)] flex flex-col transition-all ${isFlashing ? "flash-pane" : ""} ${isCompact ? "w-1/2 h-full p-4" : "w-[470px] p-6"}`}
                 style={{
                   border: isCompact ? "none" : "1px solid var(--tropx-border)",
@@ -1232,12 +1263,11 @@ function AppContent() {
                     )}
                   </>
                 )}
-              </div>
+              </div>}
 
               {/* Right Container - holds right pane and action bar */}
               <div
-                className={isCompact ? "w-1/2 h-full" : "flex-1 flex flex-col"}
-                style={{ height: isCompact ? undefined : '550px' }}
+                className={isCompact ? "w-1/2 h-full" : `flex-1 flex flex-col ${!showConnectivity ? 'max-w-6xl mx-auto' : ''} h-auto sm:h-[550px]`}
               >
                 {/* Right Pane */}
                 <div
@@ -1398,15 +1428,7 @@ function AppContent() {
                     selectedPatientImage={selectedPatient?.image}
                     recordingTitle={recordingTitle}
                     onRecordingTitleChange={setRecordingTitle}
-                    onRecordingTitleSave={() => {
-                      if (recordingTitle.trim()) {
-                        setSavedRecordingTitle(recordingTitle)
-                        setTitleJustSaved(true)
-                        setTimeout(() => setTitleJustSaved(false), 400)
-                      }
-                    }}
-                    onRecordingTitleRevert={() => setRecordingTitle(savedRecordingTitle)}
-                    titleDirty={recordingTitle !== savedRecordingTitle && recordingTitle.trim() !== ''}
+                    isTyping={isTypingTitle}
                     titleJustSaved={titleJustSaved}
                   />
                 )}

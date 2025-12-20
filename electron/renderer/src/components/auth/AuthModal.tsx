@@ -44,7 +44,7 @@ const BENEFITS = [
 // AI Analysis Icon - Brain with sparkles
 function AIAnalysisIcon({ color }: { color: string }) {
   return (
-    <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg width="56" height="56" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
       {/* Brain outline */}
       <motion.path
         d="M32 12C24 12 18 18 18 26C18 30 20 34 24 36C24 40 24 44 24 48C24 50 26 52 28 52H36C38 52 40 50 40 48C40 44 40 40 40 36C44 34 46 30 46 26C46 18 40 12 32 12Z"
@@ -112,7 +112,7 @@ function AIAnalysisIcon({ color }: { color: string }) {
 // Cloud Sync Icon - Cloud with arrows
 function CloudSyncIcon({ color }: { color: string }) {
   return (
-    <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg width="56" height="56" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
       {/* Cloud */}
       <motion.path
         d="M48 36C52.4183 36 56 32.4183 56 28C56 23.5817 52.4183 20 48 20C48 20 48 20 48 20C48 13.3726 42.6274 8 36 8C30.4772 8 25.8239 11.7549 24.4 16.8C24.2687 16.8 24.1358 16.8 24 16.8C17.3726 16.8 12 22.1726 12 28.8C12 35.4274 17.3726 40.8 24 40.8H48C48 40.8 48 36 48 36Z"
@@ -179,7 +179,7 @@ function CloudSyncIcon({ color }: { color: string }) {
 // Patient Management Icon - Person with chart
 function PatientManagementIcon({ color }: { color: string }) {
   return (
-    <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg width="56" height="56" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
       {/* Person */}
       <motion.circle
         cx="24" cy="18" r="8"
@@ -269,7 +269,7 @@ function BenefitsCarousel({ currentIndex, setCurrentIndex }: {
   }, [currentIndex, setCurrentIndex]);
 
   return (
-    <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-[var(--tropx-light)] to-white border border-[var(--tropx-vibrant)]/10 p-4">
+    <div className="relative overflow-hidden rounded-xl gradient-diagonal border border-[var(--tropx-border)] p-4">
       {/* Carousel content */}
       <div className="relative h-[180px]">
         <AnimatePresence mode="wait">
@@ -289,7 +289,7 @@ function BenefitsCarousel({ currentIndex, setCurrentIndex }: {
                 </div>
 
                 {/* Title */}
-                <h4 className="font-semibold text-base text-[var(--tropx-dark)] mb-1">
+                <h4 className="font-semibold text-base text-[var(--tropx-text-main)] mb-1">
                   {benefit.title}
                 </h4>
 
@@ -306,30 +306,30 @@ function BenefitsCarousel({ currentIndex, setCurrentIndex }: {
       {/* Navigation arrows */}
       <button
         onClick={goToPrev}
-        className="absolute left-1 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-white/80 hover:bg-white shadow-sm transition-all cursor-pointer hover:scale-105"
+        className="absolute left-1 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-[var(--tropx-card)]/80 hover:bg-[var(--tropx-card)] shadow-sm transition-all cursor-pointer hover:scale-105"
         aria-label="Previous benefit"
       >
         <ChevronLeft className="size-4 text-[var(--tropx-shadow)]" />
       </button>
       <button
         onClick={goToNext}
-        className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-white/80 hover:bg-white shadow-sm transition-all cursor-pointer hover:scale-105"
+        className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-[var(--tropx-card)]/80 hover:bg-[var(--tropx-card)] shadow-sm transition-all cursor-pointer hover:scale-105"
         aria-label="Next benefit"
       >
         <ChevronRight className="size-4 text-[var(--tropx-shadow)]" />
       </button>
 
       {/* Dot indicators */}
-      <div className="flex justify-center gap-2 mt-3">
+      <div className="flex justify-center gap-2.5 mt-3">
         {BENEFITS.map((_, index) => (
           <button
             key={index}
             onClick={() => setCurrentIndex(index)}
             className={cn(
-              "w-2 h-2 rounded-full transition-all cursor-pointer",
+              "size-2 rounded-full transition-opacity duration-300 cursor-pointer bg-[var(--tropx-vibrant)]",
               index === currentIndex
-                ? "bg-[var(--tropx-vibrant)] w-4"
-                : "bg-gray-300 hover:bg-gray-400"
+                ? "opacity-100"
+                : "opacity-40 hover:opacity-60"
             )}
             aria-label={`Go to benefit ${index + 1}`}
           />
@@ -415,7 +415,7 @@ function AuthModalContent({
           className={cn(
             'fixed inset-0 z-[51] m-auto',
             'w-full max-w-md h-fit p-6',
-            'bg-white rounded-2xl shadow-lg border border-gray-100',
+            'bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]',
             'data-[state=open]:animate-[modal-bubble-in_0.2s_var(--spring-bounce)_forwards]',
             'data-[state=closed]:animate-[modal-bubble-out_0.12s_var(--spring-smooth)_forwards]',
             'pointer-events-auto'
@@ -444,7 +444,7 @@ function AuthModalContent({
                 />
               </svg>
               <div>
-                <DialogPrimitive.Title className="text-lg font-semibold text-[var(--tropx-dark)]">
+                <DialogPrimitive.Title className="text-lg font-semibold text-[var(--tropx-text-main)]">
                   Welcome to TropX
                 </DialogPrimitive.Title>
                 <p className="text-xs text-[var(--tropx-shadow)]">Sign in to unlock cloud features</p>
@@ -453,7 +453,7 @@ function AuthModalContent({
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-full p-1.5 hover:bg-gray-100 transition-colors cursor-pointer"
+              className="rounded-full p-1.5 hover:bg-[var(--tropx-muted)] transition-colors cursor-pointer"
             >
               <XIcon className="size-4 text-[var(--tropx-shadow)]" />
               <span className="sr-only">Close</span>
@@ -510,7 +510,7 @@ function AuthModalContent({
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="rounded-lg bg-red-50 border border-red-100 p-3 text-center text-sm text-red-600"
+                className="rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-3 text-center text-sm text-red-600 dark:text-red-400"
               >
                 {error}
               </motion.div>
@@ -519,11 +519,11 @@ function AuthModalContent({
             {/* Terms */}
             <p className="text-center text-xs text-[var(--tropx-shadow)]">
               By signing in, you agree to our{" "}
-              <a href="#" className="underline hover:text-[var(--tropx-dark)]">
+              <a href="#" className="underline hover:text-[var(--tropx-text-main)]">
                 Terms of Service
               </a>{" "}
               and{" "}
-              <a href="#" className="underline hover:text-[var(--tropx-dark)]">
+              <a href="#" className="underline hover:text-[var(--tropx-text-main)]">
                 Privacy Policy
               </a>
               .

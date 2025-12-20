@@ -2,6 +2,80 @@ import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { requireUser, getCurrentUser } from "./lib/auth";
+import { COMPRESSION, METRIC_STATUS } from "./schema";
+
+// ─────────────────────────────────────────────────────────────────
+// Session Creation
+// ─────────────────────────────────────────────────────────────────
+
+/** Create a new session with metadata and preview. */
+export const createSession = mutation({
+  args: {
+    sessionId: v.string(),
+    sampleRate: v.number(),
+    totalSamples: v.number(),
+    totalChunks: v.number(),
+    activeJoints: v.array(v.string()),
+    startTime: v.number(),
+    endTime: v.number(),
+    recordedAt: v.optional(v.number()),
+
+    // Preview quaternions (downsampled)
+    leftKneePreview: v.optional(v.array(v.float64())),
+    rightKneePreview: v.optional(v.array(v.float64())),
+
+    // User metadata
+    notes: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    subjectId: v.optional(v.id("users")),
+    subjectAlias: v.optional(v.string()),
+    activityProfile: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx);
+    if (!user) {
+      throw new Error("Authentication required");
+    }
+
+    // Check if session already exists
+    const existing = await ctx.db
+      .query("recordingSessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+
+    if (existing) {
+      throw new Error(`Session ${args.sessionId} already exists`);
+    }
+
+    // Create session
+    const sessionDocId = await ctx.db.insert("recordingSessions", {
+      sessionId: args.sessionId,
+      ownerId: user._id,
+      subjectId: args.subjectId,
+      subjectAlias: args.subjectAlias,
+      sampleRate: args.sampleRate,
+      totalSamples: args.totalSamples,
+      totalChunks: args.totalChunks,
+      activeJoints: args.activeJoints,
+      startTime: args.startTime,
+      endTime: args.endTime,
+      recordedAt: args.recordedAt ?? Date.now(),
+      leftKneePreview: args.leftKneePreview,
+      rightKneePreview: args.rightKneePreview,
+      compressionVersion: COMPRESSION.VERSION,
+      notes: args.notes,
+      tags: args.tags,
+      activityProfile: args.activityProfile as any,
+      metricsStatus: METRIC_STATUS.PENDING,
+    });
+
+    return {
+      success: true,
+      sessionDocId,
+      sessionId: args.sessionId,
+    };
+  },
+});
 
 // ─────────────────────────────────────────────────────────────────
 // Session Queries
@@ -15,7 +89,7 @@ export const getSession = query({
     if (!user) return null;
 
     const session = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
@@ -77,7 +151,7 @@ export const listMySessions = query({
     const limit = args.limit ?? 50;
 
     const sessions = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
       .filter((q) => q.neq(q.field("isArchived"), true))
       .order("desc")
@@ -124,7 +198,7 @@ export const listSessionsOfMe = query({
     const limit = args.limit ?? 50;
 
     const sessions = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_subject", (q) => q.eq("subjectId", user._id))
       .filter((q) =>
         q.and(
@@ -178,7 +252,7 @@ export const searchSessions = query({
 
     // Query sessions owned by user
     let ownedQuery = ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
       .filter((q) => q.neq(q.field("isArchived"), true));
 
@@ -192,7 +266,7 @@ export const searchSessions = query({
     let subjectSessions: typeof ownedSessions = [];
     if (args.includeMe) {
       let subjectQuery = ctx.db
-        .query("sessions")
+        .query("recordingSessions")
         .withIndex("by_subject", (q) => q.eq("subjectId", user._id))
         .filter((q) =>
           q.and(
@@ -315,7 +389,7 @@ export const getSessionPreviewForChart = query({
     if (!user) return null;
 
     const session = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
@@ -352,7 +426,7 @@ export const getDistinctSubjects = query({
 
     // Get all sessions owned by user
     const sessions = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
       .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();
@@ -465,7 +539,7 @@ export const updateSession = mutation({
     const user = await requireUser(ctx);
 
     const session = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
@@ -552,7 +626,7 @@ export const addSubjectNote = mutation({
     }
 
     const session = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
@@ -611,7 +685,7 @@ export const shareSession = mutation({
     const user = await requireUser(ctx);
 
     const session = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
@@ -649,7 +723,7 @@ export const archiveSession = mutation({
     const user = await requireUser(ctx);
 
     const session = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
@@ -678,7 +752,7 @@ export const restoreSession = mutation({
     const user = await requireUser(ctx);
 
     const session = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .first();
 

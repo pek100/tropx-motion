@@ -2,7 +2,6 @@
 export interface PersistedAppState {
   // UI Preferences
   deviceOrder: string[];
-  smallScreenOverride: boolean | null;
   clientDisplay: 'closed' | 'modal' | 'minimized' | 'snapped-left' | 'snapped-right';
 
   // Metadata
@@ -12,7 +11,6 @@ export interface PersistedAppState {
 // Default state
 const defaultState: PersistedAppState = {
   deviceOrder: [],
-  smallScreenOverride: null,
   clientDisplay: 'closed',
   lastSavedAt: Date.now(),
 };
@@ -121,13 +119,6 @@ export class PersistenceManager {
    */
   saveDeviceOrder(order: string[]): void {
     this.saveState({ deviceOrder: order });
-  }
-
-  /**
-   * Update screen size preference
-   */
-  saveScreenPreference(override: boolean | null): void {
-    this.saveState({ smallScreenOverride: override });
   }
 
   /**

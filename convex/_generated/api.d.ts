@@ -30,8 +30,7 @@ import type * as lib_metrics_types from "../lib/metrics/types.js";
 import type * as notifications from "../notifications.js";
 import type * as recordingChunks from "../recordingChunks.js";
 import type * as recordingMetrics from "../recordingMetrics.js";
-import type * as recordings from "../recordings.js";
-import type * as sessions from "../sessions.js";
+import type * as recordingSessions from "../recordingSessions.js";
 import type * as tags from "../tags.js";
 import type * as users from "../users.js";
 
@@ -64,8 +63,7 @@ declare const fullApi: ApiFromModules<{
   notifications: typeof notifications;
   recordingChunks: typeof recordingChunks;
   recordingMetrics: typeof recordingMetrics;
-  recordings: typeof recordings;
-  sessions: typeof sessions;
+  recordingSessions: typeof recordingSessions;
   tags: typeof tags;
   users: typeof users;
 }>;

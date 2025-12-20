@@ -23,7 +23,7 @@ export const cleanupArchivedData = internalMutation({
       if (user.archivedAt && user.archivedAt < cutoffTime) {
         // Delete all sessions owned by this user
         const userSessions = await ctx.db
-          .query("sessions")
+          .query("recordingSessions")
           .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
           .collect();
 
@@ -86,7 +86,7 @@ export const cleanupArchivedData = internalMutation({
 
     // Find archived sessions past retention (not already deleted with user)
     const archivedSessions = await ctx.db
-      .query("sessions")
+      .query("recordingSessions")
       .withIndex("by_archived", (q) => q.eq("isArchived", true))
       .collect();
 

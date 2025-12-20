@@ -157,7 +157,7 @@ export function DashboardView({ className }: DashboardViewProps) {
 
   // Query for session preview data (for SessionChart)
   const sessionPreviewData = useQuery(
-    api.recordings.getSessionPreviewForChart,
+    api.recordingSessions.getSessionPreviewForChart,
     selectedSessionId ? { sessionId: selectedSessionId } : "skip"
   ) as PackedChunkData | null | undefined;
 
@@ -395,10 +395,27 @@ export function DashboardView({ className }: DashboardViewProps) {
           </div>
         ) : (
           <>
-            {/* Top Row: Patient Info/Notes + Sessions Carousel */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-[200px]">
-              {/* Left Column: Patient Info + Notes */}
-              <div className="col-span-1 flex flex-col gap-2 h-full overflow-hidden">
+            {/* Patient Info - visible on mobile at top */}
+            <div className="md:hidden">
+              <PatientInfoCard
+                name={selectedPatient?.name || "Patient"}
+                image={selectedPatient?.image}
+                sessionCount={metricsHistory?.totalSessions ?? 0}
+                isMe={selectedPatient?.isMe}
+                onClick={isPatient ? undefined : () => setIsPatientModalOpen(true)}
+                onAddNote={() => {
+                  const content = prompt("Add a note:");
+                  if (content?.trim()) {
+                    handleAddNote(content.trim());
+                  }
+                }}
+              />
+            </div>
+
+            {/* Top Row: Patient Info/Notes + Sessions Carousel - desktop layout */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:h-[204px] mb-4 sm:mb-0">
+              {/* Left Column: Patient Info + Notes - hidden on mobile */}
+              <div className="hidden md:flex col-span-1 flex-col gap-2 h-full overflow-hidden">
                 <PatientInfoCard
                   name={selectedPatient?.name || "Patient"}
                   image={selectedPatient?.image}
@@ -417,7 +434,7 @@ export function DashboardView({ className }: DashboardViewProps) {
               </div>
 
               {/* Sessions Carousel */}
-              <div className="col-span-1 md:col-span-2 h-full">
+              <div className="col-span-1 md:col-span-2 min-h-[180px] max-h-[220px] md:max-h-none md:h-full">
                 <SessionsCarousel
                   sessions={sessions}
                   selectedSessionId={selectedSessionId}
@@ -437,7 +454,7 @@ export function DashboardView({ className }: DashboardViewProps) {
               isSessionLoading={isSessionLoading}
               selectedMetrics={selectedMetrics}
               asymmetryEvents={asymmetryEvents ?? null}
-              className="h-[400px]"
+              className="h-[350px] sm:h-[400px]"
             />
 
             {/* Metrics Data Table */}
