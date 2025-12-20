@@ -73,7 +73,7 @@ export function RoleSelectionModal() {
           className={cn(
             "fixed inset-0 z-[51] m-auto",
             "w-full max-w-md h-fit p-6",
-            "bg-white rounded-2xl shadow-lg border border-gray-100",
+            "bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]",
             "data-[state=open]:animate-[modal-bubble-in_0.2s_var(--spring-bounce)_forwards]",
             "data-[state=closed]:animate-[modal-bubble-out_0.12s_var(--spring-smooth)_forwards]",
             "pointer-events-auto"
@@ -84,10 +84,10 @@ export function RoleSelectionModal() {
         >
           {/* Header */}
           <div className="mb-6">
-            <DialogPrimitive.Title className="text-xl font-semibold text-[var(--tropx-dark)]">
+            <DialogPrimitive.Title className="text-xl font-semibold text-[var(--tropx-text-main)]">
               Welcome to TropX Motion
             </DialogPrimitive.Title>
-            <DialogPrimitive.Description className="text-sm text-[var(--tropx-shadow)] mt-1">
+            <DialogPrimitive.Description className="text-sm text-[var(--tropx-text-sub)] mt-1">
               {user?.name ? `Hi ${user.name}! ` : ""}
               Please select your role to continue.
             </DialogPrimitive.Description>
@@ -105,7 +105,7 @@ export function RoleSelectionModal() {
                   "hover:scale-[1.01] active:scale-[0.99]",
                   selectedRole === option.id
                     ? "border-[var(--tropx-vibrant)] bg-[var(--tropx-hover)]"
-                    : "border-gray-200 hover:border-[var(--tropx-coral)] hover:bg-[var(--tropx-ivory)]",
+                    : "border-[var(--tropx-border)] hover:border-[var(--tropx-vibrant)]/50 hover:bg-[var(--tropx-hover)]",
                   isSubmitting ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
                 )}
               >
@@ -114,14 +114,14 @@ export function RoleSelectionModal() {
                     "p-2.5 rounded-full transition-colors",
                     selectedRole === option.id
                       ? "bg-[var(--tropx-vibrant)] text-white"
-                      : "bg-[var(--tropx-ivory)] text-[var(--tropx-shadow)]"
+                      : "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)]"
                   )}
                 >
                   {option.icon}
                 </div>
                 <div className="flex-1">
-                  <h3 className="font-semibold text-[var(--tropx-dark)]">{option.title}</h3>
-                  <p className="text-sm text-[var(--tropx-shadow)] mt-1">
+                  <h3 className="font-semibold text-[var(--tropx-text-main)]">{option.title}</h3>
+                  <p className="text-sm text-[var(--tropx-text-sub)] mt-1">
                     {option.description}
                   </p>
                 </div>
@@ -140,7 +140,7 @@ export function RoleSelectionModal() {
                 "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100",
                 selectedRole
                   ? "bg-[var(--tropx-vibrant)] text-white hover:opacity-90"
-                  : "bg-gray-200 text-gray-500"
+                  : "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)]"
               )}
             >
               {isSubmitting ? (

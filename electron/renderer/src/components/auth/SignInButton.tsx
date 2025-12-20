@@ -72,20 +72,20 @@ export function SignInButton({ className }: SignInButtonProps) {
           <span className="max-w-[120px] truncate">{user.name}</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuContent align="end" className="w-56 bg-[var(--tropx-card)] border-[var(--tropx-border)]">
         <DropdownMenuLabel>
           <div className="flex flex-col">
-            <span className="font-medium">{user.name}</span>
-            <span className="text-xs text-muted-foreground">{user.email}</span>
+            <span className="font-medium text-[var(--tropx-text-main)]">{user.name}</span>
+            <span className="text-xs text-[var(--tropx-text-sub)]">{user.email}</span>
             {user.role && (
-              <span className="text-xs text-muted-foreground capitalize mt-1">
+              <span className="text-xs text-[var(--tropx-text-sub)] capitalize mt-1">
                 {user.role}
               </span>
             )}
           </div>
         </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={signOut} className="text-red-600">
+        <DropdownMenuSeparator className="bg-[var(--tropx-border)]" />
+        <DropdownMenuItem onClick={signOut} className="text-red-500 dark:text-red-400 focus:text-red-600 dark:focus:text-red-300">
           <LogOut className="w-4 h-4 mr-2" />
           Sign Out
         </DropdownMenuItem>
