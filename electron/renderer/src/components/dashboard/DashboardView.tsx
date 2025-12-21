@@ -4,7 +4,7 @@
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import { Id } from "../../../../../convex/_generated/dataModel";
 import type { PackedChunkData } from "../../../../../shared/QuaternionCodec";
@@ -167,6 +167,15 @@ export function DashboardView({ className }: DashboardViewProps) {
     selectedSessionId ? { sessionId: selectedSessionId } : "skip"
   );
 
+  // Mutation for applying custom phase offset
+  const applyPhaseOffset = useMutation(api.recordingMetrics.applyCustomPhaseOffset);
+
+  // Mutation for recomputing metrics
+  const recomputeMetrics = useMutation(api.recordingMetrics.recomputeMetrics);
+
+  // Recompute state
+  const [isRecomputing, setIsRecomputing] = useState(false);
+
   // Session type
   type Session = NonNullable<typeof metricsHistory>["sessions"][number];
 
@@ -239,24 +248,27 @@ export function DashboardView({ className }: DashboardViewProps) {
       return { trend, trendPercent: change };
     };
 
-    return METRIC_DEFINITIONS.map((def) => {
-      const value = def.id === "opiScore" ? selectedSession.opiScore : (selectedSession.metrics as Record<string, number | undefined>)[def.id];
-      const reference = getAverage(def.id);
-      const { trend, trendPercent } = getTrend(def.id, value);
+    return METRIC_DEFINITIONS
+      .map((def) => {
+        const value = def.id === "opiScore" ? selectedSession.opiScore : (selectedSession.metrics as Record<string, number | undefined>)[def.id];
+        const reference = getAverage(def.id);
+        const { trend, trendPercent } = getTrend(def.id, value);
 
-      return {
-        id: def.id,
-        name: def.name,
-        domain: def.domain as MetricDomain,
-        unit: def.unit,
-        value,
-        reference,
-        trend,
-        trendPercent,
-        direction: def.direction,
-        format: def.format,
-      };
-    });
+        return {
+          id: def.id,
+          name: def.name,
+          domain: def.domain as MetricDomain,
+          unit: def.unit,
+          value,
+          reference,
+          trend,
+          trendPercent,
+          direction: def.direction,
+          format: def.format,
+        };
+      })
+      // Filter out metrics with no data (no current value AND no historical reference)
+      .filter((row) => row.value !== undefined || row.reference !== undefined);
   }, [selectedSession, metricsHistory]);
 
   // Handle session selection (from carousel or chart)
@@ -317,6 +329,37 @@ export function DashboardView({ className }: DashboardViewProps) {
     setPatientNotes((prev) => prev.filter((n) => n.id !== noteId));
     // TODO: Delete from Convex
   }, []);
+
+  // Handle applying custom phase offset
+  const handlePhaseOffsetApply = useCallback(
+    async (newOffsetMs: number) => {
+      if (!selectedSessionId) return;
+      try {
+        await applyPhaseOffset({
+          sessionId: selectedSessionId,
+          customOffsetMs: newOffsetMs,
+        });
+        // Metrics will be refetched automatically via Convex reactivity
+      } catch (error) {
+        console.error("Failed to apply phase offset:", error);
+      }
+    },
+    [selectedSessionId, applyPhaseOffset]
+  );
+
+  // Handle recompute metrics
+  const handleRecomputeMetrics = useCallback(async () => {
+    if (!selectedSessionId) return;
+    setIsRecomputing(true);
+    try {
+      await recomputeMetrics({ sessionId: selectedSessionId });
+      // Metrics will be refetched automatically via Convex reactivity
+    } catch (error) {
+      console.error("Failed to recompute metrics:", error);
+    } finally {
+      setIsRecomputing(false);
+    }
+  }, [selectedSessionId, recomputeMetrics]);
 
   // Loading user state
   if (isUserLoading) {
@@ -442,6 +485,8 @@ export function DashboardView({ className }: DashboardViewProps) {
                   onSelectSession={handleSelectSession}
                   onApiReady={setCarouselApi}
                   className="h-full"
+                  onRecomputeMetrics={handleRecomputeMetrics}
+                  isRecomputing={isRecomputing}
                 />
               </div>
             </div>
@@ -457,6 +502,7 @@ export function DashboardView({ className }: DashboardViewProps) {
               asymmetryEvents={asymmetryEvents ?? null}
               className="h-[350px] sm:h-[400px]"
               borderless
+              onPhaseOffsetApply={handlePhaseOffsetApply}
             />
 
             {/* Metrics Data Table */}

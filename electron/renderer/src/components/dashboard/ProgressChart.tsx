@@ -46,24 +46,36 @@ interface ChartDataPoint {
 const METRIC_COLORS: Record<string, string> = {
   // OPI
   opiScore: "var(--tropx-vibrant)",
-  // Symmetry (violet)
+
+  // Range (emerald) - TIER 1
+  avgMaxROM: "#10b981",
+  avgPeakFlexion: "#34d399",
+  avgPeakExtension: "#059669",
+
+  // Symmetry/Balance (violet) - TIER 2 & 3
   romAsymmetry: "#8b5cf6",
-  velocityAsymmetry: "#a78bfa",
-  crossCorrelation: "#7c3aed",
-  realAsymmetryAvg: "#6d28d9",
-  // Power (orange)
-  rsi: "#f97316",
-  jumpHeightCm: "#fb923c",
-  peakAngularVelocity: "#ea580c",
-  explosivenessConcentric: "#c2410c",
-  // Control (cyan)
+  realAsymmetryAvg: "#a78bfa",
+  velocityAsymmetry: "#7c3aed",
+  crossCorrelation: "#6d28d9",
+  netGlobalAsymmetry: "#c4b5fd",
+
+  // Power (orange) - TIER 3
+  peakAngularVelocity: "#f97316",
+  explosivenessConcentric: "#ea580c",
+  explosivenessLoading: "#fb923c",
+
+  // Control (cyan) - TIER 2 & 4
+  romCoV: "#22d3ee",
   sparc: "#06b6d4",
-  ldlj: "#22d3ee",
-  nVelocityPeaks: "#0891b2",
-  rmsJerk: "#0e7490",
-  // Stability (green)
-  romCoV: "#22c55e",
-  groundContactTimeMs: "#16a34a",
+  ldlj: "#0891b2",
+  nVelocityPeaks: "#0e7490",
+  rmsJerk: "#155e75",
+
+  // Timing (pink) - TIER 3 & 4
+  maxFlexionTimingDiff: "#ec4899",
+  phaseShift: "#f472b6",
+  temporalLag: "#db2777",
+  zeroVelocityPhaseMs: "#be185d",
 };
 
 // ─────────────────────────────────────────────────────────────────

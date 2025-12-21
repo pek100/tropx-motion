@@ -15,7 +15,7 @@ import {
   performFFT,
   fftMagnitude,
   findRobustPeak,
-  detectGroundContacts,
+  // detectGroundContacts, // DISABLED - shock absorption needs accelerometer
 } from "./helpers";
 
 // ─────────────────────────────────────────────────────────────────
@@ -239,68 +239,24 @@ export function calculateZeroVelocityPhase(
 
 /**
  * #34: shock_absorption_score
- * Quality of landing mechanics (double-dip pattern detection).
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER DATA
+ * Requires deceleration patterns from linear accelerometer to detect
+ * impact absorption quality during landing. Angular acceleration from
+ * knee angle derivatives cannot detect landing impacts reliably.
+ *
+ * TODO: Re-enable when accelerometer data is available from IMU sensors.
  */
 export function calculateShockAbsorptionScore(
-  kneeAngle: number[],
-  accel: number[],
-  timeStep: number
+  _kneeAngle: number[],
+  _accel: number[],
+  _timeStep: number
 ): ShockAbsorptionResult {
-  const contacts = detectGroundContacts(accel, timeStep);
-
-  if (contacts.length === 0) {
-    return { score: 0, doubleDipDetected: false, patternQuality: "absent" };
-  }
-
-  let totalScore = 0;
-  let doubleDipCount = 0;
-
-  for (const contact of contacts) {
-    // Analyze 50-100ms window post-impact
-    const window50ms = Math.floor(0.05 / timeStep);
-    const window100ms = Math.floor(0.1 / timeStep);
-    const windowStart = contact.touchdownIndex;
-    const windowEnd = Math.min(windowStart + window100ms, kneeAngle.length);
-
-    if (windowEnd - windowStart < 5) continue;
-
-    const windowData = kneeAngle.slice(windowStart, windowEnd);
-
-    // Detect double-dip pattern
-    const peaks: number[] = [];
-    const troughs: number[] = [];
-
-    for (let i = 1; i < windowData.length - 1; i++) {
-      if (windowData[i] > windowData[i - 1] && windowData[i] > windowData[i + 1]) {
-        peaks.push(i);
-      }
-      if (windowData[i] < windowData[i - 1] && windowData[i] < windowData[i + 1]) {
-        troughs.push(i);
-      }
-    }
-
-    // Double dip = at least 2 peaks and 1 trough
-    const hasDoubleDip = peaks.length >= 2 && troughs.length >= 1;
-    if (hasDoubleDip) doubleDipCount++;
-
-    // Score based on pattern presence and timing
-    const patternScore = hasDoubleDip ? 80 : 40;
-    const timingScore = peaks.length > 0 && peaks[0] < window50ms ? 20 : 0;
-
-    totalScore += patternScore + timingScore;
-  }
-
-  const avgScore = contacts.length > 0 ? totalScore / contacts.length : 0;
-  const doubleDipRatio = contacts.length > 0 ? doubleDipCount / contacts.length : 0;
-
-  let patternQuality: ShockAbsorptionQuality;
-  if (doubleDipRatio > 0.8) patternQuality = "excellent";
-  else if (doubleDipRatio > 0.5) patternQuality = "good";
-  else if (doubleDipRatio > 0) patternQuality = "poor";
-  else patternQuality = "absent";
-
-  return { score: avgScore, doubleDipDetected: doubleDipCount > 0, patternQuality };
+  // DISABLED: Returns placeholder values - requires accelerometer data
+  return {
+    score: 0,
+    doubleDipDetected: false,
+    patternQuality: "absent",
+  };
 }
 
 /** Calculate temporal coordination metrics. */

@@ -20,7 +20,9 @@ import type {
 // Constants
 // ─────────────────────────────────────────────────────────────────
 
-const DOMAINS: OPIDomain[] = ["symmetry", "power", "control", "stability"];
+// Only symmetry and power domains active
+// ❌ control and stability disabled (see METRIC_CONFIGS comments for reasons)
+const DOMAINS: OPIDomain[] = ["symmetry", "power"]; // "control", "stability" disabled
 
 const METHODOLOGY_CITATIONS = [
   "Reliability weighting: Daryabeygi-Khotbehsara et al. Appl Bionics Biomech. 2019",
@@ -32,12 +34,20 @@ const METHODOLOGY_CITATIONS = [
 // Clinical flag thresholds
 const CLINICAL_THRESHOLDS = {
   ASYMMETRY_HIGH: 15,
-  SPARC_POOR: -3,
-  RSI_LOW: 1.0,
+  // SPARC_POOR: -3, // ❌ DISABLED - Control domain disabled (single-movement thresholds)
+  // RSI_LOW: 1.0, // ❌ DISABLED - RSI requires accelerometer data
 } as const;
 
 // ─────────────────────────────────────────────────────────────────
-// Metric Configurations (14 metrics)
+// Metric Configurations
+// ─────────────────────────────────────────────────────────────────
+//
+// ❌ DISABLED METRICS (need accelerometer data):
+// - RSI (#23) - requires jump height + ground contact time
+// - jump_height_cm (#22) - requires flight time from accelerometer
+// - ground_contact_time (#20) - requires impact detection from accelerometer
+//
+// These are commented out until accelerometer data is available.
 // ─────────────────────────────────────────────────────────────────
 
 export const METRIC_CONFIGS: MetricConfig[] = [
@@ -92,30 +102,32 @@ export const METRIC_CONFIGS: MetricConfig[] = [
   },
 
   // === POWER DOMAIN ===
-  {
-    name: "RSI",
-    domain: "power",
-    direction: "higher_better",
-    goodThreshold: 2.0,
-    poorThreshold: 1.0,
-    weight: 1.5,
-    icc: 0.91,
-    citation: "Flanagan & Comyns 2008; Sole et al. 2018",
-    bilateral: true,
-    unilateral: true,
-  },
-  {
-    name: "jump_height_cm",
-    domain: "power",
-    direction: "higher_better",
-    goodThreshold: 35,
-    poorThreshold: 20,
-    weight: 1.3,
-    icc: 0.93,
-    citation: "Sole et al. Sports 2018 - NCAA D1 norms",
-    bilateral: true,
-    unilateral: true,
-  },
+  // ❌ RSI - DISABLED (needs accelerometer for jump height + contact time)
+  // {
+  //   name: "RSI",
+  //   domain: "power",
+  //   direction: "higher_better",
+  //   goodThreshold: 2.0,
+  //   poorThreshold: 1.0,
+  //   weight: 1.5,
+  //   icc: 0.91,
+  //   citation: "Flanagan & Comyns 2008; Sole et al. 2018",
+  //   bilateral: true,
+  //   unilateral: true,
+  // },
+  // ❌ jump_height_cm - DISABLED (needs flight time from accelerometer)
+  // {
+  //   name: "jump_height_cm",
+  //   domain: "power",
+  //   direction: "higher_better",
+  //   goodThreshold: 35,
+  //   poorThreshold: 20,
+  //   weight: 1.3,
+  //   icc: 0.93,
+  //   citation: "Sole et al. Sports 2018 - NCAA D1 norms",
+  //   bilateral: true,
+  //   unilateral: true,
+  // },
   {
     name: "peak_angular_velocity",
     domain: "power",
@@ -142,90 +154,110 @@ export const METRIC_CONFIGS: MetricConfig[] = [
   },
 
   // === CONTROL (SMOOTHNESS) DOMAIN ===
-  {
-    name: "SPARC",
-    domain: "control",
-    direction: "higher_better", // Less negative = better
-    goodThreshold: -1.5,
-    poorThreshold: -3.0,
-    weight: 1.3,
-    icc: 0.91,
-    citation: "Balasubramanian et al. 2015; Beck et al. 2018; Leclercq et al. 2024",
-    bilateral: true,
-    unilateral: true,
-  },
-  {
-    name: "LDLJ",
-    domain: "control",
-    direction: "higher_better", // Less negative = better
-    goodThreshold: -6,
-    poorThreshold: -10,
-    weight: 1.0,
-    icc: 0.85,
-    citation: "Balasubramanian et al. 2015; Leclercq et al. 2024",
-    bilateral: true,
-    unilateral: true,
-  },
-  {
-    name: "n_velocity_peaks",
-    domain: "control",
-    direction: "lower_better",
-    goodThreshold: 1,
-    poorThreshold: 5,
-    weight: 0.8,
-    icc: 0.75,
-    citation: "Smoothness literature - fewer peaks = smoother",
-    bilateral: true,
-    unilateral: true,
-  },
-  {
-    name: "rms_jerk",
-    domain: "control",
-    direction: "lower_better",
-    goodThreshold: 500,
-    poorThreshold: 2000,
-    weight: 0.9,
-    icc: 0.8,
-    citation: "Jerk minimization principle; Flash & Hogan 1985",
-    bilateral: true,
-    unilateral: true,
-  },
+  // ❌ DISABLED - Thresholds calibrated for single movements, not multi-rep sessions
+  //
+  // TODO: Re-add Control domain when:
+  //   - Session type detection implemented (single vs multi-rep)
+  //   - OR rep segmentation algorithm built
+  //   - OR thresholds recalibrated for exercise sessions
+  //
+  // {
+  //   name: "SPARC",
+  //   domain: "control",
+  //   direction: "higher_better", // Less negative = better
+  //   goodThreshold: -1.5,
+  //   poorThreshold: -3.0,
+  //   weight: 1.3,
+  //   icc: 0.91,
+  //   citation: "Balasubramanian et al. 2015; Beck et al. 2018; Leclercq et al. 2024",
+  //   bilateral: true,
+  //   unilateral: true,
+  // },
+  // {
+  //   name: "LDLJ",
+  //   domain: "control",
+  //   direction: "higher_better", // Less negative = better
+  //   goodThreshold: -6,
+  //   poorThreshold: -10,
+  //   weight: 1.0,
+  //   icc: 0.85,
+  //   citation: "Balasubramanian et al. 2015; Leclercq et al. 2024",
+  //   bilateral: true,
+  //   unilateral: true,
+  // },
+  // {
+  //   name: "n_velocity_peaks",
+  //   domain: "control",
+  //   direction: "lower_better",
+  //   goodThreshold: 1,
+  //   poorThreshold: 5,
+  //   weight: 0.8,
+  //   icc: 0.75,
+  //   citation: "Smoothness literature - fewer peaks = smoother",
+  //   bilateral: true,
+  //   unilateral: true,
+  // },
+  // {
+  //   name: "rms_jerk",
+  //   domain: "control",
+  //   direction: "lower_better",
+  //   goodThreshold: 500,
+  //   poorThreshold: 2000,
+  //   weight: 0.9,
+  //   icc: 0.8,
+  //   citation: "Jerk minimization principle; Flash & Hogan 1985",
+  //   bilateral: true,
+  //   unilateral: true,
+  // },
 
   // === STABILITY DOMAIN ===
-  {
-    name: "rom_cov",
-    domain: "stability",
-    direction: "lower_better",
-    goodThreshold: 5,
-    poorThreshold: 15,
-    weight: 1.0,
-    icc: 0.8,
-    citation: "Movement variability; CV <10% acceptable",
-    bilateral: true,
-    unilateral: true,
-  },
-  {
-    name: "ground_contact_time",
-    domain: "stability",
-    direction: "optimal_range",
-    optimalMin: 150,
-    optimalMax: 250,
-    goodThreshold: 200,
-    poorThreshold: 350,
-    weight: 1.0,
-    icc: 0.9,
-    citation: "Flanagan & Comyns 2008 - <250ms = fast SSC",
-    bilateral: true,
-    unilateral: true,
-  },
+  // ❌ DISABLED - ROM CoV meaningless for multi-rep sessions (measures variability across reps, not within)
+  //
+  // TODO: Re-add Stability domain when:
+  //   - ROM CoV calculated per-rep instead of across session
+  //   - Ground contact detection uses accelerometer (not angular velocity)
+  //
+  // {
+  //   name: "rom_cov",
+  //   domain: "stability",
+  //   direction: "lower_better",
+  //   goodThreshold: 5,
+  //   poorThreshold: 15,
+  //   weight: 1.0,
+  //   icc: 0.8,
+  //   citation: "Movement variability; CV <10% acceptable",
+  //   bilateral: true,
+  //   unilateral: true,
+  // },
+  // ❌ ground_contact_time - DISABLED (needs impact detection from accelerometer)
+  // {
+  //   name: "ground_contact_time",
+  //   domain: "stability",
+  //   direction: "optimal_range",
+  //   optimalMin: 150,
+  //   optimalMax: 250,
+  //   goodThreshold: 200,
+  //   poorThreshold: 350,
+  //   weight: 1.0,
+  //   icc: 0.9,
+  //   citation: "Flanagan & Comyns 2008 - <250ms = fast SSC",
+  //   bilateral: true,
+  //   unilateral: true,
+  // },
 ];
 
 // Domain weights by activity profile
+// ❌ control and stability disabled - weights redistributed to symmetry/power
+// Original weights preserved in comments for when domains are re-enabled
 export const DOMAIN_WEIGHTS: Record<ActivityProfile, Record<OPIDomain, number>> = {
-  power: { symmetry: 0.15, power: 0.4, control: 0.25, stability: 0.2 },
-  endurance: { symmetry: 0.3, power: 0.1, control: 0.25, stability: 0.35 },
-  rehabilitation: { symmetry: 0.35, power: 0.1, control: 0.3, stability: 0.25 },
-  general: { symmetry: 0.25, power: 0.25, control: 0.25, stability: 0.25 },
+  // Original: { symmetry: 0.15, power: 0.4, control: 0.25, stability: 0.2 }
+  power: { symmetry: 0.27, power: 0.73, control: 0, stability: 0 },
+  // Original: { symmetry: 0.3, power: 0.1, control: 0.25, stability: 0.35 }
+  endurance: { symmetry: 0.75, power: 0.25, control: 0, stability: 0 },
+  // Original: { symmetry: 0.35, power: 0.1, control: 0.3, stability: 0.25 }
+  rehabilitation: { symmetry: 0.78, power: 0.22, control: 0, stability: 0 },
+  // Original: { symmetry: 0.25, power: 0.25, control: 0.25, stability: 0.25 }
+  general: { symmetry: 0.5, power: 0.5, control: 0, stability: 0 },
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -250,31 +282,37 @@ export function extractMetricsForOPI(
   }
 
   // Power metrics
-  if (metrics.jumpMetrics) {
-    result.set("RSI", metrics.jumpMetrics.rsi);
-    result.set("jump_height_cm", metrics.jumpMetrics.jumpHeightCm);
-    result.set("ground_contact_time", metrics.jumpMetrics.groundContactTimeMs);
-  }
+  // ❌ DISABLED - jumpMetrics require accelerometer data:
+  // - RSI, jump_height_cm, ground_contact_time are all 0
+  // if (metrics.jumpMetrics) {
+  //   result.set("RSI", metrics.jumpMetrics.rsi);
+  //   result.set("jump_height_cm", metrics.jumpMetrics.jumpHeightCm);
+  //   result.set("ground_contact_time", metrics.jumpMetrics.groundContactTimeMs);
+  // }
 
   // Average of both legs for per-leg metrics
   if (metrics.leftLeg && metrics.rightLeg) {
+    // Power domain metrics (ACTIVE)
     const avgVelocity = (metrics.leftLeg.peakAngularVelocity + metrics.rightLeg.peakAngularVelocity) / 2;
     const avgExplosiveness = (metrics.leftLeg.explosivenessConcentric + metrics.rightLeg.explosivenessConcentric) / 2;
-    const avgJerk = (metrics.leftLeg.rmsJerk + metrics.rightLeg.rmsJerk) / 2;
-    const avgCoV = (metrics.leftLeg.romCoV + metrics.rightLeg.romCoV) / 2;
-
     result.set("peak_angular_velocity", avgVelocity);
     result.set("explosiveness_concentric", avgExplosiveness);
-    result.set("rms_jerk", avgJerk);
-    result.set("rom_cov", avgCoV);
+
+    // ❌ Control domain metrics - DISABLED (thresholds calibrated for single movements)
+    // const avgJerk = (metrics.leftLeg.rmsJerk + metrics.rightLeg.rmsJerk) / 2;
+    // result.set("rms_jerk", avgJerk);
+
+    // ❌ Stability domain metrics - DISABLED (ROM CoV meaningless for multi-rep)
+    // const avgCoV = (metrics.leftLeg.romCoV + metrics.rightLeg.romCoV) / 2;
+    // result.set("rom_cov", avgCoV);
   }
 
-  // Smoothness metrics
-  if (metrics.smoothnessMetrics) {
-    result.set("SPARC", metrics.smoothnessMetrics.sparc);
-    result.set("LDLJ", metrics.smoothnessMetrics.ldlj);
-    result.set("n_velocity_peaks", metrics.smoothnessMetrics.nVelocityPeaks);
-  }
+  // ❌ Smoothness/Control metrics - DISABLED (thresholds calibrated for single movements)
+  // if (metrics.smoothnessMetrics) {
+  //   result.set("SPARC", metrics.smoothnessMetrics.sparc);
+  //   result.set("LDLJ", metrics.smoothnessMetrics.ldlj);
+  //   result.set("n_velocity_peaks", metrics.smoothnessMetrics.nVelocityPeaks);
+  // }
 
   return result;
 }
@@ -431,19 +469,21 @@ function generateClinicalFlags(metrics: Map<string, number>): string[] {
     );
   }
 
-  const sparc = metrics.get("SPARC") ?? 0;
-  if (sparc < CLINICAL_THRESHOLDS.SPARC_POOR) {
-    flags.push(
-      `Poor smoothness (SPARC=${sparc.toFixed(2)}) - <-3.0 threshold [Beck 2018]`
-    );
-  }
+  // ❌ SPARC check DISABLED - Control domain disabled (single-movement thresholds)
+  // const sparc = metrics.get("SPARC") ?? 0;
+  // if (sparc < CLINICAL_THRESHOLDS.SPARC_POOR) {
+  //   flags.push(
+  //     `Poor smoothness (SPARC=${sparc.toFixed(2)}) - <-3.0 threshold [Beck 2018]`
+  //   );
+  // }
 
-  const rsi = metrics.get("RSI") ?? 0;
-  if (rsi > 0 && rsi < CLINICAL_THRESHOLDS.RSI_LOW) {
-    flags.push(
-      `Low reactive strength (RSI=${rsi.toFixed(2)}) - <1.0 threshold [Flanagan 2008]`
-    );
-  }
+  // ❌ RSI check DISABLED - requires accelerometer data
+  // const rsi = metrics.get("RSI") ?? 0;
+  // if (rsi > 0 && rsi < CLINICAL_THRESHOLDS.RSI_LOW) {
+  //   flags.push(
+  //     `Low reactive strength (RSI=${rsi.toFixed(2)}) - <1.0 threshold [Flanagan 2008]`
+  //   );
+  // }
 
   return flags;
 }

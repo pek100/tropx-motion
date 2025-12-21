@@ -55,10 +55,11 @@ interface MetricsDataTableProps {
 
 const DOMAIN_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: "all", label: "All Categories" },
-  { value: "symmetry", label: "Symmetry" },
+  { value: "range", label: "Range" },
+  { value: "symmetry", label: "Balance" },
   { value: "power", label: "Power" },
   { value: "control", label: "Control" },
-  { value: "stability", label: "Stability" },
+  { value: "timing", label: "Timing" },
 ];
 
 // ─────────────────────────────────────────────────────────────────

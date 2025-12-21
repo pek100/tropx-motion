@@ -9,6 +9,7 @@ import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { METRIC_STATUS, ACTIVITY_PROFILES } from "./schema";
 import { computeAllMetrics, type RecordingChunk, type ActivityProfile } from "./lib/metrics";
+import { recalculateWithCustomPhaseOffset, quaternionArrayToAngles } from "./lib/metrics/compute";
 import { decompressQuaternions } from "../shared/compression";
 
 // ─────────────────────────────────────────────────────────────────
@@ -170,6 +171,23 @@ export const deleteMetrics = mutation({
     }
 
     return { success: true, deleted: false };
+  },
+});
+
+/** Recalculate phase-dependent metrics with a custom offset. */
+export const applyCustomPhaseOffset = mutation({
+  args: {
+    sessionId: v.string(),
+    customOffsetMs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    // Schedule the internal action
+    await ctx.scheduler.runAfter(0, internal.recordingMetrics.recalculatePhaseMetricsInternal, {
+      sessionId: args.sessionId,
+      customOffsetMs: args.customOffsetMs,
+    });
+
+    return { success: true, sessionId: args.sessionId };
   },
 });
 
@@ -400,7 +418,7 @@ export const storeMetricsResult = internalMutation({
 
       // Advanced asymmetry
       advancedAsymmetry: m.advancedAsymmetry,
-      rollingAsymmetry: m.rollingAsymmetry,
+      // rollingAsymmetry: m.rollingAsymmetry, // ❌ DISABLED - conceptually flawed (see compute.ts)
       phaseAlignment: m.phaseAlignment,
 
       // Overall Performance Index
@@ -413,6 +431,119 @@ export const storeMetricsResult = internalMutation({
       await ctx.db.insert("recordingMetrics", {
         sessionId: args.sessionId,
         ...update,
+      });
+    }
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────
+// Partial Recalculation (Phase-dependent metrics only)
+// ─────────────────────────────────────────────────────────────────
+
+/** Internal action to recalculate only phase-dependent metrics with custom offset. */
+export const recalculatePhaseMetricsInternal = internalAction({
+  args: {
+    sessionId: v.string(),
+    customOffsetMs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    try {
+      // Get compressed session data
+      const compressedData = await ctx.runQuery(
+        internal.recordingMetrics.getCompressedSessionData,
+        { sessionId: args.sessionId }
+      );
+
+      if (!compressedData || compressedData.chunks.length === 0) {
+        throw new Error("No chunks found for session");
+      }
+
+      const { session, chunks } = compressedData;
+      const timeStep = 1 / session.sampleRate;
+
+      // Decompress and combine all chunks into angle arrays
+      const leftAngles: number[] = [];
+      const rightAngles: number[] = [];
+
+      // Sort chunks by index
+      const sortedChunks = [...chunks].sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+      for (const chunk of sortedChunks) {
+        // Decompress quaternion data
+        let leftKneeQ: number[] = [];
+        let rightKneeQ: number[] = [];
+
+        if (chunk.leftKneeCompressed) {
+          const bytes = new Uint8Array(chunk.leftKneeCompressed);
+          const decompressed = decompressQuaternions(bytes);
+          leftKneeQ = Array.from(decompressed);
+        }
+
+        if (chunk.rightKneeCompressed) {
+          const bytes = new Uint8Array(chunk.rightKneeCompressed);
+          const decompressed = decompressQuaternions(bytes);
+          rightKneeQ = Array.from(decompressed);
+        }
+
+        // Convert quaternions to angles and append
+        const chunkLeftAngles = quaternionArrayToAngles(leftKneeQ, "y");
+        const chunkRightAngles = quaternionArrayToAngles(rightKneeQ, "y");
+
+        leftAngles.push(...chunkLeftAngles);
+        rightAngles.push(...chunkRightAngles);
+      }
+
+      if (leftAngles.length === 0 || rightAngles.length === 0) {
+        throw new Error("No angle data available");
+      }
+
+      // Recalculate only phase-dependent metrics
+      const result = recalculateWithCustomPhaseOffset(
+        leftAngles,
+        rightAngles,
+        timeStep,
+        args.customOffsetMs
+      );
+
+      // Store partial results
+      await ctx.runMutation(internal.recordingMetrics.storePhaseMetricsResult, {
+        sessionId: args.sessionId,
+        advancedAsymmetry: result.advancedAsymmetry,
+        phaseAlignment: result.phaseAlignment,
+      });
+    } catch (error) {
+      // Log error but don't update status (partial recalc shouldn't mark as failed)
+      console.error(
+        `Phase metrics recalculation failed for session ${args.sessionId}:`,
+        error instanceof Error ? error.message : "Unknown error"
+      );
+    }
+  },
+});
+
+/** Store only phase-dependent metrics (partial update).
+ * Note: We only update advancedAsymmetry, NOT phaseAlignment.
+ * This preserves the original optimal offset so the user can always reset to it.
+ */
+export const storePhaseMetricsResult = internalMutation({
+  args: {
+    sessionId: v.string(),
+    advancedAsymmetry: v.any(),
+    // phaseAlignment is passed but not stored - we keep the original
+    phaseAlignment: v.any(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("recordingMetrics")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        // Only update asymmetry metrics, preserve original phaseAlignment
+        advancedAsymmetry: args.advancedAsymmetry,
+        // Update computedAt to indicate metrics were modified
+        computedAt: Date.now(),
       });
     }
   },

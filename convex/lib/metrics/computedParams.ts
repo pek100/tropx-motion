@@ -146,14 +146,19 @@ export function calculateROMSymmetryIndex(leftROM: number, rightROM: number): nu
   return maxValue > 0 ? (Math.abs(leftROM - rightROM) / maxValue) * 100 : 0;
 }
 
-/** #11: peak_resultant_acceleration - Maximum acceleration magnitude. */
-export function calculatePeakResultantAcceleration(values: number[], timeStep: number): number {
-  if (values.length < 3) return 0;
-  const velocity = calculateDerivative(values, timeStep);
-  const acceleration = calculateDerivative(velocity, timeStep);
-  if (acceleration.length === 0) return 0;
-  const absAccel = acceleration.map(Math.abs);
-  return findRobustPeak(absAccel);
+/**
+ * #11: peak_resultant_acceleration - Maximum acceleration magnitude.
+ *
+ * ❌ DISABLED - NEEDS ACCELEROMETER DATA
+ * This metric requires linear acceleration √(ax² + ay² + az²) from an
+ * accelerometer. Angular acceleration from knee angle derivatives is
+ * not equivalent and produces meaningless values.
+ *
+ * TODO: Re-enable when accelerometer data is available from IMU sensors.
+ */
+export function calculatePeakResultantAcceleration(_values: number[], _timeStep: number): number {
+  // DISABLED: Returns 0 - requires accelerometer data
+  return 0;
 }
 
 // ─────────────────────────────────────────────────────────────────

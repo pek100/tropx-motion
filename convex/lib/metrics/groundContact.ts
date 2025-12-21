@@ -2,9 +2,30 @@
  * Ground Contact, Force, Stiffness, and Gait Metrics (#20-28, #35-37)
  * Based on biomechanical-metrics-spec-v1.2.md
  *
- * TODO: review needed - All metrics in this file use angular acceleration
- * derived from joint angle data, NOT raw gyroscope/accelerometer data.
- * Results may differ from true biomechanical measurements.
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  ❌ ALL METRICS IN THIS FILE ARE DISABLED - NEEDS ACCELEROMETER DATA     ║
+ * ╠═══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                           ║
+ * ║  These metrics require linear accelerometer data, NOT angular data       ║
+ * ║  derived from knee joint angles. The current implementation produces     ║
+ * ║  meaningless values.                                                     ║
+ * ║                                                                           ║
+ * ║  Affected metrics:                                                        ║
+ * ║  • #20 Ground Contact Time - needs impact detection from accelerometer  ║
+ * ║  • #21 Flight Time - needs "quiet period" detection during flight        ║
+ * ║  • #22 Jump Height - depends on accurate flight time                     ║
+ * ║  • #23 RSI - depends on jump height + contact time                       ║
+ * ║  • #24 eRFD - needs linear acceleration (g/s)                            ║
+ * ║  • #25 Normalized Force - F = m×a requires linear acceleration           ║
+ * ║  • #26 Impulse Estimate - ∫a(t)dt needs linear acceleration              ║
+ * ║  • #27 Leg Stiffness - k = F/Δx, F needs accelerometer + body mass       ║
+ * ║  • #28 Vertical Stiffness - same as leg stiffness                        ║
+ * ║  • #35-37 Gait Cycle - needs foot contact detection                      ║
+ * ║                                                                           ║
+ * ║  TODO: Re-enable when accelerometer data is available from IMU sensors.  ║
+ * ║        Will also need user body mass input for stiffness calculations.   ║
+ * ║                                                                           ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
  */
 
 import type {
@@ -16,288 +37,200 @@ import type {
 } from "./types";
 import {
   calculateDerivative,
-  detectGroundContacts,
-  findRobustPeak,
+  // detectGroundContacts, // DISABLED - not usable with angular data
+  // findRobustPeak,       // DISABLED - not needed
 } from "./helpers";
 
 // ─────────────────────────────────────────────────────────────────
-// Constants
+// Constants (retained for future use when accelerometer data available)
 // ─────────────────────────────────────────────────────────────────
 
-const GRAVITY = 9.81; // m/s²
-const DEFAULT_MASS_KG = 70; // default body mass for stiffness calculations
+const _GRAVITY = 9.81; // m/s² - unused until accelerometer enabled
+const _DEFAULT_MASS_KG = 70; // default body mass - unused until accelerometer enabled
 
 // ─────────────────────────────────────────────────────────────────
-// Ground Contact & Jump Metrics (#20-23)
+// Ground Contact & Jump Metrics (#20-23) - ❌ DISABLED
 // ─────────────────────────────────────────────────────────────────
 
 /**
  * #20: ground_contact_time_ms
- * Average duration foot contacts ground.
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER DATA
+ * Requires impact detection from linear accelerometer to detect foot contact.
  */
-export function calculateGroundContactTime(accel: number[], timeStep: number): number {
-  const contacts = detectGroundContacts(accel, timeStep);
-  if (contacts.length === 0) return 0;
-
-  let totalContact = 0;
-  for (const c of contacts) {
-    totalContact += c.contactTimeMs;
-  }
-  return totalContact / contacts.length;
+export function calculateGroundContactTime(_accel: number[], _timeStep: number): number {
+  return 0; // DISABLED
 }
 
 /**
  * #21: flight_time_ms
- * Average airborne duration during jumps.
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER DATA
+ * Requires "quiet period" detection (near-zero g) during flight phase.
  */
-export function calculateFlightTime(accel: number[], timeStep: number): number {
-  const contacts = detectGroundContacts(accel, timeStep);
-  if (contacts.length === 0) return 0;
-
-  const validFlights = contacts.filter((c) => c.flightTimeMs > 0);
-  if (validFlights.length === 0) return 0;
-
-  let totalFlight = 0;
-  for (const c of validFlights) {
-    totalFlight += c.flightTimeMs;
-  }
-  return totalFlight / validFlights.length;
+export function calculateFlightTime(_accel: number[], _timeStep: number): number {
+  return 0; // DISABLED
 }
 
 /**
  * #22: jump_height_cm
- * Estimated vertical displacement from flight time.
- * Formula: h = g * t² / 8
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER DATA
+ * Formula h = g*t²/8 requires accurate flight time from accelerometer.
  */
-export function calculateJumpHeight(flightTimeMs: number): number {
-  if (flightTimeMs <= 0) return 0;
-  const t = flightTimeMs / 1000;
-  const heightM = (GRAVITY * t * t) / 8;
-  return heightM * 100; // Convert to cm
+export function calculateJumpHeight(_flightTimeMs: number): number {
+  return 0; // DISABLED
 }
 
 /**
  * #23: RSI (Reactive Strength Index)
- * Ratio of jump height to ground contact time.
- * Formula: RSI = jump_height(m) / ground_contact_time(s)
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER DATA
+ * Depends on jump height + contact time (both require accelerometer).
  */
-export function calculateRSI(jumpHeightCm: number, groundContactTimeMs: number): number {
-  if (groundContactTimeMs <= 0) return 0;
-  const heightM = jumpHeightCm / 100;
-  const contactS = groundContactTimeMs / 1000;
-  return heightM / contactS;
+export function calculateRSI(_jumpHeightCm: number, _groundContactTimeMs: number): number {
+  return 0; // DISABLED
 }
 
-/** Calculate all jump metrics. */
-export function calculateJumpMetrics(accel: number[], timeStep: number): JumpMetrics {
-  const groundContactTimeMs = calculateGroundContactTime(accel, timeStep);
-  const flightTimeMs = calculateFlightTime(accel, timeStep);
-  const jumpHeightCm = calculateJumpHeight(flightTimeMs);
-  const rsi = calculateRSI(jumpHeightCm, groundContactTimeMs);
-
+/**
+ * Calculate all jump metrics.
+ * ❌ DISABLED - All values return 0 until accelerometer data available.
+ */
+export function calculateJumpMetrics(_accel: number[], _timeStep: number): JumpMetrics {
   return {
-    groundContactTimeMs,
-    flightTimeMs,
-    jumpHeightCm,
-    rsi,
+    groundContactTimeMs: 0,
+    flightTimeMs: 0,
+    jumpHeightCm: 0,
+    rsi: 0,
   };
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Force/Power Metrics (#24-26)
+// Force/Power Metrics (#24-26) - ❌ DISABLED
 // ─────────────────────────────────────────────────────────────────
 
 /**
  * #24: eRFD (Estimated Rate of Force Development)
- * Rate of acceleration change during concentric phase.
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER DATA
+ * RFD is measured in g/s and requires linear acceleration, not angular.
  */
-export function calculateERFD(accel: number[], timeStep: number): number {
-  // Find the steepest positive slope in acceleration
-  let maxRFD = 0;
-  const windowSize = Math.max(5, Math.floor(0.05 / timeStep)); // 50ms window
-
-  for (let i = 0; i < accel.length - windowSize; i++) {
-    const rfd = (accel[i + windowSize] - accel[i]) / (windowSize * timeStep);
-    if (rfd > maxRFD) {
-      maxRFD = rfd;
-    }
-  }
-
-  return maxRFD;
+export function calculateERFD(_accel: number[], _timeStep: number): number {
+  return 0; // DISABLED
 }
 
 /**
  * #25: normalized_force (peak)
- * Peak force relative to body weight.
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER DATA
+ * F = m×a requires linear acceleration from accelerometer.
  */
-export function calculatePeakNormalizedForce(accel: number[]): number {
-  if (accel.length === 0) return 0;
-  const absAccel = accel.map(Math.abs);
-  return findRobustPeak(absAccel);
+export function calculatePeakNormalizedForce(_accel: number[]): number {
+  return 0; // DISABLED
 }
 
 /**
  * #26: impulse_estimate
- * Integral of acceleration over time (velocity change).
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER DATA
+ * ∫a(t)dt needs linear acceleration from accelerometer.
  */
-export function calculateImpulseEstimate(accel: number[], timeStep: number): number {
-  if (accel.length < 2) return 0;
-
-  // Trapezoidal integration
-  let impulse = 0;
-  for (let i = 1; i < accel.length; i++) {
-    impulse += ((accel[i] + accel[i - 1]) / 2) * timeStep;
-  }
-  return impulse;
+export function calculateImpulseEstimate(_accel: number[], _timeStep: number): number {
+  return 0; // DISABLED
 }
 
-/** Calculate all force/power metrics. */
-export function calculateForcePowerMetrics(accel: number[], timeStep: number): ForcePowerMetrics {
+/**
+ * Calculate all force/power metrics.
+ * ❌ DISABLED - All values return 0 until accelerometer data available.
+ */
+export function calculateForcePowerMetrics(_accel: number[], _timeStep: number): ForcePowerMetrics {
   return {
-    eRFD: calculateERFD(accel, timeStep),
-    peakNormalizedForce: calculatePeakNormalizedForce(accel),
-    impulseEstimate: calculateImpulseEstimate(accel, timeStep),
+    eRFD: 0,
+    peakNormalizedForce: 0,
+    impulseEstimate: 0,
   };
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Stiffness Metrics (#27-28)
+// Stiffness Metrics (#27-28) - ❌ DISABLED
 // ─────────────────────────────────────────────────────────────────
 
 /**
  * #27: leg_stiffness
- * Spring-like behavior of the leg (Morin method).
- * Formula: k_leg = m * π * (tf + tc) / (tc² * ((tf + tc)/π - tc/4))
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER DATA + BODY MASS
+ * k = F/Δx requires force from accelerometer and user body mass input.
+ * Currently uses hardcoded 70kg which is meaningless.
  */
 export function calculateLegStiffness(
-  mass: number,
-  flightTimeMs: number,
-  contactTimeMs: number
+  _mass: number,
+  _flightTimeMs: number,
+  _contactTimeMs: number
 ): number {
-  if (contactTimeMs <= 0 || mass <= 0) return 0;
-
-  const tf = flightTimeMs / 1000;
-  const tc = contactTimeMs / 1000;
-
-  const numerator = mass * Math.PI * (tf + tc);
-  const denominator = tc * tc * ((tf + tc) / Math.PI - tc / 4);
-
-  if (denominator <= 0) return 0;
-
-  return numerator / denominator; // N/m
+  return 0; // DISABLED
 }
 
 /**
  * #28: vertical_stiffness
- * Vertical spring stiffness (Morin method from temporal params).
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER DATA + BODY MASS
+ * Same requirements as leg stiffness.
  */
 export function calculateVerticalStiffness(
-  mass: number,
-  flightTimeMs: number,
-  contactTimeMs: number
+  _mass: number,
+  _flightTimeMs: number,
+  _contactTimeMs: number
 ): number {
-  if (contactTimeMs <= 0 || mass <= 0) return 0;
-
-  const tf = flightTimeMs / 1000;
-  const tc = contactTimeMs / 1000;
-
-  // Estimate peak force (sine wave assumption)
-  const Fmax = mass * GRAVITY * (Math.PI / 2) * (tf / tc + 1);
-
-  // Estimate COM displacement
-  const deltaY = (Fmax * tc * tc) / (mass * Math.PI * Math.PI);
-
-  return deltaY > 0 ? Fmax / deltaY : 0; // N/m
+  return 0; // DISABLED
 }
 
-/** Calculate all stiffness metrics. */
+/**
+ * Calculate all stiffness metrics.
+ * ❌ DISABLED - All values return 0 until accelerometer data + body mass available.
+ */
 export function calculateStiffnessMetrics(
-  flightTimeMs: number,
-  contactTimeMs: number,
-  mass: number = DEFAULT_MASS_KG
+  _flightTimeMs: number,
+  _contactTimeMs: number,
+  _mass: number = _DEFAULT_MASS_KG
 ): StiffnessMetrics {
   return {
-    legStiffness: calculateLegStiffness(mass, flightTimeMs, contactTimeMs),
-    verticalStiffness: calculateVerticalStiffness(mass, flightTimeMs, contactTimeMs),
+    legStiffness: 0,
+    verticalStiffness: 0,
   };
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Gait Cycle Metrics (#35-37)
+// Gait Cycle Metrics (#35-37) - ❌ DISABLED
 // ─────────────────────────────────────────────────────────────────
 
 /**
  * #35: stance_phase_pct
- * Percentage of gait cycle spent in stance.
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER/PRESSURE DATA
+ * Requires foot contact detection from accelerometer or pressure sensors.
  */
-export function calculateStancePhasePct(stanceTimeMs: number, strideTimeMs: number): number {
-  return strideTimeMs > 0 ? (stanceTimeMs / strideTimeMs) * 100 : 0;
+export function calculateStancePhasePct(_stanceTimeMs: number, _strideTimeMs: number): number {
+  return 0; // DISABLED
 }
 
 /**
  * #36: swing_phase_pct
- * Percentage of gait cycle spent in swing.
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER/PRESSURE DATA
+ * Requires foot contact detection from accelerometer or pressure sensors.
  */
-export function calculateSwingPhasePct(stanceTimeMs: number, strideTimeMs: number): number {
-  if (strideTimeMs <= 0) return 0;
-  const swingTimeMs = strideTimeMs - stanceTimeMs;
-  return (swingTimeMs / strideTimeMs) * 100;
+export function calculateSwingPhasePct(_stanceTimeMs: number, _strideTimeMs: number): number {
+  return 0; // DISABLED
 }
 
 /**
  * #37: duty_factor
- * Ratio of contact time to stride time (0-1).
- * TODO: review needed - uses angular acceleration, not raw gyro
+ * ❌ DISABLED - NEEDS ACCELEROMETER/PRESSURE DATA
+ * Requires foot contact detection from accelerometer or pressure sensors.
  */
-export function calculateDutyFactor(contactTimeMs: number, strideTimeMs: number): number {
-  return strideTimeMs > 0 ? contactTimeMs / strideTimeMs : 0;
+export function calculateDutyFactor(_contactTimeMs: number, _strideTimeMs: number): number {
+  return 0; // DISABLED
 }
 
-/** Calculate all gait cycle metrics from ground contacts. */
-export function calculateGaitCycleMetrics(accel: number[], timeStep: number): GaitCycleMetrics {
-  const contacts = detectGroundContacts(accel, timeStep);
-
-  if (contacts.length < 2) {
-    return {
-      stancePhasePct: 0,
-      swingPhasePct: 0,
-      dutyFactor: 0,
-      strideTimeMs: 0,
-    };
-  }
-
-  // Average stride time from consecutive contacts
-  let totalStrideTime = 0;
-  for (let i = 0; i < contacts.length - 1; i++) {
-    const strideTime =
-      (contacts[i + 1].touchdownIndex - contacts[i].touchdownIndex) * timeStep * 1000;
-    totalStrideTime += strideTime;
-  }
-  const avgStrideTimeMs = totalStrideTime / (contacts.length - 1);
-
-  // Average contact time (stance)
-  let totalContactTime = 0;
-  for (const c of contacts) {
-    totalContactTime += c.contactTimeMs;
-  }
-  const avgContactTimeMs = totalContactTime / contacts.length;
-
+/**
+ * Calculate all gait cycle metrics.
+ * ❌ DISABLED - All values return 0 until accelerometer/pressure data available.
+ */
+export function calculateGaitCycleMetrics(_accel: number[], _timeStep: number): GaitCycleMetrics {
   return {
-    stancePhasePct: calculateStancePhasePct(avgContactTimeMs, avgStrideTimeMs),
-    swingPhasePct: calculateSwingPhasePct(avgContactTimeMs, avgStrideTimeMs),
-    dutyFactor: calculateDutyFactor(avgContactTimeMs, avgStrideTimeMs),
-    strideTimeMs: avgStrideTimeMs,
+    stancePhasePct: 0,
+    swingPhasePct: 0,
+    dutyFactor: 0,
+    strideTimeMs: 0,
   };
 }
 

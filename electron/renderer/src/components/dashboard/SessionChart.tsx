@@ -4,7 +4,7 @@
  * Supports asymmetry event overlay to highlight time windows of detected asymmetries.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import {
   AreaChart,
   Area,
@@ -18,9 +18,11 @@ import {
   ReferenceArea,
 } from "recharts";
 import { cn } from "@/lib/utils";
-import { Loader2, Layers, GitCompareArrows } from "lucide-react";
+import { Loader2, Layers, GitCompareArrows, RotateCcw, Check } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Button } from "@/components/ui/button";
 import {
   Tooltip as UITooltip,
   TooltipContent,
@@ -42,13 +44,15 @@ interface SessionChartProps {
   sessionTitle?: string;
   asymmetryEvents?: AsymmetryEventsData;
   className?: string;
+  /** Callback when user applies a custom phase offset (triggers recalculation) */
+  onPhaseOffsetApply?: (newOffsetMs: number) => void;
 }
 
 interface ChartDataPoint {
   time: number;
   timeLabel: string;
-  left: number;
-  right: number;
+  left: number | null;
+  right: number | null;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -63,6 +67,11 @@ const TARGET_POINTS = 200;
 const LEFT_DOMINANT_COLOR = "#f97066"; // coral (same as left knee)
 const RIGHT_DOMINANT_COLOR = "#60a5fa"; // blue (same as right knee)
 const ASYMMETRY_OPACITY = 0.25; // Base opacity for overlays
+
+// Animation
+const PHASE_ANIMATION_DURATION_MS = 400;
+const ANIMATION_FRAME_INTERVAL_MS = 32; // ~30fps for smoother perf
+const EASE_OUT_CUBIC = (t: number) => 1 - Math.pow(1 - t, 3);
 
 // ─────────────────────────────────────────────────────────────────
 // Custom Tooltip
@@ -110,10 +119,18 @@ export function SessionChart({
   sessionTitle,
   asymmetryEvents,
   className,
+  onPhaseOffsetApply,
 }: SessionChartProps) {
   // Toggle states
   const [showAsymmetryOverlay, setShowAsymmetryOverlay] = useState(true);
   const [applyPhaseShift, setApplyPhaseShift] = useState(false);
+
+  // Animation state (0 = unshifted, 1 = fully shifted)
+  const [animationProgress, setAnimationProgress] = useState(0);
+  const animationRef = useRef<number | null>(null);
+
+  // Manual adjustment (-1 to 1, where 0 = optimal, negative = less shift, positive = more shift)
+  const [manualAdjustment, setManualAdjustment] = useState(0);
 
   // Check if asymmetry data is available
   const hasAsymmetryData = asymmetryEvents?.events && asymmetryEvents.events.length > 0;
@@ -122,58 +139,127 @@ export function SessionChart({
   const phaseAlignment = asymmetryEvents?.phaseAlignment;
   const hasPhaseShift = phaseAlignment !== null && phaseAlignment !== undefined;
 
-  // Convert packed data to chart points (with optional phase shift)
-  const chartData = useMemo<ChartDataPoint[]>(() => {
-    if (!packedData || packedData.sampleCount === 0) return [];
-
-    const angleSamples = unpackToAngles(packedData, "y");
-    if (angleSamples.length === 0) return [];
-
-    const sampleRate = asymmetryEvents?.sampleRate ?? packedData.sampleRate;
-
-    // Calculate phase shift in samples if enabled
-    let phaseShiftSamples = 0;
-    if (applyPhaseShift && phaseAlignment) {
-      phaseShiftSamples = Math.round((phaseAlignment.optimalOffsetMs / 1000) * sampleRate);
+  // Animate phase shift with throttled updates
+  const animatePhaseShift = useCallback((targetProgress: number) => {
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
     }
 
-    // Downsample for performance
-    const step = Math.max(1, Math.floor(angleSamples.length / TARGET_POINTS));
-    const points: ChartDataPoint[] = [];
+    const startProgress = animationProgress;
+    const startTime = performance.now();
+    let lastUpdateTime = 0;
 
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const t = Math.min(elapsed / PHASE_ANIMATION_DURATION_MS, 1);
+
+      // Throttle updates to reduce re-renders
+      if (currentTime - lastUpdateTime >= ANIMATION_FRAME_INTERVAL_MS || t >= 1) {
+        lastUpdateTime = currentTime;
+        const easedT = EASE_OUT_CUBIC(t);
+        const newProgress = startProgress + (targetProgress - startProgress) * easedT;
+        setAnimationProgress(newProgress);
+      }
+
+      if (t < 1) {
+        animationRef.current = requestAnimationFrame(animate);
+      } else {
+        animationRef.current = null;
+      }
+    };
+
+    animationRef.current = requestAnimationFrame(animate);
+  }, [animationProgress]);
+
+  // Handle toggle with animation
+  const handlePhaseShiftToggle = useCallback((checked: boolean) => {
+    setApplyPhaseShift(checked);
+    animatePhaseShift(checked ? 1 : 0);
+  }, [animatePhaseShift]);
+
+  // No auto-animation on load - user must toggle manually
+  // (Removed auto-animation to avoid unexpected behavior)
+
+  // Cleanup animation on unmount
+  useEffect(() => {
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, []);
+
+  // Pre-compute base data and shift info (expensive unpack only once)
+  const { baseData, maxHalfShift } = useMemo(() => {
+    if (!packedData || packedData.sampleCount === 0) {
+      return { baseData: { samples: [] as { left: number; right: number }[], durationMs: 0, step: 1 }, maxHalfShift: 0 };
+    }
+
+    const angleSamples = unpackToAngles(packedData, "y");
+    if (angleSamples.length === 0) {
+      return { baseData: { samples: [], durationMs: 0, step: 1 }, maxHalfShift: 0 };
+    }
+
+    const sampleRate = asymmetryEvents?.sampleRate ?? packedData.sampleRate;
     const durationMs = packedData.endTime - packedData.startTime;
 
-    for (let i = 0; i < angleSamples.length; i += step) {
-      const sample = angleSamples[i];
-      const progress = i / angleSamples.length;
+    // Calculate max phase shift (split between both signals)
+    const maxPhaseShiftSamples = phaseAlignment
+      ? Math.round((phaseAlignment.optimalOffsetMs / 1000) * sampleRate)
+      : 0;
+
+    // Downsample step
+    const step = Math.max(1, Math.floor(angleSamples.length / TARGET_POINTS));
+
+    return {
+      baseData: { samples: angleSamples, durationMs, step },
+      maxHalfShift: Math.round(maxPhaseShiftSamples / 2),
+    };
+  }, [packedData, phaseAlignment, asymmetryEvents?.sampleRate]);
+
+  // Apply animated shift to create chart data (cheap - just index math)
+  const chartData = useMemo<ChartDataPoint[]>(() => {
+    const { samples, durationMs, step } = baseData;
+    if (samples.length === 0) return [];
+
+    // Current shift based on animation progress + manual adjustment
+    // Manual adjustment: -1 = no shift, 0 = optimal, +1 = double shift
+    const adjustmentMultiplier = 1 + manualAdjustment;
+    const currentHalfShift = Math.round(maxHalfShift * animationProgress * adjustmentMultiplier);
+    const points: ChartDataPoint[] = [];
+
+    for (let i = 0; i < samples.length; i += step) {
+      const progress = i / samples.length;
       const timeMs = progress * durationMs;
 
-      // Apply phase shift to right knee (shift the index)
-      let rightValue = sample.right;
-
-      if (phaseShiftSamples !== 0) {
-        const shiftedIndex = i + phaseShiftSamples;
-        if (shiftedIndex >= 0 && shiftedIndex < angleSamples.length) {
-          rightValue = angleSamples[shiftedIndex].right;
-        }
-      }
+      // Sliding shift - each signal moves towards center
+      const leftIndex = i - currentHalfShift;
+      const rightIndex = i + currentHalfShift;
 
       points.push({
         time: timeMs,
         timeLabel: formatTimeMs(timeMs),
-        left: sample.left,
-        right: rightValue,
+        left: (leftIndex >= 0 && leftIndex < samples.length)
+          ? samples[leftIndex].left
+          : null,
+        right: (rightIndex >= 0 && rightIndex < samples.length)
+          ? samples[rightIndex].right
+          : null,
       });
     }
 
     return points;
-  }, [packedData, applyPhaseShift, phaseAlignment, asymmetryEvents?.sampleRate]);
+  }, [baseData, maxHalfShift, animationProgress, manualAdjustment]);
 
   // Calculate Y-axis domain
   const yDomain = useMemo(() => {
     if (chartData.length === 0) return [-45, 90];
 
-    const allValues = chartData.flatMap((p) => [p.left, p.right]);
+    const allValues = chartData
+      .flatMap((p) => [p.left, p.right])
+      .filter((v): v is number => v !== null);
+    if (allValues.length === 0) return [-45, 90];
+
     const min = Math.min(...allValues);
     const max = Math.max(...allValues);
     const padding = (max - min) * 0.1;
@@ -218,46 +304,102 @@ export function SessionChart({
       {/* Chart controls */}
       {(hasAsymmetryData || hasPhaseShift || asymmetryEvents === undefined) && (
         <div className="flex items-center justify-end gap-4 mb-2 px-1 flex-wrap">
-          {/* Phase Shift Toggle */}
+          {/* Phase Shift Toggle + Slider */}
           {hasPhaseShift && (
-            <UITooltip>
-              <TooltipTrigger asChild>
-                <div className="flex items-center gap-2">
-                  <Switch
-                    id="phase-shift-toggle"
-                    checked={applyPhaseShift}
-                    onCheckedChange={setApplyPhaseShift}
-                    className="data-[state=checked]:bg-emerald-500"
-                  />
-                  <Label
-                    htmlFor="phase-shift-toggle"
-                    className="text-xs text-[var(--tropx-text-sub)] cursor-pointer flex items-center gap-1.5"
-                  >
-                    <GitCompareArrows className="size-3.5" />
-                    Phase Align
-                    <span className="text-[10px] opacity-70">
-                      ({phaseAlignment!.optimalOffsetMs.toFixed(0)}ms)
+            <div className="flex items-center gap-3">
+              <UITooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="phase-shift-toggle"
+                      checked={applyPhaseShift}
+                      onCheckedChange={handlePhaseShiftToggle}
+                      className="data-[state=checked]:bg-emerald-500"
+                    />
+                    <Label
+                      htmlFor="phase-shift-toggle"
+                      className="text-xs text-[var(--tropx-text-sub)] cursor-pointer flex items-center gap-1.5"
+                    >
+                      <GitCompareArrows className="size-3.5" />
+                      Phase Align
+                    </Label>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs">
+                  <p className="text-xs">
+                    Shifts signals by {phaseAlignment!.optimalOffsetMs.toFixed(1)}ms
+                    ({phaseAlignment!.optimalOffsetDegrees.toFixed(1)}°) to align phases.
+                    <br />
+                    <span className="opacity-70">
+                      Correlation: {(phaseAlignment!.unalignedCorrelation * 100).toFixed(0)}%
+                      → {(phaseAlignment!.alignedCorrelation * 100).toFixed(0)}%
+                      {phaseAlignment!.correlationImprovement > 0 && (
+                        <span className="text-emerald-400">
+                          {" "}(+{(phaseAlignment!.correlationImprovement * 100).toFixed(0)}%)
+                        </span>
+                      )}
                     </span>
-                  </Label>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-xs">
-                <p className="text-xs">
-                  Shifts right knee by {phaseAlignment!.optimalOffsetMs.toFixed(1)}ms
-                  ({phaseAlignment!.optimalOffsetDegrees.toFixed(1)}°) to align phases.
-                  <br />
-                  <span className="opacity-70">
-                    Correlation: {(phaseAlignment!.unalignedCorrelation * 100).toFixed(0)}%
-                    → {(phaseAlignment!.alignedCorrelation * 100).toFixed(0)}%
-                    {phaseAlignment!.correlationImprovement > 0 && (
-                      <span className="text-emerald-400">
-                        {" "}(+{(phaseAlignment!.correlationImprovement * 100).toFixed(0)}%)
-                      </span>
-                    )}
+                  </p>
+                </TooltipContent>
+              </UITooltip>
+
+              {/* Manual adjustment slider - only show when toggle is on */}
+              {applyPhaseShift && (
+                <div className="flex items-center gap-2">
+                  <Slider
+                    value={[manualAdjustment]}
+                    onValueChange={(values: number[]) => setManualAdjustment(values[0])}
+                    min={-1}
+                    max={1}
+                    step={0.05}
+                    className="w-28 [&_[role=slider]]:bg-[var(--tropx-vibrant)] [&_[role=slider]]:border-[var(--tropx-vibrant)] [&_.bg-primary]:bg-[var(--tropx-vibrant)]"
+                  />
+                  <span className="text-[10px] text-[var(--tropx-text-sub)] w-14 text-right font-mono">
+                    {Math.round((1 + manualAdjustment) * phaseAlignment!.optimalOffsetMs)}ms
                   </span>
-                </p>
-              </TooltipContent>
-            </UITooltip>
+
+                  {/* Reset button */}
+                  <UITooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-6 text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] hover:bg-[var(--tropx-hover)]"
+                        onClick={() => setManualAdjustment(0)}
+                        disabled={manualAdjustment === 0}
+                      >
+                        <RotateCcw className="size-3" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p className="text-xs">Reset to optimal</p>
+                    </TooltipContent>
+                  </UITooltip>
+
+                  {/* Apply button */}
+                  {onPhaseOffsetApply && manualAdjustment !== 0 && (
+                    <UITooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-6 text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10"
+                          onClick={() => {
+                            const newOffsetMs = (1 + manualAdjustment) * phaseAlignment!.optimalOffsetMs;
+                            onPhaseOffsetApply(newOffsetMs);
+                          }}
+                        >
+                          <Check className="size-3" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        <p className="text-xs">Apply offset & recalculate metrics</p>
+                      </TooltipContent>
+                    </UITooltip>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           {/* Asymmetry Overlay Toggle */}
@@ -317,9 +459,8 @@ export function SessionChart({
       <div className="flex-1 min-h-0">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
-            data={chartData}
+            data={chartData as any}
             margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
-            baseValue={0}
           >
             <defs>
               <linearGradient id="leftKneeGradient" x1="0" y1="0" x2="0" y2="1">

@@ -70,6 +70,8 @@ interface ChartPaneProps {
   asymmetryEvents?: AsymmetryEventsData | null;
   borderless?: boolean;
   className?: string;
+  /** Callback when user applies a custom phase offset (triggers server-side recalculation) */
+  onPhaseOffsetApply?: (newOffsetMs: number) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -97,6 +99,7 @@ export function ChartPane({
   asymmetryEvents,
   borderless,
   className,
+  onPhaseOffsetApply,
 }: ChartPaneProps) {
   const [activeTab, setActiveTab] = useState<ChartTab>("progress");
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("7");
@@ -203,6 +206,7 @@ export function ChartPane({
               sessionTitle={sessionTitle}
               asymmetryEvents={asymmetryEvents ?? undefined}
               className="h-full"
+              onPhaseOffsetApply={onPhaseOffsetApply}
             />
           </TabsContent>
         </div>

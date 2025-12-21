@@ -327,7 +327,7 @@ export interface FullAnalysisResult {
 
   // Advanced asymmetry
   advancedAsymmetry: AdvancedAsymmetryResult;
-  rollingAsymmetry: RollingAsymmetryResult;
+  rollingAsymmetry?: RollingAsymmetryResult; // ❌ DISABLED - conceptually flawed (optional for backwards compat)
   phaseAlignment: PhaseAlignmentResult;
 
   // Overall Performance Index

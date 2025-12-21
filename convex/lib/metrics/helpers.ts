@@ -557,3 +557,49 @@ export function samplesToMs(samples: number, timeStep: number): number {
 export function msToSamples(ms: number, timeStep: number): number {
   return Math.round(ms / (timeStep * 1000));
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Repeating Pattern Detection (for Phase Alignment)
+// ─────────────────────────────────────────────────────────────────
+
+const DEFAULT_VELOCITY_BIN_SIZE = 10; // deg/s
+
+const DEFAULT_ACCELERATION_BIN_SIZE = 50; // deg/s²
+
+/**
+ * Find mask of repeating acceleration patterns using histogram binning.
+ * Uses acceleration (derivative of velocity) to capture movement dynamics.
+ * Points with acceleration in frequently-occurring bins (>= 75th percentile) are marked true.
+ * Used to filter out transitions/noise for phase alignment.
+ */
+export function findRepeatingVelocityMask(
+  velocities: number[],
+  binSize: number = DEFAULT_ACCELERATION_BIN_SIZE
+): boolean[] {
+  const n = velocities.length;
+  if (n < 2) return new Array(n).fill(true);
+
+  // Compute acceleration (derivative of velocity)
+  const accelerations: number[] = new Array(n);
+  accelerations[0] = velocities[1] - velocities[0];
+  for (let i = 1; i < n - 1; i++) {
+    accelerations[i] = velocities[i + 1] - velocities[i - 1]; // central difference
+  }
+  accelerations[n - 1] = velocities[n - 1] - velocities[n - 2];
+
+  // Bin accelerations into histogram
+  const binned = accelerations.map((a) => Math.round(a / binSize) * binSize);
+
+  // Count frequency of each bin
+  const histogram = new Map<number, number>();
+  for (const bin of binned) {
+    histogram.set(bin, (histogram.get(bin) || 0) + 1);
+  }
+
+  // Find 75th percentile frequency (stricter than median)
+  const frequencies = [...histogram.values()].sort((a, b) => a - b);
+  const thresholdFreq = frequencies[Math.floor(frequencies.length * 0.75)];
+
+  // Mark points in bins with frequency >= 75th percentile as repeating
+  return binned.map((bin) => (histogram.get(bin) || 0) >= thresholdFreq);
+}

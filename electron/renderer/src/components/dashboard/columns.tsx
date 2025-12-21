@@ -19,7 +19,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 // Types
 // ─────────────────────────────────────────────────────────────────
 
-export type MetricDomain = "opi" | "symmetry" | "power" | "control" | "stability";
+export type MetricDomain = "opi" | "range" | "symmetry" | "power" | "control" | "timing";
 
 export interface MetricRow {
   id: string;
@@ -40,12 +40,17 @@ export interface MetricRow {
 
 const DOMAIN_CONFIG: Record<MetricDomain, { label: string; bgClass: string; textClass: string }> = {
   opi: {
-    label: "OPI",
+    label: "Score",
     bgClass: "bg-[var(--tropx-vibrant)]/10",
     textClass: "text-[var(--tropx-vibrant)]",
   },
+  range: {
+    label: "Range",
+    bgClass: "bg-emerald-100 dark:bg-emerald-900/30",
+    textClass: "text-emerald-700 dark:text-emerald-300",
+  },
   symmetry: {
-    label: "Symmetry",
+    label: "Balance",
     bgClass: "bg-purple-100 dark:bg-purple-900/30",
     textClass: "text-purple-700 dark:text-purple-300",
   },
@@ -59,10 +64,10 @@ const DOMAIN_CONFIG: Record<MetricDomain, { label: string; bgClass: string; text
     bgClass: "bg-cyan-100 dark:bg-cyan-900/30",
     textClass: "text-cyan-700 dark:text-cyan-300",
   },
-  stability: {
-    label: "Stability",
-    bgClass: "bg-emerald-100 dark:bg-emerald-900/30",
-    textClass: "text-emerald-700 dark:text-emerald-300",
+  timing: {
+    label: "Timing",
+    bgClass: "bg-pink-100 dark:bg-pink-900/30",
+    textClass: "text-pink-700 dark:text-pink-300",
   },
 };
 
@@ -155,11 +160,12 @@ export const columns: ColumnDef<MetricRow>[] = [
             "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium border",
             config.bgClass,
             config.textClass,
+            row.original.domain === "opi" && "border-[var(--tropx-vibrant)]/20",
+            row.original.domain === "range" && "border-emerald-200 dark:border-emerald-800",
             row.original.domain === "symmetry" && "border-purple-200 dark:border-purple-800",
             row.original.domain === "power" && "border-orange-200 dark:border-orange-800",
             row.original.domain === "control" && "border-cyan-200 dark:border-cyan-800",
-            row.original.domain === "stability" && "border-emerald-200 dark:border-emerald-800",
-            row.original.domain === "opi" && "border-[var(--tropx-vibrant)]/20"
+            row.original.domain === "timing" && "border-pink-200 dark:border-pink-800"
           )}
         >
           {config.label}

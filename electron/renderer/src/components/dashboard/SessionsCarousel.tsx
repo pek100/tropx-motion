@@ -23,6 +23,10 @@ interface SessionsCarouselProps {
   onSelectSession: (sessionId: string) => void;
   onApiReady?: (api: CarouselApi) => void;
   className?: string;
+  /** Callback to trigger metrics recomputation for selected session */
+  onRecomputeMetrics?: () => void;
+  /** Whether recomputation is in progress */
+  isRecomputing?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -35,6 +39,8 @@ export function SessionsCarousel({
   onSelectSession,
   onApiReady,
   className,
+  onRecomputeMetrics,
+  isRecomputing,
 }: SessionsCarouselProps) {
   // Sessions ordered chronologically (oldest first, newest last)
   const orderedSessions = sessions;
@@ -127,6 +133,8 @@ export function SessionsCarousel({
                 isActive={session.sessionId === selectedSessionId}
                 isLatest={index === orderedSessions.length - 1}
                 onClick={() => onSelectSession(session.sessionId)}
+                onRecomputeMetrics={session.sessionId === selectedSessionId ? onRecomputeMetrics : undefined}
+                isRecomputing={session.sessionId === selectedSessionId ? isRecomputing : false}
               />
             </CarouselItem>
           ))}

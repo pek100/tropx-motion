@@ -13,7 +13,7 @@ import type {
   MovementClassification,
   RollingPhaseResult,
   AdvancedAsymmetryResult,
-  RollingAsymmetryResult,
+  // RollingAsymmetryResult, // ❌ DISABLED
   PhaseAlignmentResult,
   JumpMetrics,
   ForcePowerMetrics,
@@ -31,7 +31,7 @@ import {
   classifyMovementType,
   calculateRollingPhaseOffset,
   calculateAdvancedAsymmetry,
-  calculateRollingAdvancedAsymmetry,
+  // calculateRollingAdvancedAsymmetry, // ❌ DISABLED - conceptually flawed
   calculateOptimalPhaseAlignment,
 } from "./classification";
 import { calculateSmoothnessMetrics, calculateTemporalCoordination } from "./smoothness";
@@ -225,11 +225,16 @@ function runAnalysisPipeline(
   );
 
   // Step 5: Rolling Advanced Asymmetry
-  const rollingAsymmetry = calculateRollingAdvancedAsymmetry(
-    leftAngles,
-    rightAngles,
-    timeStep
-  );
+  // ❌ DISABLED - Rolling phase correction is conceptually flawed:
+  //   - Each window gets different phase shift, creating discontinuities
+  //   - Masks real asymmetry (consistent timing differences are meaningful)
+  //   - Redundant with Gaussian baseline extraction in advancedAsymmetry
+  // TODO: Remove entirely or redesign if per-window analysis is needed
+  // const rollingAsymmetry = calculateRollingAdvancedAsymmetry(
+  //   leftAngles,
+  //   rightAngles,
+  //   timeStep
+  // );
 
   // Step 6: Per-leg Metrics
   const leftLeg = calculatePerLegMetrics(leftAngles, timeStep);
@@ -247,8 +252,14 @@ function runAnalysisPipeline(
   // Step 8: Unilateral Analysis
   const unilateralAnalysis = calculateUnilateralAnalysis(leftLeg, rightLeg);
 
-  // Step 9: Smoothness Metrics (use left leg as primary, could average both)
-  const smoothnessMetrics = calculateSmoothnessMetrics(leftAngles, timeStep, sampleRate);
+  // Step 9: Smoothness Metrics (average both legs for balanced assessment)
+  const leftSmoothness = calculateSmoothnessMetrics(leftAngles, timeStep, sampleRate);
+  const rightSmoothness = calculateSmoothnessMetrics(rightAngles, timeStep, sampleRate);
+  const smoothnessMetrics: SmoothnessMetrics = {
+    sparc: (leftSmoothness.sparc + rightSmoothness.sparc) / 2,
+    ldlj: (leftSmoothness.ldlj + rightSmoothness.ldlj) / 2,
+    nVelocityPeaks: Math.round((leftSmoothness.nVelocityPeaks + rightSmoothness.nVelocityPeaks) / 2),
+  };
 
   // Step 10: Derive angular acceleration for jump/gait metrics
   // TODO: review needed - using angular acceleration, not raw gyro
@@ -293,7 +304,7 @@ function runAnalysisPipeline(
     movementClassification,
     rollingPhase,
     advancedAsymmetry,
-    rollingAsymmetry,
+    // rollingAsymmetry, // ❌ DISABLED - see Step 5 comment
     phaseAlignment,
   };
 
@@ -319,8 +330,9 @@ export {
   classifyMovementType,
   calculateRollingPhaseOffset,
   calculateAdvancedAsymmetry,
-  calculateRollingAdvancedAsymmetry,
+  // calculateRollingAdvancedAsymmetry, // ❌ DISABLED - conceptually flawed
   calculateOptimalPhaseAlignment,
+  recalculateWithCustomPhaseOffset,
 } from "./classification";
 export { calculateSmoothnessMetrics, calculateTemporalCoordination } from "./smoothness";
 export {

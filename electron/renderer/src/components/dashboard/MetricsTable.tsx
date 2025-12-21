@@ -20,7 +20,7 @@ import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 // Types
 // ─────────────────────────────────────────────────────────────────
 
-export type MetricDomain = "opi" | "symmetry" | "power" | "control" | "stability";
+export type MetricDomain = "opi" | "range" | "symmetry" | "power" | "control" | "timing";
 
 export type MovementType = "bilateral" | "unilateral" | "single_leg" | "mixed" | "unknown";
 
@@ -35,6 +35,8 @@ export interface MetricDefinition {
   bilateral: boolean;
   /** Metric is relevant for unilateral movements (walking, running) */
   unilateral: boolean;
+  /** Whether this metric is included in the OPI score calculation */
+  inOPI: boolean;
 }
 
 export interface MetricValue {
@@ -62,49 +64,89 @@ export interface MetricsTableProps {
 const formatPercent = (v: number) => `${v.toFixed(1)}%`;
 const formatDecimal = (v: number) => v.toFixed(2);
 const formatInt = (v: number) => Math.round(v).toString();
+const formatDegrees = (v: number) => `${v.toFixed(1)}`;
 const formatDegPerSec = (v: number) => `${Math.round(v)}`;
+const formatMs = (v: number) => `${Math.round(v)}`;
 
+/**
+ * METRIC_DEFINITIONS - Sorted by understandability (easiest first)
+ *
+ * TIER 1: Very Easy - Physical meaning immediately clear
+ * TIER 2: Easy - Simple comparison concepts
+ * TIER 3: Moderate - Requires brief explanation
+ * TIER 4: Technical - Needs biomechanics background
+ */
 export const METRIC_DEFINITIONS: MetricDefinition[] = [
-  // OPI (always first, special styling) - applies to all movement types
-  { id: "opiScore", name: "OPI Score", domain: "opi", unit: "", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true },
+  // ═══════════════════════════════════════════════════════════════════
+  // TIER 1: VERY EASY - Physical meaning immediately clear
+  // ═══════════════════════════════════════════════════════════════════
 
-  // Symmetry - most only relevant for bilateral (except real asymmetry)
-  { id: "romAsymmetry", name: "ROM Asymmetry", domain: "symmetry", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: false },
-  { id: "velocityAsymmetry", name: "Velocity Asymmetry", domain: "symmetry", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: false },
-  { id: "crossCorrelation", name: "Cross Correlation", domain: "symmetry", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: false },
-  { id: "realAsymmetryAvg", name: "Real Asymmetry", domain: "symmetry", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: true },
+  // OPI Score (always first)
+  { id: "opiScore", name: "Performance Score", domain: "opi", unit: "/100", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true, inOPI: true },
 
-  // Power - all apply to both movement types
-  { id: "rsi", name: "RSI", domain: "power", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: true },
-  { id: "jumpHeightCm", name: "Jump Height", domain: "power", unit: "cm", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true },
-  { id: "peakAngularVelocity", name: "Peak Ang. Velocity", domain: "power", unit: "°/s", format: formatDegPerSec, direction: "higher_better", bilateral: true, unilateral: true },
-  { id: "explosivenessConcentric", name: "Explosiveness", domain: "power", unit: "°/s²", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true },
+  // Range of Motion - most intuitive metrics
+  { id: "avgMaxROM", name: "Range of Motion", domain: "range", unit: "°", format: formatDegrees, direction: "higher_better", bilateral: true, unilateral: true, inOPI: false },
+  { id: "avgPeakFlexion", name: "Peak Flexion", domain: "range", unit: "°", format: formatDegrees, direction: "higher_better", bilateral: true, unilateral: true, inOPI: false },
+  { id: "avgPeakExtension", name: "Peak Extension", domain: "range", unit: "°", format: formatDegrees, direction: "lower_better", bilateral: true, unilateral: true, inOPI: false },
 
-  // Control - all apply to both movement types
-  { id: "sparc", name: "SPARC", domain: "control", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: true },
-  { id: "ldlj", name: "LDLJ", domain: "control", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: true },
-  { id: "nVelocityPeaks", name: "Velocity Peaks", domain: "control", unit: "", format: formatInt, direction: "lower_better", bilateral: true, unilateral: true },
-  { id: "rmsJerk", name: "RMS Jerk", domain: "control", unit: "°/s³", format: formatInt, direction: "lower_better", bilateral: true, unilateral: true },
+  // ═══════════════════════════════════════════════════════════════════
+  // TIER 2: EASY - Simple comparison concepts
+  // ═══════════════════════════════════════════════════════════════════
 
-  // Stability - all apply to both movement types
-  { id: "romCoV", name: "ROM CoV", domain: "stability", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: true },
-  { id: "groundContactTimeMs", name: "Ground Contact", domain: "stability", unit: "ms", format: formatInt, direction: "optimal_range", bilateral: true, unilateral: true },
+  // Symmetry - easy to understand as "balance between legs"
+  { id: "romAsymmetry", name: "ROM Difference", domain: "symmetry", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: false, inOPI: true },
+  { id: "realAsymmetryAvg", name: "Movement Imbalance", domain: "symmetry", unit: "°", format: formatDegrees, direction: "lower_better", bilateral: true, unilateral: true, inOPI: true },
+  { id: "romCoV", name: "Consistency", domain: "control", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: true, inOPI: true },
+
+  // ═══════════════════════════════════════════════════════════════════
+  // TIER 3: MODERATE - Requires brief explanation
+  // ═══════════════════════════════════════════════════════════════════
+
+  // Speed and Power
+  { id: "peakAngularVelocity", name: "Peak Speed", domain: "power", unit: "°/s", format: formatDegPerSec, direction: "higher_better", bilateral: true, unilateral: true, inOPI: true },
+  { id: "explosivenessConcentric", name: "Explosiveness", domain: "power", unit: "°/s²", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true, inOPI: true },
+  { id: "explosivenessLoading", name: "Loading Power", domain: "power", unit: "°/s²", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true, inOPI: false },
+
+  // Symmetry (more detailed)
+  { id: "velocityAsymmetry", name: "Speed Difference", domain: "symmetry", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: false, inOPI: true },
+  { id: "crossCorrelation", name: "Movement Similarity", domain: "symmetry", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: false, inOPI: true },
+  { id: "netGlobalAsymmetry", name: "Overall Asymmetry", domain: "symmetry", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: false, inOPI: false },
+
+  // Timing
+  { id: "maxFlexionTimingDiff", name: "Timing Difference", domain: "timing", unit: "ms", format: formatMs, direction: "lower_better", bilateral: true, unilateral: false, inOPI: false },
+
+  // ═══════════════════════════════════════════════════════════════════
+  // TIER 4: TECHNICAL - Needs biomechanics background
+  // ═══════════════════════════════════════════════════════════════════
+
+  // Smoothness metrics
+  { id: "sparc", name: "SPARC (Smoothness)", domain: "control", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: true, inOPI: true },
+  { id: "ldlj", name: "LDLJ (Smoothness)", domain: "control", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: true, inOPI: true },
+  { id: "nVelocityPeaks", name: "Velocity Peaks", domain: "control", unit: "", format: formatInt, direction: "lower_better", bilateral: true, unilateral: true, inOPI: true },
+  { id: "rmsJerk", name: "Jerkiness", domain: "control", unit: "°/s³", format: formatInt, direction: "lower_better", bilateral: true, unilateral: true, inOPI: true },
+
+  // Phase/Timing (technical)
+  { id: "phaseShift", name: "Phase Shift", domain: "timing", unit: "°", format: formatDegrees, direction: "lower_better", bilateral: true, unilateral: false, inOPI: false },
+  { id: "temporalLag", name: "Temporal Lag", domain: "timing", unit: "ms", format: formatMs, direction: "lower_better", bilateral: true, unilateral: false, inOPI: false },
+  { id: "zeroVelocityPhaseMs", name: "Pause Duration", domain: "timing", unit: "ms", format: formatMs, direction: "lower_better", bilateral: true, unilateral: true, inOPI: false },
 ];
 
 const DOMAIN_COLORS: Record<MetricDomain, string> = {
   opi: "var(--tropx-vibrant)",
+  range: "#10b981",    // emerald - most intuitive
   symmetry: "#8b5cf6", // violet
   power: "#f97316",    // orange
   control: "#06b6d4",  // cyan
-  stability: "#22c55e", // green
+  timing: "#ec4899",   // pink
 };
 
 const DOMAIN_LABELS: Record<MetricDomain, string> = {
-  opi: "OPI",
-  symmetry: "Symmetry",
+  opi: "Score",
+  range: "Range",
+  symmetry: "Balance",
   power: "Power",
   control: "Control",
-  stability: "Stability",
+  timing: "Timing",
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -137,10 +179,11 @@ export function MetricsTable({
   const groupedMetrics = useMemo(() => {
     const groups: Record<MetricDomain, MetricDefinition[]> = {
       opi: [],
+      range: [],
       symmetry: [],
       power: [],
       control: [],
-      stability: [],
+      timing: [],
     };
     for (const metric of METRIC_DEFINITIONS) {
       groups[metric.domain].push(metric);
@@ -280,14 +323,8 @@ export function MetricsTable({
     );
   };
 
-  // Flatten all metrics in domain order
-  const allMetrics = [
-    ...groupedMetrics.opi,
-    ...groupedMetrics.symmetry,
-    ...groupedMetrics.power,
-    ...groupedMetrics.control,
-    ...groupedMetrics.stability,
-  ];
+  // Use metrics in their defined order (sorted by understandability)
+  const allMetrics = METRIC_DEFINITIONS;
 
   return (
     <div className={cn("rounded-xl border border-gray-200 overflow-hidden", className)}>

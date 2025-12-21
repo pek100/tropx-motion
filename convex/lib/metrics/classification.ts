@@ -25,6 +25,7 @@ import {
   convolveSignal,
   mean,
   stdDev,
+  findRepeatingVelocityMask,
 } from "./helpers";
 
 // ─────────────────────────────────────────────────────────────────
@@ -539,7 +540,11 @@ export function calculateOptimalPhaseAlignment(
   const velRight = computeFirstDerivative(right.slice(0, n));
   const velLen = Math.min(velLeft.length, velRight.length);
 
-  // Find best lag by minimizing area between velocity curves
+  // Find repeating velocity patterns (filter out transitions/noise)
+  const maskLeft = findRepeatingVelocityMask(velLeft);
+  const maskRight = findRepeatingVelocityMask(velRight);
+
+  // Find best lag by minimizing area between velocity curves (only repeating points)
   let bestAreaDiff = Infinity;
   let areaAtZero = 0;
   let bestLag = 0;
@@ -550,7 +555,8 @@ export function calculateOptimalPhaseAlignment(
 
     for (let i = 0; i < velLen; i++) {
       const j = i + lag;
-      if (j >= 0 && j < velLen) {
+      // Only use points where both velocities are part of repeating pattern
+      if (j >= 0 && j < velLen && maskLeft[i] && maskRight[j]) {
         areaDiff += Math.abs(velLeft[i] - velRight[j]);
         count++;
       }
@@ -860,6 +866,235 @@ export function calculateAdvancedAsymmetry(
     baselineStability,
     signalToNoiseRatio,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Custom Phase Offset Recalculation
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Recalculate asymmetry metrics with a custom phase offset.
+ * Used when user manually adjusts the phase alignment.
+ */
+export function recalculateWithCustomPhaseOffset(
+  left: number[],
+  right: number[],
+  timeStep: number,
+  customOffsetMs: number,
+  kernelSize: number = DEFAULT_KERNEL_SIZE,
+  asymmetryThreshold: number = DEFAULT_ASYMMETRY_THRESHOLD
+): {
+  advancedAsymmetry: AdvancedAsymmetryResult;
+  phaseAlignment: PhaseAlignmentResult;
+} {
+  const n = Math.min(left.length, right.length);
+  const customOffsetSamples = Math.round(customOffsetMs / (timeStep * 1000));
+
+  // Create aligned right signal with custom offset
+  const alignedRight: number[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const srcIdx = i + customOffsetSamples;
+    if (srcIdx >= 0 && srcIdx < n) {
+      alignedRight[i] = right[srcIdx];
+    } else if (srcIdx < 0) {
+      alignedRight[i] = right[0];
+    } else {
+      alignedRight[i] = right[n - 1];
+    }
+  }
+
+  // Calculate correlation at custom offset
+  let meanL = 0, meanR = 0;
+  for (let i = 0; i < n; i++) {
+    meanL += left[i];
+    meanR += right[i];
+  }
+  meanL /= n;
+  meanR /= n;
+
+  let sumSqL = 0, sumSqR = 0;
+  for (let i = 0; i < n; i++) {
+    sumSqL += (left[i] - meanL) ** 2;
+    sumSqR += (right[i] - meanR) ** 2;
+  }
+  const stdL = Math.sqrt(sumSqL / n);
+  const stdR = Math.sqrt(sumSqR / n);
+
+  // Unaligned correlation (at zero lag)
+  let unalignedCorrelation = 0;
+  if (stdL > 1e-10 && stdR > 1e-10) {
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      sum += (left[i] - meanL) * (right[i] - meanR);
+    }
+    unalignedCorrelation = sum / (n * stdL * stdR);
+  }
+
+  // Aligned correlation (at custom offset)
+  let alignedCorrelation = 0;
+  if (stdL > 1e-10 && stdR > 1e-10) {
+    let sum = 0, count = 0;
+    for (let i = 0; i < n; i++) {
+      const j = i + customOffsetSamples;
+      if (j >= 0 && j < n) {
+        sum += (left[i] - meanL) * (right[j] - meanR);
+        count++;
+      }
+    }
+    alignedCorrelation = count > 0 ? sum / (count * stdL * stdR) : 0;
+  }
+
+  // Estimate cycle length for degree conversion
+  const cycleSamples = estimateCycleLength(left, n);
+  const optimalOffsetDegrees = Math.abs((customOffsetSamples * 360) / cycleSamples) % 360;
+
+  const correlationImprovement = alignedCorrelation - unalignedCorrelation;
+
+  // Build phase alignment result
+  const phaseAlignment: PhaseAlignmentResult = {
+    optimalOffsetSamples: customOffsetSamples,
+    optimalOffsetMs: customOffsetMs,
+    optimalOffsetDegrees,
+    alignedCorrelation,
+    unalignedCorrelation,
+    correlationImprovement,
+  };
+
+  // Calculate asymmetry using aligned signals (no auto phase correction)
+  const L = left.slice(0, n);
+  const R = alignedRight;
+
+  // Calculate raw difference
+  const rawDiff: number[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    rawDiff[i] = L[i] - R[i];
+  }
+
+  // Extract baseline using Gaussian convolution
+  const kernel = generateGaussianKernel(kernelSize);
+  const baselineOffset = convolveSignal(rawDiff, kernel);
+
+  // Real asymmetry = raw diff - baseline
+  const realAsymmetry: number[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    realAsymmetry[i] = rawDiff[i] - baselineOffset[i];
+  }
+
+  // Detect asymmetry events
+  const asymmetryEvents: AsymmetryEvent[] = [];
+  let inEvent = false;
+  let eventStart = 0;
+  let eventPeak = 0;
+  let eventSum = 0;
+  let eventCount = 0;
+  let eventDirection: AsymmetryDirection = "left_dominant";
+
+  for (let i = 0; i < n; i++) {
+    const absAsym = Math.abs(realAsymmetry[i]);
+
+    if (absAsym > asymmetryThreshold) {
+      if (!inEvent) {
+        inEvent = true;
+        eventStart = i;
+        eventPeak = absAsym;
+        eventSum = absAsym;
+        eventCount = 1;
+        eventDirection = realAsymmetry[i] > 0 ? "left_dominant" : "right_dominant";
+      } else {
+        eventPeak = Math.max(eventPeak, absAsym);
+        eventSum += absAsym;
+        eventCount++;
+      }
+    } else if (inEvent) {
+      const durationMs = (i - 1 - eventStart) * timeStep * 1000;
+      if (durationMs > MIN_EVENT_DURATION_MS) {
+        asymmetryEvents.push({
+          startIndex: eventStart,
+          endIndex: i - 1,
+          startTimeMs: eventStart * timeStep * 1000,
+          endTimeMs: (i - 1) * timeStep * 1000,
+          durationMs,
+          peakAsymmetry: eventPeak,
+          avgAsymmetry: eventSum / eventCount,
+          direction: eventDirection,
+          area: eventSum * timeStep,
+        });
+      }
+      inEvent = false;
+    }
+  }
+
+  // Handle event at end
+  if (inEvent && eventCount > 0) {
+    const durationMs = (n - 1 - eventStart) * timeStep * 1000;
+    if (durationMs > MIN_EVENT_DURATION_MS) {
+      asymmetryEvents.push({
+        startIndex: eventStart,
+        endIndex: n - 1,
+        startTimeMs: eventStart * timeStep * 1000,
+        endTimeMs: (n - 1) * timeStep * 1000,
+        durationMs,
+        peakAsymmetry: eventPeak,
+        avgAsymmetry: eventSum / eventCount,
+        direction: eventDirection,
+        area: eventSum * timeStep,
+      });
+    }
+  }
+
+  // Calculate summary statistics
+  let avgBaselineOffset = 0;
+  let avgRealAsymmetry = 0;
+  for (let i = 0; i < n; i++) {
+    avgBaselineOffset += Math.abs(baselineOffset[i]);
+    avgRealAsymmetry += Math.abs(realAsymmetry[i]);
+  }
+  avgBaselineOffset /= n;
+  avgRealAsymmetry /= n;
+
+  const maxRealAsymmetry = Math.max(...realAsymmetry.map(Math.abs));
+
+  const totalAsymmetryDurationMs = asymmetryEvents.reduce((sum, e) => sum + e.durationMs, 0);
+  const totalDurationMs = n * timeStep * 1000;
+  const asymmetryPercentage =
+    totalDurationMs > 0 ? (totalAsymmetryDurationMs / totalDurationMs) * 100 : 0;
+
+  // Baseline stability
+  let baselineChangeSum = 0;
+  for (let i = 1; i < n; i++) {
+    baselineChangeSum += Math.abs(baselineOffset[i] - baselineOffset[i - 1]);
+  }
+  const baselineStability = baselineChangeSum / (n - 1);
+
+  // Signal to noise ratio
+  const quietPeriods = realAsymmetry.filter((a) => Math.abs(a) < asymmetryThreshold);
+  const noiseFloor =
+    quietPeriods.length > 10
+      ? Math.sqrt(quietPeriods.reduce((s, v) => s + v * v, 0) / quietPeriods.length)
+      : 1;
+  const signalToNoiseRatio = noiseFloor > 0 ? maxRealAsymmetry / noiseFloor : 0;
+
+  // Classify movement for phase correction info
+  const classification = classifyMovementType(left, right, timeStep);
+
+  const advancedAsymmetry: AdvancedAsymmetryResult = {
+    phaseCorrection: {
+      appliedShiftSamples: customOffsetSamples,
+      appliedShiftMs: customOffsetMs,
+      movementType: classification.type,
+      requiresCorrection: true,
+    },
+    asymmetryEvents,
+    avgBaselineOffset,
+    avgRealAsymmetry,
+    maxRealAsymmetry,
+    totalAsymmetryDurationMs,
+    asymmetryPercentage,
+    baselineStability,
+    signalToNoiseRatio,
+  };
+
+  return { advancedAsymmetry, phaseAlignment };
 }
 
 // ─────────────────────────────────────────────────────────────────

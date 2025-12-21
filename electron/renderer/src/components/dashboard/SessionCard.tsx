@@ -2,9 +2,10 @@
  * SessionCard - Compact session card for carousel display.
  */
 
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { formatDate, formatTime } from "@/lib/utils";
-import { Dumbbell, Footprints, Activity, Shuffle, HelpCircle } from "lucide-react";
+import { Dumbbell, Footprints, Activity, Shuffle, HelpCircle, RefreshCw, Loader2 } from "lucide-react";
 import type { MovementType } from "./MetricsTable";
 
 // ─────────────────────────────────────────────────────────────────
@@ -28,6 +29,10 @@ interface SessionCardProps {
   isLatest?: boolean;
   onClick?: () => void;
   className?: string;
+  /** Callback to trigger metrics recomputation */
+  onRecomputeMetrics?: () => void;
+  /** Whether recomputation is in progress */
+  isRecomputing?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -80,11 +85,34 @@ export function SessionCard({
   isLatest,
   onClick,
   className,
+  onRecomputeMetrics,
+  isRecomputing,
 }: SessionCardProps) {
+  const [showRegenConfirm, setShowRegenConfirm] = useState(false);
+
   const config = MOVEMENT_CONFIG[session.movementType] || MOVEMENT_CONFIG.unknown;
   const Icon = config.icon;
   const title = session.tags[0] || "Untitled";
   const gradeColor = GRADE_COLORS[session.opiGrade] || "text-[var(--tropx-dark)]";
+
+  // Handle recompute button click (stop propagation to prevent card selection)
+  const handleRecomputeClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowRegenConfirm(true);
+  };
+
+  // Handle confirm recompute
+  const handleConfirmRecompute = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onRecomputeMetrics?.();
+    setShowRegenConfirm(false);
+  };
+
+  // Handle cancel
+  const handleCancelRecompute = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowRegenConfirm(false);
+  };
 
   return (
     <button
@@ -138,18 +166,40 @@ export function SessionCard({
 
         {/* OPI + Grade - inline on mobile, stacked on desktop */}
         <div className="sm:mt-3 sm:pt-3 sm:border-t sm:border-dashed sm:border-[var(--tropx-border)] flex items-center justify-between">
-          <div className="flex items-center sm:flex-col gap-1 sm:gap-0">
-            <span className="text-[8px] sm:text-[10px] text-[var(--tropx-text-sub)] uppercase hidden sm:inline">
-              OPI
-            </span>
-            <span
-              className={cn(
-                "text-sm sm:text-xl font-bold",
-                isLatest ? "text-[var(--tropx-vibrant)]" : "text-[var(--tropx-text-main)]"
-              )}
-            >
-              {Math.round(session.opiScore)}
-            </span>
+          <div className="flex items-center gap-1 sm:gap-2">
+            {/* Recompute button - only visible on active card */}
+            {isActive && onRecomputeMetrics && !showRegenConfirm && (
+              <div
+                onClick={handleRecomputeClick}
+                className={cn(
+                  "size-5 sm:size-6 flex items-center justify-center rounded-full",
+                  "bg-[var(--tropx-muted)] border border-[var(--tropx-border)]",
+                  "text-[var(--tropx-shadow)] hover:text-[var(--tropx-vibrant)] hover:border-[var(--tropx-vibrant)]",
+                  "transition-colors",
+                  isRecomputing && "pointer-events-none"
+                )}
+                title="Recompute metrics"
+              >
+                {isRecomputing ? (
+                  <Loader2 className="size-2.5 sm:size-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-2.5 sm:size-3" />
+                )}
+              </div>
+            )}
+            <div className="flex items-center sm:flex-col gap-1 sm:gap-0">
+              <span className="text-[8px] sm:text-[10px] text-[var(--tropx-text-sub)] uppercase hidden sm:inline">
+                OPI
+              </span>
+              <span
+                className={cn(
+                  "text-sm sm:text-xl font-bold",
+                  isLatest ? "text-[var(--tropx-vibrant)]" : "text-[var(--tropx-text-main)]"
+                )}
+              >
+                {Math.round(session.opiScore)}
+              </span>
+            </div>
           </div>
           <div className="flex items-center sm:flex-col sm:items-end gap-0.5 sm:gap-0">
             <span className={cn("text-sm sm:text-lg font-bold", gradeColor)}>
@@ -157,6 +207,38 @@ export function SessionCard({
             </span>
           </div>
         </div>
+
+        {/* Recompute confirmation overlay */}
+        {showRegenConfirm && (
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center p-2 sm:p-3 rounded-lg sm:rounded-xl bg-[var(--tropx-card)] z-10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-[10px] sm:text-xs text-[var(--tropx-text-main)] text-center mb-2 sm:mb-3">
+              Recompute metrics?
+            </p>
+            <div className="flex gap-1.5 sm:gap-2 w-full">
+              <button
+                onClick={handleCancelRecompute}
+                className="flex-1 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-[var(--tropx-text-main)] bg-[var(--tropx-muted)] border border-[var(--tropx-border)] rounded-md sm:rounded-lg hover:bg-[var(--tropx-hover)] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmRecompute}
+                disabled={isRecomputing}
+                className="flex-1 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-white bg-[var(--tropx-vibrant)] rounded-md sm:rounded-lg hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-1 transition-colors"
+              >
+                {isRecomputing ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-3" />
+                )}
+                <span className="hidden sm:inline">Confirm</span>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </button>
   );
