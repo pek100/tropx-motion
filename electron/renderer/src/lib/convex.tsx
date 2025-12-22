@@ -11,11 +11,23 @@ const convexUrl =
   (typeof window !== 'undefined' && window.electronAPI?.config?.convexUrl) ||
   import.meta.env.VITE_CONVEX_URL;
 
+// Enable verbose logging for auth debugging (check URL param or localStorage)
+const isVerboseAuth = typeof window !== 'undefined' && (
+  new URLSearchParams(window.location.search).get('verboseAuth') === 'true' ||
+  localStorage.getItem('tropx_verbose_auth') === 'true'
+);
+
 console.log('[Convex] URL source:', window.electronAPI?.config?.convexUrl ? 'preload' : 'vite env')
 console.log('[Convex] CONVEX_URL:', convexUrl ? 'configured' : 'NOT SET')
+if (isVerboseAuth) {
+  console.log('[Convex] Verbose auth logging enabled');
+}
 
 // Only create client if URL is configured
-const convex = convexUrl ? new ConvexReactClient(convexUrl) : null;
+// Enable verbose mode for auth debugging when requested
+const convex = convexUrl ? new ConvexReactClient(convexUrl, {
+  verbose: isVerboseAuth,
+}) : null;
 
 console.log('[Convex] Client created:', !!convex)
 

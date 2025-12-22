@@ -446,15 +446,13 @@ function RecordingPreview({
       </div>
 
       {/* Chart */}
-      <div className="min-h-[52px]">
-        <SvgPreviewChart
-          leftPaths={leftPaths}
-          rightPaths={rightPaths}
-          isLoading={isPreviewLoading}
-          height={42}
-          showLegend
-        />
-      </div>
+      <SvgPreviewChart
+        leftPaths={leftPaths}
+        rightPaths={rightPaths}
+        isLoading={isPreviewLoading}
+        height={42}
+        showLegend
+      />
 
       {/* OPI Score Display */}
       {!isEditing && (
@@ -936,6 +934,38 @@ function RecordingPreview({
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Session Storage Persistence
+// ─────────────────────────────────────────────────────────────────
+
+const LOAD_MODAL_STORAGE_KEY = 'tropx-load-modal-state';
+
+interface LoadModalPersistedState {
+  searchInput: string;
+  selectedSubjectId: string | null;
+  selectedSubjectName: string | null;
+  selectedSubjectImage: string | undefined;
+  selectedSessionId: string | null;
+}
+
+function loadPersistedState(): Partial<LoadModalPersistedState> {
+  try {
+    const saved = sessionStorage.getItem(LOAD_MODAL_STORAGE_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) {
+    console.warn('Failed to load LoadModal state:', e);
+  }
+  return {};
+}
+
+function savePersistedState(state: LoadModalPersistedState): void {
+  try {
+    sessionStorage.setItem(LOAD_MODAL_STORAGE_KEY, JSON.stringify(state));
+  } catch (e) {
+    console.warn('Failed to save LoadModal state:', e);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Main Component
 // ─────────────────────────────────────────────────────────────────
 
@@ -946,13 +976,24 @@ export function LoadModal({
   onImportCSV,
   initialSessionId,
 }: LoadModalProps) {
-  // State
-  const [searchInput, setSearchInput] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [selectedSubjectId, setSelectedSubjectId] = useState<Id<'users'> | null>(null);
-  const [selectedSubjectName, setSelectedSubjectName] = useState<string | null>(null);
-  const [selectedSubjectImage, setSelectedSubjectImage] = useState<string | undefined>(undefined);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  // Load persisted state on mount
+  const persistedState = useRef(loadPersistedState());
+
+  // State - initialize from sessionStorage if available
+  const [searchInput, setSearchInput] = useState(persistedState.current.searchInput || '');
+  const [debouncedSearch, setDebouncedSearch] = useState(persistedState.current.searchInput || '');
+  const [selectedSubjectId, setSelectedSubjectId] = useState<Id<'users'> | null>(
+    (persistedState.current.selectedSubjectId as Id<'users'>) || null
+  );
+  const [selectedSubjectName, setSelectedSubjectName] = useState<string | null>(
+    persistedState.current.selectedSubjectName || null
+  );
+  const [selectedSubjectImage, setSelectedSubjectImage] = useState<string | undefined>(
+    persistedState.current.selectedSubjectImage
+  );
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    persistedState.current.selectedSessionId || null
+  );
   const [cursor, setCursor] = useState<number | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -965,6 +1006,17 @@ export function LoadModal({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Persist state to sessionStorage whenever it changes
+  useEffect(() => {
+    savePersistedState({
+      searchInput,
+      selectedSubjectId,
+      selectedSubjectName,
+      selectedSubjectImage,
+      selectedSessionId,
+    });
+  }, [searchInput, selectedSubjectId, selectedSubjectName, selectedSubjectImage, selectedSessionId]);
 
   // Mutations
   const archiveSession = useMutation(api.recordingSessions.archiveSession);
@@ -1056,21 +1108,20 @@ export function LoadModal({
   const selectedSession = sessions.find((s) => s.sessionId === selectedSessionId) ?? null;
   const isPreviewLoading = selectedSessionId !== null && previewResult === undefined;
 
-  // Reset state when modal opens
+  // Handle modal open - apply initialSessionId if provided, otherwise preserve persisted state
   useEffect(() => {
     if (open) {
-      setSearchInput('');
-      setDebouncedSearch('');
-      setSelectedSubjectId(null);
-      setSelectedSubjectName(null);
-      setSelectedSubjectImage(undefined);
-      // Pre-select session if initialSessionId provided
-      setSelectedSessionId(initialSessionId ?? null);
+      // If initialSessionId is provided, use it (overrides persisted state)
+      if (initialSessionId) {
+        setSelectedSessionId(initialSessionId);
+      }
+      // Reset transient state
       setCursor(null);
       setIsPatientSearchOpen(false);
       setPatientSearchMode('filter');
       setEditSubject(undefined);
-      if (!initialSessionId) {
+      // Focus search if no session selected
+      if (!initialSessionId && !selectedSessionId) {
         setTimeout(() => searchInputRef.current?.focus(), 100);
       }
     }
@@ -1218,7 +1269,7 @@ export function LoadModal({
           {/* Main Modal Content */}
           <DialogPrimitive.Content
             className={cn(
-              'w-[90vw] h-[85vh]',
+              'w-[95vw] md:w-[90vw] h-[90vh] md:h-[85vh] max-w-5xl',
               'bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]',
               'flex flex-col overflow-hidden',
               'pointer-events-auto'
@@ -1248,14 +1299,14 @@ export function LoadModal({
             </div>
 
             {/* Search & Filter Bar */}
-            <div className="flex items-center gap-3 px-5 py-3 border-b border-[var(--tropx-border)] bg-[var(--tropx-muted)]/50">
+            <div className="flex flex-wrap items-center gap-2 md:gap-3 px-3 md:px-5 py-2 md:py-3 border-b border-[var(--tropx-border)] bg-[var(--tropx-muted)]/50">
               {/* Search input */}
-              <div className="flex-1 flex items-center gap-2.5 px-4 py-2.5 bg-[var(--tropx-card)] rounded-xl border border-[var(--tropx-border)] focus-within:border-[var(--tropx-vibrant)] focus-within:ring-2 focus-within:ring-[var(--tropx-vibrant)]/20 transition-all">
+              <div className="flex-1 min-w-[150px] flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 bg-[var(--tropx-card)] rounded-xl border border-[var(--tropx-border)] focus-within:border-[var(--tropx-vibrant)] focus-within:ring-2 focus-within:ring-[var(--tropx-vibrant)]/20 transition-all">
                 <Search className="size-4 text-[var(--tropx-shadow)]" />
                 <input
                   ref={searchInputRef}
                   type="text"
-                  placeholder="Search by title, tags, notes..."
+                  placeholder="Search..."
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
                   className="flex-1 bg-transparent text-sm text-[var(--tropx-text-main)] outline-none placeholder-[var(--tropx-text-sub)]"
@@ -1266,7 +1317,7 @@ export function LoadModal({
               <button
                 onClick={() => { setPatientSearchMode('filter'); setIsPatientSearchOpen(true); }}
                 className={cn(
-                  'flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all',
+                  'flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-2 md:py-2.5 rounded-xl text-sm font-medium transition-all',
                   'hover:scale-[1.02] active:scale-[0.98]',
                   selectedSubjectId
                     ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border-2 border-violet-200 dark:border-violet-700'
@@ -1278,7 +1329,7 @@ export function LoadModal({
                 ) : (
                   <Users className="size-4" />
                 )}
-                <span className="max-w-[100px] truncate">
+                <span className="hidden sm:inline max-w-[100px] truncate">
                   {selectedSubjectName || 'All Subjects'}
                 </span>
                 <ChevronRight className="size-4 opacity-50" />
@@ -1288,7 +1339,7 @@ export function LoadModal({
               {selectedSubjectId && (
                 <button
                   onClick={handleClearSubject}
-                  className="p-2 rounded-lg text-[var(--tropx-text-sub)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                  className="p-1.5 md:p-2 rounded-lg text-[var(--tropx-text-sub)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
                 >
                   <XIcon className="size-4" />
                 </button>
@@ -1299,24 +1350,24 @@ export function LoadModal({
                 <button
                   onClick={onImportCSV}
                   className={cn(
-                    'flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium',
+                    'flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-2 md:py-2.5 rounded-xl text-sm font-medium',
                     'bg-[var(--tropx-card)] text-[var(--tropx-shadow)] border-2 border-[var(--tropx-border)]',
                     'hover:border-[var(--tropx-shadow)]/30 hover:scale-[1.02] active:scale-[0.98] transition-all'
                   )}
                 >
                   <Upload className="size-4" />
-                  Import
+                  <span className="hidden sm:inline">Import</span>
                 </button>
               )}
             </div>
 
-            {/* Main content: two columns */}
-            <div className="flex-1 flex overflow-hidden">
-              {/* Left: Recording list */}
+            {/* Main content: two columns on desktop, stacked on mobile */}
+            <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+              {/* Top/Left: Recording list */}
               <div
                 ref={listRef}
                 onScroll={handleScroll}
-                className="w-1/2 border-r border-[var(--tropx-border)] overflow-y-auto p-4 space-y-3 bg-[var(--tropx-muted)]/30"
+                className="flex-1 md:flex-none md:w-1/2 border-b md:border-b-0 md:border-r border-[var(--tropx-border)] overflow-y-auto p-3 md:p-4 space-y-2 md:space-y-3 bg-[var(--tropx-muted)]/30"
               >
                 {searchResult === undefined ? (
                   <div className="flex items-center justify-center py-16">
@@ -1361,8 +1412,8 @@ export function LoadModal({
                 )}
               </div>
 
-              {/* Right: Preview panel */}
-              <div className="w-1/2 p-5 overflow-y-auto">
+              {/* Bottom/Right: Preview panel */}
+              <div className="flex-1 md:flex-none md:w-1/2 p-3 md:p-5 overflow-y-auto">
                 <RecordingPreview
                   session={selectedSession}
                   leftPaths={leftPaths}

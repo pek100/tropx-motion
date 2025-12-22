@@ -51,6 +51,11 @@ export function SvgPreviewChart({
   const leftPath = leftPaths?.[axis];
   const rightPath = rightPaths?.[axis];
 
+  // Calculate total height including legend and padding for consistency
+  const legendHeight = showLegend ? 16 : 0; // ~16px for legend row
+  const padding = 12; // p-1.5 = 6px * 2
+  const totalHeight = height + legendHeight + padding;
+
   // Loading state
   if (isLoading) {
     return (
@@ -59,7 +64,7 @@ export function SvgPreviewChart({
           "bg-[var(--tropx-muted)] rounded-lg border border-[var(--tropx-border)] overflow-hidden animate-pulse",
           className
         )}
-        style={{ height }}
+        style={{ height: totalHeight }}
       >
         <div className="w-full h-full bg-gradient-to-r from-[var(--tropx-muted)] via-[var(--tropx-card)] to-[var(--tropx-muted)]" />
       </div>
@@ -74,7 +79,7 @@ export function SvgPreviewChart({
           "bg-[var(--tropx-muted)] rounded-lg border border-[var(--tropx-border)] overflow-hidden flex items-center justify-center",
           className
         )}
-        style={{ height }}
+        style={{ height: totalHeight }}
       >
         <span className="text-xs text-[var(--tropx-text-sub)]">No preview</span>
       </div>
@@ -82,7 +87,10 @@ export function SvgPreviewChart({
   }
 
   return (
-    <div className={cn("rounded-lg bg-[var(--tropx-muted)] p-1.5", className)}>
+    <div
+      className={cn("rounded-lg bg-[var(--tropx-muted)] p-1.5", className)}
+      style={{ height: totalHeight }}
+    >
       <svg
         width="100%"
         height={height}

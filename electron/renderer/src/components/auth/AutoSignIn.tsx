@@ -1,11 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useConvexAuth } from "convex/react";
 
 const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';
 const ELECTRON_CALLBACK_URL_KEY = 'tropx_electron_callback_url';
+
+// Convex Auth storage key format - must match @convex-dev/auth/react exactly
+const JWT_STORAGE_KEY = '__convexAuthJWT';
+const REFRESH_TOKEN_STORAGE_KEY = '__convexAuthRefreshToken';
+
+// Compute storage namespace from Convex URL (same formula as Convex Auth)
+function getConvexAuthNamespace(): string {
+  const convexUrl =
+    (typeof window !== 'undefined' && (window as any).electronAPI?.config?.convexUrl) ||
+    import.meta.env.VITE_CONVEX_URL ||
+    '';
+  return convexUrl.replace(/[^a-zA-Z0-9]/g, '');
+}
+
+function getAuthStorageKey(baseKey: string): string {
+  const namespace = getConvexAuthNamespace();
+  return `${baseKey}_${namespace}`;
+}
 
 /**
  * AutoSignIn Component
@@ -79,16 +97,22 @@ export function AutoSignIn() {
     if (isLoading || hasCheckedStaleTokens) return;
 
     // Check if we have tokens in localStorage but Convex says not authenticated
-    const keys = Object.keys(localStorage);
-    const hasJWT = keys.some(k => k.toLowerCase().includes('jwt') && k.includes('convex'));
+    // Use exact key names to avoid false positives
+    const jwtKey = getAuthStorageKey(JWT_STORAGE_KEY);
+    const hasJWT = localStorage.getItem(jwtKey) !== null;
 
     if (hasJWT && !isAuthenticated) {
-      console.log('[AutoSignIn] Stale token detected - clearing tokens');
+      console.log('[AutoSignIn] Stale token detected - clearing all auth tokens');
 
-      // Clear stale tokens
-      const keysToRemove = keys.filter(k =>
-        k.includes('convexAuth') || k.includes('__convexAuth')
-      );
+      // Clear ALL Convex auth tokens to ensure clean state
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('__convexAuth')) {
+          keysToRemove.push(key);
+        }
+      }
+      console.log('[AutoSignIn] Removing keys:', keysToRemove);
       keysToRemove.forEach(key => localStorage.removeItem(key));
 
       // If we're in electron auth flow, trigger OAuth automatically
@@ -107,13 +131,15 @@ export function AutoSignIn() {
       console.log('[AutoSignIn] Auth complete, redirecting to callback:', callbackUrl);
       setRedirected(true);
 
-      // Get tokens from localStorage
-      const keys = Object.keys(localStorage);
-      const jwtKey = keys.find(k => k.toLowerCase().includes('jwt') && k.includes('convex'));
-      const refreshKey = keys.find(k => k.toLowerCase().includes('refreshtoken') && k.includes('convex'));
+      // Get tokens from localStorage using exact key names
+      const jwtKey = getAuthStorageKey(JWT_STORAGE_KEY);
+      const refreshKey = getAuthStorageKey(REFRESH_TOKEN_STORAGE_KEY);
 
-      const jwt = jwtKey ? localStorage.getItem(jwtKey) : null;
-      const refreshToken = refreshKey ? localStorage.getItem(refreshKey) : null;
+      const jwt = localStorage.getItem(jwtKey);
+      const refreshToken = localStorage.getItem(refreshKey);
+
+      console.log('[AutoSignIn] Reading tokens with keys:', { jwtKey, refreshKey });
+      console.log('[AutoSignIn] JWT found:', !!jwt, 'RefreshToken found:', !!refreshToken);
 
       // Clear pending flags
       localStorage.removeItem(ELECTRON_AUTH_KEY);
@@ -125,6 +151,7 @@ export function AutoSignIn() {
         window.location.href = redirectUrl;
       } else {
         // No tokens - redirect with error
+        console.error('[AutoSignIn] Failed to read tokens from localStorage');
         window.location.href = `${callbackUrl}?error=${encodeURIComponent('Failed to get authentication tokens')}`;
       }
     } else if (isElectronAuth && isAuthenticated && !isLoading && !callbackUrl) {

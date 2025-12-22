@@ -3,7 +3,7 @@
  * Renders lines for each selected metric from the table.
  */
 
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useState, useRef, useEffect } from "react";
 import {
   LineChart,
   Line,
@@ -95,26 +95,82 @@ interface TooltipPayload {
   payload: ChartDataPoint;
 }
 
+interface StickyTooltipState {
+  data: ChartDataPoint | null;
+  payload: TooltipPayload[];
+  isHoveringTooltip: boolean;
+}
+
 function CustomTooltip({
   active,
   payload,
   selectedSessionId,
   selectedMetrics,
   onViewSession,
+  stickyState,
+  onStickyStateChange,
 }: {
   active?: boolean;
   payload?: TooltipPayload[];
   selectedSessionId: string | null;
   selectedMetrics?: Set<string>;
   onViewSession?: (sessionId: string) => void;
+  stickyState: StickyTooltipState;
+  onStickyStateChange: (state: Partial<StickyTooltipState>) => void;
 }) {
-  if (!active || !payload?.[0]?.payload) return null;
+  const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const data = payload[0].payload;
+  // Use sticky data if hovering tooltip, otherwise use active payload
+  const effectivePayload = stickyState.isHoveringTooltip ? stickyState.payload : payload;
+  const isActive = active || stickyState.isHoveringTooltip;
+
+  // Update sticky state when new data comes in
+  useEffect(() => {
+    if (active && payload?.[0]?.payload) {
+      // Clear any pending hide timeout
+      if (hideTimeoutRef.current) {
+        clearTimeout(hideTimeoutRef.current);
+        hideTimeoutRef.current = null;
+      }
+      // Update sticky data
+      onStickyStateChange({
+        data: payload[0].payload,
+        payload: payload,
+      });
+    }
+  }, [active, payload, onStickyStateChange]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (hideTimeoutRef.current) {
+        clearTimeout(hideTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  if (!isActive || !effectivePayload?.[0]?.payload) return null;
+
+  const data = effectivePayload[0].payload;
   const isSelected = data.sessionId === selectedSessionId;
 
   // Get metric definitions for formatting
   const metricDefs = new Map(METRIC_DEFINITIONS.map((m) => [m.id, m]));
+
+  const handleMouseEnter = () => {
+    if (hideTimeoutRef.current) {
+      clearTimeout(hideTimeoutRef.current);
+      hideTimeoutRef.current = null;
+    }
+    onStickyStateChange({ isHoveringTooltip: true });
+  };
+
+  const handleMouseLeave = () => {
+    // Add a small delay before hiding to allow re-entry
+    hideTimeoutRef.current = setTimeout(() => {
+      onStickyStateChange({ isHoveringTooltip: false });
+    }, 150);
+  };
 
   return (
     <div
@@ -125,6 +181,8 @@ function CustomTooltip({
           ? "border-[var(--tropx-vibrant)]"
           : "border-[var(--tropx-border)]"
       )}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-1">
@@ -156,7 +214,7 @@ function CustomTooltip({
 
       {/* Metrics */}
       <div className="mt-2 pt-2 border-t border-[var(--tropx-border)] space-y-1">
-        {payload.filter(e => e.dataKey !== 'opiScore').slice(0, 4).map((entry) => {
+        {effectivePayload.filter(e => e.dataKey !== 'opiScore').slice(0, 4).map((entry) => {
           const def = metricDefs.get(entry.dataKey);
           const displayName = def?.name || entry.dataKey;
           const value = entry.value;
@@ -173,9 +231,9 @@ function CustomTooltip({
             </div>
           );
         })}
-        {payload.filter(e => e.dataKey !== 'opiScore').length > 4 && (
+        {effectivePayload.filter(e => e.dataKey !== 'opiScore').length > 4 && (
           <p className="text-[10px] text-[var(--tropx-text-sub)] text-center">
-            +{payload.filter(e => e.dataKey !== 'opiScore').length - 4} more metrics
+            +{effectivePayload.filter(e => e.dataKey !== 'opiScore').length - 4} more metrics
           </p>
         )}
       </div>
@@ -276,6 +334,17 @@ export function ProgressChart({
   selectedMetrics,
   className,
 }: ProgressChartProps) {
+  // Sticky tooltip state
+  const [stickyState, setStickyState] = useState<StickyTooltipState>({
+    data: null,
+    payload: [],
+    isHoveringTooltip: false,
+  });
+
+  const handleStickyStateChange = useCallback((update: Partial<StickyTooltipState>) => {
+    setStickyState((prev) => ({ ...prev, ...update }));
+  }, []);
+
   // Get active metrics (default to OPI if none selected)
   const activeMetrics = useMemo(() => {
     if (!selectedMetrics || selectedMetrics.size === 0) {
@@ -384,10 +453,13 @@ export function ProgressChart({
                 selectedSessionId={selectedSessionId}
                 selectedMetrics={activeMetrics}
                 onViewSession={onViewSession}
+                stickyState={stickyState}
+                onStickyStateChange={handleStickyStateChange}
               />
             }
             cursor={{ stroke: "var(--tropx-vibrant)", strokeOpacity: 0.3 }}
             wrapperStyle={{ pointerEvents: 'auto' }}
+            isAnimationActive={false}
           />
 
           <Legend content={<CustomLegend />} />

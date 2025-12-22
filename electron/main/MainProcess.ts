@@ -576,38 +576,58 @@ export class MainProcess {
         const result = await oauthHandler.signInWithGoogle();
         console.log('[MainProcess] OAuth result:', { success: result.success, hasTokens: !!result.tokens, error: result.error });
 
-        // If we got tokens from the BrowserWindow, inject them into the main window
+        // If we got tokens, inject them into the main window's localStorage
         if (result.success && result.tokens && this.mainWindow) {
           console.log('[MainProcess] Injecting auth tokens into main window');
           console.log('[MainProcess] JWT length:', result.tokens.jwt?.length);
           console.log('[MainProcess] RefreshToken length:', result.tokens.refreshToken?.length);
 
-          // Try both namespaced and non-namespaced keys to ensure Convex finds them
-          const convexUrl = process.env.VITE_CONVEX_URL || 'https://tough-anteater-529.convex.cloud';
+          // Convex Auth uses client.address as namespace, sanitized to alphanumeric only
+          // Must match exactly what ConvexAuthProvider uses
+          const convexUrl = process.env.VITE_CONVEX_URL;
+          if (!convexUrl) {
+            console.error('[MainProcess] VITE_CONVEX_URL not set - cannot inject tokens');
+            return { success: false, error: 'VITE_CONVEX_URL not configured' };
+          }
           const namespace = convexUrl.replace(/[^a-zA-Z0-9]/g, '');
+          const jwtKey = `__convexAuthJWT_${namespace}`;
+          const refreshKey = `__convexAuthRefreshToken_${namespace}`;
 
           await this.mainWindow.webContents.executeJavaScript(`
             (function() {
               const jwt = ${JSON.stringify(result.tokens.jwt)};
               const refreshToken = ${JSON.stringify(result.tokens.refreshToken)};
+              const jwtKey = ${JSON.stringify(jwtKey)};
+              const refreshKey = ${JSON.stringify(refreshKey)};
 
-              // Set both namespaced and non-namespaced keys
-              // Non-namespaced (default Convex Auth)
-              localStorage.setItem('__convexAuthJWT', jwt);
-              localStorage.setItem('__convexAuthRefreshToken', refreshToken);
+              // Step 1: Clear ALL existing Convex auth tokens to prevent duplicates/conflicts
+              const keysToRemove = [];
+              for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith('__convexAuth')) {
+                  keysToRemove.push(key);
+                }
+              }
+              console.log('[Auth] Clearing', keysToRemove.length, 'old auth keys:', keysToRemove);
+              keysToRemove.forEach(key => localStorage.removeItem(key));
 
-              // Namespaced (in case Convex Auth uses URL-based namespace)
-              localStorage.setItem('__convexAuthJWT_${namespace}', jwt);
-              localStorage.setItem('__convexAuthRefreshToken_${namespace}', refreshToken);
+              // Step 2: Set ONLY the correctly namespaced keys (matching Convex Auth format)
+              localStorage.setItem(jwtKey, jwt);
+              localStorage.setItem(refreshKey, refreshToken);
+              console.log('[Auth] Tokens set with keys:', jwtKey, refreshKey);
 
-              console.log('[Auth] Tokens injected into localStorage');
-              console.log('[Auth] Keys set: __convexAuthJWT, __convexAuthJWT_${namespace}');
-              console.log('[Auth] JWT length:', jwt.length);
+              // Step 3: Dispatch storage event so Convex Auth picks up the change
+              // This allows Convex Auth to sync without a full page reload
+              window.dispatchEvent(new StorageEvent('storage', {
+                key: jwtKey,
+                newValue: jwt,
+                storageArea: localStorage
+              }));
+              console.log('[Auth] Storage event dispatched');
             })()
           `);
 
-          console.log('[MainProcess] Auth tokens injected - AuthModal will handle reload');
-          // Don't reload here - let the IPC complete first, then AuthModal will reload
+          console.log('[MainProcess] Auth tokens injected successfully');
         }
 
         return result;
