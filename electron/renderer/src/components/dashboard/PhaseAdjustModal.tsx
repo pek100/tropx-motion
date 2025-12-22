@@ -3,7 +3,8 @@
  * Shows the chart without asymmetry overlays for precise alignment tuning.
  */
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import {
   AreaChart,
   Area,
@@ -19,12 +20,6 @@ import { cn } from "@/lib/utils";
 import { RotateCcw, Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   PackedChunkData,
   unpackToAngles,
@@ -206,159 +201,198 @@ export function PhaseAdjustModal({
 
   if (!phaseAlignment) return null;
 
+  const handleClose = () => onOpenChange(false);
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0 gap-0">
-        <DialogHeader className="px-6 py-4 border-b border-[var(--tropx-border)] flex-shrink-0">
-          <DialogTitle className="text-lg font-bold text-[var(--tropx-text-main)]">
-            Adjust Phase Alignment
-          </DialogTitle>
-        </DialogHeader>
+    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <DialogPrimitive.Portal>
+        {/* Blur overlay with fade animation */}
+        <DialogPrimitive.Overlay
+          className={cn(
+            "fixed inset-0 z-50 modal-blur-overlay cursor-default",
+            "data-[state=open]:animate-[overlay-fade-in_0.15s_ease-out]",
+            "data-[state=closed]:animate-[overlay-fade-out_0.1s_ease-in]"
+          )}
+          style={{
+            willChange: "opacity",
+            transform: "translateZ(0)",
+          }}
+          onClick={handleClose}
+        />
 
-        {/* Chart */}
-        <div className="flex-1 min-h-0 p-4">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart
-              data={chartData as any}
-              margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
+        {/* Modal content with bubble animation */}
+        <DialogPrimitive.Content
+          className={cn(
+            "fixed inset-0 z-[51] m-auto",
+            "w-full max-w-6xl h-[85vh] flex flex-col",
+            "bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]",
+            "data-[state=open]:animate-[modal-bubble-in_0.2s_var(--spring-bounce)_forwards]",
+            "data-[state=closed]:animate-[modal-bubble-out_0.12s_var(--spring-smooth)_forwards]",
+            "pointer-events-auto"
+          )}
+          onPointerDownOutside={handleClose}
+          onInteractOutside={handleClose}
+        >
+          {/* Header */}
+          <div className="px-6 py-4 border-b border-[var(--tropx-border)] flex-shrink-0 flex items-center justify-between">
+            <DialogPrimitive.Title className="text-lg font-bold text-[var(--tropx-text-main)]">
+              Adjust Phase Alignment
+            </DialogPrimitive.Title>
+            <button
+              type="button"
+              onClick={handleClose}
+              className="rounded-full p-1.5 hover:bg-[var(--tropx-muted)] transition-colors cursor-pointer"
             >
-              <defs>
-                <linearGradient id="modalLeftGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.4} />
-                  <stop offset="95%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.1} />
-                </linearGradient>
-                <linearGradient id="modalRightGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.4} />
-                  <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.1} />
-                </linearGradient>
-              </defs>
-
-              <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-zinc-700" />
-
-              <XAxis
-                dataKey="time"
-                type="number"
-                domain={["dataMin", "dataMax"]}
-                tickFormatter={(ms) => formatTimeMs(ms)}
-                className="text-gray-400 dark:text-gray-500"
-                tick={{ fill: "currentColor" }}
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-              />
-
-              <YAxis
-                domain={yDomain}
-                reversed
-                className="text-gray-400 dark:text-gray-500"
-                tick={{ fill: "currentColor" }}
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-                width={40}
-                tickFormatter={(v) => `${v}°`}
-              />
-
-              <ReferenceLine y={0} className="stroke-gray-300 dark:stroke-zinc-600" strokeWidth={1} />
-
-              <Tooltip content={<CustomTooltip />} />
-
-              <Legend
-                verticalAlign="top"
-                height={36}
-                formatter={(value) => (
-                  <span className="text-xs text-[var(--tropx-text-main)]">
-                    {value === "left" ? "Left Knee" : "Right Knee"}
-                  </span>
-                )}
-              />
-
-              <Area
-                type="monotone"
-                dataKey="left"
-                name="left"
-                stroke={LEFT_KNEE_COLOR}
-                strokeWidth={2}
-                fill="url(#modalLeftGradient)"
-                activeDot={{ r: 4, fill: LEFT_KNEE_COLOR }}
-              />
-
-              <Area
-                type="monotone"
-                dataKey="right"
-                name="right"
-                stroke={RIGHT_KNEE_COLOR}
-                strokeWidth={2}
-                fill="url(#modalRightGradient)"
-                activeDot={{ r: 4, fill: RIGHT_KNEE_COLOR }}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Controls */}
-        <div className="px-6 py-4 border-t border-[var(--tropx-border)] flex-shrink-0 space-y-4">
-          {/* Slider */}
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-[var(--tropx-text-sub)] w-20">Offset:</span>
-            <Slider
-              value={[manualAdjustment]}
-              onValueChange={(values: number[]) => setManualAdjustment(values[0])}
-              min={-1}
-              max={1}
-              step={0.02}
-              className="flex-1 [&_[role=slider]]:bg-[var(--tropx-vibrant)] [&_[role=slider]]:border-[var(--tropx-vibrant)] [&_.bg-primary]:bg-[var(--tropx-vibrant)]"
-            />
-            <span className="text-sm font-mono text-[var(--tropx-text-main)] w-20 text-right">
-              {currentOffsetMs.toFixed(1)}ms
-            </span>
+              <X className="size-4 text-[var(--tropx-shadow)]" />
+              <span className="sr-only">Close</span>
+            </button>
           </div>
 
-          {/* Info */}
-          <div className="flex items-center justify-between text-xs text-[var(--tropx-text-sub)]">
-            <span>
-              Optimal: {phaseAlignment.optimalOffsetMs.toFixed(1)}ms
-              ({phaseAlignment.optimalOffsetDegrees.toFixed(1)}°)
-            </span>
-            <span>
-              Correlation: {(phaseAlignment.unalignedCorrelation * 100).toFixed(0)}%
-              → {(phaseAlignment.alignedCorrelation * 100).toFixed(0)}%
-            </span>
+          {/* Chart */}
+          <div className="flex-1 min-h-0 p-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={chartData as any}
+                margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
+              >
+                <defs>
+                  <linearGradient id="modalLeftGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.4} />
+                    <stop offset="95%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.1} />
+                  </linearGradient>
+                  <linearGradient id="modalRightGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.4} />
+                    <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.1} />
+                  </linearGradient>
+                </defs>
+
+                <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-zinc-700" />
+
+                <XAxis
+                  dataKey="time"
+                  type="number"
+                  domain={["dataMin", "dataMax"]}
+                  tickFormatter={(ms) => formatTimeMs(ms)}
+                  className="text-gray-400 dark:text-gray-500"
+                  tick={{ fill: "currentColor" }}
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                />
+
+                <YAxis
+                  domain={yDomain}
+                  reversed
+                  className="text-gray-400 dark:text-gray-500"
+                  tick={{ fill: "currentColor" }}
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  width={40}
+                  tickFormatter={(v) => `${v}°`}
+                />
+
+                <ReferenceLine y={0} className="stroke-gray-300 dark:stroke-zinc-600" strokeWidth={1} />
+
+                <Tooltip content={<CustomTooltip />} />
+
+                <Legend
+                  verticalAlign="top"
+                  height={36}
+                  formatter={(value) => (
+                    <span className="text-xs text-[var(--tropx-text-main)]">
+                      {value === "left" ? "Left Knee" : "Right Knee"}
+                    </span>
+                  )}
+                />
+
+                <Area
+                  type="monotone"
+                  dataKey="left"
+                  name="left"
+                  stroke={LEFT_KNEE_COLOR}
+                  strokeWidth={2}
+                  fill="url(#modalLeftGradient)"
+                  activeDot={{ r: 4, fill: LEFT_KNEE_COLOR }}
+                />
+
+                <Area
+                  type="monotone"
+                  dataKey="right"
+                  name="right"
+                  stroke={RIGHT_KNEE_COLOR}
+                  strokeWidth={2}
+                  fill="url(#modalRightGradient)"
+                  activeDot={{ r: 4, fill: RIGHT_KNEE_COLOR }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
 
-          {/* Buttons */}
-          <div className="flex items-center justify-end gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleReset}
-              disabled={manualAdjustment === 0}
-              className="gap-1.5"
-            >
-              <RotateCcw className="size-3.5" />
-              Reset to Optimal
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onOpenChange(false)}
-              className="gap-1.5"
-            >
-              <X className="size-3.5" />
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleApply}
-              className="gap-1.5 bg-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/90"
-            >
-              <Check className="size-3.5" />
-              Apply & Recalculate
-            </Button>
+          {/* Controls */}
+          <div className="px-6 py-4 border-t border-[var(--tropx-border)] flex-shrink-0 space-y-4">
+            {/* Slider */}
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-[var(--tropx-text-sub)] w-20">Offset:</span>
+              <Slider
+                value={[manualAdjustment]}
+                onValueChange={(values: number[]) => setManualAdjustment(values[0])}
+                min={-1}
+                max={1}
+                step={0.02}
+                className="flex-1 [&_[role=slider]]:bg-[var(--tropx-vibrant)] [&_[role=slider]]:border-[var(--tropx-vibrant)] [&_.bg-primary]:bg-[var(--tropx-vibrant)]"
+              />
+              <span className="text-sm font-mono text-[var(--tropx-text-main)] w-20 text-right">
+                {currentOffsetMs.toFixed(1)}ms
+              </span>
+            </div>
+
+            {/* Info */}
+            <div className="flex items-center justify-between text-xs text-[var(--tropx-text-sub)]">
+              <span>
+                Optimal: {phaseAlignment.optimalOffsetMs.toFixed(1)}ms
+                ({phaseAlignment.optimalOffsetDegrees.toFixed(1)}°)
+              </span>
+              <span>
+                Correlation: {(phaseAlignment.unalignedCorrelation * 100).toFixed(0)}%
+                → {(phaseAlignment.alignedCorrelation * 100).toFixed(0)}%
+              </span>
+            </div>
+
+            {/* Buttons */}
+            <div className="flex items-center justify-end gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleReset}
+                disabled={manualAdjustment === 0}
+                className="gap-1.5"
+              >
+                <RotateCcw className="size-3.5" />
+                Reset to Optimal
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleClose}
+                className="gap-1.5"
+              >
+                <X className="size-3.5" />
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleApply}
+                className="gap-1.5 bg-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/90"
+              >
+                <Check className="size-3.5" />
+                Apply & Recalculate
+              </Button>
+            </div>
           </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 
