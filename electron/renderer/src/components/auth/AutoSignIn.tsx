@@ -7,25 +7,36 @@ import { useConvexAuth } from "convex/react";
 const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';
 const ELECTRON_CALLBACK_URL_KEY = 'tropx_electron_callback_url';
 
-// Convex Auth storage key format - must match @convex-dev/auth/react exactly
-const JWT_STORAGE_KEY = '__convexAuthJWT';
-const REFRESH_TOKEN_STORAGE_KEY = '__convexAuthRefreshToken';
+// Find Convex Auth tokens in localStorage by prefix
+// Convex Auth stores as __convexAuthJWT_<namespace> and __convexAuthRefreshToken_<namespace>
+function findConvexAuthTokens(): { jwt: string | null; refreshToken: string | null } {
+  let jwt: string | null = null;
+  let refreshToken: string | null = null;
 
-// Compute storage namespace from Convex URL (same formula as Convex Auth)
-function getConvexAuthNamespace(): string {
-  const convexUrl =
-    (typeof window !== 'undefined' && (window as any).electronAPI?.config?.convexUrl) ||
-    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_CONVEX_URL) ||
-    '';
-  if (!convexUrl) {
-    console.warn('[AutoSignIn] No Convex URL configured - auth storage keys may not work');
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+
+    if (key.startsWith('__convexAuthJWT_')) {
+      jwt = localStorage.getItem(key);
+      console.log('[AutoSignIn] Found JWT with key:', key);
+    } else if (key.startsWith('__convexAuthRefreshToken_')) {
+      refreshToken = localStorage.getItem(key);
+      console.log('[AutoSignIn] Found refreshToken with key:', key);
+    }
   }
-  return convexUrl.replace(/[^a-zA-Z0-9]/g, '');
+
+  return { jwt, refreshToken };
 }
 
-function getAuthStorageKey(baseKey: string): string {
-  const namespace = getConvexAuthNamespace();
-  return `${baseKey}_${namespace}`;
+function hasConvexAuthJWT(): boolean {
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('__convexAuthJWT_')) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -100,11 +111,7 @@ export function AutoSignIn() {
     if (isLoading || hasCheckedStaleTokens) return;
 
     // Check if we have tokens in localStorage but Convex says not authenticated
-    // Use exact key names to avoid false positives
-    const jwtKey = getAuthStorageKey(JWT_STORAGE_KEY);
-    const hasJWT = localStorage.getItem(jwtKey) !== null;
-
-    if (hasJWT && !isAuthenticated) {
+    if (hasConvexAuthJWT() && !isAuthenticated) {
       console.log('[AutoSignIn] Stale token detected - clearing all auth tokens');
 
       // Clear ALL Convex auth tokens to ensure clean state
@@ -134,14 +141,9 @@ export function AutoSignIn() {
       console.log('[AutoSignIn] Auth complete, redirecting to callback:', callbackUrl);
       setRedirected(true);
 
-      // Get tokens from localStorage using exact key names
-      const jwtKey = getAuthStorageKey(JWT_STORAGE_KEY);
-      const refreshKey = getAuthStorageKey(REFRESH_TOKEN_STORAGE_KEY);
+      // Find tokens in localStorage (searches for __convexAuthJWT_* and __convexAuthRefreshToken_*)
+      const { jwt, refreshToken } = findConvexAuthTokens();
 
-      const jwt = localStorage.getItem(jwtKey);
-      const refreshToken = localStorage.getItem(refreshKey);
-
-      console.log('[AutoSignIn] Reading tokens with keys:', { jwtKey, refreshKey });
       console.log('[AutoSignIn] JWT found:', !!jwt, 'RefreshToken found:', !!refreshToken);
 
       // Clear pending flags
