@@ -14,8 +14,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
 import { Id } from '../../../../convex/_generated/dataModel';
-import { PackedChunkData } from '../../../../shared/QuaternionCodec';
-import { MiniRecordingChart } from './MiniRecordingChart';
+import { SvgPreviewChart, type PreviewPaths } from './SvgPreviewChart';
 import {
   XIcon,
   Search,
@@ -325,7 +324,8 @@ interface MetricsStatus {
 // Preview panel - with inline editing support
 function RecordingPreview({
   session,
-  previewData,
+  leftPaths,
+  rightPaths,
   isPreviewLoading,
   onLoad,
   onDelete,
@@ -342,7 +342,8 @@ function RecordingPreview({
   isOwner,
 }: {
   session: SessionSummary | null;
-  previewData: PackedChunkData | null;
+  leftPaths?: PreviewPaths | null;
+  rightPaths?: PreviewPaths | null;
   isPreviewLoading: boolean;
   onLoad: () => void;
   onDelete?: () => void;
@@ -446,10 +447,12 @@ function RecordingPreview({
 
       {/* Chart */}
       <div className="min-h-[52px]">
-        <MiniRecordingChart
-          packedData={previewData}
+        <SvgPreviewChart
+          leftPaths={leftPaths}
+          rightPaths={rightPaths}
           isLoading={isPreviewLoading}
           height={42}
+          showLegend
         />
       </div>
 
@@ -1003,11 +1006,11 @@ export function LoadModal({
       : 'skip'
   );
 
-  // Query preview data for selected session (adaptive downsampling for chart)
+  // Query SVG preview paths for selected session
   const previewResult = useQuery(
-    api.recordingSessions.getSessionPreviewForChart,
+    api.recordingSessions.getSessionPreviewPaths,
     open && selectedSessionId
-      ? { sessionId: selectedSessionId, maxPoints: 100 }
+      ? { sessionId: selectedSessionId }
       : 'skip'
   );
 
@@ -1044,24 +1047,9 @@ export function LoadModal({
     };
   }, [metricsResult]);
 
-  // Convert preview result to PackedChunkData format
-  const previewData: PackedChunkData | null = useMemo(() => {
-    if (!previewResult) return null;
-    return {
-      startTime: previewResult.startTime,
-      endTime: previewResult.endTime,
-      sampleRate: previewResult.sampleRate,
-      sampleCount: previewResult.sampleCount,
-      activeJoints: previewResult.activeJoints,
-      leftKneeQ: previewResult.leftKneeQ,
-      rightKneeQ: previewResult.rightKneeQ,
-      // No flags needed for chart preview
-      leftKneeInterpolated: [],
-      leftKneeMissing: [],
-      rightKneeInterpolated: [],
-      rightKneeMissing: [],
-    };
-  }, [previewResult]);
+  // Extract preview paths
+  const leftPaths = previewResult?.leftKneePaths ?? null;
+  const rightPaths = previewResult?.rightKneePaths ?? null;
 
   // Get sessions
   const sessions = (searchResult?.sessions ?? []) as SessionSummary[];
@@ -1377,7 +1365,8 @@ export function LoadModal({
               <div className="w-1/2 p-5 overflow-y-auto">
                 <RecordingPreview
                   session={selectedSession}
-                  previewData={previewData}
+                  leftPaths={leftPaths}
+                  rightPaths={rightPaths}
                   isPreviewLoading={isPreviewLoading}
                   onLoad={handleLoad}
                   onDelete={handleDelete}

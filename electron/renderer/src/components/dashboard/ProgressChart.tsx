@@ -18,6 +18,7 @@ import { cn, formatDate } from "@/lib/utils";
 import { Activity } from "lucide-react";
 import type { SessionData, PreviewPaths } from "./SessionCard";
 import { METRIC_DEFINITIONS } from "./MetricsTable";
+import { SvgPreviewChart } from "../SvgPreviewChart";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -84,91 +85,6 @@ const METRIC_COLORS: Record<string, string> = {
 };
 
 // ─────────────────────────────────────────────────────────────────
-// Mini Preview Chart (SVG-based for tooltip)
-// Uses pre-computed SVG paths from server (normalized 0-100 coordinate space)
-// ─────────────────────────────────────────────────────────────────
-
-const LEFT_KNEE_COLOR = "#f97066";
-const RIGHT_KNEE_COLOR = "#60a5fa";
-
-function MiniPreviewChart({
-  leftPaths,
-  rightPaths,
-  axis = "y",
-}: {
-  leftPaths?: PreviewPaths | null;
-  rightPaths?: PreviewPaths | null;
-  axis?: "x" | "y" | "z";
-}) {
-  const leftPath = leftPaths?.[axis];
-  const rightPath = rightPaths?.[axis];
-
-  if (!leftPath && !rightPath) return null;
-
-  return (
-    <div className="mt-2 rounded-lg bg-[var(--tropx-muted)] p-1.5">
-      <svg
-        width={160}
-        height={48}
-        className="block"
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-      >
-        {/* Grid line */}
-        <line
-          x1={0}
-          y1={50}
-          x2={100}
-          y2={50}
-          stroke="var(--tropx-border)"
-          strokeWidth={1}
-          strokeDasharray="4,4"
-          vectorEffect="non-scaling-stroke"
-        />
-
-        {/* Left knee path */}
-        {leftPath && (
-          <path
-            d={leftPath}
-            fill="none"
-            stroke={LEFT_KNEE_COLOR}
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
-
-        {/* Right knee path */}
-        {rightPath && (
-          <path
-            d={rightPath}
-            fill="none"
-            stroke={RIGHT_KNEE_COLOR}
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
-      </svg>
-
-      {/* Legend */}
-      <div className="flex justify-center gap-3 mt-1 text-[9px] text-[var(--tropx-text-sub)]">
-        <span className="flex items-center gap-1">
-          <span className="size-1.5 rounded-full" style={{ backgroundColor: LEFT_KNEE_COLOR }} />
-          Left
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="size-1.5 rounded-full" style={{ backgroundColor: RIGHT_KNEE_COLOR }} />
-          Right
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────
 // Custom Tooltip
 // ─────────────────────────────────────────────────────────────────
 
@@ -230,9 +146,12 @@ function CustomTooltip({
       </div>
 
       {/* Mini Preview Chart */}
-      <MiniPreviewChart
+      <SvgPreviewChart
         leftPaths={data.previewLeftPaths}
         rightPaths={data.previewRightPaths}
+        height={48}
+        showLegend
+        className="mt-2"
       />
 
       {/* Metrics */}
@@ -375,8 +294,8 @@ export function ProgressChart({
         title: s.tags[0] || "Untitled",
         grade: s.opiGrade,
         opiScore: s.opiScore,
-        previewLeftY: s.previewLeftY,
-        previewRightY: s.previewRightY,
+        previewLeftPaths: s.previewLeftPaths,
+        previewRightPaths: s.previewRightPaths,
       };
 
       // Add all metrics from session

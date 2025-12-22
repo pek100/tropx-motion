@@ -27,6 +27,7 @@ import type * as lib_metrics_opi from "../lib/metrics/opi.js";
 import type * as lib_metrics_quaternionUtils from "../lib/metrics/quaternionUtils.js";
 import type * as lib_metrics_smoothness from "../lib/metrics/smoothness.js";
 import type * as lib_metrics_types from "../lib/metrics/types.js";
+import type * as migrations from "../migrations.js";
 import type * as notifications from "../notifications.js";
 import type * as recordingChunks from "../recordingChunks.js";
 import type * as recordingMetrics from "../recordingMetrics.js";
@@ -60,6 +61,7 @@ declare const fullApi: ApiFromModules<{
   "lib/metrics/quaternionUtils": typeof lib_metrics_quaternionUtils;
   "lib/metrics/smoothness": typeof lib_metrics_smoothness;
   "lib/metrics/types": typeof lib_metrics_types;
+  migrations: typeof migrations;
   notifications: typeof notifications;
   recordingChunks: typeof recordingChunks;
   recordingMetrics: typeof recordingMetrics;

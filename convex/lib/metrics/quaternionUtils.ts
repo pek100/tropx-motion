@@ -146,25 +146,56 @@ export function validateQuaternionArray(
 }
 
 /**
- * Converts an array of angles to a normalized SVG path string.
+ * Converts an array of angles to a minified SVG path string.
  * Uses 0-100 coordinate space for easy scaling via viewBox.
  * Y is inverted so higher angles appear higher on screen.
+ *
+ * Minification techniques applied:
+ * - Integer coordinates (0-100 range doesn't need decimals)
+ * - Relative line commands after initial M (shorter for sequential points)
+ * - Implicit separators (negative sign acts as separator)
+ * - No spaces where possible
  */
 export function anglesToSvgPath(angles: number[]): string {
   if (angles.length === 0) return "";
+  if (angles.length === 1) return "M0,50"; // Single point at center
 
   const min = Math.min(...angles);
   const max = Math.max(...angles);
   const range = max - min || 1;
 
-  return angles
-    .map((v, i) => {
-      const x = (i / (angles.length - 1)) * 100;
-      // Invert Y so higher values are at top
-      const y = ((max - v) / range) * 100;
-      return `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
+  // Pre-calculate all Y values as integers
+  const yValues = angles.map((v) => Math.round(((max - v) / range) * 100));
+
+  // Calculate X step (integer)
+  const xStep = 100 / (angles.length - 1);
+
+  // Start with absolute move to first point
+  const parts: string[] = [`M0,${yValues[0]}`];
+
+  let prevX = 0;
+  let prevY = yValues[0];
+
+  for (let i = 1; i < angles.length; i++) {
+    const x = Math.round(i * xStep);
+    const y = yValues[i];
+
+    const dx = x - prevX;
+    const dy = y - prevY;
+
+    // Use relative line command 'l'
+    // When dy is negative, it acts as separator: "l1-5" instead of "l1,-5"
+    if (dy >= 0) {
+      parts.push(`l${dx},${dy}`);
+    } else {
+      parts.push(`l${dx}${dy}`); // Negative sign acts as separator
+    }
+
+    prevX = x;
+    prevY = y;
+  }
+
+  return parts.join("");
 }
 
 /**

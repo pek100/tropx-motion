@@ -7,7 +7,6 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { getCurrentUser } from "./lib/auth";
-import { quaternionArrayToSvgPaths } from "./lib/metrics/quaternionUtils";
 
 /**
  * Get metrics history for a patient (subject).
@@ -79,12 +78,8 @@ export const getPatientMetricsHistory = query({
           notes: session.notes,
 
           // Preview SVG paths for mini chart (all 3 axes, normalized 0-100 coordinate space)
-          previewLeftPaths: session.leftKneePreview
-            ? quaternionArrayToSvgPaths(session.leftKneePreview)
-            : null,
-          previewRightPaths: session.rightKneePreview
-            ? quaternionArrayToSvgPaths(session.rightKneePreview)
-            : null,
+          previewLeftPaths: session.leftKneePaths ?? null,
+          previewRightPaths: session.rightKneePaths ?? null,
 
           // OPI
           opiScore: metrics.opiResult.overallScore,

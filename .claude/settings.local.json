@@ -64,7 +64,8 @@
       "Bash(npx:*)",
       "Bash(git stash:*)",
       "WebFetch(domain:www.mathworks.com)",
-      "WebFetch(domain:www.jospt.org)"
+      "WebFetch(domain:www.jospt.org)",
+      "WebFetch(domain:svgo.dev)"
     ],
     "deny": [],
     "ask": [],

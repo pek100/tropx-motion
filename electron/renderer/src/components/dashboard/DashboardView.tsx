@@ -4,10 +4,15 @@
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useConvex } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import { Id } from "../../../../../convex/_generated/dataModel";
-import type { PackedChunkData } from "../../../../../shared/QuaternionCodec";
+import { mergeChunks, type PackedChunkData } from "../../../../../shared/QuaternionCodec";
+import {
+  decompressAllChunks,
+  type CompressedChunk,
+  type SessionMetadata as CompressionSessionMeta,
+} from "../../../../../shared/compression/decompressSession";
 import { cn } from "@/lib/utils";
 import { User, Loader2, TrendingUp, BarChart3 } from "lucide-react";
 
@@ -149,17 +154,91 @@ export function DashboardView({ className }: DashboardViewProps) {
     setHasInitialized(true);
   }, [isUserLoading, isPatient, isPhysiotherapist, user, selectedPatientId, hasInitialized]);
 
+  // Convex client for manual queries
+  const convex = useConvex();
+
   // Queries
   const metricsHistory = useQuery(
     api.dashboard.getPatientMetricsHistory,
     selectedPatientId ? { subjectId: selectedPatientId } : "skip"
   );
 
-  // Query for session preview data (for SessionChart)
-  const sessionPreviewData = useQuery(
-    api.recordingSessions.getSessionPreviewForChart,
-    selectedSessionId ? { sessionId: selectedSessionId } : "skip"
-  ) as PackedChunkData | null | undefined;
+  // State for session waveform data (loaded on demand with decompression)
+  const [sessionPackedData, setSessionPackedData] = useState<PackedChunkData | null>(null);
+  const [isSessionLoading, setIsSessionLoading] = useState(false);
+  const loadedSessionIdRef = useRef<string | null>(null);
+
+  // Load session data when selectedSessionId changes
+  useEffect(() => {
+    if (!selectedSessionId) {
+      setSessionPackedData(null);
+      loadedSessionIdRef.current = null;
+      return;
+    }
+
+    // Skip if already loaded
+    if (loadedSessionIdRef.current === selectedSessionId) return;
+
+    const loadSessionData = async () => {
+      setIsSessionLoading(true);
+      try {
+        const result = await convex.query(api.recordingChunks.getSessionWithChunks, {
+          sessionId: selectedSessionId,
+        });
+
+        if (!result || result.chunks.length === 0) {
+          setSessionPackedData(null);
+          return;
+        }
+
+        const { session, chunks } = result;
+
+        // Build session metadata for decompression
+        const sessionMeta: CompressionSessionMeta = {
+          sessionId: session.sessionId,
+          sampleRate: session.sampleRate,
+          totalSamples: session.totalSamples,
+          totalChunks: session.totalChunks,
+          activeJoints: session.activeJoints,
+          startTime: session.startTime,
+          endTime: session.endTime,
+        };
+
+        // Decompress all chunks
+        const decompressedChunks = decompressAllChunks(
+          chunks as CompressedChunk[],
+          sessionMeta
+        );
+
+        // Convert to PackedChunkData format
+        const packedChunks: PackedChunkData[] = decompressedChunks.map((chunk) => ({
+          startTime: chunk.startTime,
+          endTime: chunk.endTime,
+          sampleRate: chunk.sampleRate,
+          sampleCount: chunk.sampleCount,
+          activeJoints: chunk.activeJoints,
+          leftKneeQ: chunk.leftKneeQ,
+          rightKneeQ: chunk.rightKneeQ,
+          leftKneeInterpolated: chunk.leftKneeInterpolated,
+          leftKneeMissing: chunk.leftKneeMissing,
+          rightKneeInterpolated: chunk.rightKneeInterpolated,
+          rightKneeMissing: chunk.rightKneeMissing,
+        }));
+
+        // Merge chunks and set state
+        const merged = mergeChunks(packedChunks);
+        setSessionPackedData(merged);
+        loadedSessionIdRef.current = selectedSessionId;
+      } catch (error) {
+        console.error("Failed to load session data:", error);
+        setSessionPackedData(null);
+      } finally {
+        setIsSessionLoading(false);
+      }
+    };
+
+    loadSessionData();
+  }, [selectedSessionId, convex]);
 
   // Query for asymmetry events (for SessionChart overlay)
   const asymmetryEvents = useQuery(
@@ -419,7 +498,6 @@ export function DashboardView({ className }: DashboardViewProps) {
 
   // Loading state
   const isLoading = metricsHistory === undefined;
-  const isSessionLoading = selectedSessionId !== null && sessionPreviewData === undefined;
 
   return (
     <div className={cn("flex flex-col h-full overflow-hidden", className)}>
@@ -499,7 +577,7 @@ export function DashboardView({ className }: DashboardViewProps) {
               sessions={sessions}
               selectedSessionId={selectedSessionId}
               onSelectSession={handleSelectSession}
-              sessionPreviewData={sessionPreviewData ?? null}
+              sessionPreviewData={sessionPackedData}
               isSessionLoading={isSessionLoading}
               selectedMetrics={selectedMetrics}
               asymmetryEvents={asymmetryEvents ?? null}

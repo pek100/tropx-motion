@@ -1,6 +1,6 @@
 /**
  * MiniRecordingChart - Sparkline chart for recording preview.
- * Uses QuaternionCodec for proper decoding of packed quaternion data.
+ * Supports pre-computed SVG paths (preferred) or quaternion data (legacy).
  */
 
 import { useMemo } from 'react';
@@ -11,13 +11,19 @@ import {
   QuaternionSample,
   quaternionToAngle,
 } from '../../../../shared/QuaternionCodec';
+import type { PreviewPaths } from './dashboard/SessionCard';
 
 // ─────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────
 
 interface MiniRecordingChartProps {
-  /** Packed chunk data from Convex (for LoadModal) */
+  /** Pre-computed SVG paths (preferred, from getSessionPreviewPaths) */
+  leftPaths?: PreviewPaths | null;
+  rightPaths?: PreviewPaths | null;
+  /** Axis to display when using SVG paths */
+  axis?: 'x' | 'y' | 'z';
+  /** Packed chunk data from Convex (legacy, for SaveModal) */
   packedData?: PackedChunkData | null;
   /** Raw quaternion samples (for SaveModal) */
   samples?: QuaternionSample[];

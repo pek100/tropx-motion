@@ -412,6 +412,13 @@ const subjectNoteValidator = v.object({
   createdAt: v.number(), // Keep: embedded data, not a document
 });
 
+// Minified SVG paths for preview charts (x, y, z axis projections)
+const previewPathsValidator = v.object({
+  x: v.string(),
+  y: v.string(),
+  z: v.string(),
+});
+
 const softDeleteFields = {
   isArchived: v.optional(v.boolean()),
   archivedAt: v.optional(v.number()),
@@ -471,10 +478,10 @@ export default defineSchema({
     endTime: v.number(),
     recordedAt: v.optional(v.number()), // Original capture time (for imports)
 
-    // Preview Quaternions (downsampled for instant chart display)
-    // 100 quaternions × 4 floats = 400 floats per leg
-    leftKneePreview: v.optional(v.array(v.float64())),
-    rightKneePreview: v.optional(v.array(v.float64())),
+    // Minified SVG paths for instant chart preview (x, y, z axis projections)
+    // ~500 bytes per leg, pre-rendered for zero client-side computation
+    leftKneePaths: v.optional(previewPathsValidator),
+    rightKneePaths: v.optional(previewPathsValidator),
 
     // Compression info
     compressionVersion: v.string(),

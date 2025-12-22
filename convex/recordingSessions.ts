@@ -20,9 +20,9 @@ export const createSession = mutation({
     endTime: v.number(),
     recordedAt: v.optional(v.number()),
 
-    // Preview quaternions (downsampled)
-    leftKneePreview: v.optional(v.array(v.float64())),
-    rightKneePreview: v.optional(v.array(v.float64())),
+    // Preview SVG paths (minified, pre-rendered)
+    leftKneePaths: v.optional(v.object({ x: v.string(), y: v.string(), z: v.string() })),
+    rightKneePaths: v.optional(v.object({ x: v.string(), y: v.string(), z: v.string() })),
 
     // User metadata
     notes: v.optional(v.string()),
@@ -60,8 +60,8 @@ export const createSession = mutation({
       startTime: args.startTime,
       endTime: args.endTime,
       recordedAt: args.recordedAt ?? Date.now(),
-      leftKneePreview: args.leftKneePreview,
-      rightKneePreview: args.rightKneePreview,
+      leftKneePaths: args.leftKneePaths,
+      rightKneePaths: args.rightKneePaths,
       compressionVersion: COMPRESSION.VERSION,
       notes: args.notes,
       tags: args.tags,
@@ -378,11 +378,10 @@ export const searchSessions = query({
   },
 });
 
-// Get session preview optimized for chart rendering (uses pre-computed preview)
-export const getSessionPreviewForChart = query({
+// Get session SVG preview paths for chart rendering
+export const getSessionPreviewPaths = query({
   args: {
     sessionId: v.string(),
-    maxPoints: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
@@ -403,16 +402,14 @@ export const getSessionPreviewForChart = query({
 
     if (!hasAccess) return null;
 
-    // Use pre-computed preview data (already downsampled to ~100 points)
     return {
       sessionId: args.sessionId,
       startTime: session.startTime,
       endTime: session.endTime,
       sampleRate: session.sampleRate,
-      sampleCount: Math.floor((session.leftKneePreview?.length ?? session.rightKneePreview?.length ?? 0) / 4),
       activeJoints: session.activeJoints,
-      leftKneeQ: session.leftKneePreview ?? [],
-      rightKneeQ: session.rightKneePreview ?? [],
+      leftKneePaths: session.leftKneePaths ?? null,
+      rightKneePaths: session.rightKneePaths ?? null,
     };
   },
 });
