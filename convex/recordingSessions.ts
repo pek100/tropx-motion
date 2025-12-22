@@ -3,6 +3,7 @@ import { query, mutation } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { requireUser, getCurrentUser } from "./lib/auth";
 import { COMPRESSION, METRIC_STATUS } from "./schema";
+import { bilateralQuaternionsToSvgPaths } from "./lib/metrics/quaternionUtils";
 
 // ─────────────────────────────────────────────────────────────────
 // Session Creation
@@ -20,9 +21,9 @@ export const createSession = mutation({
     endTime: v.number(),
     recordedAt: v.optional(v.number()),
 
-    // Preview SVG paths (minified, pre-rendered)
-    leftKneePaths: v.optional(v.object({ x: v.string(), y: v.string(), z: v.string() })),
-    rightKneePaths: v.optional(v.object({ x: v.string(), y: v.string(), z: v.string() })),
+    // Preview quaternions (downsampled, will be converted to SVG paths server-side)
+    leftKneePreview: v.optional(v.array(v.number())),
+    rightKneePreview: v.optional(v.array(v.number())),
 
     // User metadata
     notes: v.optional(v.string()),
@@ -47,6 +48,12 @@ export const createSession = mutation({
       throw new Error(`Session ${args.sessionId} already exists`);
     }
 
+    // Convert quaternion previews to SVG paths with bilateral scaling
+    const { leftPaths, rightPaths } = bilateralQuaternionsToSvgPaths(
+      args.leftKneePreview ?? null,
+      args.rightKneePreview ?? null
+    );
+
     // Create session
     const sessionDocId = await ctx.db.insert("recordingSessions", {
       sessionId: args.sessionId,
@@ -60,8 +67,8 @@ export const createSession = mutation({
       startTime: args.startTime,
       endTime: args.endTime,
       recordedAt: args.recordedAt ?? Date.now(),
-      leftKneePaths: args.leftKneePaths,
-      rightKneePaths: args.rightKneePaths,
+      leftKneePaths: leftPaths ?? undefined,
+      rightKneePaths: rightPaths ?? undefined,
       compressionVersion: COMPRESSION.VERSION,
       notes: args.notes,
       tags: args.tags,

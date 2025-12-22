@@ -3,8 +3,11 @@
  * Run these via the Convex dashboard or CLI to migrate data.
  */
 
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, internalAction } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
+import { decompressQuaternions, downsampleQuaternions } from "../shared/compression";
+import { bilateralQuaternionsToSvgPaths } from "./lib/metrics/quaternionUtils";
 
 /**
  * Count sessions with and without SVG preview paths.
@@ -66,6 +69,205 @@ export const getStorageStats = internalQuery({
       avgBytesPerSession: sessionsWithPaths > 0
         ? Math.round(totalPathBytes / sessionsWithPaths)
         : 0,
+    };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────
+// SVG Path Regeneration Migration
+// ─────────────────────────────────────────────────────────────────
+
+const PREVIEW_POINTS = 100;
+
+/**
+ * Get session IDs that need SVG path regeneration.
+ */
+export const getSessionsForSvgRegeneration = internalQuery({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 50;
+    const sessions = await ctx.db
+      .query("recordingSessions")
+      .order("desc")
+      .take(limit);
+
+    return sessions.map((s) => ({
+      sessionId: s.sessionId,
+      _id: s._id,
+      hasLeftPaths: !!s.leftKneePaths,
+      hasRightPaths: !!s.rightKneePaths,
+    }));
+  },
+});
+
+/**
+ * Get session with chunks for regeneration.
+ */
+export const getSessionWithChunksForMigration = internalQuery({
+  args: { sessionId: v.string() },
+  handler: async (ctx, args) => {
+    const session = await ctx.db
+      .query("recordingSessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+
+    if (!session) return null;
+
+    const chunks = await ctx.db
+      .query("recordingChunks")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    return {
+      session,
+      chunks: chunks.sort((a, b) => a.chunkIndex - b.chunkIndex),
+    };
+  },
+});
+
+/**
+ * Update session with regenerated SVG paths.
+ */
+export const updateSessionSvgPaths = internalMutation({
+  args: {
+    sessionId: v.string(),
+    leftKneePaths: v.union(
+      v.null(),
+      v.object({ x: v.string(), y: v.string(), z: v.string() })
+    ),
+    rightKneePaths: v.union(
+      v.null(),
+      v.object({ x: v.string(), y: v.string(), z: v.string() })
+    ),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.db
+      .query("recordingSessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+
+    if (!session) {
+      throw new Error(`Session ${args.sessionId} not found`);
+    }
+
+    await ctx.db.patch(session._id, {
+      leftKneePaths: args.leftKneePaths ?? undefined,
+      rightKneePaths: args.rightKneePaths ?? undefined,
+    });
+
+    return { success: true, sessionId: args.sessionId };
+  },
+});
+
+/**
+ * Regenerate SVG paths for a single session.
+ * Decompresses chunks, downsamples, and generates bilateral-scaled SVG paths.
+ */
+export const regenerateSvgPathsForSession = internalAction({
+  args: { sessionId: v.string() },
+  handler: async (ctx, args) => {
+    // Get session with chunks
+    const data = await ctx.runQuery(
+      internal.migrations.getSessionWithChunksForMigration,
+      { sessionId: args.sessionId }
+    );
+
+    if (!data || data.chunks.length === 0) {
+      return { success: false, error: "Session or chunks not found" };
+    }
+
+    // Decompress and accumulate all quaternion data
+    const allLeftQ: number[] = [];
+    const allRightQ: number[] = [];
+
+    for (const chunk of data.chunks) {
+      if (chunk.leftKneeCompressed) {
+        const bytes = new Uint8Array(chunk.leftKneeCompressed);
+        const decompressed = decompressQuaternions(bytes);
+        allLeftQ.push(...Array.from(decompressed));
+      }
+      if (chunk.rightKneeCompressed) {
+        const bytes = new Uint8Array(chunk.rightKneeCompressed);
+        const decompressed = decompressQuaternions(bytes);
+        allRightQ.push(...Array.from(decompressed));
+      }
+    }
+
+    // Downsample to preview points
+    let leftPreview: number[] | null = null;
+    let rightPreview: number[] | null = null;
+
+    if (allLeftQ.length > 0) {
+      const downsampled = downsampleQuaternions(allLeftQ, PREVIEW_POINTS);
+      leftPreview = Array.from(downsampled);
+    }
+    if (allRightQ.length > 0) {
+      const downsampled = downsampleQuaternions(allRightQ, PREVIEW_POINTS);
+      rightPreview = Array.from(downsampled);
+    }
+
+    // Generate SVG paths with bilateral scaling
+    const { leftPaths, rightPaths } = bilateralQuaternionsToSvgPaths(
+      leftPreview,
+      rightPreview
+    );
+
+    // Update session
+    await ctx.runMutation(internal.migrations.updateSessionSvgPaths, {
+      sessionId: args.sessionId,
+      leftKneePaths: leftPaths,
+      rightKneePaths: rightPaths,
+    });
+
+    return { success: true, sessionId: args.sessionId };
+  },
+});
+
+/**
+ * Batch regenerate SVG paths for multiple sessions.
+ * Call this from the dashboard to migrate existing data.
+ */
+export const batchRegenerateSvgPaths = internalAction({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 10;
+
+    // Get sessions to process
+    const sessions = await ctx.runQuery(
+      internal.migrations.getSessionsForSvgRegeneration,
+      { limit }
+    );
+
+    const results: Array<{ sessionId: string; success: boolean; error?: string }> = [];
+
+    for (const session of sessions) {
+      try {
+        const result = await ctx.runAction(
+          internal.migrations.regenerateSvgPathsForSession,
+          { sessionId: session.sessionId }
+        );
+        results.push({
+          sessionId: session.sessionId,
+          success: result.success,
+          error: result.error,
+        });
+      } catch (error) {
+        results.push({
+          sessionId: session.sessionId,
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    }
+
+    const successCount = results.filter((r) => r.success).length;
+    const failCount = results.filter((r) => !r.success).length;
+
+    return {
+      processed: results.length,
+      success: successCount,
+      failed: failCount,
+      results,
     };
   },
 });

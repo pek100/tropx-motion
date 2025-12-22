@@ -150,22 +150,33 @@ export function validateQuaternionArray(
  * Uses 0-100 coordinate space for easy scaling via viewBox.
  * Y is inverted so higher angles appear higher on screen.
  *
+ * @param angles - Array of angles in degrees
+ * @param refRange - Optional reference range {min, max} for consistent scaling across joints
+ *
  * Minification techniques applied:
  * - Integer coordinates (0-100 range doesn't need decimals)
  * - Relative line commands after initial M (shorter for sequential points)
  * - Implicit separators (negative sign acts as separator)
  * - No spaces where possible
  */
-export function anglesToSvgPath(angles: number[]): string {
+export function anglesToSvgPath(
+  angles: number[],
+  refRange?: { min: number; max: number }
+): string {
   if (angles.length === 0) return "";
   if (angles.length === 1) return "M0,50"; // Single point at center
 
-  const min = Math.min(...angles);
-  const max = Math.max(...angles);
+  const min = refRange?.min ?? Math.min(...angles);
+  const max = refRange?.max ?? Math.max(...angles);
   const range = max - min || 1;
 
   // Pre-calculate all Y values as integers
-  const yValues = angles.map((v) => Math.round(((max - v) / range) * 100));
+  // Higher angles → lower Y value (top of screen)
+  // Clamp values to 0-100 range in case angles exceed refRange
+  const yValues = angles.map((v) => {
+    const normalized = ((v - min) / range) * 100;
+    return Math.round(Math.max(0, Math.min(100, normalized)));
+  });
 
   // Calculate X step (integer)
   const xStep = 100 / (angles.length - 1);
@@ -201,8 +212,14 @@ export function anglesToSvgPath(angles: number[]): string {
 /**
  * Converts flat quaternion array to SVG paths for all 3 axes.
  * Returns an object with x, y, z path strings.
+ *
+ * @param flatQuaternions - Flat array of quaternion components [w,x,y,z,...]
+ * @param refRange - Optional reference range {min, max} for consistent scaling
  */
-export function quaternionArrayToSvgPaths(flatQuaternions: number[]): {
+export function quaternionArrayToSvgPaths(
+  flatQuaternions: number[],
+  refRange?: { min: number; max: number }
+): {
   x: string;
   y: string;
   z: string;
@@ -212,8 +229,84 @@ export function quaternionArrayToSvgPaths(flatQuaternions: number[]): {
   const anglesZ = quaternionArrayToAngles(flatQuaternions, "z");
 
   return {
-    x: anglesToSvgPath(anglesX),
-    y: anglesToSvgPath(anglesY),
-    z: anglesToSvgPath(anglesZ),
+    x: anglesToSvgPath(anglesX, refRange),
+    y: anglesToSvgPath(anglesY, refRange),
+    z: anglesToSvgPath(anglesZ, refRange),
   };
+}
+
+/**
+ * Converts left and right knee quaternion arrays to SVG paths with shared scaling.
+ * Both joints use the same min/max range so they're visually comparable.
+ *
+ * @param leftQuaternions - Flat array of left knee quaternions
+ * @param rightQuaternions - Flat array of right knee quaternions
+ * @returns Object with leftPaths and rightPaths, both using shared scale
+ */
+export function bilateralQuaternionsToSvgPaths(
+  leftQuaternions: number[] | null,
+  rightQuaternions: number[] | null
+): {
+  leftPaths: { x: string; y: string; z: string } | null;
+  rightPaths: { x: string; y: string; z: string } | null;
+} {
+  // Collect all angles from both joints to find shared min/max
+  const allAnglesX: number[] = [];
+  const allAnglesY: number[] = [];
+  const allAnglesZ: number[] = [];
+
+  let leftAnglesX: number[] = [];
+  let leftAnglesY: number[] = [];
+  let leftAnglesZ: number[] = [];
+  let rightAnglesX: number[] = [];
+  let rightAnglesY: number[] = [];
+  let rightAnglesZ: number[] = [];
+
+  if (leftQuaternions && leftQuaternions.length > 0) {
+    leftAnglesX = quaternionArrayToAngles(leftQuaternions, "x");
+    leftAnglesY = quaternionArrayToAngles(leftQuaternions, "y");
+    leftAnglesZ = quaternionArrayToAngles(leftQuaternions, "z");
+    allAnglesX.push(...leftAnglesX);
+    allAnglesY.push(...leftAnglesY);
+    allAnglesZ.push(...leftAnglesZ);
+  }
+
+  if (rightQuaternions && rightQuaternions.length > 0) {
+    rightAnglesX = quaternionArrayToAngles(rightQuaternions, "x");
+    rightAnglesY = quaternionArrayToAngles(rightQuaternions, "y");
+    rightAnglesZ = quaternionArrayToAngles(rightQuaternions, "z");
+    allAnglesX.push(...rightAnglesX);
+    allAnglesY.push(...rightAnglesY);
+    allAnglesZ.push(...rightAnglesZ);
+  }
+
+  // Calculate shared range per axis
+  const rangeX = allAnglesX.length > 0
+    ? { min: Math.min(...allAnglesX), max: Math.max(...allAnglesX) }
+    : undefined;
+  const rangeY = allAnglesY.length > 0
+    ? { min: Math.min(...allAnglesY), max: Math.max(...allAnglesY) }
+    : undefined;
+  const rangeZ = allAnglesZ.length > 0
+    ? { min: Math.min(...allAnglesZ), max: Math.max(...allAnglesZ) }
+    : undefined;
+
+  // Generate paths using shared ranges
+  const leftPaths = leftQuaternions && leftQuaternions.length > 0
+    ? {
+        x: anglesToSvgPath(leftAnglesX, rangeX),
+        y: anglesToSvgPath(leftAnglesY, rangeY),
+        z: anglesToSvgPath(leftAnglesZ, rangeZ),
+      }
+    : null;
+
+  const rightPaths = rightQuaternions && rightQuaternions.length > 0
+    ? {
+        x: anglesToSvgPath(rightAnglesX, rangeX),
+        y: anglesToSvgPath(rightAnglesY, rangeY),
+        z: anglesToSvgPath(rightAnglesZ, rangeZ),
+      }
+    : null;
+
+  return { leftPaths, rightPaths };
 }
