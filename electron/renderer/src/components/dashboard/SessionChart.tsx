@@ -217,6 +217,18 @@ export function SessionChart({
     };
   }, [packedData, phaseAlignment, asymmetryEvents?.sampleRate]);
 
+  // Calculate current shift in milliseconds (for asymmetry overlay positioning)
+  const currentShiftMs = useMemo(() => {
+    const { samples, durationMs } = baseData;
+    if (samples.length === 0) return 0;
+
+    const adjustmentMultiplier = 1 + manualAdjustment;
+    const currentHalfShift = Math.round(maxHalfShift * animationProgress * adjustmentMultiplier);
+
+    // Convert sample shift to time shift
+    return (currentHalfShift / samples.length) * durationMs;
+  }, [baseData, maxHalfShift, animationProgress, manualAdjustment]);
+
   // Apply animated shift to create chart data (cheap - just index math)
   const chartData = useMemo<ChartDataPoint[]>(() => {
     const { samples, durationMs, step } = baseData;
@@ -500,13 +512,14 @@ export function SessionChart({
             />
 
             {/* Asymmetry event overlays - rendered behind the waveforms */}
+            {/* Overlays shift with the right signal during phase alignment animation */}
             {showAsymmetryOverlay &&
               hasAsymmetryData &&
               asymmetryEvents!.events.map((event, index) => (
                 <ReferenceArea
                   key={`asymmetry-${index}`}
-                  x1={event.startTimeMs}
-                  x2={event.endTimeMs}
+                  x1={event.startTimeMs - currentShiftMs}
+                  x2={event.endTimeMs - currentShiftMs}
                   fill={
                     event.direction === "left_dominant"
                       ? LEFT_DOMINANT_COLOR
