@@ -582,62 +582,32 @@ export class MainProcess {
           console.log('[MainProcess] JWT length:', result.tokens.jwt?.length);
           console.log('[MainProcess] RefreshToken length:', result.tokens.refreshToken?.length);
 
-          // Extract Convex URL from JWT issuer claim - this is the authoritative source
-          // The JWT's `iss` field contains the Convex deployment URL
-          let convexUrl: string;
-          try {
-            const jwtParts = result.tokens.jwt.split('.');
-            const payload = JSON.parse(Buffer.from(jwtParts[1], 'base64url').toString('utf-8'));
-            convexUrl = payload.iss;
-            if (!convexUrl) {
-              throw new Error('No issuer in JWT');
-            }
-            console.log('[MainProcess] Extracted Convex URL from JWT issuer:', convexUrl);
-          } catch (err) {
-            console.error('[MainProcess] Failed to extract Convex URL from JWT:', err);
-            return { success: false, error: 'Failed to parse authentication token' };
-          }
-
-          // Convex Auth uses client.address as namespace, sanitized to alphanumeric only
-          const namespace = convexUrl.replace(/[^a-zA-Z0-9]/g, '');
-          const jwtKey = `__convexAuthJWT_${namespace}`;
-          const refreshKey = `__convexAuthRefreshToken_${namespace}`;
-
+          // Inject tokens using the renderer's namespace (from its Convex client config)
+          // The namespace must match what ConvexAuthProvider uses: client.address sanitized
           await this.mainWindow.webContents.executeJavaScript(`
             (function() {
               const jwt = ${JSON.stringify(result.tokens.jwt)};
               const refreshToken = ${JSON.stringify(result.tokens.refreshToken)};
-              const jwtKey = ${JSON.stringify(jwtKey)};
-              const refreshKey = ${JSON.stringify(refreshKey)};
 
-              // Step 1: Clear ALL existing Convex auth tokens to prevent duplicates/conflicts
-              const keysToRemove = [];
-              for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
-                if (key && key.startsWith('__convexAuth')) {
-                  keysToRemove.push(key);
-                }
+              // Get namespace from renderer's Convex config - this is what Convex Auth uses
+              const convexUrl = window.electronAPI?.config?.convexUrl || '';
+              if (!convexUrl) {
+                console.error('[Auth] No Convex URL in renderer config - cannot inject tokens');
+                return;
               }
-              console.log('[Auth] Clearing', keysToRemove.length, 'old auth keys:', keysToRemove);
-              keysToRemove.forEach(key => localStorage.removeItem(key));
+              const namespace = convexUrl.replace(/[^a-zA-Z0-9]/g, '');
 
-              // Step 2: Set ONLY the correctly namespaced keys (matching Convex Auth format)
+              const jwtKey = '__convexAuthJWT_' + namespace;
+              const refreshKey = '__convexAuthRefreshToken_' + namespace;
+
               localStorage.setItem(jwtKey, jwt);
               localStorage.setItem(refreshKey, refreshToken);
-              console.log('[Auth] Tokens set with keys:', jwtKey, refreshKey);
 
-              // Step 3: Dispatch storage event so Convex Auth picks up the change
-              // This allows Convex Auth to sync without a full page reload
-              window.dispatchEvent(new StorageEvent('storage', {
-                key: jwtKey,
-                newValue: jwt,
-                storageArea: localStorage
-              }));
-              console.log('[Auth] Storage event dispatched');
+              console.log('[Auth] Tokens injected with keys:', jwtKey, refreshKey);
             })()
           `);
 
-          console.log('[MainProcess] Auth tokens injected successfully');
+          console.log('[MainProcess] Auth tokens injected - AuthModal will handle reload');
         }
 
         return result;

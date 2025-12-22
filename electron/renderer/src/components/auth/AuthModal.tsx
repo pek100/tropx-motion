@@ -369,17 +369,11 @@ function AuthModalContent({
         const result = await window.electronAPI.auth.signInWithGoogle();
 
         if (result.success) {
-          console.log('[AuthModal] OAuth successful, tokens injected');
+          console.log('[AuthModal] OAuth successful, tokens injected - reloading to apply auth');
           onOpenChange(false);
           onSuccess?.();
-          // Tokens are injected into localStorage with correct namespaced keys.
-          // Convex Auth only reads from storage on initialization, so we need to reload.
-          // The storage event dispatch in MainProcess triggers cross-tab sync but not same-window.
-          // A small delay ensures the IPC completes and localStorage is written before reload.
-          setTimeout(() => {
-            console.log('[AuthModal] Reloading to apply auth state');
-            window.location.reload();
-          }, 100);
+          // Convex Auth reads tokens on initialization, so reload to pick them up
+          window.location.reload();
         } else {
           setError(result.error || "Failed to sign in. Please try again.");
           setIsLoading(false);
