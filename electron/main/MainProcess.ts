@@ -582,13 +582,23 @@ export class MainProcess {
           console.log('[MainProcess] JWT length:', result.tokens.jwt?.length);
           console.log('[MainProcess] RefreshToken length:', result.tokens.refreshToken?.length);
 
-          // Convex Auth uses client.address as namespace, sanitized to alphanumeric only
-          // Must match exactly what ConvexAuthProvider uses
-          const convexUrl = process.env.VITE_CONVEX_URL;
-          if (!convexUrl) {
-            console.error('[MainProcess] VITE_CONVEX_URL not set - cannot inject tokens');
-            return { success: false, error: 'VITE_CONVEX_URL not configured' };
+          // Extract Convex URL from JWT issuer claim - this is the authoritative source
+          // The JWT's `iss` field contains the Convex deployment URL
+          let convexUrl: string;
+          try {
+            const jwtParts = result.tokens.jwt.split('.');
+            const payload = JSON.parse(Buffer.from(jwtParts[1], 'base64url').toString('utf-8'));
+            convexUrl = payload.iss;
+            if (!convexUrl) {
+              throw new Error('No issuer in JWT');
+            }
+            console.log('[MainProcess] Extracted Convex URL from JWT issuer:', convexUrl);
+          } catch (err) {
+            console.error('[MainProcess] Failed to extract Convex URL from JWT:', err);
+            return { success: false, error: 'Failed to parse authentication token' };
           }
+
+          // Convex Auth uses client.address as namespace, sanitized to alphanumeric only
           const namespace = convexUrl.replace(/[^a-zA-Z0-9]/g, '');
           const jwtKey = `__convexAuthJWT_${namespace}`;
           const refreshKey = `__convexAuthRefreshToken_${namespace}`;

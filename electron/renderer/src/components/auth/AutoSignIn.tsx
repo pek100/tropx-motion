@@ -15,8 +15,11 @@ const REFRESH_TOKEN_STORAGE_KEY = '__convexAuthRefreshToken';
 function getConvexAuthNamespace(): string {
   const convexUrl =
     (typeof window !== 'undefined' && (window as any).electronAPI?.config?.convexUrl) ||
-    import.meta.env.VITE_CONVEX_URL ||
+    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_CONVEX_URL) ||
     '';
+  if (!convexUrl) {
+    console.warn('[AutoSignIn] No Convex URL configured - auth storage keys may not work');
+  }
   return convexUrl.replace(/[^a-zA-Z0-9]/g, '');
 }
 
