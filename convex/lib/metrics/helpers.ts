@@ -598,7 +598,7 @@ export function findRepeatingVelocityMask(
 
   // Find 75th percentile frequency (stricter than median)
   const frequencies = [...histogram.values()].sort((a, b) => a - b);
-  const thresholdFreq = frequencies[Math.floor(frequencies.length * 0.75)];
+  const thresholdFreq = frequencies[Math.floor(frequencies.length * 0.85)];
 
   // Mark points in bins with frequency >= 75th percentile as repeating
   return binned.map((bin) => (histogram.get(bin) || 0) >= thresholdFreq);
