@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "../../../../convex/_generated/api";
 import { isConvexConfigured } from "../lib/convex";
+import { isElectron } from "../lib/platform";
 
 export type UserRole = "physiotherapist" | "patient" | "admin";
 
@@ -73,7 +74,30 @@ function useCurrentUserEnabled(): UseCurrentUserResult {
   };
 
   const signOut = async () => {
+    // Clear all Convex auth tokens from localStorage
+    // This ensures both namespaced and non-namespaced keys are removed
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('__convexAuth')) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    console.log('[useCurrentUser] Cleared localStorage keys:', keysToRemove);
+
+    // Call Convex Auth signOut
     await authActions.signOut();
+
+    // In Electron, also call the main process sign out to clear session cookies
+    if (isElectron() && window.electronAPI?.auth?.signOut) {
+      try {
+        await window.electronAPI.auth.signOut();
+        console.log('[useCurrentUser] Cleared Electron session');
+      } catch (err) {
+        console.error('[useCurrentUser] Failed to clear Electron session:', err);
+      }
+    }
   };
 
   const completeOnboarding = async (role: "physiotherapist" | "patient") => {

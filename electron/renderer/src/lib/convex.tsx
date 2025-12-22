@@ -4,6 +4,7 @@ import { ReactNode } from "react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { AutoSignIn } from "../components/auth/AutoSignIn";
+import { isElectron } from "./platform";
 
 // Initialize Convex client
 // In Electron, get from preload; in web/dev, use import.meta.env
@@ -45,8 +46,12 @@ export function ConvexClientProvider({ children }: ConvexClientProviderProps) {
     return <>{children}</>;
   }
 
+  // Use separate storage namespace for Electron to avoid conflicts with web app
+  // Web uses default (convex URL), Electron uses "electron"
+  const storageNamespace = isElectron() ? "electron" : undefined;
+
   return (
-    <ConvexAuthProvider client={convex}>
+    <ConvexAuthProvider client={convex} storageNamespace={storageNamespace}>
       <AutoSignIn />
       {children}
     </ConvexAuthProvider>
