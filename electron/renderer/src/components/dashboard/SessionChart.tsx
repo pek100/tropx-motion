@@ -18,16 +18,9 @@ import {
   ReferenceArea,
 } from "recharts";
 import { cn } from "@/lib/utils";
-import { Loader2, Layers, GitCompareArrows, RotateCcw, Check } from "lucide-react";
+import { Loader2, Layers, GitCompareArrows, SlidersHorizontal } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
-import { Button } from "@/components/ui/button";
-import {
-  Tooltip as UITooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { PhaseAdjustModal } from "./PhaseAdjustModal";
 import {
   PackedChunkData,
   unpackToAngles,
@@ -66,7 +59,71 @@ const TARGET_POINTS = 200;
 // Asymmetry overlay colors
 const LEFT_DOMINANT_COLOR = "#f97066"; // coral (same as left knee)
 const RIGHT_DOMINANT_COLOR = "#60a5fa"; // blue (same as right knee)
+const OVERLAP_COLOR = "#a855f7"; // purple for overlapping regions
 const ASYMMETRY_OPACITY = 0.25; // Base opacity for overlays
+
+// ─────────────────────────────────────────────────────────────────
+// Overlap Detection
+// ─────────────────────────────────────────────────────────────────
+
+interface ShiftedEvent {
+  startTimeMs: number;
+  endTimeMs: number;
+  direction: "left_dominant" | "right_dominant";
+  avgAsymmetry: number;
+}
+
+interface OverlapRegion {
+  startTimeMs: number;
+  endTimeMs: number;
+  avgAsymmetry: number; // average of both overlapping events
+}
+
+/** Find overlapping time regions between left and right dominant events */
+function findOverlappingRegions(
+  events: Array<{ startTimeMs: number; endTimeMs: number; direction: "left_dominant" | "right_dominant"; avgAsymmetry: number }>,
+  currentShiftMs: number
+): OverlapRegion[] {
+  // Separate and shift events by direction
+  const leftEvents: ShiftedEvent[] = [];
+  const rightEvents: ShiftedEvent[] = [];
+
+  for (const event of events) {
+    const shift = event.direction === "left_dominant" ? currentShiftMs : -currentShiftMs;
+    const shifted: ShiftedEvent = {
+      startTimeMs: event.startTimeMs + shift,
+      endTimeMs: event.endTimeMs + shift,
+      direction: event.direction,
+      avgAsymmetry: event.avgAsymmetry,
+    };
+    if (event.direction === "left_dominant") {
+      leftEvents.push(shifted);
+    } else {
+      rightEvents.push(shifted);
+    }
+  }
+
+  // Find overlaps between left and right events
+  const overlaps: OverlapRegion[] = [];
+
+  for (const left of leftEvents) {
+    for (const right of rightEvents) {
+      // Check for overlap
+      const overlapStart = Math.max(left.startTimeMs, right.startTimeMs);
+      const overlapEnd = Math.min(left.endTimeMs, right.endTimeMs);
+
+      if (overlapStart < overlapEnd) {
+        overlaps.push({
+          startTimeMs: overlapStart,
+          endTimeMs: overlapEnd,
+          avgAsymmetry: (left.avgAsymmetry + right.avgAsymmetry) / 2,
+        });
+      }
+    }
+  }
+
+  return overlaps;
+}
 
 // Animation
 const PHASE_ANIMATION_DURATION_MS = 400;
@@ -125,12 +182,12 @@ export function SessionChart({
   const [showAsymmetryOverlay, setShowAsymmetryOverlay] = useState(true);
   const [applyPhaseShift, setApplyPhaseShift] = useState(false);
 
+  // Modal state
+  const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
+
   // Animation state (0 = unshifted, 1 = fully shifted)
   const [animationProgress, setAnimationProgress] = useState(0);
   const animationRef = useRef<number | null>(null);
-
-  // Manual adjustment (-1 to 1, where 0 = optimal, negative = less shift, positive = more shift)
-  const [manualAdjustment, setManualAdjustment] = useState(0);
 
   // Check if asymmetry data is available
   const hasAsymmetryData = asymmetryEvents?.events && asymmetryEvents.events.length > 0;
@@ -222,22 +279,26 @@ export function SessionChart({
     const { samples, durationMs } = baseData;
     if (samples.length === 0) return 0;
 
-    const adjustmentMultiplier = 1 + manualAdjustment;
-    const currentHalfShift = Math.round(maxHalfShift * animationProgress * adjustmentMultiplier);
+    const currentHalfShift = Math.round(maxHalfShift * animationProgress);
 
     // Convert sample shift to time shift
     return (currentHalfShift / samples.length) * durationMs;
-  }, [baseData, maxHalfShift, animationProgress, manualAdjustment]);
+  }, [baseData, maxHalfShift, animationProgress]);
+
+  // Calculate overlapping asymmetry regions (where left and right dominant events overlap after shifting)
+  const overlappingRegions = useMemo(() => {
+    if (!asymmetryEvents?.events || asymmetryEvents.events.length === 0) {
+      return [];
+    }
+    return findOverlappingRegions(asymmetryEvents.events, currentShiftMs);
+  }, [asymmetryEvents?.events, currentShiftMs]);
 
   // Apply animated shift to create chart data (cheap - just index math)
   const chartData = useMemo<ChartDataPoint[]>(() => {
     const { samples, durationMs, step } = baseData;
     if (samples.length === 0) return [];
 
-    // Current shift based on animation progress + manual adjustment
-    // Manual adjustment: -1 = no shift, 0 = optimal, +1 = double shift
-    const adjustmentMultiplier = 1 + manualAdjustment;
-    const currentHalfShift = Math.round(maxHalfShift * animationProgress * adjustmentMultiplier);
+    const currentHalfShift = Math.round(maxHalfShift * animationProgress);
     const points: ChartDataPoint[] = [];
 
     for (let i = 0; i < samples.length; i += step) {
@@ -261,7 +322,7 @@ export function SessionChart({
     }
 
     return points;
-  }, [baseData, maxHalfShift, animationProgress, manualAdjustment]);
+  }, [baseData, maxHalfShift, animationProgress]);
 
   // Calculate Y-axis domain
   const yDomain = useMemo(() => {
@@ -313,160 +374,146 @@ export function SessionChart({
 
   return (
     <div className={cn("w-full h-full flex flex-col", className)}>
-      {/* Chart controls */}
+      {/* Chart controls - card-based toggles */}
       {(hasAsymmetryData || hasPhaseShift || asymmetryEvents === undefined) && (
-        <div className="flex items-center justify-end gap-4 mb-2 px-1 flex-wrap">
-          {/* Phase Shift Toggle + Slider */}
+        <div className="flex items-center justify-end gap-2 mb-2 px-1 flex-wrap">
+          {/* Phase Alignment Card */}
           {hasPhaseShift && (
-            <div className="flex items-center gap-3">
-              <UITooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      id="phase-shift-toggle"
-                      checked={applyPhaseShift}
-                      onCheckedChange={handlePhaseShiftToggle}
-                      className="data-[state=checked]:bg-emerald-500"
-                    />
-                    <Label
-                      htmlFor="phase-shift-toggle"
-                      className="text-xs text-[var(--tropx-text-sub)] cursor-pointer flex items-center gap-1.5"
-                    >
-                      <GitCompareArrows className="size-3.5" />
-                      Phase Align
-                    </Label>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-xs">
-                  <p className="text-xs">
-                    Shifts signals by {phaseAlignment!.optimalOffsetMs.toFixed(1)}ms
-                    ({phaseAlignment!.optimalOffsetDegrees.toFixed(1)}°) to align phases.
-                    <br />
-                    <span className="opacity-70">
-                      Correlation: {(phaseAlignment!.unalignedCorrelation * 100).toFixed(0)}%
-                      → {(phaseAlignment!.alignedCorrelation * 100).toFixed(0)}%
-                      {phaseAlignment!.correlationImprovement > 0 && (
-                        <span className="text-emerald-400">
-                          {" "}(+{(phaseAlignment!.correlationImprovement * 100).toFixed(0)}%)
-                        </span>
-                      )}
-                    </span>
-                  </p>
-                </TooltipContent>
-              </UITooltip>
-
-              {/* Manual adjustment slider - only show when toggle is on */}
-              {applyPhaseShift && (
-                <div className="flex items-center gap-2">
-                  <Slider
-                    value={[manualAdjustment]}
-                    onValueChange={(values: number[]) => setManualAdjustment(values[0])}
-                    min={-1}
-                    max={1}
-                    step={0.05}
-                    className="w-28 [&_[role=slider]]:bg-[var(--tropx-vibrant)] [&_[role=slider]]:border-[var(--tropx-vibrant)] [&_.bg-primary]:bg-[var(--tropx-vibrant)]"
-                  />
-                  <span className="text-[10px] text-[var(--tropx-text-sub)] w-14 text-right font-mono">
-                    {Math.round((1 + manualAdjustment) * phaseAlignment!.optimalOffsetMs)}ms
-                  </span>
-
-                  {/* Reset button */}
-                  <UITooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-6 text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] hover:bg-[var(--tropx-hover)]"
-                        onClick={() => setManualAdjustment(0)}
-                        disabled={manualAdjustment === 0}
-                      >
-                        <RotateCcw className="size-3" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p className="text-xs">Reset to optimal</p>
-                    </TooltipContent>
-                  </UITooltip>
-
-                  {/* Apply button */}
-                  {onPhaseOffsetApply && manualAdjustment !== 0 && (
-                    <UITooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-6 text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10"
-                          onClick={() => {
-                            const newOffsetMs = (1 + manualAdjustment) * phaseAlignment!.optimalOffsetMs;
-                            onPhaseOffsetApply(newOffsetMs);
-                          }}
-                        >
-                          <Check className="size-3" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        <p className="text-xs">Apply offset & recalculate metrics</p>
-                      </TooltipContent>
-                    </UITooltip>
+            <div
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all",
+                applyPhaseShift
+                  ? "bg-emerald-500/10 border-emerald-500/30"
+                  : "bg-[var(--tropx-muted)] border-[var(--tropx-border)]"
+              )}
+            >
+              {/* Adjust button */}
+              {onPhaseOffsetApply && (
+                <button
+                  onClick={() => setIsAdjustModalOpen(true)}
+                  className={cn(
+                    "flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors",
+                    "bg-[var(--tropx-card)] border border-[var(--tropx-border)]",
+                    "hover:border-[var(--tropx-vibrant)] hover:text-[var(--tropx-vibrant)]"
                   )}
-                </div>
+                >
+                  <SlidersHorizontal className="size-3" />
+                  Adjust
+                </button>
+              )}
+
+              <div className="w-px h-4 bg-[var(--tropx-border)]" />
+
+              <Switch
+                id="phase-shift-toggle"
+                checked={applyPhaseShift}
+                onCheckedChange={handlePhaseShiftToggle}
+                className="data-[state=checked]:bg-emerald-500 scale-90"
+              />
+              <label
+                htmlFor="phase-shift-toggle"
+                className="text-xs text-[var(--tropx-text-sub)] cursor-pointer flex items-center gap-1.5"
+              >
+                <GitCompareArrows className="size-3.5" />
+                <span className="hidden sm:inline">Phase Align</span>
+                <span className="text-[10px] font-mono opacity-70">
+                  {phaseAlignment!.optimalOffsetMs.toFixed(0)}ms
+                </span>
+              </label>
+            </div>
+          )}
+
+          {/* Asymmetry Overlay Card */}
+          {hasAsymmetryData && (
+            <div
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all",
+                showAsymmetryOverlay
+                  ? "bg-[var(--tropx-vibrant)]/10 border-[var(--tropx-vibrant)]/30"
+                  : "bg-[var(--tropx-muted)] border-[var(--tropx-border)]"
+              )}
+            >
+              <Switch
+                id="asymmetry-toggle"
+                checked={showAsymmetryOverlay}
+                onCheckedChange={setShowAsymmetryOverlay}
+                className="data-[state=checked]:bg-[var(--tropx-vibrant)] scale-90"
+              />
+              <label
+                htmlFor="asymmetry-toggle"
+                className="text-xs text-[var(--tropx-text-sub)] cursor-pointer flex items-center gap-1.5"
+              >
+                <Layers className="size-3.5" />
+                <span className="hidden sm:inline">Asymmetry</span>
+                <span className="text-[10px] opacity-70">
+                  ({asymmetryEvents!.events.length})
+                </span>
+              </label>
+
+              {/* Legend indicators */}
+              {showAsymmetryOverlay && (
+                <>
+                  <div className="w-px h-4 bg-[var(--tropx-border)]" />
+                  <div className="flex items-center gap-2 text-[10px] text-[var(--tropx-text-sub)]">
+                    <span className="flex items-center gap-0.5">
+                      <span
+                        className="size-2 rounded-sm"
+                        style={{ backgroundColor: LEFT_DOMINANT_COLOR, opacity: 0.5 }}
+                      />
+                      L
+                    </span>
+                    <span className="flex items-center gap-0.5">
+                      <span
+                        className="size-2 rounded-sm"
+                        style={{ backgroundColor: RIGHT_DOMINANT_COLOR, opacity: 0.5 }}
+                      />
+                      R
+                    </span>
+                    {overlappingRegions.length > 0 && (
+                      <span className="flex items-center gap-0.5">
+                        <span
+                          className="size-2 rounded-sm border border-purple-400"
+                          style={{
+                            background: `repeating-linear-gradient(
+                              45deg,
+                              ${LEFT_DOMINANT_COLOR}66,
+                              ${LEFT_DOMINANT_COLOR}66 2px,
+                              ${RIGHT_DOMINANT_COLOR}66 2px,
+                              ${RIGHT_DOMINANT_COLOR}66 4px
+                            )`,
+                          }}
+                        />
+                        L+R
+                      </span>
+                    )}
+                  </div>
+                </>
               )}
             </div>
           )}
 
-          {/* Asymmetry Overlay Toggle */}
-          {hasAsymmetryData && (
-            <>
-              <div className="flex items-center gap-2">
-                <Switch
-                  id="asymmetry-toggle"
-                  checked={showAsymmetryOverlay}
-                  onCheckedChange={setShowAsymmetryOverlay}
-                  className="data-[state=checked]:bg-[var(--tropx-vibrant)]"
-                />
-                <Label
-                  htmlFor="asymmetry-toggle"
-                  className="text-xs text-[var(--tropx-text-sub)] cursor-pointer flex items-center gap-1.5"
-                >
-                  <Layers className="size-3.5" />
-                  Asymmetry
-                  <span className="text-[10px] opacity-70">
-                    ({asymmetryEvents!.events.length})
-                  </span>
-                </Label>
-              </div>
-              {showAsymmetryOverlay && (
-                <div className="flex items-center gap-3 text-[10px] text-[var(--tropx-text-sub)]">
-                  <span className="flex items-center gap-1">
-                    <span
-                      className="size-2.5 rounded-sm"
-                      style={{ backgroundColor: LEFT_DOMINANT_COLOR, opacity: 0.4 }}
-                    />
-                    L
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span
-                      className="size-2.5 rounded-sm"
-                      style={{ backgroundColor: RIGHT_DOMINANT_COLOR, opacity: 0.4 }}
-                    />
-                    R
-                  </span>
-                  <span className="opacity-70">
-                    Avg: {asymmetryEvents!.summary.avgRealAsymmetry.toFixed(1)}%
-                  </span>
-                </div>
-              )}
-            </>
-          )}
-
           {/* Loading state */}
           {asymmetryEvents === undefined && !hasAsymmetryData && !hasPhaseShift && (
-            <span className="text-[10px] text-[var(--tropx-text-sub)] opacity-50">
-              Loading metrics...
-            </span>
+            <div className="px-3 py-1.5 rounded-lg bg-[var(--tropx-muted)] border border-[var(--tropx-border)]">
+              <span className="text-[10px] text-[var(--tropx-text-sub)] opacity-50">
+                Loading metrics...
+              </span>
+            </div>
           )}
         </div>
       )}
+
+      {/* Phase Adjust Modal */}
+      <PhaseAdjustModal
+        open={isAdjustModalOpen}
+        onOpenChange={setIsAdjustModalOpen}
+        packedData={packedData}
+        phaseAlignment={phaseAlignment ?? null}
+        sampleRate={asymmetryEvents?.sampleRate}
+        onApply={(newOffsetMs) => {
+          onPhaseOffsetApply?.(newOffsetMs);
+        }}
+      />
 
       <div className="flex-1 min-h-0">
         <ResponsiveContainer width="100%" height="100%">
@@ -483,6 +530,27 @@ export function SessionChart({
                 <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.4} />
                 <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.1} />
               </linearGradient>
+              {/* Diagonal stripe pattern for overlapping asymmetry regions */}
+              <pattern
+                id="diagonalStripes"
+                patternUnits="userSpaceOnUse"
+                width="8"
+                height="8"
+                patternTransform="rotate(45)"
+              >
+                <line
+                  x1="0" y1="0" x2="0" y2="8"
+                  stroke={LEFT_DOMINANT_COLOR}
+                  strokeWidth="4"
+                  strokeOpacity="0.4"
+                />
+                <line
+                  x1="4" y1="0" x2="4" y2="8"
+                  stroke={RIGHT_DOMINANT_COLOR}
+                  strokeWidth="4"
+                  strokeOpacity="0.4"
+                />
+              </pattern>
             </defs>
 
             <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-zinc-700" />
@@ -512,27 +580,52 @@ export function SessionChart({
             />
 
             {/* Asymmetry event overlays - rendered behind the waveforms */}
-            {/* Overlays shift with the right signal during phase alignment animation */}
+            {/* Each overlay shifts with its corresponding signal:
+                - Left dominant (red) events anchor to left signal → shifts +currentShiftMs (forward)
+                - Right dominant (blue) events anchor to right signal → shifts -currentShiftMs (backward) */}
             {showAsymmetryOverlay &&
               hasAsymmetryData &&
-              asymmetryEvents!.events.map((event, index) => (
+              asymmetryEvents!.events.map((event, index) => {
+                // Left signal shifts forward (+), right signal shifts backward (-)
+                const eventShift = event.direction === "left_dominant"
+                  ? currentShiftMs
+                  : -currentShiftMs;
+                return (
+                  <ReferenceArea
+                    key={`asymmetry-${index}`}
+                    x1={event.startTimeMs + eventShift}
+                    x2={event.endTimeMs + eventShift}
+                    fill={
+                      event.direction === "left_dominant"
+                        ? LEFT_DOMINANT_COLOR
+                        : RIGHT_DOMINANT_COLOR
+                    }
+                    fillOpacity={ASYMMETRY_OPACITY + (event.avgAsymmetry / 100) * 0.15}
+                    stroke={
+                      event.direction === "left_dominant"
+                        ? LEFT_DOMINANT_COLOR
+                        : RIGHT_DOMINANT_COLOR
+                    }
+                    strokeOpacity={0.3}
+                    strokeWidth={1}
+                    ifOverflow="extendDomain"
+                  />
+                );
+              })}
+
+            {/* Overlapping asymmetry regions - diagonal stripes where L and R dominant events intersect */}
+            {showAsymmetryOverlay &&
+              overlappingRegions.map((overlap, index) => (
                 <ReferenceArea
-                  key={`asymmetry-${index}`}
-                  x1={event.startTimeMs - currentShiftMs}
-                  x2={event.endTimeMs - currentShiftMs}
-                  fill={
-                    event.direction === "left_dominant"
-                      ? LEFT_DOMINANT_COLOR
-                      : RIGHT_DOMINANT_COLOR
-                  }
-                  fillOpacity={ASYMMETRY_OPACITY + (event.avgAsymmetry / 100) * 0.15}
-                  stroke={
-                    event.direction === "left_dominant"
-                      ? LEFT_DOMINANT_COLOR
-                      : RIGHT_DOMINANT_COLOR
-                  }
-                  strokeOpacity={0.3}
+                  key={`overlap-${index}`}
+                  x1={overlap.startTimeMs}
+                  x2={overlap.endTimeMs}
+                  fill="url(#diagonalStripes)"
+                  fillOpacity={1}
+                  stroke={OVERLAP_COLOR}
+                  strokeOpacity={0.5}
                   strokeWidth={1}
+                  strokeDasharray="4 2"
                   ifOverflow="extendDomain"
                 />
               ))}
