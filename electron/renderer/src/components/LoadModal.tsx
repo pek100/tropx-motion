@@ -1230,7 +1230,7 @@ export function LoadModal({
           {/* Main Modal Content */}
           <DialogPrimitive.Content
             className={cn(
-              'w-full max-w-3xl h-[85vh] max-h-[720px]',
+              'w-[90vw] h-[85vh]',
               'bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]',
               'flex flex-col overflow-hidden',
               'pointer-events-auto'

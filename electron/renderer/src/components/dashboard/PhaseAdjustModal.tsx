@@ -224,7 +224,7 @@ export function PhaseAdjustModal({
         <DialogPrimitive.Content
           className={cn(
             "fixed inset-0 z-[51] m-auto",
-            "w-full max-w-6xl h-[85vh] flex flex-col",
+            "w-[90vw] h-[85vh] flex flex-col",
             "bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]",
             "data-[state=open]:animate-[modal-bubble-in_0.2s_var(--spring-bounce)_forwards]",
             "data-[state=closed]:animate-[modal-bubble-out_0.12s_var(--spring-smooth)_forwards]",
