@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useAuthActions } from "@convex-dev/auth/react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useAction } from "convex/react";
+import { api } from "../../../../../convex/_generated/api";
 
 const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';
 const ELECTRON_CALLBACK_URL_KEY = 'tropx_electron_callback_url';
@@ -68,8 +69,10 @@ export function AutoSignIn() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [redirected, setRedirected] = useState(false);
   const [hasCheckedStaleTokens, setHasCheckedStaleTokens] = useState(false);
+  const [creatingElectronSession, setCreatingElectronSession] = useState(false);
   const { signIn } = useAuthActions();
   const { isAuthenticated, isLoading } = useConvexAuth();
+  const createElectronSession = useAction(api.electronAuth.createElectronSession);
 
   // Check for autoSignIn param OR pending electron auth on mount
   useEffect(() => {
@@ -144,35 +147,43 @@ export function AutoSignIn() {
     setHasCheckedStaleTokens(true);
   }, [isLoading, isAuthenticated, hasCheckedStaleTokens, isElectronAuth, triggered]);
 
-  // When auth completes, redirect to callback URL with tokens
+  // When auth completes for Electron, create a SEPARATE session for Electron
+  // This ensures web and Electron have independent sessions
   useEffect(() => {
-    if (isElectronAuth && isAuthenticated && !isLoading && !redirected && callbackUrl) {
-      console.log('[AutoSignIn] Auth complete, redirecting to callback:', callbackUrl);
-      setRedirected(true);
+    if (isElectronAuth && isAuthenticated && !isLoading && !redirected && callbackUrl && !creatingElectronSession) {
+      console.log('[AutoSignIn] Auth complete, creating separate Electron session...');
+      setCreatingElectronSession(true);
 
-      // Find tokens in localStorage (searches for __convexAuthJWT_* and __convexAuthRefreshToken_*)
-      const { jwt, refreshToken } = findConvexAuthTokens();
+      // Create a new session specifically for Electron (separate from web's session)
+      createElectronSession()
+        .then((tokens) => {
+          if (tokens) {
+            console.log('[AutoSignIn] Electron session created, JWT length:', tokens.jwt.length);
 
-      console.log('[AutoSignIn] JWT found:', !!jwt, 'RefreshToken found:', !!refreshToken);
+            // Clear pending flags
+            localStorage.removeItem(ELECTRON_AUTH_KEY);
+            localStorage.removeItem(ELECTRON_CALLBACK_URL_KEY);
 
-      // Clear pending flags
-      localStorage.removeItem(ELECTRON_AUTH_KEY);
-      localStorage.removeItem(ELECTRON_CALLBACK_URL_KEY);
-
-      // Redirect to callback with tokens
-      if (jwt && refreshToken) {
-        const redirectUrl = `${callbackUrl}?jwt=${encodeURIComponent(jwt)}&refreshToken=${encodeURIComponent(refreshToken)}`;
-        window.location.href = redirectUrl;
-      } else {
-        // No tokens - redirect with error
-        console.error('[AutoSignIn] Failed to read tokens from localStorage');
-        window.location.href = `${callbackUrl}?error=${encodeURIComponent('Failed to get authentication tokens')}`;
-      }
+            // Redirect to callback with the NEW tokens (not web's tokens)
+            const redirectUrl = `${callbackUrl}?jwt=${encodeURIComponent(tokens.jwt)}&refreshToken=${encodeURIComponent(tokens.refreshToken)}`;
+            setRedirected(true);
+            window.location.href = redirectUrl;
+          } else {
+            console.error('[AutoSignIn] Failed to create Electron session');
+            setAuthError('Failed to create Electron session');
+            setCreatingElectronSession(false);
+          }
+        })
+        .catch((err) => {
+          console.error('[AutoSignIn] Error creating Electron session:', err);
+          setAuthError(err.message || 'Failed to create Electron session');
+          setCreatingElectronSession(false);
+        });
     } else if (isElectronAuth && isAuthenticated && !isLoading && !callbackUrl) {
       // No callback URL - just clear flags (old protocol-based flow)
       localStorage.removeItem(ELECTRON_AUTH_KEY);
     }
-  }, [isElectronAuth, isAuthenticated, isLoading, redirected, callbackUrl]);
+  }, [isElectronAuth, isAuthenticated, isLoading, redirected, callbackUrl, creatingElectronSession, createElectronSession]);
 
   // Trigger OAuth after detecting param (only if not already authenticated)
   // Wait for isLoading to be false before deciding

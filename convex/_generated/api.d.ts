@@ -13,6 +13,7 @@ import type * as auth from "../auth.js";
 import type * as cleanup from "../cleanup.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
+import type * as electronAuth from "../electronAuth.js";
 import type * as http from "../http.js";
 import type * as invites from "../invites.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -47,6 +48,7 @@ declare const fullApi: ApiFromModules<{
   cleanup: typeof cleanup;
   crons: typeof crons;
   dashboard: typeof dashboard;
+  electronAuth: typeof electronAuth;
   http: typeof http;
   invites: typeof invites;
   "lib/auth": typeof lib_auth;
