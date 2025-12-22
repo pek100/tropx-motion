@@ -12,6 +12,13 @@ import type { MovementType } from "./MetricsTable";
 // Types
 // ─────────────────────────────────────────────────────────────────
 
+/** SVG paths for all 3 axes (normalized 0-100 coordinate space) */
+export interface PreviewPaths {
+  x: string;
+  y: string;
+  z: string;
+}
+
 export interface SessionData {
   sessionId: string;
   recordedAt: number;
@@ -21,6 +28,9 @@ export interface SessionData {
   movementType: MovementType;
   /** Full metrics for chart display */
   metrics?: Record<string, number | undefined>;
+  /** Preview SVG paths for mini chart (all 3 axes) */
+  previewLeftPaths?: PreviewPaths | null;
+  previewRightPaths?: PreviewPaths | null;
 }
 
 interface SessionCardProps {

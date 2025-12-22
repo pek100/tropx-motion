@@ -144,3 +144,45 @@ export function validateQuaternionArray(
 ): boolean {
   return flatArray.length === expectedSamples * 4;
 }
+
+/**
+ * Converts an array of angles to a normalized SVG path string.
+ * Uses 0-100 coordinate space for easy scaling via viewBox.
+ * Y is inverted so higher angles appear higher on screen.
+ */
+export function anglesToSvgPath(angles: number[]): string {
+  if (angles.length === 0) return "";
+
+  const min = Math.min(...angles);
+  const max = Math.max(...angles);
+  const range = max - min || 1;
+
+  return angles
+    .map((v, i) => {
+      const x = (i / (angles.length - 1)) * 100;
+      // Invert Y so higher values are at top
+      const y = ((max - v) / range) * 100;
+      return `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+/**
+ * Converts flat quaternion array to SVG paths for all 3 axes.
+ * Returns an object with x, y, z path strings.
+ */
+export function quaternionArrayToSvgPaths(flatQuaternions: number[]): {
+  x: string;
+  y: string;
+  z: string;
+} {
+  const anglesX = quaternionArrayToAngles(flatQuaternions, "x");
+  const anglesY = quaternionArrayToAngles(flatQuaternions, "y");
+  const anglesZ = quaternionArrayToAngles(flatQuaternions, "z");
+
+  return {
+    x: anglesToSvgPath(anglesX),
+    y: anglesToSvgPath(anglesY),
+    z: anglesToSvgPath(anglesZ),
+  };
+}

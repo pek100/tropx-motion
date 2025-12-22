@@ -191,6 +191,9 @@ export function DashboardView({ className }: DashboardViewProps) {
       opiGrade: s.opiGrade,
       movementType: s.movementType as MovementType,
       metrics: s.metrics as Record<string, number | undefined>,
+      // Preview SVG paths for tooltip mini chart (all 3 axes)
+      previewLeftPaths: s.previewLeftPaths,
+      previewRightPaths: s.previewRightPaths,
     }));
   }, [metricsHistory]);
 

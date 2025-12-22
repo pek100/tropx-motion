@@ -15,7 +15,8 @@ import {
   Legend,
 } from "recharts";
 import { cn, formatDate } from "@/lib/utils";
-import type { SessionData } from "./SessionCard";
+import { Activity } from "lucide-react";
+import type { SessionData, PreviewPaths } from "./SessionCard";
 import { METRIC_DEFINITIONS } from "./MetricsTable";
 
 // ─────────────────────────────────────────────────────────────────
@@ -26,6 +27,8 @@ interface ProgressChartProps {
   sessions: SessionData[];
   selectedSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
+  /** Callback to view session waveform (selects session + switches to waveform tab) */
+  onViewSession?: (sessionId: string) => void;
   selectedMetrics?: Set<string>;
   className?: string;
 }
@@ -36,7 +39,9 @@ interface ChartDataPoint {
   dateLabel: string;
   title: string;
   grade: string;
-  [key: string]: string | number; // Dynamic metric values
+  previewLeftPaths?: PreviewPaths | null;
+  previewRightPaths?: PreviewPaths | null;
+  [key: string]: string | number | PreviewPaths | null | undefined; // Dynamic metric values + preview paths
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -79,6 +84,91 @@ const METRIC_COLORS: Record<string, string> = {
 };
 
 // ─────────────────────────────────────────────────────────────────
+// Mini Preview Chart (SVG-based for tooltip)
+// Uses pre-computed SVG paths from server (normalized 0-100 coordinate space)
+// ─────────────────────────────────────────────────────────────────
+
+const LEFT_KNEE_COLOR = "#f97066";
+const RIGHT_KNEE_COLOR = "#60a5fa";
+
+function MiniPreviewChart({
+  leftPaths,
+  rightPaths,
+  axis = "y",
+}: {
+  leftPaths?: PreviewPaths | null;
+  rightPaths?: PreviewPaths | null;
+  axis?: "x" | "y" | "z";
+}) {
+  const leftPath = leftPaths?.[axis];
+  const rightPath = rightPaths?.[axis];
+
+  if (!leftPath && !rightPath) return null;
+
+  return (
+    <div className="mt-2 rounded-lg bg-[var(--tropx-muted)] p-1.5">
+      <svg
+        width={160}
+        height={48}
+        className="block"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+      >
+        {/* Grid line */}
+        <line
+          x1={0}
+          y1={50}
+          x2={100}
+          y2={50}
+          stroke="var(--tropx-border)"
+          strokeWidth={1}
+          strokeDasharray="4,4"
+          vectorEffect="non-scaling-stroke"
+        />
+
+        {/* Left knee path */}
+        {leftPath && (
+          <path
+            d={leftPath}
+            fill="none"
+            stroke={LEFT_KNEE_COLOR}
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+
+        {/* Right knee path */}
+        {rightPath && (
+          <path
+            d={rightPath}
+            fill="none"
+            stroke={RIGHT_KNEE_COLOR}
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+      </svg>
+
+      {/* Legend */}
+      <div className="flex justify-center gap-3 mt-1 text-[9px] text-[var(--tropx-text-sub)]">
+        <span className="flex items-center gap-1">
+          <span className="size-1.5 rounded-full" style={{ backgroundColor: LEFT_KNEE_COLOR }} />
+          Left
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="size-1.5 rounded-full" style={{ backgroundColor: RIGHT_KNEE_COLOR }} />
+          Right
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Custom Tooltip
 // ─────────────────────────────────────────────────────────────────
 
@@ -94,11 +184,13 @@ function CustomTooltip({
   payload,
   selectedSessionId,
   selectedMetrics,
+  onViewSession,
 }: {
   active?: boolean;
   payload?: TooltipPayload[];
   selectedSessionId: string | null;
   selectedMetrics?: Set<string>;
+  onViewSession?: (sessionId: string) => void;
 }) {
   if (!active || !payload?.[0]?.payload) return null;
 
@@ -111,26 +203,41 @@ function CustomTooltip({
   return (
     <div
       className={cn(
-        "px-3 py-2 rounded-lg shadow-lg text-xs min-w-[140px]",
+        "px-3 py-2.5 rounded-xl shadow-lg text-xs min-w-[180px]",
         "bg-[var(--tropx-card)] border-2",
         isSelected
-          ? "border-orange-500"
+          ? "border-[var(--tropx-vibrant)]"
           : "border-[var(--tropx-border)]"
       )}
     >
-      {isSelected && (
-        <p className="text-[10px] uppercase font-bold mb-1 text-orange-500">
-          Selected Session
-        </p>
-      )}
-      <p className="font-semibold text-[var(--tropx-text-main)]">
-        {data.title}
-      </p>
-      <p className="mt-0.5 text-[var(--tropx-text-sub)]">
-        {data.dateLabel}
-      </p>
-      <div className="mt-1.5 pt-1.5 border-t border-[var(--tropx-border)] space-y-1">
-        {payload.map((entry) => {
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <div className="min-w-0">
+          <p className="font-semibold text-[var(--tropx-text-main)] truncate">
+            {data.title}
+          </p>
+          <p className="text-[10px] text-[var(--tropx-text-sub)]">
+            {data.dateLabel}
+          </p>
+        </div>
+        {/* OPI Score Badge */}
+        <div className="flex-shrink-0 flex flex-col items-center">
+          <span className="text-lg font-bold text-[var(--tropx-text-main)]">
+            {Math.round(data.opiScore as number)}
+          </span>
+          <span className="text-[8px] uppercase text-[var(--tropx-text-sub)]">OPI</span>
+        </div>
+      </div>
+
+      {/* Mini Preview Chart */}
+      <MiniPreviewChart
+        leftPaths={data.previewLeftPaths}
+        rightPaths={data.previewRightPaths}
+      />
+
+      {/* Metrics */}
+      <div className="mt-2 pt-2 border-t border-[var(--tropx-border)] space-y-1">
+        {payload.filter(e => e.dataKey !== 'opiScore').slice(0, 4).map((entry) => {
           const def = metricDefs.get(entry.dataKey);
           const displayName = def?.name || entry.dataKey;
           const value = entry.value;
@@ -138,16 +245,42 @@ function CustomTooltip({
 
           return (
             <div key={entry.dataKey} className="flex justify-between gap-3">
-              <span style={{ color: entry.color }}>
-                {displayName}:
+              <span className="truncate" style={{ color: entry.color }}>
+                {displayName}
               </span>
-              <span className="font-semibold text-[var(--tropx-text-main)]">
+              <span className="font-medium text-[var(--tropx-text-main)]">
                 {formatted}
               </span>
             </div>
           );
         })}
+        {payload.filter(e => e.dataKey !== 'opiScore').length > 4 && (
+          <p className="text-[10px] text-[var(--tropx-text-sub)] text-center">
+            +{payload.filter(e => e.dataKey !== 'opiScore').length - 4} more metrics
+          </p>
+        )}
       </div>
+
+      {/* View Waveform Button */}
+      {onViewSession && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onViewSession(data.sessionId);
+          }}
+          className={cn(
+            "w-full mt-2.5 py-1.5 rounded-lg text-[11px] font-medium",
+            "flex items-center justify-center gap-1.5",
+            "transition-colors",
+            isSelected
+              ? "bg-[var(--tropx-vibrant)] text-white"
+              : "bg-[var(--tropx-muted)] text-[var(--tropx-text-main)] hover:bg-[var(--tropx-vibrant)]/10 hover:text-[var(--tropx-vibrant)]"
+          )}
+        >
+          <Activity className="size-3" />
+          View Waveform
+        </button>
+      )}
     </div>
   );
 }
@@ -220,6 +353,7 @@ export function ProgressChart({
   sessions,
   selectedSessionId,
   onSelectSession,
+  onViewSession,
   selectedMetrics,
   className,
 }: ProgressChartProps) {
@@ -241,6 +375,8 @@ export function ProgressChart({
         title: s.tags[0] || "Untitled",
         grade: s.opiGrade,
         opiScore: s.opiScore,
+        previewLeftY: s.previewLeftY,
+        previewRightY: s.previewRightY,
       };
 
       // Add all metrics from session
@@ -328,9 +464,11 @@ export function ProgressChart({
               <CustomTooltip
                 selectedSessionId={selectedSessionId}
                 selectedMetrics={activeMetrics}
+                onViewSession={onViewSession}
               />
             }
             cursor={{ stroke: "var(--tropx-vibrant)", strokeOpacity: 0.3 }}
+            wrapperStyle={{ pointerEvents: 'auto' }}
           />
 
           <Legend content={<CustomLegend />} />

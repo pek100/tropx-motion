@@ -2,7 +2,7 @@
  * ChartPane - Tabbed container for Progress and Session charts.
  */
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { TrendingUp, Activity } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -111,6 +111,12 @@ export function ChartPane({
   const selectedSession = sessions.find((s) => s.sessionId === selectedSessionId);
   const sessionTitle = selectedSession?.tags[0] || "Session";
 
+  // Handle view session (select + switch to waveform tab)
+  const handleViewSession = useCallback((sessionId: string) => {
+    onSelectSession(sessionId);
+    setActiveTab("session");
+  }, [onSelectSession]);
+
   return (
     <div
       className={cn(
@@ -130,12 +136,12 @@ export function ChartPane({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-3 sm:py-4 border-b border-[var(--tropx-border)]">
           <div className="min-w-0">
             <h3 className="font-bold text-base sm:text-lg text-[var(--tropx-text-main)] truncate">
-              {activeTab === "progress" ? "Progress Over Time" : sessionTitle}
+              {activeTab === "progress" ? "Performance Trends" : sessionTitle}
             </h3>
             <p className="hidden sm:block text-sm text-[var(--tropx-text-sub)]">
               {activeTab === "progress"
-                ? "Historical performance of OPI scores"
-                : "Knee angle waveforms for selected session"}
+                ? "Track your metrics across all sessions"
+                : "View knee motion for this recording"}
             </p>
           </div>
 
@@ -170,7 +176,8 @@ export function ChartPane({
                 )}
               >
                 <TrendingUp className="size-3 sm:size-3.5" />
-                <span className="hidden xs:inline">Progress</span>
+                <span className="hidden xs:inline sm:hidden">Trends</span>
+                <span className="hidden sm:inline">All Trends</span>
               </TabsTrigger>
               <TabsTrigger
                 value="session"
@@ -181,7 +188,8 @@ export function ChartPane({
                 )}
               >
                 <Activity className="size-3 sm:size-3.5" />
-                <span className="hidden xs:inline">Session</span>
+                <span className="hidden xs:inline sm:hidden">Motion</span>
+                <span className="hidden sm:inline">Waveform</span>
               </TabsTrigger>
             </TabsList>
           </div>
@@ -194,6 +202,7 @@ export function ChartPane({
               sessions={filteredSessions}
               selectedSessionId={selectedSessionId}
               onSelectSession={onSelectSession}
+              onViewSession={handleViewSession}
               selectedMetrics={selectedMetrics}
               className="h-full"
             />
