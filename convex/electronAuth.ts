@@ -36,17 +36,38 @@ export const createElectronSession = action({
       },
     });
 
-    if (!result || typeof result !== "object" || !("token" in result)) {
-      console.error("[electronAuth] Failed to create session:", result);
+    // The result structure is: { sessionId, tokens: { token, refreshToken }, userId }
+    const typedResult = result as {
+      sessionId?: string;
+      tokens?: { token: string; refreshToken: string };
+      token?: string;
+      refreshToken?: string;
+    } | null;
+
+    if (!typedResult) {
+      console.error("[electronAuth] Failed to create session: null result");
       return null;
     }
 
-    const tokens = result as { token: string; refreshToken: string };
-    console.log("[electronAuth] Created new session with JWT length:", tokens.token.length);
+    // Handle both possible response structures
+    let jwt: string;
+    let refreshToken: string;
 
-    return {
-      jwt: tokens.token,
-      refreshToken: tokens.refreshToken,
-    };
+    if (typedResult.tokens) {
+      // New structure: { sessionId, tokens: { token, refreshToken }, userId }
+      jwt = typedResult.tokens.token;
+      refreshToken = typedResult.tokens.refreshToken;
+    } else if (typedResult.token && typedResult.refreshToken) {
+      // Old structure: { token, refreshToken }
+      jwt = typedResult.token;
+      refreshToken = typedResult.refreshToken;
+    } else {
+      console.error("[electronAuth] Unexpected result structure:", result);
+      return null;
+    }
+
+    console.log("[electronAuth] Created new session with JWT length:", jwt.length);
+
+    return { jwt, refreshToken };
   },
 });
