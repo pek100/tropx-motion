@@ -582,30 +582,35 @@ export class MainProcess {
           console.log('[MainProcess] JWT length:', result.tokens.jwt?.length);
           console.log('[MainProcess] RefreshToken length:', result.tokens.refreshToken?.length);
 
-          // Inject tokens using the renderer's namespace (from its Convex client config)
-          // The namespace must match what ConvexAuthProvider uses: client.address sanitized
-          await this.mainWindow.webContents.executeJavaScript(`
-            (function() {
-              const jwt = ${JSON.stringify(result.tokens.jwt)};
-              const refreshToken = ${JSON.stringify(result.tokens.refreshToken)};
+          // Compute namespace in main process from VITE_CONVEX_URL
+          // This must match what ConvexAuthProvider uses: client.address sanitized
+          const convexUrl = process.env.VITE_CONVEX_URL || '';
+          console.log('[MainProcess] VITE_CONVEX_URL:', convexUrl);
 
-              // Get namespace from renderer's Convex config - this is what Convex Auth uses
-              const convexUrl = window.electronAPI?.config?.convexUrl || '';
-              if (!convexUrl) {
-                console.error('[Auth] No Convex URL in renderer config - cannot inject tokens');
-                return;
-              }
-              const namespace = convexUrl.replace(/[^a-zA-Z0-9]/g, '');
+          if (!convexUrl) {
+            console.error('[MainProcess] VITE_CONVEX_URL not set - cannot inject tokens');
+          } else {
+            const namespace = convexUrl.replace(/[^a-zA-Z0-9]/g, '');
+            const jwtKey = `__convexAuthJWT_${namespace}`;
+            const refreshKey = `__convexAuthRefreshToken_${namespace}`;
 
-              const jwtKey = '__convexAuthJWT_' + namespace;
-              const refreshKey = '__convexAuthRefreshToken_' + namespace;
+            console.log('[MainProcess] Injecting tokens with keys:', jwtKey, refreshKey);
 
-              localStorage.setItem(jwtKey, jwt);
-              localStorage.setItem(refreshKey, refreshToken);
+            await this.mainWindow.webContents.executeJavaScript(`
+              (function() {
+                const jwt = ${JSON.stringify(result.tokens.jwt)};
+                const refreshToken = ${JSON.stringify(result.tokens.refreshToken)};
+                const jwtKey = ${JSON.stringify(jwtKey)};
+                const refreshKey = ${JSON.stringify(refreshKey)};
 
-              console.log('[Auth] Tokens injected with keys:', jwtKey, refreshKey);
-            })()
-          `);
+                localStorage.setItem(jwtKey, jwt);
+                localStorage.setItem(refreshKey, refreshToken);
+
+                console.log('[Auth] Tokens injected with keys:', jwtKey, refreshKey);
+                console.log('[Auth] localStorage keys after injection:', Object.keys(localStorage).filter(k => k.includes('convex') || k.includes('Convex')));
+              })()
+            `);
+          }
 
           console.log('[MainProcess] Auth tokens injected - AuthModal will handle reload');
         }

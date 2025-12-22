@@ -13,16 +13,25 @@ function findConvexAuthTokens(): { jwt: string | null; refreshToken: string | nu
   let jwt: string | null = null;
   let refreshToken: string | null = null;
 
+  // Debug: log all localStorage keys
+  const allKeys: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key) allKeys.push(key);
+  }
+  console.log('[AutoSignIn] All localStorage keys:', allKeys);
+  console.log('[AutoSignIn] Convex-related keys:', allKeys.filter(k => k.includes('convex') || k.includes('Convex')));
+
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
     if (!key) continue;
 
-    if (key.startsWith('__convexAuthJWT_')) {
+    if (key.startsWith('__convexAuthJWT')) {
       jwt = localStorage.getItem(key);
-      console.log('[AutoSignIn] Found JWT with key:', key);
-    } else if (key.startsWith('__convexAuthRefreshToken_')) {
+      console.log('[AutoSignIn] Found JWT with key:', key, 'length:', jwt?.length);
+    } else if (key.startsWith('__convexAuthRefreshToken')) {
       refreshToken = localStorage.getItem(key);
-      console.log('[AutoSignIn] Found refreshToken with key:', key);
+      console.log('[AutoSignIn] Found refreshToken with key:', key, 'length:', refreshToken?.length);
     }
   }
 
@@ -32,7 +41,7 @@ function findConvexAuthTokens(): { jwt: string | null; refreshToken: string | nu
 function hasConvexAuthJWT(): boolean {
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (key && key.startsWith('__convexAuthJWT_')) {
+    if (key && key.startsWith('__convexAuthJWT')) {
       return true;
     }
   }
