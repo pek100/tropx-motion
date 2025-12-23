@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, shell, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol, shell, dialog, net } from 'electron';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -432,6 +432,13 @@ export class MainProcess {
       const info = PlatformDetector.detect();
       const config = PlatformDetector.getOptimizationConfig();
       return { info, config };
+    });
+
+    // Network connectivity check using Electron's net module (more reliable than renderer-side)
+    ipcMain.handle('network:isOnline', () => {
+      const online = net.isOnline();
+      console.log('[MainProcess] net.isOnline():', online);
+      return online;
     });
 
     // Keep WebSocket port getter for backward compatibility

@@ -59,7 +59,21 @@ function AppContent() {
 
   // Auth modal state (for toast sign-in actions)
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
-  const [hasAttemptedAutoReauth, setHasAttemptedAutoReauth] = useState(false)
+
+  // Use sessionStorage to persist auto-reauth flag across OAuth redirects (but not browser sessions)
+  const AUTO_REAUTH_KEY = 'tropx_auto_reauth_attempted'
+  const [hasAttemptedAutoReauth, setHasAttemptedAutoReauth] = useState(() => {
+    return sessionStorage.getItem(AUTO_REAUTH_KEY) === 'true'
+  })
+
+  // Sync hasAttemptedAutoReauth to sessionStorage
+  useEffect(() => {
+    if (hasAttemptedAutoReauth) {
+      sessionStorage.setItem(AUTO_REAUTH_KEY, 'true')
+    } else {
+      sessionStorage.removeItem(AUTO_REAUTH_KEY)
+    }
+  }, [hasAttemptedAutoReauth])
 
   // Detect stale tokens and auto-trigger re-auth
   useEffect(() => {

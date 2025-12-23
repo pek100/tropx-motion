@@ -61,6 +61,10 @@ export interface ElectronAPI {
         getPlatformInfo: () => Promise<any>;
     };
 
+    network: {
+        isOnline: () => Promise<boolean>;
+    };
+
     testClient: {
         discoverPort: () => Promise<{ success: boolean; port?: number; url?: string; error?: string }>;
     };
@@ -143,6 +147,10 @@ const electronAPI: ElectronAPI = {
         arch: process.arch,
         version: process.version,
         getPlatformInfo: () => ipcRenderer.invoke('system:getPlatformInfo'),
+    },
+
+    network: {
+        isOnline: () => ipcRenderer.invoke('network:isOnline'),
     },
 
     testClient: {
