@@ -25,7 +25,6 @@ import {
   convolveSignal,
   mean,
   stdDev,
-  findRepeatingVelocityMask,
 } from "./helpers";
 
 // ─────────────────────────────────────────────────────────────────
@@ -511,9 +510,16 @@ function calculateSegmentPhaseAlignment(
 
 
 /**
- * #41: optimal_phase_alignment - Calculate optimal phase offset using velocity overlap.
- * Computes the first derivative (velocity) of both signals and finds the lag
- * that minimizes the area between the velocity curves.
+ * #41: optimal_phase_alignment - Calculate optimal phase offset using cross-correlation.
+ *
+ * Uses MATLAB-style normalized cross-correlation (xcorr) to find the lag
+ * that maximizes signal similarity. This is the standard approach for
+ * signal alignment in biomechanics and signal processing.
+ *
+ * Algorithm:
+ * 1. Compute mean and std of both signals
+ * 2. For each possible lag, compute normalized cross-correlation
+ * 3. Best alignment = lag with maximum correlation
  */
 export function calculateOptimalPhaseAlignment(
   left: number[],
@@ -535,58 +541,7 @@ export function calculateOptimalPhaseAlignment(
     };
   }
 
-  // Compute first derivatives (velocity) of both signals
-  const velLeft = computeFirstDerivative(left.slice(0, n));
-  const velRight = computeFirstDerivative(right.slice(0, n));
-  const velLen = Math.min(velLeft.length, velRight.length);
-
-  // Find repeating velocity patterns (filter out transitions/noise)
-  const maskLeft = findRepeatingVelocityMask(velLeft);
-  const maskRight = findRepeatingVelocityMask(velRight);
-
-  // Find best lag by minimizing area between velocity curves (only repeating points)
-  let bestAreaDiff = Infinity;
-  let areaAtZero = 0;
-  let bestLag = 0;
-
-  for (let lag = -maxSearchSamples; lag <= maxSearchSamples; lag++) {
-    let areaDiff = 0;
-    let count = 0;
-
-    for (let i = 0; i < velLen; i++) {
-      const j = i + lag;
-      // Only use points where both velocities are part of repeating pattern
-      if (j >= 0 && j < velLen && maskLeft[i] && maskRight[j]) {
-        areaDiff += Math.abs(velLeft[i] - velRight[j]);
-        count++;
-      }
-    }
-
-    // Normalize by count to make comparable across different lags
-    const normalizedArea = count > 0 ? areaDiff / count : Infinity;
-
-    if (lag === 0) areaAtZero = normalizedArea;
-
-    if (normalizedArea < bestAreaDiff) {
-      bestAreaDiff = normalizedArea;
-      bestLag = lag;
-    }
-  }
-
-  // Create aligned right signal
-  const alignedRight: number[] = new Array(right.length);
-  for (let i = 0; i < right.length; i++) {
-    const srcIdx = i + bestLag;
-    if (srcIdx >= 0 && srcIdx < right.length) {
-      alignedRight[i] = right[srcIdx];
-    } else if (srcIdx < 0) {
-      alignedRight[i] = right[0];
-    } else {
-      alignedRight[i] = right[right.length - 1];
-    }
-  }
-
-  // Calculate correlation on original signals for reporting
+  // Compute mean and std for normalized cross-correlation
   let origMeanL = 0, origMeanR = 0;
   for (let i = 0; i < n; i++) {
     origMeanL += left[i];
@@ -603,7 +558,52 @@ export function calculateOptimalPhaseAlignment(
   const origStdL = Math.sqrt(origSumSqL / n);
   const origStdR = Math.sqrt(origSumSqR / n);
 
-  // Correlation at zero lag (original signals)
+  // Find best lag by maximizing cross-correlation (MATLAB xcorr approach)
+  let maxCorrelation = -Infinity;
+  let correlationAtZero = 0;
+  let bestLag = 0;
+
+  for (let lag = -maxSearchSamples; lag <= maxSearchSamples; lag++) {
+    // Calculate normalized cross-correlation at this lag
+    let corrAtLag = 0;
+    if (origStdL > 1e-10 && origStdR > 1e-10) {
+      let sum = 0, count = 0;
+      for (let i = 0; i < n; i++) {
+        const j = i + lag;
+        if (j >= 0 && j < n) {
+          sum += (left[i] - origMeanL) * (right[j] - origMeanR);
+          count++;
+        }
+      }
+      corrAtLag = count > 0 ? sum / (count * origStdL * origStdR) : 0;
+    }
+
+    if (lag === 0) correlationAtZero = corrAtLag;
+
+    if (corrAtLag > maxCorrelation) {
+      maxCorrelation = corrAtLag;
+      bestLag = lag;
+    }
+  }
+
+  // Store for later use
+  const similarityAtZero = correlationAtZero;
+  const maxSimilarity = maxCorrelation;
+
+  // Create aligned right signal
+  const alignedRight: number[] = new Array(right.length);
+  for (let i = 0; i < right.length; i++) {
+    const srcIdx = i + bestLag;
+    if (srcIdx >= 0 && srcIdx < right.length) {
+      alignedRight[i] = right[srcIdx];
+    } else if (srcIdx < 0) {
+      alignedRight[i] = right[0];
+    } else {
+      alignedRight[i] = right[right.length - 1];
+    }
+  }
+
+  // Correlation at zero lag (original signals) - reuse already computed stats
   let corrAtZero = 0;
   if (origStdL > 1e-10 && origStdR > 1e-10) {
     let sum = 0;
@@ -631,8 +631,11 @@ export function calculateOptimalPhaseAlignment(
   const cycleSamples = estimateCycleLength(left, n);
   const optimalOffsetDegrees = Math.abs((bestLag * 360) / cycleSamples) % 360;
 
-  // Calculate improvement based on area reduction (positive = better alignment)
-  const improvement = areaAtZero > 0 ? (areaAtZero - bestAreaDiff) / areaAtZero : 0;
+  // Calculate improvement based on similarity increase (positive = better alignment)
+  // similarityAtZero = normalized similarity at zero lag
+  // maxSimilarity = normalized similarity at best lag
+  // Improvement = relative increase in pattern matching
+  const improvement = similarityAtZero > 0 ? (maxSimilarity - similarityAtZero) / similarityAtZero : 0;
 
   return {
     optimalOffsetSamples: bestLag,

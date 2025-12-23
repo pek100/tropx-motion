@@ -603,3 +603,77 @@ export function findRepeatingVelocityMask(
   // Mark points in bins with frequency >= 75th percentile as repeating
   return binned.map((bin) => (histogram.get(bin) || 0) >= thresholdFreq);
 }
+
+/**
+ * Find repeating pattern segments and return array with SIGNED segment lengths.
+ * Returns array where each element is:
+ * - 0 for transitions/noise (non-repeating patterns)
+ * - +segment_length for positive acceleration segments (speeding up)
+ * - -segment_length for negative acceleration segments (slowing down)
+ *
+ * The sign ensures that positive segments align with positive, and negative with negative.
+ * This creates a "signature" that can be aligned between signals.
+ */
+export function findRepeatingPatternSegments(
+  velocities: number[],
+  binSize: number = DEFAULT_ACCELERATION_BIN_SIZE
+): number[] {
+  const n = velocities.length;
+  if (n < 2) return new Array(n).fill(0);
+
+  // Compute acceleration (derivative of velocity)
+  const accelerations: number[] = new Array(n);
+  accelerations[0] = velocities[1] - velocities[0];
+  for (let i = 1; i < n - 1; i++) {
+    accelerations[i] = velocities[i + 1] - velocities[i - 1]; // central difference
+  }
+  accelerations[n - 1] = velocities[n - 1] - velocities[n - 2];
+
+  const mask = findRepeatingVelocityMask(velocities, binSize);
+  const result: number[] = new Array(n).fill(0);
+
+  // First pass: find all segments, their lengths, and their sign (avg acceleration)
+  const segments: { start: number; end: number; length: number; sign: number }[] = [];
+  let segmentStart = -1;
+
+  for (let i = 0; i < n; i++) {
+    if (mask[i]) {
+      if (segmentStart === -1) {
+        segmentStart = i;
+      }
+    } else {
+      if (segmentStart !== -1) {
+        const length = i - segmentStart;
+        // Calculate average acceleration in this segment to determine sign
+        let accelSum = 0;
+        for (let j = segmentStart; j < i; j++) {
+          accelSum += accelerations[j];
+        }
+        const sign = accelSum >= 0 ? 1 : -1;
+        segments.push({ start: segmentStart, end: i - 1, length, sign });
+        segmentStart = -1;
+      }
+    }
+  }
+
+  // Handle segment at end
+  if (segmentStart !== -1) {
+    const length = n - segmentStart;
+    let accelSum = 0;
+    for (let j = segmentStart; j < n; j++) {
+      accelSum += accelerations[j];
+    }
+    const sign = accelSum >= 0 ? 1 : -1;
+    segments.push({ start: segmentStart, end: n - 1, length, sign });
+  }
+
+  // Second pass: fill result array with SIGNED segment lengths
+  for (const seg of segments) {
+    const signedLength = seg.sign * seg.length;
+    for (let i = seg.start; i <= seg.end; i++) {
+      result[i] = signedLength;
+    }
+  }
+
+  return result;
+}

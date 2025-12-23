@@ -123,8 +123,13 @@ export function PhaseAdjustModal({
       return { baseData: { samples: [], durationMs: 0, step: 1 }, maxHalfShift: 0 };
     }
 
-    const effectiveSampleRate = sampleRate ?? packedData.sampleRate;
     const durationMs = packedData.endTime - packedData.startTime;
+
+    // Calculate EFFECTIVE sample rate from actual data
+    // This ensures phase shift visualization matches the actual data density
+    const effectiveSampleRate = durationMs > 0
+      ? (angleSamples.length / durationMs) * 1000
+      : (sampleRate ?? packedData.sampleRate);
 
     const maxPhaseShiftSamples = Math.round((phaseAlignment.optimalOffsetMs / 1000) * effectiveSampleRate);
     const step = Math.max(1, Math.floor(angleSamples.length / TARGET_POINTS));
@@ -142,10 +147,14 @@ export function PhaseAdjustModal({
   }, [phaseAlignment, manualAdjustment]);
 
   // Apply shift to create chart data
+  // Modal always shows fully-shifted state (like animationProgress=1 in main chart)
+  // manualAdjustment scales around the optimal: -1 = no shift, 0 = optimal, +1 = double shift
   const chartData = useMemo<ChartDataPoint[]>(() => {
     const { samples, durationMs, step } = baseData;
     if (samples.length === 0 || !phaseAlignment) return [];
 
+    // At manualAdjustment=0, we want the full optimal shift (adjustmentMultiplier=1)
+    // The modal shows the result with shift applied, so user can see alignment quality
     const adjustmentMultiplier = 1 + manualAdjustment;
     const currentHalfShift = Math.round(maxHalfShift * adjustmentMultiplier);
     const points: ChartDataPoint[] = [];

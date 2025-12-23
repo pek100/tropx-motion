@@ -257,12 +257,19 @@ export function SessionChart({
       return { baseData: { samples: [], durationMs: 0, step: 1 }, maxHalfShift: 0 };
     }
 
-    const sampleRate = asymmetryEvents?.sampleRate ?? packedData.sampleRate;
     const durationMs = packedData.endTime - packedData.startTime;
 
-    // Calculate max phase shift (split between both signals)
+    // Calculate EFFECTIVE sample rate from actual data
+    // This is crucial: the chart data may have different sample count than original recording
+    // e.g., if we have 6000 samples over 60 seconds, effective rate is 100Hz
+    // but if we have 100 preview samples over 60 seconds, effective rate is ~1.67Hz
+    const effectiveSampleRate = durationMs > 0
+      ? (angleSamples.length / durationMs) * 1000
+      : (asymmetryEvents?.sampleRate ?? packedData.sampleRate);
+
+    // Calculate max phase shift using EFFECTIVE sample rate of displayed data
     const maxPhaseShiftSamples = phaseAlignment
-      ? Math.round((phaseAlignment.optimalOffsetMs / 1000) * sampleRate)
+      ? Math.round((phaseAlignment.optimalOffsetMs / 1000) * effectiveSampleRate)
       : 0;
 
     // Downsample step

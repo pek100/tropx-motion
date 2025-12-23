@@ -229,11 +229,15 @@ export const triggerMetricComputation = internalMutation({
 export const computeMetricsInternal = internalAction({
   args: { sessionId: v.string() },
   handler: async (ctx, args) => {
-    // Mark as computing
-    await ctx.runMutation(internal.recordingMetrics.updateMetricsStatus, {
+    // Check if already computing (prevent race conditions from duplicate triggers)
+    const canStart = await ctx.runMutation(internal.recordingMetrics.tryStartComputation, {
       sessionId: args.sessionId,
-      status: METRIC_STATUS.COMPUTING,
     });
+
+    if (!canStart) {
+      console.log(`Computation already in progress for session ${args.sessionId}, skipping`);
+      return;
+    }
 
     try {
       let recordingChunks: RecordingChunk[] = [];
@@ -361,6 +365,37 @@ export const updateMetricsStatus = internalMutation({
       }
       await ctx.db.patch(existing._id, update);
     }
+  },
+});
+
+/** Atomically try to start computation - returns true if we got the lock. */
+export const tryStartComputation = internalMutation({
+  args: { sessionId: v.string() },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("recordingMetrics")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+
+    if (!existing) {
+      // No metrics entry - shouldn't happen, but create one
+      await ctx.db.insert("recordingMetrics", {
+        sessionId: args.sessionId,
+        status: METRIC_STATUS.COMPUTING,
+      });
+      return true;
+    }
+
+    // If already computing, don't start another computation
+    if (existing.status === METRIC_STATUS.COMPUTING) {
+      return false;
+    }
+
+    // Set to computing and return true
+    await ctx.db.patch(existing._id, {
+      status: METRIC_STATUS.COMPUTING,
+    });
+    return true;
   },
 });
 
