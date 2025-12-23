@@ -34,7 +34,10 @@ interface PhaseAdjustModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   packedData: PackedChunkData | null;
-  phaseAlignment: PhaseAlignmentData | null;
+  /** Currently applied phase offset (may differ from default if manually adjusted) */
+  currentOffsetMs: number;
+  /** Default (calculated) phase alignment data - used for reset and display */
+  defaultPhaseAlignment: PhaseAlignmentData | null;
   sampleRate?: number;
   onApply: (newOffsetMs: number) => void;
 }
@@ -98,73 +101,70 @@ export function PhaseAdjustModal({
   open,
   onOpenChange,
   packedData,
-  phaseAlignment,
+  currentOffsetMs,
+  defaultPhaseAlignment,
   sampleRate,
   onApply,
 }: PhaseAdjustModalProps) {
-  // Manual adjustment state (-1 to 1, where 0 = optimal)
-  const [manualAdjustment, setManualAdjustment] = useState(0);
+  // Slider offset value in ms (starts at current offset)
+  const [sliderOffsetMs, setSliderOffsetMs] = useState(currentOffsetMs);
 
-  // Reset adjustment when modal opens
+  // Reset to current offset when modal opens
   useEffect(() => {
     if (open) {
-      setManualAdjustment(0);
+      setSliderOffsetMs(currentOffsetMs);
     }
-  }, [open]);
+  }, [open, currentOffsetMs]);
+
+  // Calculate the default optimal offset for display/reset
+  const defaultOptimalMs = defaultPhaseAlignment?.optimalOffsetMs ?? 0;
+
+  // Compute effective sample rate for shift calculations
+  const effectiveSampleRate = useMemo(() => {
+    if (!packedData || packedData.sampleCount === 0) return 100;
+    const durationMs = packedData.endTime - packedData.startTime;
+    const angleSamples = unpackToAngles(packedData, "y");
+    return durationMs > 0
+      ? (angleSamples.length / durationMs) * 1000
+      : (sampleRate ?? packedData.sampleRate);
+  }, [packedData, sampleRate]);
 
   // Pre-compute base data
-  const { baseData, maxHalfShift } = useMemo(() => {
-    if (!packedData || packedData.sampleCount === 0 || !phaseAlignment) {
-      return { baseData: { samples: [] as { left: number; right: number }[], durationMs: 0, step: 1 }, maxHalfShift: 0 };
+  const { baseData, step } = useMemo(() => {
+    if (!packedData || packedData.sampleCount === 0) {
+      return { baseData: { samples: [] as { left: number; right: number }[], durationMs: 0 }, step: 1 };
     }
 
     const angleSamples = unpackToAngles(packedData, "y");
     if (angleSamples.length === 0) {
-      return { baseData: { samples: [], durationMs: 0, step: 1 }, maxHalfShift: 0 };
+      return { baseData: { samples: [], durationMs: 0 }, step: 1 };
     }
 
     const durationMs = packedData.endTime - packedData.startTime;
-
-    // Calculate EFFECTIVE sample rate from actual data
-    // This ensures phase shift visualization matches the actual data density
-    const effectiveSampleRate = durationMs > 0
-      ? (angleSamples.length / durationMs) * 1000
-      : (sampleRate ?? packedData.sampleRate);
-
-    const maxPhaseShiftSamples = Math.round((phaseAlignment.optimalOffsetMs / 1000) * effectiveSampleRate);
     const step = Math.max(1, Math.floor(angleSamples.length / TARGET_POINTS));
 
     return {
-      baseData: { samples: angleSamples, durationMs, step },
-      maxHalfShift: Math.round(maxPhaseShiftSamples / 2),
+      baseData: { samples: angleSamples, durationMs },
+      step,
     };
-  }, [packedData, phaseAlignment, sampleRate]);
+  }, [packedData]);
 
-  // Calculate current offset in ms
-  const currentOffsetMs = useMemo(() => {
-    if (!phaseAlignment) return 0;
-    return (1 + manualAdjustment) * phaseAlignment.optimalOffsetMs;
-  }, [phaseAlignment, manualAdjustment]);
-
-  // Apply shift to create chart data
-  // Modal always shows fully-shifted state (like animationProgress=1 in main chart)
-  // manualAdjustment scales around the optimal: -1 = no shift, 0 = optimal, +1 = double shift
+  // Apply shift to create chart data based on slider value
   const chartData = useMemo<ChartDataPoint[]>(() => {
-    const { samples, durationMs, step } = baseData;
-    if (samples.length === 0 || !phaseAlignment) return [];
+    const { samples, durationMs } = baseData;
+    if (samples.length === 0) return [];
 
-    // At manualAdjustment=0, we want the full optimal shift (adjustmentMultiplier=1)
-    // The modal shows the result with shift applied, so user can see alignment quality
-    const adjustmentMultiplier = 1 + manualAdjustment;
-    const currentHalfShift = Math.round(maxHalfShift * adjustmentMultiplier);
+    // Convert slider offset to sample shift
+    const shiftSamples = Math.round((sliderOffsetMs / 1000) * effectiveSampleRate);
+    const halfShift = Math.round(shiftSamples / 2);
     const points: ChartDataPoint[] = [];
 
     for (let i = 0; i < samples.length; i += step) {
       const progress = i / samples.length;
       const timeMs = progress * durationMs;
 
-      const leftIndex = i - currentHalfShift;
-      const rightIndex = i + currentHalfShift;
+      const leftIndex = i - halfShift;
+      const rightIndex = i + halfShift;
 
       points.push({
         time: timeMs,
@@ -179,7 +179,7 @@ export function PhaseAdjustModal({
     }
 
     return points;
-  }, [baseData, maxHalfShift, manualAdjustment, phaseAlignment]);
+  }, [baseData, step, sliderOffsetMs, effectiveSampleRate]);
 
   // Calculate Y-axis domain
   const yDomain = useMemo(() => {
@@ -199,16 +199,20 @@ export function PhaseAdjustModal({
 
   // Handle apply
   const handleApply = useCallback(() => {
-    onApply(currentOffsetMs);
+    onApply(sliderOffsetMs);
     onOpenChange(false);
-  }, [currentOffsetMs, onApply, onOpenChange]);
+  }, [sliderOffsetMs, onApply, onOpenChange]);
 
-  // Handle reset
-  const handleReset = useCallback(() => {
-    setManualAdjustment(0);
-  }, []);
+  // Handle reset to default optimal
+  const handleResetToDefault = useCallback(() => {
+    setSliderOffsetMs(defaultOptimalMs);
+  }, [defaultOptimalMs]);
 
-  if (!phaseAlignment) return null;
+  // Slider range: allow adjustment from 0 to 2x the default optimal (or at least ±500ms)
+  const sliderMax = Math.max(500, defaultOptimalMs * 2);
+  const sliderMin = -sliderMax;
+
+  if (!packedData) return null;
 
   const handleClose = () => onOpenChange(false);
 
@@ -344,28 +348,30 @@ export function PhaseAdjustModal({
             <div className="flex items-center gap-4">
               <span className="text-sm text-[var(--tropx-text-sub)] w-20">Offset:</span>
               <Slider
-                value={[manualAdjustment]}
-                onValueChange={(values: number[]) => setManualAdjustment(values[0])}
-                min={-1}
-                max={1}
-                step={0.02}
+                value={[sliderOffsetMs]}
+                onValueChange={(values: number[]) => setSliderOffsetMs(values[0])}
+                min={sliderMin}
+                max={sliderMax}
+                step={10}
                 className="flex-1 [&_[role=slider]]:bg-[var(--tropx-vibrant)] [&_[role=slider]]:border-[var(--tropx-vibrant)] [&_.bg-primary]:bg-[var(--tropx-vibrant)]"
               />
               <span className="text-sm font-mono text-[var(--tropx-text-main)] w-20 text-right">
-                {currentOffsetMs.toFixed(1)}ms
+                {sliderOffsetMs.toFixed(0)}ms
               </span>
             </div>
 
             {/* Info */}
             <div className="flex items-center justify-between text-xs text-[var(--tropx-text-sub)]">
               <span>
-                Optimal: {phaseAlignment.optimalOffsetMs.toFixed(1)}ms
-                ({phaseAlignment.optimalOffsetDegrees.toFixed(1)}°)
+                Default: {defaultOptimalMs.toFixed(0)}ms
+                {defaultPhaseAlignment && ` (${defaultPhaseAlignment.optimalOffsetDegrees.toFixed(1)}°)`}
               </span>
-              <span>
-                Correlation: {(phaseAlignment.unalignedCorrelation * 100).toFixed(0)}%
-                → {(phaseAlignment.alignedCorrelation * 100).toFixed(0)}%
-              </span>
+              {defaultPhaseAlignment && (
+                <span>
+                  Correlation: {(defaultPhaseAlignment.unalignedCorrelation * 100).toFixed(0)}%
+                  → {(defaultPhaseAlignment.alignedCorrelation * 100).toFixed(0)}%
+                </span>
+              )}
             </div>
 
             {/* Buttons */}
@@ -373,12 +379,12 @@ export function PhaseAdjustModal({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleReset}
-                disabled={manualAdjustment === 0}
+                onClick={handleResetToDefault}
+                disabled={sliderOffsetMs === defaultOptimalMs}
                 className="gap-1.5"
               >
                 <RotateCcw className="size-3.5" />
-                Reset to Optimal
+                Reset to Default
               </Button>
               <Button
                 variant="outline"

@@ -585,7 +585,12 @@ export default defineSchema({
     // Advanced asymmetry (#40-41)
     advancedAsymmetry: v.optional(advancedAsymmetryResultValidator),
     rollingAsymmetry: v.optional(rollingAsymmetryResultValidator),
-    phaseAlignment: v.optional(phaseAlignmentResultValidator),
+
+    // Phase alignment
+    // defaultPhaseAlignment: the calculated optimal alignment (for reset)
+    // phaseOffsetMs: the actual applied offset (can be manually adjusted)
+    defaultPhaseAlignment: v.optional(phaseAlignmentResultValidator),
+    phaseOffsetMs: v.optional(v.float64()),
 
     // Overall Performance Index (OPI)
     opiResult: v.optional(opiResultValidator),

@@ -57,7 +57,10 @@ export interface AsymmetryEventsData {
     maxRealAsymmetry: number;
     asymmetryPercentage: number;
   };
-  phaseAlignment: PhaseAlignmentData | null;
+  // Currently applied phase offset (may be manually adjusted)
+  phaseOffsetMs: number;
+  // Default (calculated) phase alignment data (for reset functionality)
+  defaultPhaseAlignment: PhaseAlignmentData | null;
 }
 
 interface ChartPaneProps {

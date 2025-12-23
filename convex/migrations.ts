@@ -271,3 +271,106 @@ export const batchRegenerateSvgPaths = internalAction({
     };
   },
 });
+
+// ─────────────────────────────────────────────────────────────────
+// Batch Recompute All Metrics
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Get all session IDs for batch recomputation.
+ */
+export const getAllSessionIds = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const sessions = await ctx.db.query("recordingSessions").collect();
+    return sessions.map((s) => s.sessionId);
+  },
+});
+
+/**
+ * Trigger recomputation for a single session (internal version).
+ */
+export const triggerRecomputeForSession = internalMutation({
+  args: { sessionId: v.string() },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("recordingMetrics")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        status: "pending" as const,
+        error: undefined,
+      });
+    } else {
+      await ctx.db.insert("recordingMetrics", {
+        sessionId: args.sessionId,
+        status: "pending" as const,
+      });
+    }
+
+    // Schedule computation
+    await ctx.scheduler.runAfter(0, internal.recordingMetrics.computeMetricsInternal, {
+      sessionId: args.sessionId,
+    });
+
+    return { success: true };
+  },
+});
+
+/**
+ * Batch recompute metrics for all sessions.
+ * This will recalculate all metrics fresh, ensuring new schema fields are populated.
+ *
+ * Usage: npx convex run migrations:batchRecomputeAllMetrics
+ */
+export const batchRecomputeAllMetrics = internalAction({
+  args: {
+    delayBetweenMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const delayMs = args.delayBetweenMs ?? 500; // Default 500ms between each to avoid overload
+
+    // Get all session IDs
+    const sessionIds = await ctx.runQuery(internal.migrations.getAllSessionIds, {});
+
+    console.log(`Starting batch recomputation for ${sessionIds.length} sessions`);
+
+    const results: Array<{ sessionId: string; success: boolean; error?: string }> = [];
+
+    for (let i = 0; i < sessionIds.length; i++) {
+      const sessionId = sessionIds[i];
+
+      try {
+        await ctx.runMutation(internal.migrations.triggerRecomputeForSession, { sessionId });
+        results.push({ sessionId, success: true });
+        console.log(`[${i + 1}/${sessionIds.length}] Triggered: ${sessionId}`);
+      } catch (error) {
+        results.push({
+          sessionId,
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error"
+        });
+        console.error(`[${i + 1}/${sessionIds.length}] Failed: ${sessionId}`, error);
+      }
+
+      // Add delay between sessions to avoid overwhelming the system
+      if (i < sessionIds.length - 1 && delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
+    const successCount = results.filter((r) => r.success).length;
+    const failCount = results.filter((r) => !r.success).length;
+
+    console.log(`Batch recomputation complete: ${successCount} triggered, ${failCount} failed`);
+
+    return {
+      total: sessionIds.length,
+      triggered: successCount,
+      failed: failCount,
+      results,
+    };
+  },
+});

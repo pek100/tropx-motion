@@ -192,9 +192,12 @@ export function SessionChart({
   // Check if asymmetry data is available
   const hasAsymmetryData = asymmetryEvents?.events && asymmetryEvents.events.length > 0;
 
-  // Check if phase alignment data is available
-  const phaseAlignment = asymmetryEvents?.phaseAlignment;
-  const hasPhaseShift = phaseAlignment !== null && phaseAlignment !== undefined;
+  // Get phase alignment data
+  // phaseOffsetMs = currently applied offset (may be manually adjusted)
+  // defaultPhaseAlignment = calculated optimal (for display and reset)
+  const phaseOffsetMs = asymmetryEvents?.phaseOffsetMs ?? 0;
+  const defaultPhaseAlignment = asymmetryEvents?.defaultPhaseAlignment;
+  const hasPhaseShift = phaseOffsetMs !== 0 || defaultPhaseAlignment !== null;
 
   // Animate phase shift with throttled updates
   const animatePhaseShift = useCallback((targetProgress: number) => {
@@ -268,8 +271,9 @@ export function SessionChart({
       : (asymmetryEvents?.sampleRate ?? packedData.sampleRate);
 
     // Calculate max phase shift using EFFECTIVE sample rate of displayed data
-    const maxPhaseShiftSamples = phaseAlignment
-      ? Math.round((phaseAlignment.optimalOffsetMs / 1000) * effectiveSampleRate)
+    // Use the currently applied phaseOffsetMs (not the default)
+    const maxPhaseShiftSamples = phaseOffsetMs !== 0
+      ? Math.round((phaseOffsetMs / 1000) * effectiveSampleRate)
       : 0;
 
     // Downsample step
@@ -279,7 +283,7 @@ export function SessionChart({
       baseData: { samples: angleSamples, durationMs, step },
       maxHalfShift: Math.round(maxPhaseShiftSamples / 2),
     };
-  }, [packedData, phaseAlignment, asymmetryEvents?.sampleRate]);
+  }, [packedData, phaseOffsetMs, asymmetryEvents?.sampleRate]);
 
   // Calculate current shift in milliseconds (for asymmetry overlay positioning)
   const currentShiftMs = useMemo(() => {
@@ -424,7 +428,7 @@ export function SessionChart({
                 <GitCompareArrows className="size-3.5" />
                 <span className="hidden sm:inline">Phase Align</span>
                 <span className="text-[10px] font-mono opacity-70">
-                  {phaseAlignment!.optimalOffsetMs.toFixed(0)}ms
+                  {phaseOffsetMs.toFixed(0)}ms
                 </span>
               </label>
             </div>
@@ -515,7 +519,8 @@ export function SessionChart({
         open={isAdjustModalOpen}
         onOpenChange={setIsAdjustModalOpen}
         packedData={packedData}
-        phaseAlignment={phaseAlignment ?? null}
+        currentOffsetMs={phaseOffsetMs}
+        defaultPhaseAlignment={defaultPhaseAlignment ?? null}
         sampleRate={asymmetryEvents?.sampleRate}
         onApply={(newOffsetMs) => {
           onPhaseOffsetApply?.(newOffsetMs);

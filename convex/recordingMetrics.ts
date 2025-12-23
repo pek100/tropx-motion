@@ -86,8 +86,8 @@ export const getSessionAsymmetryEvents = query({
       asymmetryPercentage?: number;
     } | null;
 
-    // Extract phase alignment data
-    const phaseAlignment = metrics.phaseAlignment as {
+    // Extract default phase alignment data (calculated optimal)
+    const defaultPhaseAlignment = metrics.defaultPhaseAlignment as {
       optimalOffsetSamples?: number;
       optimalOffsetMs?: number;
       optimalOffsetDegrees?: number;
@@ -95,6 +95,9 @@ export const getSessionAsymmetryEvents = query({
       unalignedCorrelation?: number;
       correlationImprovement?: number;
     } | null;
+
+    // Get the currently applied phase offset (may differ from default if manually adjusted)
+    const phaseOffsetMs = metrics.phaseOffsetMs as number | undefined;
 
     // Return data even if no asymmetry events (phase alignment still useful)
     return {
@@ -107,13 +110,16 @@ export const getSessionAsymmetryEvents = query({
         maxRealAsymmetry: advancedAsymmetry?.maxRealAsymmetry ?? 0,
         asymmetryPercentage: advancedAsymmetry?.asymmetryPercentage ?? 0,
       },
-      phaseAlignment: phaseAlignment ? {
-        optimalOffsetSamples: phaseAlignment.optimalOffsetSamples ?? 0,
-        optimalOffsetMs: phaseAlignment.optimalOffsetMs ?? 0,
-        optimalOffsetDegrees: phaseAlignment.optimalOffsetDegrees ?? 0,
-        alignedCorrelation: phaseAlignment.alignedCorrelation ?? 0,
-        unalignedCorrelation: phaseAlignment.unalignedCorrelation ?? 0,
-        correlationImprovement: phaseAlignment.correlationImprovement ?? 0,
+      // Currently applied phase offset (for chart rendering)
+      phaseOffsetMs: phaseOffsetMs ?? defaultPhaseAlignment?.optimalOffsetMs ?? 0,
+      // Default (calculated) phase alignment data (for reset functionality)
+      defaultPhaseAlignment: defaultPhaseAlignment ? {
+        optimalOffsetSamples: defaultPhaseAlignment.optimalOffsetSamples ?? 0,
+        optimalOffsetMs: defaultPhaseAlignment.optimalOffsetMs ?? 0,
+        optimalOffsetDegrees: defaultPhaseAlignment.optimalOffsetDegrees ?? 0,
+        alignedCorrelation: defaultPhaseAlignment.alignedCorrelation ?? 0,
+        unalignedCorrelation: defaultPhaseAlignment.unalignedCorrelation ?? 0,
+        correlationImprovement: defaultPhaseAlignment.correlationImprovement ?? 0,
       } : null,
     };
   },
@@ -454,7 +460,10 @@ export const storeMetricsResult = internalMutation({
       // Advanced asymmetry
       advancedAsymmetry: m.advancedAsymmetry,
       // rollingAsymmetry: m.rollingAsymmetry, // ❌ DISABLED - conceptually flawed (see compute.ts)
-      phaseAlignment: m.phaseAlignment,
+
+      // Phase alignment: store calculated as default, set initial phaseOffsetMs
+      defaultPhaseAlignment: m.phaseAlignment,
+      phaseOffsetMs: m.phaseAlignment?.optimalOffsetMs ?? 0,
 
       // Overall Performance Index
       opiResult: m.opiResult,
@@ -557,15 +566,14 @@ export const recalculatePhaseMetricsInternal = internalAction({
 });
 
 /** Store only phase-dependent metrics (partial update).
- * Note: We only update advancedAsymmetry, NOT phaseAlignment.
- * This preserves the original optimal offset so the user can always reset to it.
+ * Updates advancedAsymmetry and phaseOffsetMs (the applied offset).
+ * defaultPhaseAlignment is preserved so user can always reset to it.
  */
 export const storePhaseMetricsResult = internalMutation({
   args: {
     sessionId: v.string(),
     advancedAsymmetry: v.any(),
-    // phaseAlignment is passed but not stored - we keep the original
-    phaseAlignment: v.any(),
+    phaseAlignment: v.any(), // Contains the new offset being applied
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -575,8 +583,10 @@ export const storePhaseMetricsResult = internalMutation({
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        // Only update asymmetry metrics, preserve original phaseAlignment
+        // Update asymmetry metrics
         advancedAsymmetry: args.advancedAsymmetry,
+        // Update the applied phase offset (not the default)
+        phaseOffsetMs: args.phaseAlignment?.optimalOffsetMs ?? 0,
         // Update computedAt to indicate metrics were modified
         computedAt: Date.now(),
       });
