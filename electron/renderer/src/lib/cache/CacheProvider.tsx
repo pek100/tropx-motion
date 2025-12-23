@@ -36,6 +36,9 @@ import {
   storeWrappedDEK,
   getWrappedDEK,
   deleteUserCache,
+  storeSessionKEK,
+  getSessionKEK,
+  clearSessionKEK,
 } from "./store";
 import { MutationQueue } from "./mutationQueue";
 import { drainFallbackMutations } from "./fallbackQueue";
@@ -172,6 +175,8 @@ export function CacheProvider({ children }: CacheProviderProps) {
       storeRef.current = null;
       queueRef.current = null;
       setIsReady(false);
+      // Note: Don't clear session KEK on unmount - it's needed for page refreshes
+      // It will be cleared on logout via clearCache or naturally on session end
     };
   }, [isAuthenticated, user?._id, convex]);
 
@@ -182,43 +187,73 @@ export function CacheProvider({ children }: CacheProviderProps) {
     const existingWrappedDEK = await getWrappedDEK(userId);
     console.log(`[CacheProvider] Existing DEK: ${existingWrappedDEK ? `yes (v${existingWrappedDEK.version})` : 'no'}`);
 
-    // Get or create KEK from Convex
-    let kekResult: Awaited<ReturnType<typeof getOrCreateKEK>>;
+    // Check for session-cached KEK (for offline support)
+    const sessionKEK = getSessionKEK(userId);
+    console.log(`[CacheProvider] Session KEK: ${sessionKEK ? `yes (v${sessionKEK.kekVersion})` : 'no'}`);
 
-    if (existingWrappedDEK) {
-      // We have a local DEK, get KEK to unwrap it
-      console.log("[CacheProvider] Path: existing DEK, fetching KEK from server");
-      kekResult = await getOrCreateKEK({});
-    } else {
-      // No local DEK, generate new KEK and DEK
-      console.log("[CacheProvider] Path: no DEK, generating new KEK");
-      const newKEK = await generateKEK();
-      const newKEKBase64 = await exportKey(newKEK);
-      kekResult = await getOrCreateKEK({ newKekIfMissing: newKEKBase64 });
+    // Try to get KEK from server, fall back to session cache if offline
+    let kekWrapped: string;
+    let kekVersionNum: number;
+    let needsRotationFlag = false;
+
+    try {
+      // Try server first
+      let kekResult: Awaited<ReturnType<typeof getOrCreateKEK>>;
+
+      if (existingWrappedDEK) {
+        console.log("[CacheProvider] Path: existing DEK, fetching KEK from server");
+        kekResult = await getOrCreateKEK({});
+      } else {
+        console.log("[CacheProvider] Path: no DEK, generating new KEK");
+        const newKEK = await generateKEK();
+        const newKEKBase64 = await exportKey(newKEK);
+        kekResult = await getOrCreateKEK({ newKekIfMissing: newKEKBase64 });
+      }
+
+      if (!kekResult.kekWrapped) {
+        throw new Error("Failed to get or create KEK");
+      }
+
+      kekWrapped = kekResult.kekWrapped;
+      kekVersionNum = kekResult.kekVersion;
+      needsRotationFlag = kekResult.needsRotation;
+
+      // Cache KEK for this session (enables offline access)
+      storeSessionKEK(userId, { kekWrapped, kekVersion: kekVersionNum });
+      console.log(`[CacheProvider] KEK from server: version=${kekVersionNum}, needsRotation=${needsRotationFlag}`);
+    } catch (error) {
+      // Server fetch failed - try session cache
+      console.log("[CacheProvider] Server KEK fetch failed, trying session cache:", error);
+
+      if (sessionKEK && existingWrappedDEK) {
+        // Use session-cached KEK for offline access
+        console.log(`[CacheProvider] Using session-cached KEK (v${sessionKEK.kekVersion})`);
+        kekWrapped = sessionKEK.kekWrapped;
+        kekVersionNum = sessionKEK.kekVersion;
+      } else {
+        // No session KEK or no DEK - can't initialize offline
+        console.warn("[CacheProvider] No session KEK available, cache unavailable offline");
+        throw error;
+      }
     }
 
-    if (!kekResult.kekWrapped) {
-      throw new Error("Failed to get or create KEK");
-    }
-
-    console.log(`[CacheProvider] KEK from server: version=${kekResult.kekVersion}, needsRotation=${kekResult.needsRotation}`);
-    setKekVersion(kekResult.kekVersion);
-    setNeedsRotation(kekResult.needsRotation);
+    setKekVersion(kekVersionNum);
+    setNeedsRotation(needsRotationFlag);
 
     // Import KEK
-    const kek = await importKEK(kekResult.kekWrapped);
+    const kek = await importKEK(kekWrapped);
 
     let dek: CryptoKey;
 
     if (existingWrappedDEK) {
       // Check if KEK version matches
-      if (existingWrappedDEK.version !== kekResult.kekVersion) {
+      if (existingWrappedDEK.version !== kekVersionNum) {
         // KEK was rotated on another device, need to re-initialize
-        console.log(`[CacheProvider] KEK version mismatch (local=${existingWrappedDEK.version}, server=${kekResult.kekVersion}), clearing cache`);
+        console.log(`[CacheProvider] KEK version mismatch (local=${existingWrappedDEK.version}, server=${kekVersionNum}), clearing cache`);
         await deleteUserCache(userId);
         // Generate new DEK with new KEK
         dek = await generateDEK();
-        const wrappedDEK = await wrapDEK(dek, kek, kekResult.kekVersion);
+        const wrappedDEK = await wrapDEK(dek, kek, kekVersionNum);
         const storeResult = await storeWrappedDEK(userId, wrappedDEK);
         if (!storeResult.success) {
           throw new Error(`Failed to store DEK: ${storeResult.error}`);
@@ -232,7 +267,7 @@ export function CacheProvider({ children }: CacheProviderProps) {
       // Generate new DEK
       console.log("[CacheProvider] Generating new DEK");
       dek = await generateDEK();
-      const wrappedDEK = await wrapDEK(dek, kek, kekResult.kekVersion);
+      const wrappedDEK = await wrapDEK(dek, kek, kekVersionNum);
       const storeResult = await storeWrappedDEK(userId, wrappedDEK);
       if (!storeResult.success) {
         throw new Error(`Failed to store DEK: ${storeResult.error}`);
@@ -309,6 +344,8 @@ export function CacheProvider({ children }: CacheProviderProps) {
     const userId = String(user._id);
 
     await storeRef.current?.clear();
+    // Also clear session KEK for full logout
+    clearSessionKEK(userId);
     toast({
       title: "Cache cleared",
       description: "Local cache has been cleared.",

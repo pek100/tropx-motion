@@ -5,7 +5,7 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useMutation, useConvex } from "convex/react";
-import { useCachedQuery, useCacheOptional, cacheQuery } from "@/lib/cache";
+import { useSyncedQuery, useCachedQuery, useCacheOptional, cacheQuery } from "@/lib/cache";
 import { api } from "../../../../../convex/_generated/api";
 import { Id } from "../../../../../convex/_generated/dataModel";
 import { mergeChunks, type PackedChunkData } from "../../../../../shared/QuaternionCodec";
@@ -161,10 +161,11 @@ export function DashboardView({ className }: DashboardViewProps) {
   // Cache context for imperative queries
   const cache = useCacheOptional();
 
-  // Queries (using cached query for offline support)
-  const { data: metricsHistory, isLoading: isMetricsLoading } = useCachedQuery(
+  // Queries (using synced query for offline + real-time sync)
+  const { data: metricsHistory, isLoading: isMetricsLoading } = useSyncedQuery(
     api.dashboard.getPatientMetricsHistory,
-    selectedPatientId ? { subjectId: selectedPatientId } : "skip"
+    selectedPatientId ? { subjectId: selectedPatientId } : "skip",
+    { timestamps: api.sync.getSessionTimestamps }
   );
 
   // State for session waveform data (loaded on demand with decompression)

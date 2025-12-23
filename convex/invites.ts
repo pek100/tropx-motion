@@ -176,16 +176,18 @@ export const acceptInviteById = mutation({
       throw new Error(`Invite already ${invite.status}`);
     }
 
-    if (invite.expiresAt < Date.now()) {
-      await ctx.db.patch(invite._id, { status: INVITE_STATUS.EXPIRED });
+    const now = Date.now();
+    if (invite.expiresAt < now) {
+      await ctx.db.patch(invite._id, { status: INVITE_STATUS.EXPIRED, updatedAt: now });
       throw new Error("Invite has expired");
     }
 
     // Mark invite as accepted
     await ctx.db.patch(invite._id, {
       status: INVITE_STATUS.ACCEPTED,
-      acceptedAt: Date.now(),
+      acceptedAt: now,
       acceptedByUserId: user._id,
+      updatedAt: now,
     });
 
     // Add contact relationship (inviter -> invitee)
@@ -201,10 +203,10 @@ export const acceptInviteById = mutation({
           {
             userId: user._id,
             alias: invite.alias,
-            addedAt: Date.now(),
+            addedAt: now,
           },
         ];
-        await ctx.db.patch(invite.fromUserId, { contacts: updatedContacts });
+        await ctx.db.patch(invite.fromUserId, { contacts: updatedContacts, updatedAt: now });
       }
     }
 
@@ -264,23 +266,27 @@ export const createInvite = mutation({
       }
       // Expired - update it
       const newToken = generateToken();
+      const now = Date.now();
       await ctx.db.patch(existingInvite._id, {
         token: newToken,
         alias: args.alias,
-        expiresAt: Date.now() + INVITE_EXPIRY_MS,
+        expiresAt: now + INVITE_EXPIRY_MS,
+        updatedAt: now,
       });
       return { inviteId: existingInvite._id, token: newToken };
     }
 
     // Create new invite
     const token = generateToken();
+    const now = Date.now();
     const inviteId = await ctx.db.insert("invites", {
       fromUserId: user._id,
       toEmail: email,
       alias: args.alias,
       token,
       status: INVITE_STATUS.PENDING,
-      expiresAt: Date.now() + INVITE_EXPIRY_MS,
+      expiresAt: now + INVITE_EXPIRY_MS,
+      updatedAt: now,
     });
 
     return { inviteId, token };
@@ -312,8 +318,9 @@ export const acceptInvite = mutation({
       throw new Error(`Invite already ${invite.status}`);
     }
 
-    if (invite.expiresAt < Date.now()) {
-      await ctx.db.patch(invite._id, { status: INVITE_STATUS.EXPIRED });
+    const now = Date.now();
+    if (invite.expiresAt < now) {
+      await ctx.db.patch(invite._id, { status: INVITE_STATUS.EXPIRED, updatedAt: now });
       throw new Error("Invite has expired");
     }
 
@@ -322,14 +329,16 @@ export const acceptInvite = mutation({
       await ctx.db.patch(userId, {
         role: ROLES.PATIENT,
         contacts: user.contacts ?? [],
+        updatedAt: now,
       });
     }
 
     // Mark invite as accepted
     await ctx.db.patch(invite._id, {
       status: INVITE_STATUS.ACCEPTED,
-      acceptedAt: Date.now(),
+      acceptedAt: now,
       acceptedByUserId: user._id,
+      updatedAt: now,
     });
 
     // Add contact relationship (inviter -> invitee)
@@ -345,10 +354,10 @@ export const acceptInvite = mutation({
           {
             userId: user._id,
             alias: invite.alias,
-            addedAt: Date.now(),
+            addedAt: now,
           },
         ];
-        await ctx.db.patch(invite.fromUserId, { contacts: updatedContacts });
+        await ctx.db.patch(invite.fromUserId, { contacts: updatedContacts, updatedAt: now });
       }
     }
 
@@ -395,7 +404,7 @@ export const expireOldInvites = internalMutation({
     let expiredCount = 0;
     for (const invite of expiredInvites) {
       if (invite.expiresAt < now) {
-        await ctx.db.patch(invite._id, { status: INVITE_STATUS.EXPIRED });
+        await ctx.db.patch(invite._id, { status: INVITE_STATUS.EXPIRED, updatedAt: now });
         expiredCount++;
       }
     }

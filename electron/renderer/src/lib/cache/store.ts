@@ -19,6 +19,7 @@ import { isElectron } from "../platform";
 
 const DB_PREFIX = "tropx_cache_";
 const DEK_KEY_PREFIX = "tropx_cache_dek";
+const KEK_SESSION_PREFIX = "tropx_cache_kek_session";
 const CACHE_STORE = "cache";
 const META_STORE = "meta";
 const DB_VERSION = 1;
@@ -548,4 +549,53 @@ async function deleteDatabase(name: string): Promise<void> {
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve();
   });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Session KEK Cache (for offline support within session)
+// ─────────────────────────────────────────────────────────────────
+
+export interface SessionKEK {
+  kekWrapped: string;
+  kekVersion: number;
+}
+
+/** Get sessionStorage key for KEK. */
+function getKEKSessionKey(userId: string): string {
+  const platform = isElectron() ? "electron" : "web";
+  return `${KEK_SESSION_PREFIX}_${platform}_${userId}`;
+}
+
+/** Store KEK in sessionStorage (survives page refresh, not app close). */
+export function storeSessionKEK(userId: string, kek: SessionKEK): void {
+  try {
+    const key = getKEKSessionKey(userId);
+    sessionStorage.setItem(key, JSON.stringify(kek));
+    console.log(`[storeSessionKEK] KEK cached for session, version: ${kek.kekVersion}`);
+  } catch (error) {
+    console.error("[storeSessionKEK] Failed to cache KEK:", error);
+  }
+}
+
+/** Get KEK from sessionStorage. */
+export function getSessionKEK(userId: string): SessionKEK | null {
+  try {
+    const key = getKEKSessionKey(userId);
+    const stored = sessionStorage.getItem(key);
+    if (!stored) return null;
+    return JSON.parse(stored) as SessionKEK;
+  } catch (error) {
+    console.error("[getSessionKEK] Failed to get cached KEK:", error);
+    return null;
+  }
+}
+
+/** Clear session KEK (on logout). */
+export function clearSessionKEK(userId: string): void {
+  try {
+    const key = getKEKSessionKey(userId);
+    sessionStorage.removeItem(key);
+  } catch (error) {
+    console.error("[clearSessionKEK] Failed to clear KEK:", error);
+  }
 }

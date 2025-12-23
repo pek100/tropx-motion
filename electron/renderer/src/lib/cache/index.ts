@@ -31,6 +31,9 @@ export type { CacheContextValue } from "./CacheProvider";
 export { useCachedQuery, generateCacheKey } from "./useCachedQuery";
 export type { UseCachedQueryOptions, UseCachedQueryResult } from "./useCachedQuery";
 
+export { useSyncedQuery } from "./useSyncedQuery";
+export type { UseSyncedQueryOptions, UseSyncedQueryResult, TimestampEntry } from "./useSyncedQuery";
+
 export { useCachedMutation, usePendingMutations } from "./useCachedMutation";
 export type { UseCachedMutationOptions, UseCachedMutationResult } from "./useCachedMutation";
 

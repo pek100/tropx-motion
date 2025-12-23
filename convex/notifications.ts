@@ -79,7 +79,7 @@ export const markRead = mutation({
       throw new Error("Not authorized");
     }
 
-    await ctx.db.patch(args.notificationId, { read: true });
+    await ctx.db.patch(args.notificationId, { read: true, updatedAt: Date.now() });
 
     return { success: true };
   },
@@ -98,8 +98,9 @@ export const markAllRead = mutation({
       )
       .collect();
 
+    const now = Date.now();
     for (const notification of unread) {
-      await ctx.db.patch(notification._id, { read: true });
+      await ctx.db.patch(notification._id, { read: true, updatedAt: now });
     }
 
     return { success: true, count: unread.length };
@@ -143,6 +144,7 @@ export const create = internalMutation({
     data: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
+    const now = Date.now();
     const notificationId = await ctx.db.insert("notifications", {
       userId: args.userId,
       type: args.type,
@@ -150,6 +152,7 @@ export const create = internalMutation({
       body: args.body,
       data: args.data,
       read: false,
+      updatedAt: now,
     });
 
     // Check if user wants email notifications

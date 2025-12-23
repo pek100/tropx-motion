@@ -11,7 +11,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useConvex } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
-import { useCachedQuery, useCacheOptional, cacheQuery } from '../lib/cache';
+import { useSyncedQuery, useCacheOptional, cacheQuery } from '../lib/cache';
 import {
   PackedChunkData,
   AngleSample,
@@ -80,10 +80,11 @@ export function useRecordingSession(): UseRecordingSessionReturn {
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Fetch session list (cached for offline)
-  const { data: sessionsQuery, isLoading: isLoadingSessions } = useCachedQuery(
+  // Fetch session list (synced with timestamps)
+  const { data: sessionsQuery, isLoading: isLoadingSessions } = useSyncedQuery(
     api.recordingSessions.listMySessions,
-    { limit: 50 }
+    { limit: 50 },
+    { timestamps: api.sync.getSessionTimestamps }
   );
 
   const sessions: SessionMetadata[] = useMemo(() => {

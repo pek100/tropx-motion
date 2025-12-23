@@ -34,6 +34,7 @@ import type * as notifications from "../notifications.js";
 import type * as recordingChunks from "../recordingChunks.js";
 import type * as recordingMetrics from "../recordingMetrics.js";
 import type * as recordingSessions from "../recordingSessions.js";
+import type * as sync from "../sync.js";
 import type * as tags from "../tags.js";
 import type * as users from "../users.js";
 
@@ -70,6 +71,7 @@ declare const fullApi: ApiFromModules<{
   recordingChunks: typeof recordingChunks;
   recordingMetrics: typeof recordingMetrics;
   recordingSessions: typeof recordingSessions;
+  sync: typeof sync;
   tags: typeof tags;
   users: typeof users;
 }>;

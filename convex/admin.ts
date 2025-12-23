@@ -146,7 +146,7 @@ export const setUserRole = mutation({
       throw new Error("Cannot change role of archived user");
     }
 
-    await ctx.db.patch(args.userId, { role: args.role });
+    await ctx.db.patch(args.userId, { role: args.role, updatedAt: Date.now() });
 
     return args.userId;
   },
@@ -175,10 +175,12 @@ export const archiveUser = mutation({
       throw new Error("User is already archived");
     }
 
+    const now = Date.now();
     await ctx.db.patch(args.userId, {
       isArchived: true,
-      archivedAt: Date.now(),
+      archivedAt: now,
       archiveReason: args.reason ?? "Archived by admin",
+      updatedAt: now,
     });
 
     return args.userId;
@@ -204,6 +206,7 @@ export const restoreUser = mutation({
       isArchived: false,
       archivedAt: undefined,
       archiveReason: undefined,
+      updatedAt: Date.now(),
     });
 
     return args.userId;
@@ -274,7 +277,7 @@ export const permanentlyDeleteUser = mutation({
         const updatedContacts = (otherUser.contacts ?? []).filter(
           (c) => c.userId !== args.userId
         );
-        await ctx.db.patch(otherUser._id, { contacts: updatedContacts });
+        await ctx.db.patch(otherUser._id, { contacts: updatedContacts, updatedAt: Date.now() });
       }
     }
 

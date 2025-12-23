@@ -11,7 +11,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
-import { useCachedQuery } from "@/lib/cache";
+import { useSyncedQuery } from "@/lib/cache";
 import { Id } from "../../../../convex/_generated/dataModel";
 import { NOTIFICATION_TYPES } from "../../../../convex/schema";
 import {
@@ -445,18 +445,18 @@ export function NotificationBell({
   const isOpen = isControlled ? controlledIsOpen : internalIsOpen;
   const setIsOpen = isControlled ? (open: boolean) => onOpenChange?.(open) : setInternalIsOpen;
 
-  // Fetch pending invitations (cached for offline)
-  const { data: invitations } = useCachedQuery(api.invites.getMyPendingInvitations, {}) as {
-    data: Invitation[] | undefined;
-  };
+  // Fetch pending invitations (synced with timestamps)
+  const { data: invitations } = useSyncedQuery(api.invites.getMyPendingInvitations, {}, {
+    timestamps: api.sync.getInviteTimestamps,
+  }) as { data: Invitation[] | undefined };
 
-  // Fetch generic notifications (cached for offline)
-  const { data: notifications } = useCachedQuery(api.notifications.listForUser, { limit: 20 }) as {
-    data: GenericNotification[] | undefined;
-  };
+  // Fetch generic notifications (synced with timestamps)
+  const { data: notifications } = useSyncedQuery(api.notifications.listForUser, { limit: 20 }, {
+    timestamps: api.sync.getNotificationTimestamps,
+  }) as { data: GenericNotification[] | undefined };
 
-  // Unread count for generic notifications
-  const { data: unreadNotificationCount = 0 } = useCachedQuery(api.notifications.getUnreadCount, {});
+  // Unread count for generic notifications (no timestamp sync needed - simple value)
+  const { data: unreadNotificationCount = 0 } = useSyncedQuery(api.notifications.getUnreadCount, {});
 
   // Mutations
   const acceptInvite = useMutation(api.invites.acceptInviteById);

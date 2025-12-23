@@ -74,7 +74,7 @@ export const cleanupArchivedData = internalMutation({
             const updatedContacts = (otherUser.contacts ?? []).filter(
               (c) => c.userId !== user._id
             );
-            await ctx.db.patch(otherUser._id, { contacts: updatedContacts });
+            await ctx.db.patch(otherUser._id, { contacts: updatedContacts, updatedAt: Date.now() });
           }
         }
 

@@ -455,6 +455,9 @@ export default defineSchema({
     kekVersion: v.optional(v.number()), // Rotation counter (increments on rotate)
     kekRotatedAt: v.optional(v.number()), // Timestamp of last rotation
 
+    // Cache sync
+    updatedAt: v.optional(v.number()),
+
     // Soft delete
     ...softDeleteFields,
   })
@@ -614,6 +617,8 @@ export default defineSchema({
     expiresAt: v.number(),
     acceptedAt: v.optional(v.number()),
     acceptedByUserId: v.optional(v.id("users")),
+    // Cache sync
+    updatedAt: v.optional(v.number()),
   })
     .index("by_token", ["token"])
     .index("by_from_user", ["fromUserId", "status"])
@@ -628,6 +633,8 @@ export default defineSchema({
     body: v.string(),
     data: v.optional(v.any()),
     read: v.boolean(),
+    // Cache sync
+    updatedAt: v.optional(v.number()),
   })
     .index("by_user", ["userId"])
     .index("by_user_unread", ["userId", "read"]),

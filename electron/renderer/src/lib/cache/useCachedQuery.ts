@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useQuery, useConvex } from "convex/react";
+import { useQuery, useConvex, useConvexConnectionState } from "convex/react";
 import { FunctionReference, FunctionArgs, FunctionReturnType } from "convex/server";
 import { api } from "../../../../../convex/_generated/api";
 import { useCacheOptional } from "./CacheProvider";
@@ -77,16 +77,40 @@ export function useCachedQuery<Query extends FunctionReference<"query">>(
 
   const cache = useCacheOptional();
   const convex = useConvex();
+  const connectionState = useConvexConnectionState();
 
   const [cachedData, setCachedData] = useState<T | undefined>(undefined);
   const [isCached, setIsCached] = useState(false);
   const [isStale, setIsStale] = useState(false);
   const [isLoadingCache, setIsLoadingCache] = useState(true); // Start true until cache checked
   const [error, setError] = useState<Error | null>(null);
+  const [justReconnected, setJustReconnected] = useState(false);
 
   const cacheKeyRef = useRef<string | null>(null);
+  const wasConnectedRef = useRef(connectionState.isWebSocketConnected);
 
   const skip = args === "skip" || options.skip;
+
+  // Detect when we come back online - mark as needing refresh
+  useEffect(() => {
+    const isConnected = connectionState.isWebSocketConnected;
+    const wasConnected = wasConnectedRef.current;
+
+    if (isConnected && !wasConnected) {
+      // Just reconnected - force refresh
+      setJustReconnected(true);
+      setIsStale(true);
+    }
+
+    wasConnectedRef.current = isConnected;
+  }, [connectionState.isWebSocketConnected]);
+
+  // Clear justReconnected flag after data refreshes
+  useEffect(() => {
+    if (justReconnected && !isStale) {
+      setJustReconnected(false);
+    }
+  }, [justReconnected, isStale]);
 
   // Stable key for dependency arrays (prevents re-running effects on every render)
   const argsKey = useMemo(() => stableArgsKey(args), [args]);

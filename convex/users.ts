@@ -86,6 +86,7 @@ export const completeOnboarding = mutation({
       await ctx.db.patch(userId, {
         role: args.role,
         contacts: user.contacts ?? [],
+        updatedAt: Date.now(),
       });
     }
 
@@ -99,12 +100,14 @@ export const completeOnboarding = mutation({
         .collect();
 
       for (const invite of pendingInvites) {
-        if (invite.expiresAt > Date.now()) {
+        const now = Date.now();
+        if (invite.expiresAt > now) {
           // Accept the invite
           await ctx.db.patch(invite._id, {
             status: "accepted",
-            acceptedAt: Date.now(),
+            acceptedAt: now,
             acceptedByUserId: userId,
+            updatedAt: now,
           });
 
           // Add contact relationship (inviter -> invitee)
@@ -118,7 +121,7 @@ export const completeOnboarding = mutation({
                 addedAt: Date.now(),
               },
             ];
-            await ctx.db.patch(invite.fromUserId, { contacts: updatedContacts });
+            await ctx.db.patch(invite.fromUserId, { contacts: updatedContacts, updatedAt: Date.now() });
           }
         }
       }
@@ -142,7 +145,7 @@ export const updateProfile = mutation({
     if (args.image !== undefined) updates.image = args.image;
 
     if (Object.keys(updates).length > 0) {
-      await ctx.db.patch(user._id, updates);
+      await ctx.db.patch(user._id, { ...updates, updatedAt: Date.now() });
     }
 
     return user._id;
@@ -243,7 +246,7 @@ export const addContact = mutation({
       },
     ];
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts });
+    await ctx.db.patch(user._id, { contacts: updatedContacts, updatedAt: Date.now() });
     return user._id;
   },
 });
@@ -270,7 +273,7 @@ export const updateContactAlias = mutation({
       alias: args.alias ?? undefined,
     };
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts });
+    await ctx.db.patch(user._id, { contacts: updatedContacts, updatedAt: Date.now() });
     return user._id;
   },
 });
@@ -289,7 +292,7 @@ export const removeContact = mutation({
       throw new Error("Contact not found");
     }
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts });
+    await ctx.db.patch(user._id, { contacts: updatedContacts, updatedAt: Date.now() });
     return user._id;
   },
 });
@@ -314,7 +317,7 @@ export const toggleContactStar = mutation({
       starred: !currentStarred,
     };
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts });
+    await ctx.db.patch(user._id, { contacts: updatedContacts, updatedAt: Date.now() });
     return !currentStarred; // Return new starred state
   },
 });
@@ -329,6 +332,7 @@ export const archiveMyAccount = mutation({
       isArchived: true,
       archivedAt: Date.now(),
       archiveReason: args.reason ?? "User requested account deletion",
+      updatedAt: Date.now(),
     });
 
     return user._id;
