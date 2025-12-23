@@ -233,6 +233,9 @@ export function ChartPane({
 
 /** Filter sessions by time range */
 function filterSessions(sessions: SessionData[], filter: TimeFilter): SessionData[] {
+  // Defensive: ensure sessions is an array
+  if (!Array.isArray(sessions)) return [];
+
   if (filter === "all") return sessions;
 
   const now = Date.now();
@@ -252,7 +255,7 @@ function filterSessions(sessions: SessionData[], filter: TimeFilter): SessionDat
       return sessions;
   }
 
-  return sessions.filter((s) => s.recordedAt >= cutoff);
+  return sessions.filter((s) => s && typeof s.recordedAt === 'number' && s.recordedAt >= cutoff);
 }
 
 export default ChartPane;

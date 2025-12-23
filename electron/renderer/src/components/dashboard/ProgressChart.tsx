@@ -355,29 +355,34 @@ export function ProgressChart({
 
   // Transform sessions to chart data with all metrics
   const chartData = useMemo<ChartDataPoint[]>(() => {
-    return sessions.map((s) => {
-      const dataPoint: ChartDataPoint = {
-        sessionId: s.sessionId,
-        date: s.recordedAt,
-        dateLabel: formatDate(s.recordedAt),
-        title: s.tags[0] || "Untitled",
-        grade: s.opiGrade,
-        opiScore: s.opiScore,
-        previewLeftPaths: s.previewLeftPaths,
-        previewRightPaths: s.previewRightPaths,
-      };
+    // Defensive: ensure sessions is an array
+    if (!Array.isArray(sessions)) return [];
 
-      // Add all metrics from session
-      if (s.metrics) {
-        Object.entries(s.metrics).forEach(([key, value]) => {
-          if (value !== undefined) {
-            dataPoint[key] = value;
-          }
-        });
-      }
+    return sessions
+      .filter((s) => s && typeof s.sessionId === 'string') // Skip invalid entries
+      .map((s) => {
+        const dataPoint: ChartDataPoint = {
+          sessionId: s.sessionId,
+          date: s.recordedAt,
+          dateLabel: formatDate(s.recordedAt),
+          title: Array.isArray(s.tags) && s.tags[0] ? s.tags[0] : "Untitled",
+          grade: s.opiGrade || "C",
+          opiScore: typeof s.opiScore === 'number' ? s.opiScore : 0,
+          previewLeftPaths: s.previewLeftPaths,
+          previewRightPaths: s.previewRightPaths,
+        };
 
-      return dataPoint;
-    });
+        // Add all metrics from session (defensive: check metrics is an object)
+        if (s.metrics && typeof s.metrics === 'object') {
+          Object.entries(s.metrics).forEach(([key, value]) => {
+            if (typeof value === 'number') {
+              dataPoint[key] = value;
+            }
+          });
+        }
+
+        return dataPoint;
+      });
   }, [sessions]);
 
   const handleDotClick = useCallback(

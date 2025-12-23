@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { useQuery, useMutation } from "convex/react";
+import { useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
+import { useCachedQuery } from "@/lib/cache";
 import { Id } from "../../../../convex/_generated/dataModel";
 import {
   XIcon,
@@ -54,11 +55,13 @@ export function PatientSearchModal({
   const [optimisticStars, setOptimisticStars] = useState<Map<string, boolean>>(new Map());
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch contacts from Convex
-  const contacts = useQuery(api.users.getContacts) as Contact[] | undefined;
+  // Fetch contacts from Convex (cached for offline)
+  const { data: contacts } = useCachedQuery(api.users.getContacts, {}) as {
+    data: Contact[] | undefined;
+  };
 
-  // Fetch current user for "Me" option
-  const currentUser = useQuery(api.users.getMe);
+  // Fetch current user for "Me" option (cached for offline)
+  const { data: currentUser } = useCachedQuery(api.users.getMe, {});
 
   // Create "Me" contact option
   const meContact: Contact | null = useMemo(() => {
@@ -76,7 +79,8 @@ export function PatientSearchModal({
 
   // Sort contacts by most recent (addedAt) and apply optimistic star updates
   const sortedContacts = useMemo(() => {
-    if (!contacts) return [];
+    // Defensive: ensure contacts is an array before spreading
+    if (!contacts || !Array.isArray(contacts)) return [];
     return [...contacts]
       .map((c) => ({
         ...c,

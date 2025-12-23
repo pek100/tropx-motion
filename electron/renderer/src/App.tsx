@@ -10,6 +10,7 @@ import { ActionModal } from "@/components/ActionModal"
 import { StorageSettingsModal } from "@/components/StorageSettingsModal"
 import { AuthModal } from "@/components/auth"
 import { ThemeToggle } from "@/components/ThemeToggle"
+import { ConnectionStatusBar } from "@/components/ConnectionStatusBar"
 import { isElectron, isWeb } from "@/lib/platform"
 import { platformInfo } from "@/lib/platform"
 import { useState, useRef, useEffect, useMemo, useCallback, lazy, Suspense } from "react"
@@ -23,6 +24,7 @@ import { persistence } from "@/lib/persistence"
 import { UIProfileProvider, useUIProfile } from "@/lib/ui-profiles"
 import { useConvex } from "convex/react"
 import { api } from "../../../convex/_generated/api"
+import { useCacheOptional, cacheQuery } from "@/lib/cache"
 import { mergeChunks, unpackToAngles, type PackedChunkData } from "../../../shared/QuaternionCodec"
 import { decompressAllChunks, type CompressedChunk, type SessionMetadata } from "../../../shared/compression/decompressSession"
 import type { ImportedSample } from "@/lib/recording"
@@ -52,6 +54,7 @@ function AppContent() {
   const { toast } = useToast()
   const { profile, clearOverride } = useUIProfile()
   const convex = useConvex()
+  const cache = useCacheOptional()
   const { isAuthenticated, isLoading: isAuthLoading, signIn } = useCurrentUser()
 
   // Auth modal state (for toast sign-in actions)
@@ -671,8 +674,13 @@ function AppContent() {
       let packedChunks: PackedChunkData[] = []
       let totalSampleCount = 0
 
-      // First, try new compressed format (sessions + recordingChunks tables)
-      const compressedResult = await convex.query(api.recordingChunks.getSessionWithChunks, { sessionId })
+      // First, try new compressed format (sessions + recordingChunks tables) - cached for offline
+      const { data: compressedResult } = await cacheQuery(
+        cache?.store ?? null,
+        "recordingChunks.getSessionWithChunks",
+        { sessionId },
+        () => convex.query(api.recordingChunks.getSessionWithChunks, { sessionId })
+      )
 
       if (compressedResult && compressedResult.chunks.length > 0) {
         // New compressed format found - decompress
@@ -758,7 +766,7 @@ function AppContent() {
     } finally {
       setIsLoadingSession(false)
     }
-  }, [convex, toast])
+  }, [convex, cache?.store, toast])
 
   // Handle CSV import from LoadModal
   const handleImportCSVFromModal = useCallback(async () => {
@@ -1035,6 +1043,9 @@ function AppContent() {
   return (
     <TooltipProvider delayDuration={1500}>
       <div className={`${isCompact ? "h-screen bg-[var(--tropx-bg)] flex flex-col relative overflow-hidden" : "min-h-screen bg-[var(--tropx-bg)] flex flex-col relative"} ${showDynamicIsland ? "raspberry-pi" : ""}`}>
+        {/* Connection Status Bar (shows offline/reconnected) */}
+        <ConnectionStatusBar />
+
         {/* Content */}
         <div className={isCompact ? "relative h-screen flex flex-col" : "relative min-h-screen flex flex-col"}>
           {/* Window Controls - Desktop only, minimize/maximize hidden in kiosk mode */}

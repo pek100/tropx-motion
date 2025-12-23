@@ -60,6 +60,8 @@ const DISABLED_RESULT: UseCurrentUserResult = {
 };
 
 // Hook that uses Convex - only call when Convex is configured
+// NOTE: This hook must use raw useQuery, NOT useCachedQuery, because
+// CacheProvider depends on this hook for initialization (circular dependency)
 function useCurrentUserEnabled(): UseCurrentUserResult {
   const authActions = useAuthActions();
   const userData = useQuery(api.users.getMe);

@@ -4,6 +4,7 @@ import { ReactNode } from "react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { AutoSignIn } from "../components/auth/AutoSignIn";
+import { CacheProvider } from "./cache";
 import { isElectron } from "./platform";
 
 // Initialize Convex client
@@ -53,7 +54,9 @@ export function ConvexClientProvider({ children }: ConvexClientProviderProps) {
   return (
     <ConvexAuthProvider client={convex} storageNamespace={storageNamespace}>
       <AutoSignIn />
-      {children}
+      <CacheProvider>
+        {children}
+      </CacheProvider>
     </ConvexAuthProvider>
   );
 }

@@ -9,8 +9,9 @@
  */
 
 import { useState, useRef, useEffect, useMemo } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
+import { useCachedQuery } from "@/lib/cache";
 import { Id } from "../../../../convex/_generated/dataModel";
 import { NOTIFICATION_TYPES } from "../../../../convex/schema";
 import {
@@ -444,18 +445,18 @@ export function NotificationBell({
   const isOpen = isControlled ? controlledIsOpen : internalIsOpen;
   const setIsOpen = isControlled ? (open: boolean) => onOpenChange?.(open) : setInternalIsOpen;
 
-  // Fetch pending invitations
-  const invitations = useQuery(api.invites.getMyPendingInvitations) as
-    | Invitation[]
-    | undefined;
+  // Fetch pending invitations (cached for offline)
+  const { data: invitations } = useCachedQuery(api.invites.getMyPendingInvitations, {}) as {
+    data: Invitation[] | undefined;
+  };
 
-  // Fetch generic notifications
-  const notifications = useQuery(api.notifications.listForUser, { limit: 20 }) as
-    | GenericNotification[]
-    | undefined;
+  // Fetch generic notifications (cached for offline)
+  const { data: notifications } = useCachedQuery(api.notifications.listForUser, { limit: 20 }) as {
+    data: GenericNotification[] | undefined;
+  };
 
   // Unread count for generic notifications
-  const unreadNotificationCount = useQuery(api.notifications.getUnreadCount) ?? 0;
+  const { data: unreadNotificationCount = 0 } = useCachedQuery(api.notifications.getUnreadCount, {});
 
   // Mutations
   const acceptInvite = useMutation(api.invites.acceptInviteById);
@@ -472,15 +473,15 @@ export function NotificationBell({
   const unifiedItems = useMemo((): UnifiedNotificationItem[] => {
     const items: UnifiedNotificationItem[] = [];
 
-    // Add invites
-    if (invitations) {
+    // Add invites (defensive: check it's an array before iterating)
+    if (Array.isArray(invitations)) {
       for (const invite of invitations) {
         items.push({ kind: "invite", data: invite });
       }
     }
 
-    // Add notifications
-    if (notifications) {
+    // Add notifications (defensive: check it's an array before iterating)
+    if (Array.isArray(notifications)) {
       for (const notification of notifications) {
         items.push({ kind: "notification", data: notification });
       }

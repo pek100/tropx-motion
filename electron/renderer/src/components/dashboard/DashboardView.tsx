@@ -4,7 +4,8 @@
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useQuery, useMutation, useConvex } from "convex/react";
+import { useMutation, useConvex } from "convex/react";
+import { useCachedQuery, useCacheOptional, cacheQuery } from "@/lib/cache";
 import { api } from "../../../../../convex/_generated/api";
 import { Id } from "../../../../../convex/_generated/dataModel";
 import { mergeChunks, type PackedChunkData } from "../../../../../shared/QuaternionCodec";
@@ -157,8 +158,11 @@ export function DashboardView({ className }: DashboardViewProps) {
   // Convex client for manual queries
   const convex = useConvex();
 
-  // Queries
-  const metricsHistory = useQuery(
+  // Cache context for imperative queries
+  const cache = useCacheOptional();
+
+  // Queries (using cached query for offline support)
+  const { data: metricsHistory, isLoading: isMetricsLoading } = useCachedQuery(
     api.dashboard.getPatientMetricsHistory,
     selectedPatientId ? { subjectId: selectedPatientId } : "skip"
   );
@@ -182,16 +186,35 @@ export function DashboardView({ className }: DashboardViewProps) {
     const loadSessionData = async () => {
       setIsSessionLoading(true);
       try {
-        const result = await convex.query(api.recordingChunks.getSessionWithChunks, {
-          sessionId: selectedSessionId,
-        });
+        // Use cacheQuery to cache recording data
+        const { data: result } = await cacheQuery(
+          cache?.store ?? null,
+          "recordingChunks.getSessionWithChunks",
+          { sessionId: selectedSessionId },
+          () => convex.query(api.recordingChunks.getSessionWithChunks, {
+            sessionId: selectedSessionId,
+          })
+        );
 
-        if (!result || result.chunks.length === 0) {
+        // Defensive: validate cached data structure
+        if (!result || typeof result !== 'object') {
           setSessionPackedData(null);
           return;
         }
 
         const { session, chunks } = result;
+
+        // Defensive: ensure chunks is an array with data
+        if (!Array.isArray(chunks) || chunks.length === 0) {
+          setSessionPackedData(null);
+          return;
+        }
+
+        // Defensive: ensure session has required properties
+        if (!session || typeof session.sessionId !== 'string') {
+          setSessionPackedData(null);
+          return;
+        }
 
         // Build session metadata for decompression
         const sessionMeta: CompressionSessionMeta = {
@@ -238,10 +261,10 @@ export function DashboardView({ className }: DashboardViewProps) {
     };
 
     loadSessionData();
-  }, [selectedSessionId, convex]);
+  }, [selectedSessionId, convex, cache?.store]);
 
   // Query for asymmetry events (for SessionChart overlay)
-  const asymmetryEvents = useQuery(
+  const { data: asymmetryEvents } = useCachedQuery(
     api.recordingMetrics.getSessionAsymmetryEvents,
     selectedSessionId ? { sessionId: selectedSessionId } : "skip"
   );
@@ -260,20 +283,38 @@ export function DashboardView({ className }: DashboardViewProps) {
 
   // Transform sessions for carousel/chart
   const sessions = useMemo<SessionData[]>(() => {
-    if (!metricsHistory?.sessions) return [];
+    // Defensive: check it's an array before mapping
+    if (!Array.isArray(metricsHistory?.sessions)) return [];
 
-    return metricsHistory.sessions.map((s: Session) => ({
-      sessionId: s.sessionId,
-      recordedAt: s.recordedAt,
-      tags: s.tags,
-      opiScore: s.opiScore,
-      opiGrade: s.opiGrade,
-      movementType: s.movementType as MovementType,
-      metrics: s.metrics as Record<string, number | undefined>,
-      // Preview SVG paths for tooltip mini chart (all 3 axes)
-      previewLeftPaths: s.previewLeftPaths,
-      previewRightPaths: s.previewRightPaths,
-    }));
+    return metricsHistory.sessions
+      .filter((s: Session) => {
+        // Defensive: skip invalid session entries from cache
+        return s && typeof s.sessionId === 'string' && typeof s.recordedAt === 'number';
+      })
+      .map((s: Session) => {
+        // Defensive: validate preview paths structure (must have x, y, z string properties)
+        const validatePreviewPaths = (paths: unknown): typeof paths | null => {
+          if (!paths || typeof paths !== 'object') return null;
+          const p = paths as Record<string, unknown>;
+          if (typeof p.x === 'string' && typeof p.y === 'string' && typeof p.z === 'string') {
+            return paths;
+          }
+          return null; // Invalid structure, likely corrupted cache
+        };
+
+        return {
+          sessionId: s.sessionId,
+          recordedAt: s.recordedAt,
+          tags: Array.isArray(s.tags) ? s.tags : [],
+          opiScore: typeof s.opiScore === 'number' ? s.opiScore : 0,
+          opiGrade: typeof s.opiGrade === 'string' ? s.opiGrade : 'C',
+          movementType: (s.movementType as MovementType) || 'unknown',
+          metrics: (s.metrics && typeof s.metrics === 'object' ? s.metrics : {}) as Record<string, number | undefined>,
+          // Preview SVG paths for tooltip mini chart (all 3 axes) - validate structure
+          previewLeftPaths: validatePreviewPaths(s.previewLeftPaths),
+          previewRightPaths: validatePreviewPaths(s.previewRightPaths),
+        };
+      });
   }, [metricsHistory]);
 
   // Auto-select latest session when data loads
@@ -285,7 +326,7 @@ export function DashboardView({ className }: DashboardViewProps) {
 
   // Get selected session
   const selectedSession = useMemo(() => {
-    if (!selectedSessionId || !metricsHistory?.sessions) return null;
+    if (!selectedSessionId || !Array.isArray(metricsHistory?.sessions)) return null;
     return metricsHistory.sessions.find((s: Session) => s.sessionId === selectedSessionId) || null;
   }, [selectedSessionId, metricsHistory]);
 
@@ -293,8 +334,8 @@ export function DashboardView({ className }: DashboardViewProps) {
   const metricsTableData = useMemo<MetricRow[]>(() => {
     if (!selectedSession) return [];
 
-    // Get historical average for reference
-    const sessions = metricsHistory?.sessions || [];
+    // Get historical average for reference (defensive: ensure array)
+    const sessions = Array.isArray(metricsHistory?.sessions) ? metricsHistory.sessions : [];
     const getAverage = (metricId: string): number | undefined => {
       const values = sessions
         .map((s: Session) => (metricId === "opiScore" ? s.opiScore : (s.metrics as Record<string, number | undefined>)[metricId]))
@@ -497,7 +538,7 @@ export function DashboardView({ className }: DashboardViewProps) {
   }
 
   // Loading state
-  const isLoading = metricsHistory === undefined;
+  const isLoading = isMetricsLoading;
 
   return (
     <div className={cn("flex flex-col h-full overflow-hidden", className)}>
@@ -507,7 +548,7 @@ export function DashboardView({ className }: DashboardViewProps) {
           <div className="flex items-center justify-center h-64">
             <Loader2 className="size-8 animate-spin text-[var(--tropx-vibrant)]" />
           </div>
-        ) : metricsHistory?.sessions.length === 0 ? (
+        ) : sessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center">
             <TrendingUp className="size-12 text-[var(--tropx-text-sub)] opacity-50 mb-4" />
             <p className="text-[var(--tropx-text-sub)]">

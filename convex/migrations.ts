@@ -272,10 +272,6 @@ export const batchRegenerateSvgPaths = internalAction({
   },
 });
 
-// ─────────────────────────────────────────────────────────────────
-// Batch Recompute All Metrics
-// ─────────────────────────────────────────────────────────────────
-
 /**
  * Get all session IDs for batch recomputation.
  */

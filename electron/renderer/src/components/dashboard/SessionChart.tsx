@@ -251,11 +251,27 @@ export function SessionChart({
 
   // Pre-compute base data and shift info (expensive unpack only once)
   const { baseData, maxHalfShift } = useMemo(() => {
-    if (!packedData || packedData.sampleCount === 0) {
+    // Defensive: validate packedData structure (could be corrupted cache)
+    if (!packedData || typeof packedData !== 'object') {
       return { baseData: { samples: [] as { left: number; right: number }[], durationMs: 0, step: 1 }, maxHalfShift: 0 };
     }
 
-    const angleSamples = unpackToAngles(packedData, "y");
+    if (typeof packedData.sampleCount !== 'number' || packedData.sampleCount === 0) {
+      return { baseData: { samples: [] as { left: number; right: number }[], durationMs: 0, step: 1 }, maxHalfShift: 0 };
+    }
+
+    // Defensive: ensure required properties exist
+    if (typeof packedData.startTime !== 'number' || typeof packedData.endTime !== 'number') {
+      return { baseData: { samples: [] as { left: number; right: number }[], durationMs: 0, step: 1 }, maxHalfShift: 0 };
+    }
+
+    let angleSamples: { left: number; right: number }[];
+    try {
+      angleSamples = unpackToAngles(packedData, "y");
+    } catch (error) {
+      console.error("[SessionChart] Failed to unpack angles:", error);
+      return { baseData: { samples: [] as { left: number; right: number }[], durationMs: 0, step: 1 }, maxHalfShift: 0 };
+    }
     if (angleSamples.length === 0) {
       return { baseData: { samples: [], durationMs: 0, step: 1 }, maxHalfShift: 0 };
     }

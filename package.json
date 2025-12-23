@@ -222,7 +222,7 @@
     "cache": "./electron-cache"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.53.3",
+    "@rollup/rollup-linux-x64-gnu": "^4.54.0",
     "bufferutil": "^4.0.8",
     "utf-8-validate": "^6.0.5"
   },

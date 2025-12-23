@@ -9,8 +9,9 @@
  */
 
 import { useState, useCallback, useMemo } from 'react';
-import { useQuery, useConvex } from 'convex/react';
+import { useConvex } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
+import { useCachedQuery, useCacheOptional, cacheQuery } from '../lib/cache';
 import {
   PackedChunkData,
   AngleSample,
@@ -74,16 +75,20 @@ export interface UseRecordingSessionReturn {
 
 export function useRecordingSession(): UseRecordingSessionReturn {
   const convex = useConvex();
+  const cache = useCacheOptional();
   const [loadedSession, setLoadedSession] = useState<LoadedSession | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Fetch session list
-  const sessionsQuery = useQuery(api.recordingSessions.listMySessions, { limit: 50 });
-  const isLoadingSessions = sessionsQuery === undefined;
+  // Fetch session list (cached for offline)
+  const { data: sessionsQuery, isLoading: isLoadingSessions } = useCachedQuery(
+    api.recordingSessions.listMySessions,
+    { limit: 50 }
+  );
 
   const sessions: SessionMetadata[] = useMemo(() => {
-    if (!sessionsQuery) return [];
+    // Defensive: check it's an array before mapping
+    if (!Array.isArray(sessionsQuery)) return [];
 
     return sessionsQuery.map((s) => ({
       sessionId: s.sessionId,
@@ -109,8 +114,13 @@ export function useRecordingSession(): UseRecordingSessionReturn {
     setLoadedSession(null);
 
     try {
-      // Fetch session with compressed chunks
-      const result = await convex.query(api.recordingChunks.getSessionWithChunks, { sessionId });
+      // Fetch session with compressed chunks (cached for offline)
+      const { data: result } = await cacheQuery(
+        cache?.store ?? null,
+        "recordingChunks.getSessionWithChunks",
+        { sessionId },
+        () => convex.query(api.recordingChunks.getSessionWithChunks, { sessionId })
+      );
 
       if (!result || result.chunks.length === 0) {
         throw new Error('Session not found or empty');
@@ -191,7 +201,7 @@ export function useRecordingSession(): UseRecordingSessionReturn {
     } finally {
       setIsLoadingSession(false);
     }
-  }, [convex]);
+  }, [convex, cache?.store]);
 
   const clearSession = useCallback(() => {
     setLoadedSession(null);

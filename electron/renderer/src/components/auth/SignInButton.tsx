@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import { Button } from "../ui/button";
-import { LogIn, LogOut, User, Loader2 } from "lucide-react";
+import { LogIn, LogOut, User, Loader2, Settings2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,12 +12,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import { SettingsModal } from "../settings";
 
 interface SignInButtonProps {
   className?: string;
 }
 
 export function SignInButton({ className }: SignInButtonProps) {
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
   const {
     isAuthenticated,
     isLoading,
@@ -85,11 +89,21 @@ export function SignInButton({ className }: SignInButtonProps) {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="bg-[var(--tropx-border)]" />
+        <DropdownMenuItem
+          onClick={() => setIsSettingsOpen(true)}
+          className="text-[var(--tropx-text-main)] focus:text-[var(--tropx-text-main)]"
+        >
+          <Settings2 className="w-4 h-4 mr-2" />
+          Settings
+        </DropdownMenuItem>
         <DropdownMenuItem onClick={signOut} className="text-red-500 dark:text-red-400 focus:text-red-600 dark:focus:text-red-300">
           <LogOut className="w-4 h-4 mr-2" />
           Sign Out
         </DropdownMenuItem>
       </DropdownMenuContent>
+
+      {/* Settings Modal */}
+      <SettingsModal open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
     </DropdownMenu>
   );
 }

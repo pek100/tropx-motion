@@ -449,6 +449,12 @@ export default defineSchema({
     // Settings
     emailNotifications: v.optional(v.boolean()),
 
+    // Client-side cache encryption (KEK = Key Encryption Key)
+    // KEK wraps the DEK (Data Encryption Key) stored locally on client
+    kekWrapped: v.optional(v.string()), // Base64-encoded encrypted KEK
+    kekVersion: v.optional(v.number()), // Rotation counter (increments on rotate)
+    kekRotatedAt: v.optional(v.number()), // Timestamp of last rotation
+
     // Soft delete
     ...softDeleteFields,
   })

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { useQuery } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
+import { useCachedQuery } from '@/lib/cache';
 import { X, Sparkles, Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -29,18 +29,19 @@ export function TagsInput({
   const editInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch user's tags + defaults
-  const tagsData = useQuery(api.tags.getTagsWithDefaults, { limit: 20 });
+  // Fetch user's tags + defaults (cached for offline)
+  const { data: tagsData } = useCachedQuery(api.tags.getTagsWithDefaults, { limit: 20 });
 
   // Merge all tags for suggestions/recent
   const allTags = useMemo(() => {
     if (!tagsData) return [];
 
+    // Defensive: ensure arrays exist before spreading
+    const userTags = Array.isArray(tagsData.userTags) ? tagsData.userTags : [];
+    const defaults = Array.isArray(tagsData.defaults) ? tagsData.defaults : [];
+
     // User tags first (already sorted by recent), then defaults
-    return [
-      ...tagsData.userTags,
-      ...tagsData.defaults,
-    ];
+    return [...userTags, ...defaults];
   }, [tagsData]);
 
   // Filter suggestions based on input

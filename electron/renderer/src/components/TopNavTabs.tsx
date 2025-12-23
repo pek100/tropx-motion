@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import { CircleUserRound, LayoutDashboard, Disc3, LogOut, Loader2 } from 'lucide-react'
+import { CircleUserRound, LayoutDashboard, Disc3, LogOut, Loader2, Settings2 } from 'lucide-react'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { AuthModal } from './auth'
 import { NotificationBell } from './NotificationBell'
+import { SettingsModal } from './settings'
 import { cn } from '@/lib/utils'
 
 interface NavItem {
@@ -39,6 +40,7 @@ export function TopNavTabs({
     }
   }
   const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false)
   const [profilePanelOpen, setProfilePanelOpen] = useState(false)
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false)
   const pillRef = useRef<HTMLDivElement>(null)
@@ -253,18 +255,36 @@ export function TopNavTabs({
                 </div>
               </div>
 
-              {/* Sign Out Button */}
-              <div className="p-3">
+              {/* Menu Options */}
+              <div className="p-2 space-y-1">
+                {/* Settings */}
+                <button
+                  onClick={() => {
+                    closeAllPanels()
+                    setSettingsModalOpen(true)
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl",
+                    "text-sm font-medium text-[var(--tropx-text-main)]",
+                    "hover:bg-[var(--tropx-hover)]",
+                    "transition-all hover:scale-[1.01] active:scale-[0.98]"
+                  )}
+                >
+                  <Settings2 className="size-4 text-[var(--tropx-shadow)]" />
+                  Settings
+                </button>
+
+                {/* Sign Out */}
                 <button
                   onClick={() => {
                     closeAllPanels()
                     handleSignOut()
                   }}
                   className={cn(
-                    "w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl",
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl",
                     "text-sm font-medium text-red-600",
-                    "border-2 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/30 hover:border-red-300 dark:hover:border-red-700",
-                    "transition-all hover:scale-[1.02] active:scale-[0.98]"
+                    "hover:bg-red-50 dark:hover:bg-red-950/30",
+                    "transition-all hover:scale-[1.01] active:scale-[0.98]"
                   )}
                 >
                   <LogOut className="size-4" />
@@ -318,6 +338,12 @@ export function TopNavTabs({
       <AuthModal
         open={authModalOpen}
         onOpenChange={setAuthModalOpen}
+      />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        open={settingsModalOpen}
+        onOpenChange={setSettingsModalOpen}
       />
     </>
   )
