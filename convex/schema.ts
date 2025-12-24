@@ -677,6 +677,5 @@ export default defineSchema({
     serverTimestamp: v.number(), // What the server had
     rejectedArgs: v.optional(v.any()), // The args that were rejected (for debugging)
   })
-    .index("by_created", ["_creationTime"])
     .index("by_user", ["userId"]),
 });

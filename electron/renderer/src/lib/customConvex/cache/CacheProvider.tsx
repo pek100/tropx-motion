@@ -43,8 +43,8 @@ import {
   getSessionKEK,
   clearSessionKEK,
 } from "./store";
-import { MutationQueue } from "./mutationQueue";
-import { drainFallbackMutations } from "./fallbackQueue";
+import { MutationQueue, clearMutationQueue } from "./mutationQueue";
+import { drainFallbackMutations, clearFallbackMutations } from "./fallbackQueue";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -346,11 +346,21 @@ export function CacheProvider({ children }: CacheProviderProps) {
     if (!user?._id) return;
     const userId = String(user._id);
 
+    // Clear cache store
     await storeRef.current?.clear();
     clearSessionKEK(userId);
+
+    // Clear mutation queue (IndexedDB)
+    mutationQueueRef.current?.close();
+    await clearMutationQueue();
+
+    // Clear fallback mutations (localStorage)
+    clearFallbackMutations();
+
+    debug.cache.log("All local cache data cleared");
     toast({
       title: "Cache cleared",
-      description: "Local cache has been cleared.",
+      description: "All local cache and pending mutations have been cleared.",
     });
   }, [user?._id, toast]);
 

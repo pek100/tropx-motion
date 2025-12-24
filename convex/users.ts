@@ -131,6 +131,34 @@ export const completeOnboarding = mutation({
   },
 });
 
+// Update user role
+export const updateRole = mutation({
+  args: {
+    role: v.union(
+      v.literal(ROLES.PHYSIOTHERAPIST),
+      v.literal(ROLES.PATIENT)
+    ),
+    modifiedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+
+    // LWW check
+    if (args.modifiedAt !== undefined && user.modifiedAt !== undefined) {
+      if (args.modifiedAt <= user.modifiedAt) {
+        return { stale: true, role: user.role };
+      }
+    }
+
+    await ctx.db.patch(user._id, {
+      role: args.role,
+      modifiedAt: args.modifiedAt ?? Date.now(),
+    });
+
+    return { stale: false, role: args.role };
+  },
+});
+
 // Update profile (name, image)
 export const updateProfile = mutation({
   args: {

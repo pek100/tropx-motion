@@ -24,10 +24,14 @@ import {
   Sun,
   Moon,
   Monitor,
+  Stethoscope,
+  UserRound,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
-import { useCacheOptional } from "@/lib/customConvex";
+import { useCacheOptional, useMutation } from "@/lib/customConvex";
+import { api } from "../../../../../convex/_generated/api";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -144,8 +148,34 @@ function GeneralTab() {
   );
 }
 
+type RoleId = "physiotherapist" | "patient";
+
+interface RoleOption {
+  id: RoleId;
+  title: string;
+  description: string;
+  icon: typeof Stethoscope;
+}
+
+const ROLE_OPTIONS: RoleOption[] = [
+  {
+    id: "physiotherapist",
+    title: "Physiotherapist",
+    description: "Record and manage patient sessions",
+    icon: Stethoscope,
+  },
+  {
+    id: "patient",
+    title: "Patient",
+    description: "View shared recordings and track progress",
+    icon: UserRound,
+  },
+];
+
 function ProfileTab() {
   const { user } = useCurrentUser();
+  const updateRole = useMutation(api.users.updateRole);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   if (!user) {
     return (
@@ -154,6 +184,14 @@ function ProfileTab() {
       </div>
     );
   }
+
+  const handleRoleChange = (role: RoleId) => {
+    if (role === user.role || isUpdating) return;
+    setIsUpdating(true);
+    updateRole({ role });
+    // Brief delay for visual feedback
+    setTimeout(() => setIsUpdating(false), 300);
+  };
 
   return (
     <div className="space-y-6">
@@ -178,14 +216,57 @@ function ProfileTab() {
         </div>
       </div>
 
-      {/* Role */}
+      {/* Role Selector */}
       <div>
         <label className="text-xs font-medium text-[var(--tropx-text-sub)] uppercase tracking-wide">
           Role
         </label>
-        <p className="mt-1 text-sm text-[var(--tropx-text-main)] capitalize">
-          {user.role || "Not set"}
-        </p>
+        <div className="mt-2 grid gap-2">
+          {ROLE_OPTIONS.map((option) => {
+            const Icon = option.icon;
+            const isSelected = user.role === option.id;
+
+            return (
+              <button
+                key={option.id}
+                onClick={() => handleRoleChange(option.id)}
+                disabled={isUpdating}
+                className={cn(
+                  "w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-colors text-left",
+                  isSelected
+                    ? "border-[var(--tropx-vibrant)] bg-[var(--tropx-hover)]"
+                    : "border-[var(--tropx-border)] hover:border-[var(--tropx-vibrant)]/50 hover:bg-[var(--tropx-hover)]",
+                  isUpdating ? "opacity-50 cursor-wait" : "cursor-pointer"
+                )}
+              >
+                <div
+                  className={cn(
+                    "p-2 rounded-full transition-colors",
+                    isSelected
+                      ? "bg-[var(--tropx-vibrant)] text-white"
+                      : "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)]"
+                  )}
+                >
+                  <Icon className="size-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="font-medium text-sm text-[var(--tropx-text-main)]">
+                    {option.title}
+                  </h4>
+                  <p className="text-xs text-[var(--tropx-text-sub)] leading-snug">
+                    {option.description}
+                  </p>
+                </div>
+                <Check
+                  className={cn(
+                    "size-5 shrink-0 transition-opacity",
+                    isSelected ? "text-[var(--tropx-vibrant)] opacity-100" : "opacity-0"
+                  )}
+                />
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Info */}

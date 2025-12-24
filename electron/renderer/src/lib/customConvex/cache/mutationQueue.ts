@@ -60,6 +60,24 @@ export interface MutationQueueStats {
 type MutationExecutor = (path: string, args: unknown) => Promise<unknown>;
 
 // ─────────────────────────────────────────────────────────────────
+// Error Classification
+// ─────────────────────────────────────────────────────────────────
+
+/** Error patterns that indicate the mutation will never succeed */
+const PERMANENT_ERROR_PATTERNS = [
+  "ArgumentValidationError",
+  "Object is missing the required field",
+  "Validator:",
+];
+
+/** Check if an error is permanent (will never succeed on retry) */
+function isPermanentError(errorMessage: string): boolean {
+  return PERMANENT_ERROR_PATTERNS.some((pattern) =>
+    errorMessage.includes(pattern)
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Record ID Extraction
 // ─────────────────────────────────────────────────────────────────
 
@@ -399,7 +417,15 @@ export class MutationQueue {
           const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
           console.error(`[MutationQueue] Failed: ${mutation.mutationPath}`, errorMessage);
-          await this.markFailed(mutation.id, errorMessage);
+
+          if (isPermanentError(errorMessage)) {
+            // Permanent error - remove mutation (will never succeed)
+            console.warn(`[MutationQueue] Removing permanently failed mutation: ${mutation.id}`);
+            await this.remove(mutation.id);
+          } else {
+            // Temporary error - mark failed for retry
+            await this.markFailed(mutation.id, errorMessage);
+          }
           failed++;
         }
       }
