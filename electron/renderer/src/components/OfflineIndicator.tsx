@@ -9,7 +9,7 @@
 
 import { useState } from "react";
 import { WifiOff, Cloud, CloudOff, RefreshCw, Check } from "lucide-react";
-import { useCacheOptional } from "@/lib/cache";
+import { useCacheOptional } from "@/lib/customConvex";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,

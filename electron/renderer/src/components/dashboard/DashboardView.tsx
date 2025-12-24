@@ -4,8 +4,7 @@
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useMutation, useConvex, useQuery } from "@/lib/convex";
-import { useSyncOptional } from "@/lib/cache";
+import { useMutation, useConvex, useQuery, useSyncOptional } from "@/lib/customConvex";
 import { api } from "../../../../../convex/_generated/api";
 import { Id } from "../../../../../convex/_generated/dataModel";
 import { mergeChunks, type PackedChunkData } from "../../../../../shared/QuaternionCodec";

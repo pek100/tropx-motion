@@ -5,7 +5,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "../ui/button";
 import { Loader2, XIcon, ChevronLeft, ChevronRight } from "lucide-react";
-import { isConvexConfigured } from "../../lib/convex";
+import { isConvexConfigured } from "../../lib/customConvex";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { isElectron } from "../../lib/platform";
 import { cn } from "../../lib/utils";

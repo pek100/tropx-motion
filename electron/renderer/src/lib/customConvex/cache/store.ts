@@ -11,7 +11,7 @@ import {
   type EncryptedData,
   type WrappedKey,
 } from "./encryption";
-import { isElectron } from "../platform";
+import { isElectron } from "../../platform";
 
 // ─────────────────────────────────────────────────────────────────
 // Constants

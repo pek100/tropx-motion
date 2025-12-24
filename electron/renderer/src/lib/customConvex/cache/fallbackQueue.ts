@@ -8,7 +8,7 @@
  * On CacheProvider init, these mutations are migrated to the main IndexedDB queue.
  */
 
-import { isElectron } from "../platform";
+import { isElectron } from "../../platform";
 
 // ─────────────────────────────────────────────────────────────────
 // Constants

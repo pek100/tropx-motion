@@ -9,8 +9,7 @@
  */
 
 import { useState, useCallback, useMemo } from 'react';
-import { useConvex, useQuery } from '@/lib/convex';
-import { useSyncOptional } from '@/lib/cache';
+import { useConvex, useQuery, useSyncOptional } from '@/lib/customConvex';
 import { api } from '../../../../convex/_generated/api';
 import {
   PackedChunkData,

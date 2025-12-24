@@ -1,19 +1,18 @@
 /**
- * ConnectionStatusBar - Floating pill at top showing connection status
+ * ConnectionStatusBar - Floating bar at top showing connection status
  *
  * Behavior:
- * - Slides down from top when offline (red pill)
- * - Shows "Back online!" (green pill) for 3s when reconnected, then slides up
+ * - Slides down from top when offline (red bar)
+ * - Shows "Back online!" (green bar) for 3s when reconnected, then slides up
  *
- * Detection: Fast heartbeat approach
- * - Pings Convex deployment every 2s with 1.5s timeout
- * - Combined with browser events for instant OS-level hints
- * - Much faster than waiting for WebSocket timeout
+ * Detection:
+ * - Uses unified ConnectivityProvider (10s polling with debounce)
+ * - No redundant HEAD requests
  */
 
 import { useState, useEffect, useRef } from "react";
 import { Wifi, WifiOff } from "lucide-react";
-import { useCacheOptional } from "@/lib/cache";
+import { useIsOnline, useCacheOptional } from "@/lib/customConvex";
 import { cn } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────
@@ -21,77 +20,14 @@ import { cn } from "@/lib/utils";
 // ─────────────────────────────────────────────────────────────────
 
 const CONNECTED_DISPLAY_DURATION_MS = 3000;
-const HEARTBEAT_INTERVAL_MS = 2000; // Check every 2 seconds
-const HEARTBEAT_TIMEOUT_MS = 1500; // Fail fast after 1.5 seconds
-
-// Convex deployment URL for heartbeat (same origin, no CORS issues)
-const CONVEX_URL = import.meta.env.VITE_CONVEX_URL as string;
 
 // ─────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────
 
 export function ConnectionStatusBar() {
+  const isOnline = useIsOnline();
   const cache = useCacheOptional();
-
-  // Heartbeat-based connectivity (fast and reliable)
-  const [heartbeatOnline, setHeartbeatOnline] = useState(true);
-
-  // Browser-level connectivity (instant OS-level hint)
-  const [browserOnline, setBrowserOnline] = useState(() => navigator.onLine);
-
-  // Combined: offline if EITHER says offline
-  const isOnline = browserOnline && heartbeatOnline;
-
-  // Fast heartbeat to Convex deployment
-  useEffect(() => {
-    let mounted = true;
-
-    const checkHeartbeat = async () => {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), HEARTBEAT_TIMEOUT_MS);
-
-        // HEAD request to Convex URL (lightweight, same origin)
-        await fetch(CONVEX_URL, {
-          method: "HEAD",
-          mode: "no-cors",
-          cache: "no-store",
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeout);
-        if (mounted) setHeartbeatOnline(true);
-      } catch {
-        if (mounted) setHeartbeatOnline(false);
-      }
-    };
-
-    // Initial check
-    checkHeartbeat();
-
-    // Fast interval
-    const interval = setInterval(checkHeartbeat, HEARTBEAT_INTERVAL_MS);
-
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
-  }, []);
-
-  // Listen to browser online/offline events (instant hints)
-  useEffect(() => {
-    const handleOnline = () => setBrowserOnline(true);
-    const handleOffline = () => setBrowserOnline(false);
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, []);
 
   // Track UI state - isVisible controls the slide animation
   const [isVisible, setIsVisible] = useState(false);
@@ -99,7 +35,7 @@ export function ConnectionStatusBar() {
 
   // Track previous state
   const prevOnlineRef = useRef(true);
-  const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const pendingCount = cache?.pendingMutations ?? 0;
 

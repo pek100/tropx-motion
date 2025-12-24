@@ -9,7 +9,7 @@
  */
 
 import { useState, useRef, useEffect, useMemo } from "react";
-import { useMutation, useQuery } from "@/lib/convex";
+import { useMutation, useQuery } from "@/lib/customConvex";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import { NOTIFICATION_TYPES } from "../../../../convex/schema";

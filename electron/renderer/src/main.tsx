@@ -4,7 +4,7 @@ import App from './App'
 import './styles/globals.css'
 import { ThemeProvider } from './components/theme-provider'
 import { Toaster } from './components/ui/toaster'
-import { ConvexClientProvider } from './lib/convex'
+import { ConvexClientProvider } from './lib/customConvex'
 import { RoleSelectionModal } from './components/auth'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

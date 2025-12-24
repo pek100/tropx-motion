@@ -1,6 +1,6 @@
 import { useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { useMutation } from "@/lib/convex";
+import { useMutation } from "@/lib/customConvex";
 import { api } from "../../../../convex/_generated/api";
 import { XIcon, Mail, Loader2, UserPlus, Check } from "lucide-react";
 import { cn } from "@/lib/utils";

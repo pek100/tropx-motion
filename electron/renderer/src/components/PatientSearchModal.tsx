@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { useMutation, useQuery } from "@/lib/convex";
+import { useMutation, useQuery } from "@/lib/customConvex";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import {

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { useQuery } from '@/lib/convex';
+import { useQuery } from '@/lib/customConvex';
 import { api } from '../../../../convex/_generated/api';
 import { X, Sparkles, Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';

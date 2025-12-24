@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
-import { useCacheOptional } from "@/lib/cache";
+import { useCacheOptional } from "@/lib/customConvex";
 
 // ─────────────────────────────────────────────────────────────────
 // Types

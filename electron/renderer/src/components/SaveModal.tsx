@@ -16,7 +16,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { useMutation, useQuery } from '@/lib/convex';
+import { useMutation, useQuery } from '@/lib/customConvex';
 import { api } from '../../../../convex/_generated/api';
 import {
   XIcon,

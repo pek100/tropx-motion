@@ -1,7 +1,7 @@
 import { useMutation } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "../../../../convex/_generated/api";
-import { isConvexConfigured, useQuery } from "../lib/convex";
+import { isConvexConfigured, useQuery } from "../lib/customConvex";
 import { isElectron } from "../lib/platform";
 
 export type UserRole = "physiotherapist" | "patient" | "admin";
