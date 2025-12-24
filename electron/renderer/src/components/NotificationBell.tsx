@@ -8,7 +8,7 @@
  * Template registry allows easy extension for new notification types.
  */
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { useMutation, useQuery } from "@/lib/customConvex";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
@@ -30,6 +30,7 @@ import {
 import { cn, formatTimeAgo } from "@/lib/utils";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -419,8 +420,8 @@ function GenericNotificationItem({
 // ─────────────────────────────────────────────────────────────────
 
 interface NotificationBellProps {
-  /** Center the dropdown horizontally instead of right-aligned */
-  centerDropdown?: boolean;
+  /** Alignment of the popover */
+  align?: "start" | "center" | "end";
   /** Controlled open state (optional - if not provided, uses internal state) */
   isOpen?: boolean;
   /** Callback when open state changes (required if isOpen is provided) */
@@ -430,14 +431,13 @@ interface NotificationBellProps {
 }
 
 export function NotificationBell({
-  centerDropdown = false,
+  align = "end",
   isOpen: controlledIsOpen,
   onOpenChange,
   onViewRecording,
 }: NotificationBellProps) {
   const [internalIsOpen, setInternalIsOpen] = useState(false);
   const [processingInviteId, setProcessingInviteId] = useState<Id<"invites"> | null>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Use controlled or internal state
   const isControlled = controlledIsOpen !== undefined;
@@ -492,49 +492,6 @@ export function NotificationBell({
     return items;
   }, [invitations, notifications]);
 
-  // Close dropdown when clicking outside or window loses focus (only when uncontrolled)
-  useEffect(() => {
-    if (isControlled) return; // Parent handles this when controlled
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (
-        isOpen &&
-        dropdownRef.current &&
-        !dropdownRef.current.contains(e.target as Node)
-      ) {
-        setIsOpen(false);
-      }
-    };
-
-    const handleWindowBlur = () => {
-      if (isOpen) {
-        setIsOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside, true);
-    window.addEventListener("blur", handleWindowBlur);
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside, true);
-      window.removeEventListener("blur", handleWindowBlur);
-    };
-  }, [isOpen, isControlled]);
-
-  // Close on escape (only when uncontrolled)
-  useEffect(() => {
-    if (isControlled) return; // Parent handles this when controlled
-
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) {
-        setIsOpen(false);
-      }
-    };
-
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
-  }, [isOpen, isControlled]);
-
   // Invite handlers
   const handleAcceptInvite = async (inviteId: Id<"invites">) => {
     setProcessingInviteId(inviteId);
@@ -585,118 +542,102 @@ export function NotificationBell({
 
   const isLoading = invitations === undefined || notifications === undefined;
 
-  // Dropdown content (can be rendered by parent if renderDropdownOutside is true)
-  const dropdownContent = (
-    <div
-      className={cn(
-        "w-80 bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-2xl shadow-lg overflow-hidden",
-        "animate-[modal-bubble-in_0.15s_var(--spring-bounce)_forwards]"
-      )}
-    >
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--tropx-border)] flex items-center justify-between">
-        <h3 className="font-semibold text-[var(--tropx-text-main)]">
-          Notifications
-        </h3>
-        {unreadNotificationCount > 0 && (
-          <button
-            onClick={handleMarkAllRead}
-            className="flex items-center gap-1 text-xs text-[var(--tropx-vibrant)] hover:underline cursor-pointer"
-          >
-            <CheckCheck className="size-3.5" />
-            Mark all read
-          </button>
-        )}
-      </div>
-
-      {/* Content */}
-      <div className="max-h-80 overflow-y-auto">
-        {isLoading && (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="size-5 animate-spin text-[var(--tropx-vibrant)]" />
-          </div>
-        )}
-
-        {!isLoading && unifiedItems.length === 0 && (
-          <div className="py-8 text-center">
-            <Bell className="size-8 text-[var(--tropx-text-sub)] mx-auto mb-2" />
-            <p className="text-sm text-[var(--tropx-shadow)]">
-              No notifications
-            </p>
-            <p className="text-xs text-[var(--tropx-text-sub)] mt-1">You're all caught up!</p>
-          </div>
-        )}
-
-        {!isLoading && unifiedItems.length > 0 && (
-          <div>
-            {unifiedItems.map((item) => {
-              if (item.kind === "invite") {
-                return (
-                  <InviteNotificationItem
-                    key={`invite-${item.data._id}`}
-                    invite={item.data}
-                    processingId={processingInviteId}
-                    onAccept={handleAcceptInvite}
-                    onReject={handleRejectInvite}
-                  />
-                );
-              } else {
-                return (
-                  <GenericNotificationItem
-                    key={`notif-${item.data._id}`}
-                    notification={item.data}
-                    onMarkRead={handleMarkRead}
-                    onDelete={handleDeleteNotification}
-                    onViewRecording={onViewRecording}
-                  />
-                );
-              }
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
   return (
-    <div className={isControlled ? "" : "relative"} ref={dropdownRef}>
-      {/* Bell button */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={cn(
-          "relative p-2 rounded-full transition-all duration-150 cursor-pointer",
-          "hover:bg-[var(--tropx-hover)] hover:scale-110 active:scale-95",
-          isOpen && "bg-[var(--tropx-hover)] scale-110"
-        )}
-      >
-        <Bell
+    <Popover open={isOpen} onOpenChange={setIsOpen}>
+      <PopoverTrigger asChild>
+        <button
           className={cn(
-            "size-5 transition-colors",
-            totalBadgeCount > 0
-              ? "text-[var(--tropx-vibrant)]"
-              : "text-[var(--tropx-shadow)]"
-          )}
-        />
-        {/* Badge */}
-        {totalBadgeCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center text-[10px] font-bold text-white bg-[var(--tropx-vibrant)] rounded-full px-1">
-            {totalBadgeCount > 99 ? "99+" : totalBadgeCount}
-          </span>
-        )}
-      </button>
-
-      {/* Dropdown - positions relative to nearest positioned ancestor */}
-      {isOpen && (
-        <div
-          className={cn(
-            "absolute top-full mt-2 z-50",
-            centerDropdown ? "left-1/2 ml-[-10rem]" : "right-0"
+            "relative p-2 rounded-full transition-all duration-150 cursor-pointer",
+            "hover:bg-[var(--tropx-hover)] hover:scale-110 active:scale-95",
+            isOpen && "bg-[var(--tropx-hover)] scale-110"
           )}
         >
-          {dropdownContent}
+          <Bell
+            className={cn(
+              "size-5 transition-colors",
+              totalBadgeCount > 0
+                ? "text-[var(--tropx-vibrant)]"
+                : "text-[var(--tropx-shadow)]"
+            )}
+          />
+          {/* Badge */}
+          {totalBadgeCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center text-[10px] font-bold text-white bg-[var(--tropx-vibrant)] rounded-full px-1">
+              {totalBadgeCount > 99 ? "99+" : totalBadgeCount}
+            </span>
+          )}
+        </button>
+      </PopoverTrigger>
+
+      <PopoverContent
+        align={align}
+        sideOffset={8}
+        className="w-80 p-0 bg-[var(--tropx-card)] border-[var(--tropx-border)] rounded-2xl shadow-lg overflow-hidden"
+      >
+        {/* Header */}
+        <div className="px-4 py-3 border-b border-[var(--tropx-border)] flex items-center justify-between">
+          <h3 className="font-semibold text-[var(--tropx-text-main)]">
+            Notifications
+          </h3>
+          {unreadNotificationCount > 0 && (
+            <button
+              onClick={handleMarkAllRead}
+              className="flex items-center gap-1 text-xs text-[var(--tropx-vibrant)] hover:underline cursor-pointer"
+            >
+              <CheckCheck className="size-3.5" />
+              Mark all read
+            </button>
+          )}
         </div>
-      )}
-    </div>
+
+        {/* Content */}
+        <div className="max-h-80 overflow-y-auto">
+          {isLoading && (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="size-5 animate-spin text-[var(--tropx-vibrant)]" />
+            </div>
+          )}
+
+          {!isLoading && unifiedItems.length === 0 && (
+            <div className="py-8 text-center">
+              <Bell className="size-8 text-[var(--tropx-text-sub)] mx-auto mb-2" />
+              <p className="text-sm text-[var(--tropx-shadow)]">
+                No notifications
+              </p>
+              <p className="text-xs text-[var(--tropx-text-sub)] mt-1">You're all caught up!</p>
+            </div>
+          )}
+
+          {!isLoading && unifiedItems.length > 0 && (
+            <div>
+              {unifiedItems.map((item) => {
+                if (item.kind === "invite") {
+                  return (
+                    <InviteNotificationItem
+                      key={`invite-${item.data._id}`}
+                      invite={item.data}
+                      processingId={processingInviteId}
+                      onAccept={handleAcceptInvite}
+                      onReject={handleRejectInvite}
+                    />
+                  );
+                } else {
+                  return (
+                    <GenericNotificationItem
+                      key={`notif-${item.data._id}`}
+                      notification={item.data}
+                      onMarkRead={handleMarkRead}
+                      onDelete={handleDeleteNotification}
+                      onViewRecording={onViewRecording}
+                    />
+                  );
+                }
+              })}
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

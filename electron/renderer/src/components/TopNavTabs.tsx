@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { CircleUserRound, LayoutDashboard, Disc3, LogOut, Loader2, Settings2 } from 'lucide-react'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { AuthModal } from './auth'
 import { NotificationBell } from './NotificationBell'
 import { SettingsModal } from './settings'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 
 interface NavItem {
@@ -42,8 +43,6 @@ export function TopNavTabs({
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
   const [profilePanelOpen, setProfilePanelOpen] = useState(false)
-  const [notificationPanelOpen, setNotificationPanelOpen] = useState(false)
-  const pillRef = useRef<HTMLDivElement>(null)
 
   const {
     isAuthenticated,
@@ -52,69 +51,6 @@ export function TopNavTabs({
     signOut,
     isConvexEnabled,
   } = useCurrentUser()
-
-  // Toggle profile panel (closes notification)
-  const toggleProfilePanel = () => {
-    if (profilePanelOpen) {
-      setProfilePanelOpen(false)
-    } else {
-      setNotificationPanelOpen(false)
-      setProfilePanelOpen(true)
-    }
-  }
-
-  // Toggle notification panel (closes profile)
-  const toggleNotificationPanel = () => {
-    if (notificationPanelOpen) {
-      setNotificationPanelOpen(false)
-    } else {
-      setProfilePanelOpen(false)
-      setNotificationPanelOpen(true)
-    }
-  }
-
-  // Close all panels
-  const closeAllPanels = () => {
-    setProfilePanelOpen(false)
-    setNotificationPanelOpen(false)
-  }
-
-  // Close panels when clicking outside or on blur/escape
-  useEffect(() => {
-    const anyPanelOpen = profilePanelOpen || notificationPanelOpen
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (
-        anyPanelOpen &&
-        pillRef.current &&
-        !pillRef.current.contains(e.target as Node)
-      ) {
-        closeAllPanels()
-      }
-    }
-
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && anyPanelOpen) {
-        closeAllPanels()
-      }
-    }
-
-    const handleBlur = () => {
-      if (anyPanelOpen) {
-        closeAllPanels()
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside, true)
-    document.addEventListener('keydown', handleEscape)
-    window.addEventListener('blur', handleBlur)
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside, true)
-      document.removeEventListener('keydown', handleEscape)
-      window.removeEventListener('blur', handleBlur)
-    }
-  }, [profilePanelOpen, notificationPanelOpen])
 
   // Build nav items dynamically based on auth state
   const getProfileLabel = () => {
@@ -182,48 +118,26 @@ export function TopNavTabs({
       return (
         <div
           key={item.id}
-          ref={pillRef}
-          className="relative inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--tropx-card)]/80 border border-[var(--tropx-border)] shadow-sm"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--tropx-card)]/80 border border-[var(--tropx-border)] shadow-sm"
         >
-          {/* Profile button */}
-          <button
-            onClick={toggleProfilePanel}
-            className={cn(
-              "inline-flex items-center gap-2 px-2 py-1 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-text-main)] hover:text-[var(--tropx-vibrant)]",
-              profilePanelOpen && "text-[var(--tropx-vibrant)]"
-            )}
-          >
-            {item.icon}
-            <span className="hidden sm:inline">{item.label}</span>
-          </button>
+          {/* Profile button with Popover */}
+          <Popover open={profilePanelOpen} onOpenChange={setProfilePanelOpen}>
+            <PopoverTrigger asChild>
+              <button
+                className={cn(
+                  "inline-flex items-center gap-2 px-2 py-1 text-sm font-medium transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 bg-transparent text-[var(--tropx-text-main)] hover:text-[var(--tropx-vibrant)]",
+                  profilePanelOpen && "text-[var(--tropx-vibrant)]"
+                )}
+              >
+                {item.icon}
+                <span className="hidden sm:inline">{item.label}</span>
+              </button>
+            </PopoverTrigger>
 
-          <div className="w-px h-4 bg-[var(--tropx-border)]" />
-
-          {/* Notification bell (controlled by parent - dropdown positions relative to pill) */}
-          <NotificationBell
-            isOpen={notificationPanelOpen}
-            onOpenChange={(open) => {
-              if (open) {
-                toggleNotificationPanel()
-              } else {
-                setNotificationPanelOpen(false)
-              }
-            }}
-            centerDropdown
-            onViewRecording={(sessionId) => {
-              closeAllPanels()
-              onViewRecording?.(sessionId)
-            }}
-          />
-
-          {/* Profile Panel - centered under the pill (w-72 = 18rem, half = 9rem = ml-[-9rem]) */}
-          {profilePanelOpen && (
-            <div
-              className={cn(
-                "absolute top-full left-1/2 ml-[-9rem] mt-2 w-72 z-50",
-                "bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-2xl shadow-lg overflow-hidden",
-                "animate-[modal-bubble-in_0.15s_var(--spring-bounce)_forwards]"
-              )}
+            <PopoverContent
+              align="center"
+              sideOffset={12}
+              className="w-72 p-0 bg-[var(--tropx-card)] border-[var(--tropx-border)] rounded-2xl shadow-lg overflow-hidden"
             >
               {/* Profile Header */}
               <div className="px-4 py-4 border-b border-[var(--tropx-border)]">
@@ -260,7 +174,7 @@ export function TopNavTabs({
                 {/* Settings */}
                 <button
                   onClick={() => {
-                    closeAllPanels()
+                    setProfilePanelOpen(false)
                     setSettingsModalOpen(true)
                   }}
                   className={cn(
@@ -277,7 +191,7 @@ export function TopNavTabs({
                 {/* Sign Out */}
                 <button
                   onClick={() => {
-                    closeAllPanels()
+                    setProfilePanelOpen(false)
                     handleSignOut()
                   }}
                   className={cn(
@@ -291,8 +205,18 @@ export function TopNavTabs({
                   Sign Out
                 </button>
               </div>
-            </div>
-          )}
+            </PopoverContent>
+          </Popover>
+
+          <div className="w-px h-4 bg-[var(--tropx-border)]" />
+
+          {/* Notification bell */}
+          <NotificationBell
+            align="center"
+            onViewRecording={(sessionId) => {
+              onViewRecording?.(sessionId)
+            }}
+          />
         </div>
       )
     }
