@@ -8,6 +8,33 @@ import { api } from "../../../../../convex/_generated/api";
 const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';
 const ELECTRON_CALLBACK_URL_KEY = 'tropx_electron_callback_url';
 
+/**
+ * Submit tokens to callback URL via POST (more secure than GET).
+ * Tokens are sent in the request body, not visible in URL/browser history.
+ */
+function postToCallback(
+  callbackUrl: string,
+  data: { jwt?: string; refreshToken?: string; error?: string }
+): void {
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = callbackUrl;
+  form.style.display = 'none';
+
+  for (const [key, value] of Object.entries(data)) {
+    if (value) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = key;
+      input.value = value;
+      form.appendChild(input);
+    }
+  }
+
+  document.body.appendChild(form);
+  form.submit();
+}
+
 // Find Convex Auth tokens in localStorage by prefix
 // Convex Auth stores as __convexAuthJWT_<namespace> and __convexAuthRefreshToken_<namespace>
 function findConvexAuthTokens(): { jwt: string | null; refreshToken: string | null } {
@@ -47,6 +74,18 @@ function hasConvexAuthJWT(): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Check if we're currently in an OAuth callback.
+ * OAuth callbacks have 'code' or 'error' params from the OAuth provider.
+ * We should NOT clear tokens during a callback - Convex Auth is processing them.
+ */
+function isOAuthCallback(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  // OAuth 2.0 authorization code flow adds 'code' param
+  // OAuth errors add 'error' param
+  return params.has('code') || params.has('error');
 }
 
 /**
@@ -122,6 +161,14 @@ export function AutoSignIn() {
   useEffect(() => {
     if (isLoading || hasCheckedStaleTokens) return;
 
+    // IMPORTANT: Skip during OAuth callback - Convex Auth is still processing tokens
+    // Clearing tokens here would cause an infinite auth loop!
+    if (isOAuthCallback()) {
+      console.log('[AutoSignIn] OAuth callback detected - skipping stale token check');
+      setHasCheckedStaleTokens(true);
+      return;
+    }
+
     // Check if we have tokens in localStorage but Convex says not authenticated
     if (hasConvexAuthJWT() && !isAuthenticated) {
       console.log('[AutoSignIn] Stale token detected - clearing all auth tokens');
@@ -164,10 +211,12 @@ export function AutoSignIn() {
             localStorage.removeItem(ELECTRON_AUTH_KEY);
             localStorage.removeItem(ELECTRON_CALLBACK_URL_KEY);
 
-            // Redirect to callback with the NEW tokens (not web's tokens)
-            const redirectUrl = `${callbackUrl}?jwt=${encodeURIComponent(tokens.jwt)}&refreshToken=${encodeURIComponent(tokens.refreshToken)}`;
+            // POST tokens to callback (more secure than URL params)
             setRedirected(true);
-            window.location.href = redirectUrl;
+            postToCallback(callbackUrl, {
+              jwt: tokens.jwt,
+              refreshToken: tokens.refreshToken,
+            });
           } else {
             console.error('[AutoSignIn] Failed to create Electron session');
             setAuthError('Failed to create Electron session');
@@ -262,12 +311,12 @@ export function AutoSignIn() {
 
   // For Electron flow: Show error screen
   if (isElectronAuth && authError) {
-    // If we have a callback URL, redirect with error
+    // If we have a callback URL, POST error to callback
     if (callbackUrl && !redirected) {
       setRedirected(true);
       localStorage.removeItem(ELECTRON_AUTH_KEY);
       localStorage.removeItem(ELECTRON_CALLBACK_URL_KEY);
-      window.location.href = `${callbackUrl}?error=${encodeURIComponent(authError)}`;
+      postToCallback(callbackUrl, { error: authError });
     }
 
     return (

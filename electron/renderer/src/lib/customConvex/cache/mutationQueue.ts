@@ -21,6 +21,11 @@ const DB_VERSION = 1;
 // Set to true for verbose logging (development only)
 const DEBUG = false;
 
+/** Check if browser is online (basic check, ConnectivityProvider does deeper checks) */
+function isOnline(): boolean {
+  return typeof navigator !== "undefined" ? navigator.onLine : true;
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────
@@ -56,6 +61,12 @@ export interface MutationQueueStats {
   failed: number;
   total: number;
 }
+
+/** Result of processing a single mutation */
+type ProcessResult =
+  | { status: "success"; id: string }
+  | { status: "reprocess"; id: string }
+  | { status: "failed"; id: string; errorMessage: string; isPermanent: boolean };
 
 type MutationExecutor = (path: string, args: unknown) => Promise<unknown>;
 
@@ -242,18 +253,22 @@ export class MutationQueue {
       }
 
       // Update existing mutation - reset to pending so it gets (re)processed
-      existing.fields = mergedFields;
-      existing.args = mergedArgs;
-      existing.modifiedAt = latestModifiedAt;
-      existing.status = "pending"; // Reset to pending for reprocessing
+      const updatedMutation: QueuedMutation = {
+        ...existing,
+        fields: mergedFields,
+        args: mergedArgs,
+        modifiedAt: latestModifiedAt,
+        status: "pending",
+      };
 
-      await this.putMutation(existing);
+      // Cache update is sync inside putMutation, IndexedDB is fire-and-forget
+      this.putMutation(updatedMutation).catch((e) => {
+        console.error("[MutationQueue] IndexedDB persist failed:", e);
+      });
       this.notifyListeners();
-
-      // Auto-process queue after update
       this.scheduleProcess();
 
-      return existing.id;
+      return updatedMutation.id;
     }
 
     // No existing mutation - create new one
@@ -271,19 +286,24 @@ export class MutationQueue {
       attempts: 0,
     };
 
-    await this.putMutation(mutation);
+    // Cache update is sync inside putMutation, IndexedDB is fire-and-forget
+    this.putMutation(mutation).catch((e) => {
+      console.error("[MutationQueue] IndexedDB persist failed:", e);
+    });
     this.notifyListeners();
-
-    // Auto-process queue after enqueue
     this.scheduleProcess();
 
     return mutation.id;
   }
 
-  /** Schedule queue processing (immediate via microtask) */
+  /** Schedule queue processing (immediate via microtask, skipped if offline) */
   private processScheduled = false;
   private scheduleProcess(): void {
     if (this.processScheduled) return; // Already scheduled
+    if (!isOnline()) {
+      if (DEBUG) console.log("[MutationQueue] Offline - skipping process schedule");
+      return; // Don't process when offline, CacheProvider will trigger on reconnect
+    }
     this.processScheduled = true;
     queueMicrotask(() => {
       this.processScheduled = false;
@@ -367,87 +387,147 @@ export class MutationQueue {
   // ─── Processing ──────────────────────────────────────────────────
 
   /**
-   * Process all pending mutations.
+   * Process all pending mutations concurrently.
    * Should be called when connection is restored.
    */
   async process(): Promise<{ success: number; failed: number }> {
+    // Early returns - check all conditions before acquiring lock
     if (!this.executor) {
       if (DEBUG) console.warn("[MutationQueue] No executor set");
       return { success: 0, failed: 0 };
     }
-
+    if (!isOnline()) {
+      if (DEBUG) console.log("[MutationQueue] Offline - skipping process");
+      return { success: 0, failed: 0 };
+    }
     if (this.isProcessing) {
       return { success: 0, failed: 0 };
     }
 
+    const pending = this.getPending();
+    if (pending.length === 0) {
+      return { success: 0, failed: 0 };
+    }
+
+    // Acquire processing lock
     this.isProcessing = true;
-    let success = 0;
-    let failed = 0;
-    let needsReprocess = false;
+    if (DEBUG) console.log(`[MutationQueue] Processing ${pending.length} mutations concurrently`);
 
     try {
-      const pending = this.getPending();
-      if (pending.length === 0) {
-        return { success: 0, failed: 0 };
-      }
+      const now = Date.now();
 
-      if (DEBUG) console.log(`[MutationQueue] Processing ${pending.length} mutations`);
-
+      // Mark all as processing (immutable update, single notify)
       for (const mutation of pending) {
-        const originalModifiedAt = mutation.modifiedAt;
-
-        // Mark as processing
-        await this.updateStatus(mutation.id, "processing");
-
-        try {
-          await this.executor(mutation.mutationPath, mutation.args);
-
-          // Check if mutation was modified during execution (merged with newer data)
-          const current = this.cache.get(mutation.id);
-          if (current && current.modifiedAt > originalModifiedAt) {
-            // Mutation was updated during execution - reset to pending for reprocess
-            if (DEBUG) console.log(`[MutationQueue] Will reprocess: ${mutation.id}`);
-            await this.updateStatus(mutation.id, "pending");
-            needsReprocess = true;
-          } else {
-            await this.updateStatus(mutation.id, "synced");
-            success++;
-          }
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : "Unknown error";
-          console.error(`[MutationQueue] Failed: ${mutation.mutationPath}`, errorMessage);
-
-          if (isPermanentError(errorMessage)) {
-            // Permanent error - remove mutation (will never succeed)
-            console.warn(`[MutationQueue] Removing permanently failed mutation: ${mutation.id}`);
-            await this.remove(mutation.id);
-          } else {
-            // Temporary error - mark failed for retry
-            await this.markFailed(mutation.id, errorMessage);
-          }
-          failed++;
-        }
+        this.cache.set(mutation.id, {
+          ...mutation,
+          status: "processing",
+          lastAttemptAt: now,
+          attempts: mutation.attempts + 1,
+        });
       }
+      this.notifyListeners();
+
+      // Execute all mutations concurrently
+      const results = await Promise.all(
+        pending.map((mutation) => this.executeMutation(mutation))
+      );
+
+      // Process results and collect counts
+      const { success, failed, needsReprocess } = await this.processResults(results);
 
       // Clean up synced mutations
       await this.clearSynced();
 
-      // Schedule reprocess for mutations that were updated during execution
+      // Schedule follow-up processing if needed
       if (needsReprocess) {
         this.scheduleProcess();
       }
-
-      // Schedule retry for failed mutations (with delay)
       if (failed > 0) {
         setTimeout(() => this.scheduleProcess(), 5000);
       }
+
+      return { success, failed };
     } finally {
       this.isProcessing = false;
       this.notifyListeners();
     }
+  }
 
-    return { success, failed };
+  /** Execute a single mutation and return result */
+  private async executeMutation(mutation: QueuedMutation): Promise<ProcessResult> {
+    const originalModifiedAt = mutation.modifiedAt;
+
+    try {
+      await this.executor!(mutation.mutationPath, mutation.args);
+
+      // Check if mutation was modified during execution (merged with newer data)
+      const current = this.cache.get(mutation.id);
+      if (current && current.modifiedAt > originalModifiedAt) {
+        if (DEBUG) console.log(`[MutationQueue] Will reprocess: ${mutation.id}`);
+        return { status: "reprocess", id: mutation.id };
+      }
+      return { status: "success", id: mutation.id };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error(`[MutationQueue] Failed: ${mutation.mutationPath}`, errorMessage);
+      return {
+        status: "failed",
+        id: mutation.id,
+        errorMessage,
+        isPermanent: isPermanentError(errorMessage),
+      };
+    }
+  }
+
+  /** Process results and update statuses (batched for same-status updates) */
+  private async processResults(
+    results: ProcessResult[]
+  ): Promise<{ success: number; failed: number; needsReprocess: boolean }> {
+    let success = 0;
+    let failed = 0;
+    let needsReprocess = false;
+
+    // Group by status for potential batching
+    const successIds: string[] = [];
+    const reprocessIds: string[] = [];
+    const failedResults: Array<{ id: string; errorMessage: string; isPermanent: boolean }> = [];
+
+    for (const result of results) {
+      switch (result.status) {
+        case "success":
+          successIds.push(result.id);
+          success++;
+          break;
+        case "reprocess":
+          reprocessIds.push(result.id);
+          needsReprocess = true;
+          break;
+        case "failed":
+          failedResults.push(result);
+          failed++;
+          break;
+      }
+    }
+
+    // Batch update successful mutations
+    await Promise.all(successIds.map((id) => this.updateStatus(id, "synced")));
+
+    // Batch update reprocess mutations
+    await Promise.all(reprocessIds.map((id) => this.updateStatus(id, "pending")));
+
+    // Handle failed mutations
+    await Promise.all(
+      failedResults.map(async ({ id, errorMessage, isPermanent }) => {
+        if (isPermanent) {
+          console.warn(`[MutationQueue] Removing permanently failed mutation: ${id}`);
+          await this.remove(id);
+        } else {
+          await this.markFailed(id, errorMessage);
+        }
+      })
+    );
+
+    return { success, failed, needsReprocess };
   }
 
   /** Retry a specific failed mutation. */

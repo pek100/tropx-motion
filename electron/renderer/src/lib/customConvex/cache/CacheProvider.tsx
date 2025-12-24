@@ -351,7 +351,7 @@ export function CacheProvider({ children }: CacheProviderProps) {
     clearSessionKEK(userId);
 
     // Clear mutation queue (IndexedDB)
-    mutationQueueRef.current?.close();
+    queueRef.current?.close();
     await clearMutationQueue();
 
     // Clear fallback mutations (localStorage)

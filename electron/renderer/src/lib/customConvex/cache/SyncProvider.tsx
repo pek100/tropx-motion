@@ -542,18 +542,26 @@ export function SyncProvider({ children }: SyncProviderProps) {
     return Array.from(queries.keys());
   }, [queries]);
 
+  // ─── Get query ─────────────────────────────────────────────────
+  // Note: We intentionally include `queries` in deps so consumers re-render
+  // when cache updates. The Map.get() is O(1) so this is cheap.
+
+  const getQuery = useCallback((key: string): unknown | undefined => {
+    return queries.get(key);
+  }, [queries]);
+
   // ─── Context value ─────────────────────────────────────────────
 
   const value = useMemo<SyncContextValue>(
     () => ({
-      getQuery: (key) => queries.get(key),
+      getQuery,
       setQuery,
       setQueryBatch,
       getQueryKeys,
       state,
       refresh,
     }),
-    [queries, setQuery, setQueryBatch, getQueryKeys, state, refresh]
+    [getQuery, setQuery, setQueryBatch, getQueryKeys, state, refresh]
   );
 
   return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>;

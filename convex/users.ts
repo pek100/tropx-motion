@@ -191,7 +191,23 @@ export const getContacts = query({
     const contacts = await Promise.all(
       user.contacts.map(async (contact) => {
         const contactUser = await ctx.db.get(contact.userId);
-        if (!contactUser || contactUser.isArchived) return null;
+
+        // User was deleted or archived - return with isInactive flag
+        if (!contactUser || contactUser.isArchived) {
+          return {
+            userId: contact.userId,
+            alias: contact.alias,
+            addedAt: contact.addedAt,
+            starred: contact.starred ?? false,
+            // Inactive user - use placeholder data
+            name: contact.alias || "Deleted User",
+            email: "",
+            image: undefined,
+            role: undefined,
+            displayName: contact.alias || "Deleted User",
+            isInactive: true,
+          };
+        }
 
         return {
           userId: contact.userId,
@@ -207,11 +223,12 @@ export const getContacts = query({
           displayName: contact.alias
             ? `${contactUser.name} (${contactUser.role}) (${contact.alias})`
             : `${contactUser.name} (${contactUser.role})`,
+          isInactive: false,
         };
       })
     );
 
-    return contacts.filter(Boolean);
+    return contacts;
   },
 });
 

@@ -107,6 +107,27 @@ export class OAuthHandler {
   }
 
   /**
+   * Parse POST body from request
+   */
+  private parsePostBody(req: http.IncomingMessage): Promise<URLSearchParams> {
+    return new Promise((resolve, reject) => {
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk.toString();
+        // Limit body size to prevent abuse
+        if (body.length > 1e6) {
+          req.destroy();
+          reject(new Error('Request body too large'));
+        }
+      });
+      req.on('end', () => {
+        resolve(new URLSearchParams(body));
+      });
+      req.on('error', reject);
+    });
+  }
+
+  /**
    * Start a temporary HTTP server to receive the OAuth callback
    */
   private startCallbackServer(port: number): Promise<{ jwt: string; refreshToken: string }> {
@@ -114,12 +135,31 @@ export class OAuthHandler {
       this.server = http.createServer(async (req, res) => {
         const url = new URL(req.url || '/', `http://localhost:${port}`);
 
-        console.log('[OAuthHandler] Callback received:', url.pathname);
+        console.log('[OAuthHandler] Callback received:', url.pathname, 'method:', req.method);
 
         if (url.pathname === '/callback') {
-          const jwt = url.searchParams.get('jwt');
-          const refreshToken = url.searchParams.get('refreshToken');
-          const error = url.searchParams.get('error');
+          let jwt: string | null = null;
+          let refreshToken: string | null = null;
+          let error: string | null = null;
+
+          // Support both POST (secure) and GET (fallback) methods
+          if (req.method === 'POST') {
+            try {
+              const params = await this.parsePostBody(req);
+              jwt = params.get('jwt');
+              refreshToken = params.get('refreshToken');
+              error = params.get('error');
+              console.log('[OAuthHandler] POST body parsed successfully');
+            } catch (err) {
+              console.error('[OAuthHandler] Failed to parse POST body:', err);
+              error = 'Failed to parse request';
+            }
+          } else {
+            // GET fallback (less secure, but maintains compatibility)
+            jwt = url.searchParams.get('jwt');
+            refreshToken = url.searchParams.get('refreshToken');
+            error = url.searchParams.get('error');
+          }
 
           console.log('[OAuthHandler] Callback params - jwt:', jwt ? `${jwt.length} chars` : 'null');
           console.log('[OAuthHandler] Callback params - refreshToken:', refreshToken ? `${refreshToken.length} chars` : 'null');

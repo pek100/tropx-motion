@@ -9,10 +9,12 @@ import {
   Clock,
   UserPlus,
   User,
+  UserX,
   Check,
   Loader2,
   Star,
   Users,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { InviteModal } from "./InviteModal";
@@ -28,6 +30,7 @@ interface Contact {
   role?: string;
   displayName: string;
   isMe?: boolean; // Flag for "Me" option
+  isInactive?: boolean; // Flag for deleted/archived users
 }
 
 interface PatientSearchModalProps {
@@ -91,6 +94,9 @@ export function PatientSearchModal({
 
   // Set star mutation (explicit value for optimistic updates)
   const setContactStar = useMutation(api.users.setContactStar);
+
+  // Remove contact mutation
+  const removeContact = useMutation(api.users.removeContact);
 
   // All contacts including "Me" at top
   const allContacts = useMemo(() => {
@@ -159,6 +165,11 @@ export function PatientSearchModal({
     setContactStar({ userId, starred: newStarred });
   };
 
+  const handleRemoveContact = (e: React.MouseEvent, userId: Id<"users">) => {
+    e.stopPropagation(); // Prevent any parent click handlers
+    removeContact({ userId });
+  };
+
   const handleCloseInvite = (open: boolean) => {
     setIsInviteModalOpen(open);
     if (!open) {
@@ -170,28 +181,38 @@ export function PatientSearchModal({
   const renderContactItem = (contact: Contact) => {
     const isSelected = selectedPatientId === contact.userId;
     const isMe = contact.isMe === true;
+    const isInactive = contact.isInactive === true;
 
     return (
-      <button
+      <div
         key={contact.userId}
-        onClick={() => handleSelectPatient(contact)}
+        onClick={() => !isInactive && handleSelectPatient(contact)}
         className={cn(
           "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left group",
-          "hover:scale-[1.01] active:scale-[0.99]",
-          "cursor-pointer",
-          // "Me" gets violet styling
-          isMe
-            ? isSelected
-              ? "bg-violet-100 dark:bg-violet-900/30 border border-violet-300 dark:border-violet-700"
-              : "bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/40"
-            : isSelected
-              ? "bg-[var(--tropx-hover)]"
-              : "hover:bg-[var(--tropx-ivory)]"
+          // Inactive contacts - muted, non-interactive
+          isInactive
+            ? "opacity-60 cursor-not-allowed bg-muted/50"
+            : [
+                "hover:scale-[1.01] active:scale-[0.99]",
+                "cursor-pointer",
+                // "Me" gets violet styling
+                isMe
+                  ? isSelected
+                    ? "bg-violet-100 dark:bg-violet-900/30 border border-violet-300 dark:border-violet-700"
+                    : "bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/40"
+                  : isSelected
+                    ? "bg-[var(--tropx-hover)]"
+                    : "hover:bg-[var(--tropx-ivory)]"
+              ]
         )}
       >
         {/* Avatar */}
         <div className="relative flex-shrink-0">
-          {contact.image ? (
+          {isInactive ? (
+            <div className="size-9 rounded-full flex items-center justify-center bg-muted">
+              <UserX className="size-4 text-muted-foreground" />
+            </div>
+          ) : contact.image ? (
             <img
               src={contact.image}
               alt={contact.name}
@@ -225,7 +246,11 @@ export function PatientSearchModal({
             <span
               className={cn(
                 "text-sm font-medium truncate",
-                isMe ? "text-violet-900 dark:text-violet-200" : "text-[var(--tropx-text-main)]"
+                isInactive
+                  ? "text-muted-foreground"
+                  : isMe
+                    ? "text-violet-900 dark:text-violet-200"
+                    : "text-[var(--tropx-text-main)]"
               )}
             >
               {contact.name}
@@ -236,7 +261,13 @@ export function PatientSearchModal({
                 Me
               </span>
             )}
-            {contact.alias && !isMe && (
+            {/* Inactive badge */}
+            {isInactive && (
+              <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-muted text-muted-foreground rounded-full">
+                Inactive
+              </span>
+            )}
+            {contact.alias && !isMe && !isInactive && (
               <span className="text-xs text-[var(--tropx-shadow)] truncate">
                 ({contact.alias})
               </span>
@@ -245,15 +276,19 @@ export function PatientSearchModal({
           <p
             className={cn(
               "text-xs truncate",
-              isMe ? "text-violet-600" : "text-[var(--tropx-shadow)]"
+              isInactive
+                ? "text-muted-foreground"
+                : isMe
+                  ? "text-violet-600"
+                  : "text-[var(--tropx-shadow)]"
             )}
           >
-            {contact.email}
+            {isInactive ? "This user is no longer active" : contact.email}
           </p>
         </div>
 
-        {/* Star button (not for "Me") */}
-        {!isMe && (
+        {/* Star button (not for "Me" or inactive) */}
+        {!isMe && !isInactive && (
           <button
             onClick={(e) => handleToggleStar(e, contact.userId)}
             className={cn(
@@ -269,8 +304,19 @@ export function PatientSearchModal({
           </button>
         )}
 
+        {/* Remove button (only for inactive contacts) */}
+        {isInactive && (
+          <button
+            onClick={(e) => handleRemoveContact(e, contact.userId)}
+            className="p-1.5 rounded-full transition-colors text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+            title="Remove from contacts"
+          >
+            <Trash2 className="size-4" />
+          </button>
+        )}
+
         {/* Selected indicator */}
-        {isSelected && (
+        {isSelected && !isInactive && (
           <div
             className={cn(
               "p-1 rounded-full",
@@ -280,7 +326,7 @@ export function PatientSearchModal({
             <Check className="size-3 text-white" />
           </div>
         )}
-      </button>
+      </div>
     );
   };
 

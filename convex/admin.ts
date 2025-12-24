@@ -269,18 +269,9 @@ export const permanentlyDeleteUser = mutation({
       await ctx.db.delete(invite._id);
     }
 
-    // Remove from other users' contacts
-    const allUsers = await ctx.db.query("users").collect();
-    for (const otherUser of allUsers) {
-      if (otherUser._id === args.userId) continue;
-      const hasContact = (otherUser.contacts ?? []).some((c) => c.userId === args.userId);
-      if (hasContact) {
-        const updatedContacts = (otherUser.contacts ?? []).filter(
-          (c) => c.userId !== args.userId
-        );
-        await ctx.db.patch(otherUser._id, { contacts: updatedContacts });
-      }
-    }
+    // Note: We intentionally don't remove the deleted user from other users' contacts.
+    // Instead, getContacts will return them with isInactive: true, allowing the UI
+    // to show "This user is no longer active" rather than silently removing them.
 
     // Delete user
     await ctx.db.delete(args.userId);

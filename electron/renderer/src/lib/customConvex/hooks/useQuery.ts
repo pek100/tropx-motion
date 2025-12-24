@@ -29,6 +29,9 @@ function getQueryName(queryRef: FunctionReference<"query">): string {
 // Hook
 // ─────────────────────────────────────────────────────────────────
 
+/** Stable empty object to avoid new reference on every render */
+const EMPTY_ARGS = {} as Record<string, unknown>;
+
 /**
  * Drop-in replacement for Convex's useQuery with unified caching.
  *
@@ -48,38 +51,40 @@ export function useQuery<Query extends FunctionReference<"query">>(
   const cache = useCacheOptional();
   const isOnline = useIsOnline();
 
-  // Handle "skip" argument
+  // Handle "skip" argument - use stable reference for empty args
   const isSkipped = args[0] === "skip";
-  const queryArgs = (isSkipped ? {} : args[0] ?? {}) as Record<string, unknown>;
+  const queryArgs = isSkipped ? EMPTY_ARGS : (args[0] ?? EMPTY_ARGS) as Record<string, unknown>;
 
-  // Generate cache key: queryName:argsJson
-  const cacheKey = useMemo(() => {
+  // Stable args string for memo dependency (avoid object reference issues)
+  const argsString = useMemo(() => {
     if (isSkipped) return null;
     try {
-      const queryName = getQueryName(query);
-      return `${queryName}:${JSON.stringify(queryArgs)}`;
+      return JSON.stringify(queryArgs);
     } catch {
       return null;
     }
-  }, [query, queryArgs, isSkipped]);
+  }, [isSkipped, queryArgs]);
 
-  // Extract module from cache key (e.g., "users:getContacts:{}" → "users")
-  const queryModule = useMemo(() => {
-    if (!cacheKey) return null;
-    return cacheKey.split(":")[0];
-  }, [cacheKey]);
+  // Generate cache key: queryName:argsJson
+  const cacheKey = useMemo(() => {
+    if (argsString === null) return null;
+    try {
+      return `${getQueryName(query)}:${argsString}`;
+    } catch {
+      return null;
+    }
+  }, [query, argsString]);
+
+  // Extract module from cache key (simple string op, no memo needed)
+  const queryModule = cacheKey ? cacheKey.split(":")[0] : null;
 
   // Check if this module has pending mutations (optimistic updates in flight)
   const hasPendingForModule = queryModule
     ? cache?.pendingModules?.has(queryModule) ?? false
     : false;
 
-  // Get cached data (works for both proactive and on-demand cache)
-  const cachedData = useMemo(() => {
-    if (!sync || !cacheKey) return undefined;
-    return sync.getQuery(cacheKey);
-  }, [sync, cacheKey]);
-
+  // Get cached data - sync.getQuery is stable via useCallback in SyncProvider
+  const cachedData = cacheKey ? sync?.getQuery(cacheKey) : undefined;
   const hasCachedData = cachedData !== undefined;
 
   // Skip Convex if: explicitly skipped, have cached data, or offline
