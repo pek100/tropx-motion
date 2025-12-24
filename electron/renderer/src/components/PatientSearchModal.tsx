@@ -51,7 +51,6 @@ export function PatientSearchModal({
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<TabType>("recent");
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
-  const [optimisticStars, setOptimisticStars] = useState<Map<string, boolean>>(new Map());
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Fetch contacts from Convex
@@ -74,17 +73,11 @@ export function PatientSearchModal({
     };
   }, [currentUser]);
 
-  // Sort contacts by most recent (addedAt) and apply optimistic star updates
+  // Sort contacts by most recent (addedAt)
   const sortedContacts = useMemo(() => {
-    // Defensive: ensure contacts is an array before spreading
     if (!contacts || !Array.isArray(contacts)) return [];
-    return [...contacts]
-      .map((c) => ({
-        ...c,
-        starred: optimisticStars.has(c.userId) ? optimisticStars.get(c.userId) : c.starred,
-      }))
-      .sort((a, b) => b.addedAt - a.addedAt);
-  }, [contacts, optimisticStars]);
+    return [...contacts].sort((a, b) => b.addedAt - a.addedAt);
+  }, [contacts]);
 
   // Recent contacts (max 5)
   const recentContacts = useMemo(() => {
@@ -96,8 +89,8 @@ export function PatientSearchModal({
     return sortedContacts.filter((c) => c.starred === true);
   }, [sortedContacts]);
 
-  // Toggle star mutation
-  const toggleStar = useMutation(api.users.toggleContactStar);
+  // Set star mutation (explicit value for optimistic updates)
+  const setContactStar = useMutation(api.users.setContactStar);
 
   // All contacts including "Me" at top
   const allContacts = useMemo(() => {
@@ -144,7 +137,6 @@ export function PatientSearchModal({
   const handleClose = () => {
     setSearchQuery("");
     setActiveTab("recent");
-    setOptimisticStars(new Map());
     onOpenChange(false);
   };
 
@@ -160,37 +152,11 @@ export function PatientSearchModal({
   const handleToggleStar = (e: React.MouseEvent, userId: Id<"users">) => {
     e.stopPropagation(); // Prevent selecting the contact
 
-    // Get current starred state (from optimistic or actual)
     const contact = sortedContacts.find((c) => c.userId === userId);
-    const currentStarred = contact?.starred ?? false;
-    const newStarred = !currentStarred;
+    const newStarred = !(contact?.starred ?? false);
 
-    // Optimistically update immediately
-    setOptimisticStars((prev) => {
-      const next = new Map(prev);
-      next.set(userId, newStarred);
-      return next;
-    });
-
-    // Call mutation (fire and forget - optimistic handles UI)
-    toggleStar({ userId })
-      .then(() => {
-        // Clear optimistic state once server confirms
-        setOptimisticStars((prev) => {
-          const next = new Map(prev);
-          next.delete(userId);
-          return next;
-        });
-      })
-      .catch((err) => {
-        console.error("Failed to toggle star:", err);
-        // Revert optimistic state on error
-        setOptimisticStars((prev) => {
-          const next = new Map(prev);
-          next.delete(userId);
-          return next;
-        });
-      });
+    // useMutation handles optimistic cache updates automatically
+    setContactStar({ userId, starred: newStarred });
   };
 
   const handleCloseInvite = (open: boolean) => {

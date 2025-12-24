@@ -17,4 +17,11 @@ crons.hourly(
   internal.invites.expireOldInvites
 );
 
+// Clean up LWW conflict logs weekly (Sundays at 4:00 AM UTC)
+crons.weekly(
+  "cleanup lww conflicts",
+  { dayOfWeek: "sunday", hourUTC: 4, minuteUTC: 0 },
+  internal.lwwConflicts.cleanupOldConflicts
+);
+
 export default crons;

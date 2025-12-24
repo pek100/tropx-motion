@@ -129,6 +129,7 @@ export const setUserRole = mutation({
       v.literal(ROLES.PATIENT),
       v.literal(ROLES.ADMIN)
     ),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const admin = await requireAdmin(ctx);
@@ -158,6 +159,7 @@ export const archiveUser = mutation({
   args: {
     userId: v.id("users"),
     reason: v.optional(v.string()),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const admin = await requireAdmin(ctx);
@@ -189,7 +191,7 @@ export const archiveUser = mutation({
 
 // Restore archived user (admin only)
 export const restoreUser = mutation({
-  args: { userId: v.id("users") },
+  args: { userId: v.id("users"), modifiedAt: v.optional(v.number()) },
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
 
@@ -214,7 +216,7 @@ export const restoreUser = mutation({
 
 // Permanently delete user (admin only, immediate)
 export const permanentlyDeleteUser = mutation({
-  args: { userId: v.id("users") },
+  args: { userId: v.id("users"), modifiedAt: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const admin = await requireAdmin(ctx);
 

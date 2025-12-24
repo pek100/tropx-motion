@@ -133,7 +133,7 @@ export const getMyPendingInvitations = query({
 
 // Reject invite
 export const rejectInvite = mutation({
-  args: { inviteId: v.id("invites") },
+  args: { inviteId: v.id("invites"), modifiedAt: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 
@@ -159,7 +159,7 @@ export const rejectInvite = mutation({
 
 // Accept invite by ID (for notification bell)
 export const acceptInviteById = mutation({
-  args: { inviteId: v.id("invites") },
+  args: { inviteId: v.id("invites"), modifiedAt: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 
@@ -219,6 +219,7 @@ export const createInvite = mutation({
   args: {
     email: v.string(),
     alias: v.optional(v.string()),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
@@ -293,7 +294,7 @@ export const createInvite = mutation({
 
 // Accept invite (called after user signs in via invite link)
 export const acceptInvite = mutation({
-  args: { token: v.string() },
+  args: { token: v.string(), modifiedAt: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx);
     const user = await ctx.db.get(userId);
@@ -363,7 +364,7 @@ export const acceptInvite = mutation({
 
 // Cancel invite
 export const cancelInvite = mutation({
-  args: { inviteId: v.id("invites") },
+  args: { inviteId: v.id("invites"), modifiedAt: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 

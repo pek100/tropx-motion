@@ -31,6 +31,7 @@ export const getOrCreateKEK = mutation({
     // Client generates KEK, sends it wrapped with a temporary key derived from auth
     // For simplicity, we store the raw base64 KEK (Convex auth protects it)
     newKekIfMissing: v.optional(v.string()),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx);
@@ -83,6 +84,7 @@ export const getOrCreateKEK = mutation({
 export const rotateKEK = mutation({
   args: {
     newKekWrapped: v.string(),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx);

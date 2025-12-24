@@ -32,6 +32,9 @@ export const createSession = mutation({
     subjectId: v.optional(v.id("users")),
     subjectAlias: v.optional(v.string()),
     activityProfile: v.optional(v.string()),
+
+    // LWW timestamp (from useMutation)
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
@@ -75,6 +78,7 @@ export const createSession = mutation({
       tags: args.tags,
       activityProfile: args.activityProfile as any,
       metricsStatus: METRIC_STATUS.PENDING,
+      modifiedAt: args.modifiedAt ?? Date.now(),
     });
 
     return {
@@ -539,6 +543,7 @@ export const updateSession = mutation({
     tags: v.optional(v.array(v.string())),
     subjectId: v.optional(v.id("users")),
     subjectAlias: v.optional(v.string()),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
@@ -610,6 +615,9 @@ export const updateSession = mutation({
       }
     }
 
+    // Set modifiedAt for LWW
+    updates.modifiedAt = args.modifiedAt ?? Date.now();
+
     await ctx.db.patch(session._id, updates);
 
     return args.sessionId;
@@ -621,6 +629,7 @@ export const addSubjectNote = mutation({
   args: {
     sessionId: v.string(),
     note: v.string(),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
@@ -658,6 +667,7 @@ export const addSubjectNote = mutation({
     const currentNotes = session.subjectNotes ?? [];
     await ctx.db.patch(session._id, {
       subjectNotes: [...currentNotes, newNote],
+      modifiedAt: args.modifiedAt ?? now,
     });
 
     // Create notification for owner
@@ -673,6 +683,7 @@ export const addSubjectNote = mutation({
         notePreview: args.note.slice(0, 100),
       },
       read: false,
+      modifiedAt: args.modifiedAt ?? now,
     });
 
     return { success: true, sessionId: args.sessionId };
@@ -684,6 +695,7 @@ export const shareSession = mutation({
   args: {
     sessionId: v.string(),
     userId: v.id("users"),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
@@ -710,6 +722,7 @@ export const shareSession = mutation({
     if (!currentShared.includes(args.userId)) {
       await ctx.db.patch(session._id, {
         sharedWith: [...currentShared, args.userId],
+        modifiedAt: args.modifiedAt ?? Date.now(),
       });
     }
 
@@ -722,6 +735,7 @@ export const archiveSession = mutation({
   args: {
     sessionId: v.string(),
     reason: v.optional(v.string()),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
@@ -739,10 +753,12 @@ export const archiveSession = mutation({
       throw new Error("Not authorized to archive this session");
     }
 
+    const now = Date.now();
     await ctx.db.patch(session._id, {
       isArchived: true,
-      archivedAt: Date.now(),
+      archivedAt: now,
       archiveReason: args.reason ?? "User deleted session",
+      modifiedAt: args.modifiedAt ?? now,
     });
 
     return args.sessionId;
@@ -751,7 +767,10 @@ export const archiveSession = mutation({
 
 // Restore archived session
 export const restoreSession = mutation({
-  args: { sessionId: v.string() },
+  args: {
+    sessionId: v.string(),
+    modifiedAt: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 
@@ -772,6 +791,7 @@ export const restoreSession = mutation({
       isArchived: false,
       archivedAt: undefined,
       archiveReason: undefined,
+      modifiedAt: args.modifiedAt ?? Date.now(),
     });
 
     return args.sessionId;

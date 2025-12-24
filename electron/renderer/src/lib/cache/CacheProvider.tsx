@@ -52,6 +52,8 @@ export interface CacheContextValue {
   isReady: boolean;
   isOnline: boolean;
   pendingMutations: number;
+  /** Modules (e.g., "users") with pending/processing mutations */
+  pendingModules: Set<string>;
 
   // Store access
   store: CacheStore | null;
@@ -86,6 +88,7 @@ export function CacheProvider({ children }: CacheProviderProps) {
   const [isReady, setIsReady] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pendingMutations, setPendingMutations] = useState(0);
+  const [pendingModules, setPendingModules] = useState<Set<string>>(new Set());
   const [kekVersion, setKekVersion] = useState(0);
   const [needsRotation, setNeedsRotation] = useState(false);
 
@@ -105,6 +108,7 @@ export function CacheProvider({ children }: CacheProviderProps) {
 
     const initCache = async () => {
       initializingRef.current = true;
+      console.log("[CacheProvider] Starting initialization...");
 
       try {
         if (!isCryptoAvailable()) {
@@ -114,16 +118,19 @@ export function CacheProvider({ children }: CacheProviderProps) {
 
         // Convert Convex ID to string to ensure compatibility
         const userId = String(user._id);
+        console.log("[CacheProvider] User ID:", userId);
 
         // Initialize mutation queue
+        console.log("[CacheProvider] Opening mutation queue...");
         const queue = new MutationQueue(userId);
         await queue.open();
         queueRef.current = queue;
+        console.log("[CacheProvider] Mutation queue opened");
 
-        // Set up mutation executor
+        // Set up mutation executor with timeout
         queue.setExecutor(async (path, args) => {
-          // Parse path like "recordingSessions.update" to call Convex mutation
-          const parts = path.split(".");
+          // Parse path like "users:setContactStar" (colon-separated from getFunctionName)
+          const parts = path.split(":");
           if (parts.length !== 2) {
             throw new Error(`Invalid mutation path: ${path}`);
           }
@@ -132,29 +139,49 @@ export function CacheProvider({ children }: CacheProviderProps) {
           if (!mutationRef) {
             throw new Error(`Unknown mutation: ${path}`);
           }
-          return convex.mutation(mutationRef, args as any);
+
+          // Add timeout to prevent waiting forever when offline
+          const timeoutMs = 10000; // 10 seconds
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Mutation timeout - will retry")), timeoutMs)
+          );
+
+          return Promise.race([
+            convex.mutation(mutationRef, args as any),
+            timeoutPromise,
+          ]);
         });
 
-        // Subscribe to queue changes
-        queue.subscribe(async () => {
-          const stats = await queue.getStats();
+        // Subscribe to queue changes (sync methods for fast UI updates)
+        queue.subscribe(() => {
+          const stats = queue.getStats();
           setPendingMutations(stats.pending + stats.failed);
+
+          // Track which modules have pending mutations
+          const pending = queue.getPending();
+          const currentModules = new Set(
+            pending.map((m) => m.mutationPath.split(":")[0])
+          );
+
+          setPendingModules(currentModules);
         });
 
         // Migrate any fallback mutations to main queue
         const fallbackMutations = drainFallbackMutations();
-        if (fallbackMutations.length > 0) {
-          console.log(
-            `[CacheProvider] Migrating ${fallbackMutations.length} fallback mutations`
-          );
-          for (const mutation of fallbackMutations) {
-            await queue.enqueue(mutation.mutationPath, mutation.args);
-          }
+        for (const mutation of fallbackMutations) {
+          await queue.enqueue(mutation.mutationPath, mutation.args);
         }
 
-        // Get initial pending count
-        const stats = await queue.getStats();
+        // Get initial pending count (sync after cache is loaded)
+        const stats = queue.getStats();
         setPendingMutations(stats.pending + stats.failed);
+
+        // Process any pending mutations from previous session
+        if (stats.pending > 0) {
+          queue.process().catch((e) => {
+            console.error("[CacheProvider] Failed to process pending:", e);
+          });
+        }
 
         // Initialize encryption
         await initializeEncryption(userId);
@@ -181,11 +208,12 @@ export function CacheProvider({ children }: CacheProviderProps) {
   }, [isAuthenticated, user?._id, convex]);
 
   const initializeEncryption = async (userId: string) => {
-    console.log(`[CacheProvider] initializeEncryption for user: ${userId}`);
+    console.log(`[CacheProvider] ─── initializeEncryption START ───`);
+    console.log(`[CacheProvider] User ID: ${userId}`);
 
     // Check for existing wrapped DEK
     const existingWrappedDEK = await getWrappedDEK(userId);
-    console.log(`[CacheProvider] Existing DEK: ${existingWrappedDEK ? `yes (v${existingWrappedDEK.version})` : 'no'}`);
+    console.log(`[CacheProvider] Local DEK: ${existingWrappedDEK ? `version=${existingWrappedDEK.version}` : 'NOT FOUND'}`);
 
     // Check for session-cached KEK (for offline support)
     const sessionKEK = getSessionKEK(userId);
@@ -201,13 +229,15 @@ export function CacheProvider({ children }: CacheProviderProps) {
       let kekResult: Awaited<ReturnType<typeof getOrCreateKEK>>;
 
       if (existingWrappedDEK) {
-        console.log("[CacheProvider] Path: existing DEK, fetching KEK from server");
+        console.log("[CacheProvider] → Path A: existing local DEK, fetching server KEK...");
         kekResult = await getOrCreateKEK({});
+        console.log("[CacheProvider] → Server response:", JSON.stringify(kekResult));
       } else {
-        console.log("[CacheProvider] Path: no DEK, generating new KEK");
+        console.log("[CacheProvider] → Path B: no local DEK, generating new KEK...");
         const newKEK = await generateKEK();
         const newKEKBase64 = await exportKey(newKEK);
         kekResult = await getOrCreateKEK({ newKekIfMissing: newKEKBase64 });
+        console.log("[CacheProvider] → Server response:", JSON.stringify({ ...kekResult, kekWrapped: '[REDACTED]' }));
       }
 
       if (!kekResult.kekWrapped) {
@@ -220,7 +250,15 @@ export function CacheProvider({ children }: CacheProviderProps) {
 
       // Cache KEK for this session (enables offline access)
       storeSessionKEK(userId, { kekWrapped, kekVersion: kekVersionNum });
-      console.log(`[CacheProvider] KEK from server: version=${kekVersionNum}, needsRotation=${needsRotationFlag}`);
+      console.log(`[CacheProvider] Server KEK: version=${kekVersionNum}, needsRotation=${needsRotationFlag}`);
+
+      // Log version comparison
+      if (existingWrappedDEK) {
+        console.log(`[CacheProvider] Version comparison: local DEK v${existingWrappedDEK.version} vs server KEK v${kekVersionNum}`);
+        if (existingWrappedDEK.version !== kekVersionNum) {
+          console.warn(`[CacheProvider] ⚠️ VERSION MISMATCH - cache will be cleared!`);
+        }
+      }
     } catch (error) {
       // Server fetch failed - try session cache
       console.log("[CacheProvider] Server KEK fetch failed, trying session cache:", error);
@@ -249,7 +287,10 @@ export function CacheProvider({ children }: CacheProviderProps) {
       // Check if KEK version matches
       if (existingWrappedDEK.version !== kekVersionNum) {
         // KEK was rotated on another device, need to re-initialize
-        console.log(`[CacheProvider] KEK version mismatch (local=${existingWrappedDEK.version}, server=${kekVersionNum}), clearing cache`);
+        console.warn(`[CacheProvider] ⚠️ KEK VERSION MISMATCH!`);
+        console.warn(`[CacheProvider]   Local DEK wrapped with KEK v${existingWrappedDEK.version}`);
+        console.warn(`[CacheProvider]   Server KEK is v${kekVersionNum}`);
+        console.warn(`[CacheProvider]   → Clearing cache and regenerating DEK...`);
         await deleteUserCache(userId);
         // Generate new DEK with new KEK
         dek = await generateDEK();
@@ -258,20 +299,23 @@ export function CacheProvider({ children }: CacheProviderProps) {
         if (!storeResult.success) {
           throw new Error(`Failed to store DEK: ${storeResult.error}`);
         }
+        console.log(`[CacheProvider] New DEK stored with version ${kekVersionNum}`);
       } else {
         // Unwrap existing DEK
-        console.log("[CacheProvider] KEK version matches, unwrapping existing DEK");
+        console.log("[CacheProvider] ✓ KEK version matches, unwrapping existing DEK...");
         dek = await unwrapDEK(existingWrappedDEK, kek);
+        console.log("[CacheProvider] ✓ DEK unwrapped successfully");
       }
     } else {
       // Generate new DEK
-      console.log("[CacheProvider] Generating new DEK");
+      console.log("[CacheProvider] First time setup - generating new DEK...");
       dek = await generateDEK();
       const wrappedDEK = await wrapDEK(dek, kek, kekVersionNum);
       const storeResult = await storeWrappedDEK(userId, wrappedDEK);
       if (!storeResult.success) {
         throw new Error(`Failed to store DEK: ${storeResult.error}`);
       }
+      console.log(`[CacheProvider] New DEK stored with version ${kekVersionNum}`);
     }
 
     // Open cache store with DEK
@@ -279,7 +323,7 @@ export function CacheProvider({ children }: CacheProviderProps) {
     const store = new CacheStore(userId);
     await store.open(dek);
     storeRef.current = store;
-    console.log("[CacheProvider] Encryption initialized successfully");
+    console.log(`[CacheProvider] ─── initializeEncryption COMPLETE ───`);
   };
 
   // ─── Online/Offline Handling ─────────────────────────────────────
@@ -405,6 +449,7 @@ export function CacheProvider({ children }: CacheProviderProps) {
       isReady,
       isOnline,
       pendingMutations,
+      pendingModules,
       store: storeRef.current,
       mutationQueue: queueRef.current,
       clearCache,
@@ -417,6 +462,7 @@ export function CacheProvider({ children }: CacheProviderProps) {
       isReady,
       isOnline,
       pendingMutations,
+      pendingModules,
       clearCache,
       rotateKey,
       syncMutations,

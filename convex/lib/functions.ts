@@ -1,43 +1,52 @@
 /**
- * Custom Convex Functions with Triggers
+ * Convex Functions
  *
- * Wraps standard mutation/query with trigger support for auto modifiedAt.
- * Use these instead of importing directly from _generated/server.
+ * Re-exports standard Convex functions.
  *
- * @see https://stack.convex.dev/triggers
- * @see https://stack.convex.dev/custom-functions
+ * Note: Triggers (convex-helpers) were removed due to wrapDB causing
+ * excessive document reads (16MB+ limit exceeded on large tables).
+ *
+ * modifiedAt is now set explicitly in mutations:
+ * - Client: useMutation() auto-adds modifiedAt timestamp to all args
+ * - Server: Mutations use `args.modifiedAt ?? Date.now()` in patches
  */
 
-import {
-  customCtx,
-  customMutation,
-} from "convex-helpers/server/customFunctions";
-import {
-  mutation as rawMutation,
-  internalMutation as rawInternalMutation,
-} from "../_generated/server";
-import { triggers } from "./triggers";
-
-/**
- * Mutation with auto modifiedAt trigger.
- * All db.patch/db.insert operations will auto-set modifiedAt on tracked tables.
- */
-export const mutation = customMutation(rawMutation, customCtx(triggers.wrapDB));
-
-/**
- * Internal mutation with auto modifiedAt trigger.
- */
-export const internalMutation = customMutation(
-  rawInternalMutation,
-  customCtx(triggers.wrapDB)
-);
-
-/**
- * Re-export unchanged functions (no db writes, no triggers needed).
- */
 export {
   query,
   internalQuery,
+  mutation,
+  internalMutation,
   action,
   internalAction,
 } from "../_generated/server";
+
+// ─────────────────────────────────────────────────────────────────
+// Timestamp Utilities
+// ─────────────────────────────────────────────────────────────────
+
+/** Max allowed clock drift (5 minutes) */
+const MAX_CLOCK_DRIFT_MS = 5 * 60 * 1000;
+
+/**
+ * Normalize client timestamp with bounds checking.
+ * If client time is too far from server time, use server time instead.
+ * This prevents clock manipulation attacks and handles wrong client clocks.
+ */
+export function normalizeTimestamp(clientTimestamp: number | undefined): number {
+  const serverNow = Date.now();
+
+  if (clientTimestamp === undefined) {
+    return serverNow;
+  }
+
+  const drift = Math.abs(clientTimestamp - serverNow);
+  if (drift > MAX_CLOCK_DRIFT_MS) {
+    // Client clock is too far off - use server time
+    console.warn(
+      `[normalizeTimestamp] Clock drift detected: client=${clientTimestamp}, server=${serverNow}, drift=${drift}ms`
+    );
+    return serverNow;
+  }
+
+  return clientTimestamp;
+}

@@ -67,7 +67,8 @@
       "WebFetch(domain:www.jospt.org)",
       "WebFetch(domain:svgo.dev)",
       "Bash(find:*)",
-      "WebFetch(domain:stack.convex.dev)"
+      "WebFetch(domain:stack.convex.dev)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": [],

@@ -132,7 +132,7 @@ export const getSessionAsymmetryEvents = query({
 
 /** Manually trigger metric re-computation. */
 export const recomputeMetrics = mutation({
-  args: { sessionId: v.string() },
+  args: { sessionId: v.string(), modifiedAt: v.optional(v.number()) },
   handler: async (ctx, args) => {
     // Check if metrics exist
     const existing = await ctx.db
@@ -165,7 +165,7 @@ export const recomputeMetrics = mutation({
 
 /** Delete metrics for a session. */
 export const deleteMetrics = mutation({
-  args: { sessionId: v.string() },
+  args: { sessionId: v.string(), modifiedAt: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("recordingMetrics")
@@ -186,6 +186,7 @@ export const applyCustomPhaseOffset = mutation({
   args: {
     sessionId: v.string(),
     customOffsetMs: v.number(),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     // Schedule the internal action

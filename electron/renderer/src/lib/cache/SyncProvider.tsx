@@ -59,6 +59,10 @@ export interface SyncContextValue {
   getQuery: (key: string) => unknown | undefined;
   /** Set cached query result (persists to IndexedDB) */
   setQuery: (key: string, data: unknown) => void;
+  /** Batch set multiple queries (single state update) */
+  setQueryBatch: (updates: Array<{ key: string; data: unknown }>) => void;
+  /** Get all cache keys (for optimistic updates) */
+  getQueryKeys: () => string[];
   /** Current sync state */
   state: SyncState;
   /** Force a full refresh */
@@ -104,12 +108,18 @@ export function SyncProvider({ children }: SyncProviderProps) {
   // ─── Load from persistent cache on mount ───────────────────────
 
   useEffect(() => {
-    if (!cache?.store) return;
+    if (!cache?.store) {
+      console.log("[SyncProvider] Waiting for cache store...");
+      return;
+    }
 
     const loadFromCache = async () => {
+      console.log("[SyncProvider] ─── Loading from cache START ───");
       try {
         // Load query cache keys list
         const queryList = await cache.store!.get<string[]>("sync:queries:list");
+        console.log(`[SyncProvider] Query list: ${queryList?.data?.length ?? 0} keys`);
+
         if (queryList?.data) {
           const loadedQueries = new Map<string, unknown>();
           for (const key of queryList.data) {
@@ -120,9 +130,17 @@ export function SyncProvider({ children }: SyncProviderProps) {
             }
           }
           setQueries(loadedQueries);
+          console.log(`[SyncProvider] Loaded ${loadedQueries.size} cached queries`);
+
+          // Log some example keys
+          const keys = Array.from(loadedQueries.keys()).slice(0, 5);
+          console.log(`[SyncProvider] Sample keys:`, keys);
+        } else {
+          console.log("[SyncProvider] No cached queries found");
         }
 
         setState((s) => ({ ...s, isInitialized: true }));
+        console.log("[SyncProvider] ─── Loading from cache COMPLETE ───");
       } catch (err) {
         console.error("[SyncProvider] Failed to load from cache:", err);
         setState((s) => ({ ...s, isInitialized: true, error: err as Error }));
@@ -153,11 +171,15 @@ export function SyncProvider({ children }: SyncProviderProps) {
 
   // ─── Update query list in persistent cache ─────────────────────
 
+  // Use ref to avoid re-triggering syncData effect when queries change
+  const queriesRef = useRef(queries);
+  queriesRef.current = queries;
+
   const persistQueryList = useCallback(async () => {
     if (!cache?.store) return;
-    const keys = Array.from(queries.keys());
+    const keys = Array.from(queriesRef.current.keys());
     await cache.store.put("sync:queries:list", keys, Date.now());
-  }, [cache?.store, queries]);
+  }, [cache?.store]);
 
   // ─── Subscribe to centralized timestamps ───────────────────────
 
@@ -174,12 +196,21 @@ export function SyncProvider({ children }: SyncProviderProps) {
       try {
         // ─── Sync user ───
         if (timestamps.user) {
-          const cacheKey = makeCacheKey("users:getMe", {});
-          const cachedVersion = cachedVersions.current.get(cacheKey);
+          const userCacheKey = makeCacheKey("users:getMe", {});
+          const cachedVersion = cachedVersions.current.get(userCacheKey);
           if (cachedVersion !== timestamps.user.modifiedAt) {
             const freshUser = await convex.query(api.fetchById.getMe, {});
             if (freshUser) {
-              setQueryInternal(cacheKey, freshUser, timestamps.user.modifiedAt);
+              setQueryInternal(userCacheKey, freshUser, timestamps.user.modifiedAt);
+            }
+            // Also fetch contacts (includes starred metadata from user.contacts)
+            const freshContacts = await convex.query(api.users.getContacts, {});
+            if (freshContacts) {
+              setQueryInternal(
+                makeCacheKey("users:getContacts", {}),
+                freshContacts,
+                timestamps.user.modifiedAt
+              );
             }
           }
         }
@@ -253,6 +284,69 @@ export function SyncProvider({ children }: SyncProviderProps) {
           allSessions,
           Date.now()
         );
+
+        // ─── Sync dashboard data for cached subjects ───
+        // Extract unique subjectIds from sessions (for patients we have data for)
+        const subjectIds = new Set<string>();
+        for (const ts of timestamps.sessions) {
+          // Get the session from cache to check subjectId
+          const cacheKey = makeCacheKey("recordingSessions:getSession", { sessionId: ts.sessionId });
+          const session = queries.get(cacheKey) as { subjectId?: string } | undefined;
+          if (session?.subjectId) {
+            subjectIds.add(session.subjectId);
+          }
+        }
+        // Also include current user's own sessions
+        if (timestamps.user?._id) {
+          subjectIds.add(timestamps.user._id);
+        }
+
+        // Fetch dashboard metrics history for each subject
+        if (subjectIds.size > 0) {
+          console.log(`[SyncProvider] Syncing dashboard data for ${subjectIds.size} subjects`);
+          for (const subjectId of subjectIds) {
+            try {
+              const dashboardCacheKey = makeCacheKey("dashboard:getPatientMetricsHistory", { subjectId });
+              // Always refresh dashboard data to ensure metrics are current
+              const metricsHistory = await convex.query(api.dashboard.getPatientMetricsHistory, {
+                subjectId: subjectId as Id<"users">,
+              });
+              if (metricsHistory) {
+                setQueryInternal(dashboardCacheKey, metricsHistory, Date.now());
+              }
+            } catch (err) {
+              console.warn(`[SyncProvider] Failed to sync dashboard for ${subjectId}:`, err);
+            }
+          }
+        }
+
+        // Sync patients list for dashboard selector
+        try {
+          const patientsList = await convex.query(api.dashboard.getPatientsList, {});
+          if (patientsList) {
+            setQueryInternal(
+              makeCacheKey("dashboard:getPatientsList", {}),
+              patientsList,
+              Date.now()
+            );
+          }
+        } catch (err) {
+          console.warn("[SyncProvider] Failed to sync patients list:", err);
+        }
+
+        // Sync asymmetry events for each session (for chart overlay)
+        for (const ts of timestamps.sessions) {
+          try {
+            const asymmetryCacheKey = makeCacheKey("recordingMetrics:getSessionAsymmetryEvents", { sessionId: ts.sessionId });
+            const asymmetryEvents = await convex.query(api.recordingMetrics.getSessionAsymmetryEvents, {
+              sessionId: ts.sessionId,
+            });
+            // Cache even if null (session may not have completed metrics)
+            setQueryInternal(asymmetryCacheKey, asymmetryEvents, Date.now());
+          } catch (err) {
+            // Don't log for individual failures - these may not exist for all sessions
+          }
+        }
 
         // ─── Sync notifications ───
         const notificationsToFetch: Id<"notifications">[] = [];
@@ -393,70 +487,8 @@ export function SyncProvider({ children }: SyncProviderProps) {
           Date.now()
         );
 
-        // ─── Sync contacts ───
-        const contactsToFetch: Id<"users">[] = [];
-        const serverContactKeys = new Set<string>();
-
-        for (const ts of timestamps.contacts) {
-          if (!ts) continue;
-          const cacheKey = makeCacheKey("users:getContact", { id: ts._id });
-          serverContactKeys.add(cacheKey);
-          const cachedVersion = cachedVersions.current.get(cacheKey);
-          if (cachedVersion !== ts.modifiedAt) {
-            contactsToFetch.push(ts._id as Id<"users">);
-          }
-        }
-
-        // Remove deleted contacts
-        for (const key of cachedVersions.current.keys()) {
-          if (key.startsWith("users:getContact:") && !serverContactKeys.has(key)) {
-            setQueries((prev) => {
-              const next = new Map(prev);
-              next.delete(key);
-              return next;
-            });
-            cachedVersions.current.delete(key);
-            if (cache?.store) {
-              await cache.store.delete(`sync:query:${key}`);
-            }
-          }
-        }
-
-        // Fetch changed contacts
-        if (contactsToFetch.length > 0) {
-          const freshContacts = await convex.query(
-            api.fetchById.getUsersByIds,
-            { userIds: contactsToFetch }
-          );
-          if (freshContacts) {
-            for (const contact of freshContacts) {
-              if (contact) {
-                const id = (contact as any)._id;
-                const cacheKey = makeCacheKey("users:getContact", { id });
-                const ts = timestamps.contacts.find((t) => t?._id === id);
-                if (ts) {
-                  setQueryInternal(cacheKey, contact, ts.modifiedAt);
-                }
-              }
-            }
-          }
-        }
-
-        // Cache contacts list
-        const allContacts: unknown[] = [];
-        for (const ts of timestamps.contacts) {
-          if (!ts) continue;
-          const cacheKey = makeCacheKey("users:getContact", { id: ts._id });
-          const contact = queries.get(cacheKey);
-          if (contact) {
-            allContacts.push(contact);
-          }
-        }
-        setQueryInternal(
-          makeCacheKey("users:getContacts", {}),
-          allContacts,
-          Date.now()
-        );
+        // ─── Contacts are synced with user (above) ───
+        // getContacts includes starred metadata from user.contacts array
 
         // ─── Sync user tags ───
         // Tags are simpler - just cache the list
@@ -503,6 +535,34 @@ export function SyncProvider({ children }: SyncProviderProps) {
     }
   }, [setQueryInternal, cache?.store]);
 
+  // Batch update multiple queries in a single state update (for optimistic updates)
+  const setQueryBatch = useCallback((updates: Array<{ key: string; data: unknown }>) => {
+    if (updates.length === 0) return;
+
+    const now = Date.now();
+
+    // Single state update for all changes
+    setQueries((prev) => {
+      const next = new Map(prev);
+      for (const { key, data } of updates) {
+        next.set(key, data);
+        cachedVersions.current.set(key, now);
+      }
+      return next;
+    });
+
+    // Persist to IndexedDB (fire and forget)
+    if (cache?.store) {
+      Promise.all(
+        updates.map(({ key, data }) =>
+          cache.store!.put(`sync:query:${key}`, data, now)
+        )
+      ).catch((err) => {
+        console.error("[SyncProvider] Failed to persist batch:", err);
+      });
+    }
+  }, [cache?.store]);
+
   // ─── Refresh ───────────────────────────────────────────────────
 
   const refresh = useCallback(() => {
@@ -510,16 +570,24 @@ export function SyncProvider({ children }: SyncProviderProps) {
     setQueries(new Map());
   }, []);
 
+  // ─── Get all query keys ─────────────────────────────────────────
+
+  const getQueryKeys = useCallback(() => {
+    return Array.from(queries.keys());
+  }, [queries]);
+
   // ─── Context value ─────────────────────────────────────────────
 
   const value = useMemo<SyncContextValue>(
     () => ({
       getQuery: (key) => queries.get(key),
       setQuery,
+      setQueryBatch,
+      getQueryKeys,
       state,
       refresh,
     }),
-    [queries, setQuery, state, refresh]
+    [queries, setQuery, setQueryBatch, getQueryKeys, state, refresh]
   );
 
   return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>;

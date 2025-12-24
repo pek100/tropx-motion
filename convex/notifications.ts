@@ -69,6 +69,7 @@ export const getUnreadCount = query({
 export const markRead = mutation({
   args: {
     notificationId: v.id("notifications"),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
@@ -90,7 +91,9 @@ export const markRead = mutation({
 
 // Mark all notifications as read
 export const markAllRead = mutation({
-  args: {},
+  args: {
+    modifiedAt: v.optional(v.number()),
+  },
   handler: async (ctx) => {
     const user = await requireUser(ctx);
 
@@ -113,6 +116,7 @@ export const markAllRead = mutation({
 export const deleteNotification = mutation({
   args: {
     notificationId: v.id("notifications"),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);

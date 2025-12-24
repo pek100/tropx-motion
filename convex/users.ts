@@ -73,6 +73,7 @@ export const completeOnboarding = mutation({
       v.literal(ROLES.PHYSIOTHERAPIST),
       v.literal(ROLES.PATIENT)
     ),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx);
@@ -135,6 +136,7 @@ export const updateProfile = mutation({
   args: {
     name: v.optional(v.string()),
     image: v.optional(v.string()),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
@@ -209,13 +211,25 @@ export const searchUserByEmail = query({
 });
 
 // Add contact directly (if user already exists)
+// Uses LWW (last-write-wins) based on modifiedAt timestamp
 export const addContact = mutation({
   args: {
     userId: v.id("users"),
     alias: v.optional(v.string()),
+    modifiedAt: v.optional(v.number()), // Client timestamp for LWW
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
+
+    // LWW check: only apply if client timestamp > record timestamp
+    if (args.modifiedAt !== undefined && user.modifiedAt !== undefined) {
+      if (args.modifiedAt <= user.modifiedAt) {
+        console.log(`[addContact] Stale mutation rejected: ${args.modifiedAt} <= ${user.modifiedAt}`);
+        return { stale: true };
+      }
+    }
+
+    const contacts = user.contacts ?? [];
 
     // Check target user exists
     const targetUser = await ctx.db.get(args.userId);
@@ -224,7 +238,7 @@ export const addContact = mutation({
     }
 
     // Check not already a contact
-    const alreadyContact = user.contacts.some(
+    const alreadyContact = contacts.some(
       (c) => c.userId === args.userId
     );
     if (alreadyContact) {
@@ -237,7 +251,7 @@ export const addContact = mutation({
     }
 
     const updatedContacts = [
-      ...user.contacts,
+      ...contacts,
       {
         userId: args.userId,
         alias: args.alias,
@@ -245,85 +259,137 @@ export const addContact = mutation({
       },
     ];
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts });
-    return user._id;
+    await ctx.db.patch(user._id, {
+      contacts: updatedContacts,
+      modifiedAt: args.modifiedAt ?? Date.now(),
+    });
+    return { stale: false, userId: user._id };
   },
 });
 
 // Update contact alias
+// Uses LWW (last-write-wins) based on modifiedAt timestamp
 export const updateContactAlias = mutation({
   args: {
     userId: v.id("users"),
     alias: v.union(v.string(), v.null()),
+    modifiedAt: v.optional(v.number()), // Client timestamp for LWW
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 
-    const contactIndex = user.contacts.findIndex(
+    // LWW check: only apply if client timestamp > record timestamp
+    if (args.modifiedAt !== undefined && user.modifiedAt !== undefined) {
+      if (args.modifiedAt <= user.modifiedAt) {
+        console.log(`[updateContactAlias] Stale mutation rejected: ${args.modifiedAt} <= ${user.modifiedAt}`);
+        return { stale: true };
+      }
+    }
+
+    const contacts = user.contacts ?? [];
+
+    const contactIndex = contacts.findIndex(
       (c) => c.userId === args.userId
     );
     if (contactIndex === -1) {
       throw new Error("Contact not found");
     }
 
-    const updatedContacts = [...user.contacts];
+    const updatedContacts = [...contacts];
     updatedContacts[contactIndex] = {
       ...updatedContacts[contactIndex],
       alias: args.alias ?? undefined,
     };
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts });
-    return user._id;
+    await ctx.db.patch(user._id, {
+      contacts: updatedContacts,
+      modifiedAt: args.modifiedAt ?? Date.now(),
+    });
+    return { stale: false, userId: user._id };
   },
 });
 
 // Remove contact
+// Uses LWW (last-write-wins) based on modifiedAt timestamp
 export const removeContact = mutation({
-  args: { userId: v.id("users") },
+  args: {
+    userId: v.id("users"),
+    modifiedAt: v.optional(v.number()), // Client timestamp for LWW
+  },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 
-    const updatedContacts = user.contacts.filter(
+    // LWW check: only apply if client timestamp > record timestamp
+    if (args.modifiedAt !== undefined && user.modifiedAt !== undefined) {
+      if (args.modifiedAt <= user.modifiedAt) {
+        console.log(`[removeContact] Stale mutation rejected: ${args.modifiedAt} <= ${user.modifiedAt}`);
+        return { stale: true };
+      }
+    }
+
+    const contacts = user.contacts ?? [];
+
+    const updatedContacts = contacts.filter(
       (c) => c.userId !== args.userId
     );
 
-    if (updatedContacts.length === user.contacts.length) {
+    if (updatedContacts.length === contacts.length) {
       throw new Error("Contact not found");
     }
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts });
-    return user._id;
+    await ctx.db.patch(user._id, {
+      contacts: updatedContacts,
+      modifiedAt: args.modifiedAt ?? Date.now(),
+    });
+    return { stale: false, userId: user._id };
   },
 });
 
-// Toggle contact starred status
-export const toggleContactStar = mutation({
-  args: { userId: v.id("users") },
+// Set contact starred status (explicit value for predictable optimistic updates)
+// Uses LWW (last-write-wins) based on modifiedAt timestamp
+export const setContactStar = mutation({
+  args: {
+    userId: v.id("users"),
+    starred: v.boolean(),
+    modifiedAt: v.optional(v.number()), // Client timestamp for LWW
+  },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 
-    const contactIndex = user.contacts.findIndex(
+    // LWW check: only apply if client timestamp > record timestamp
+    if (args.modifiedAt !== undefined && user.modifiedAt !== undefined) {
+      if (args.modifiedAt <= user.modifiedAt) {
+        // Stale mutation - skip but don't throw (queue should still clear)
+        console.log(`[setContactStar] Stale mutation rejected: ${args.modifiedAt} <= ${user.modifiedAt}`);
+        return { stale: true, starred: args.starred };
+      }
+    }
+
+    const contacts = user.contacts ?? [];
+    const contactIndex = contacts.findIndex(
       (c) => c.userId === args.userId
     );
     if (contactIndex === -1) {
       throw new Error("Contact not found");
     }
 
-    const updatedContacts = [...user.contacts];
-    const currentStarred = updatedContacts[contactIndex].starred ?? false;
+    const updatedContacts = [...contacts];
     updatedContacts[contactIndex] = {
       ...updatedContacts[contactIndex],
-      starred: !currentStarred,
+      starred: args.starred,
     };
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts });
-    return !currentStarred; // Return new starred state
+    await ctx.db.patch(user._id, {
+      contacts: updatedContacts,
+      modifiedAt: args.modifiedAt ?? Date.now(),
+    });
+    return { stale: false, starred: args.starred };
   },
 });
 
 // Archive own account (self-delete)
 export const archiveMyAccount = mutation({
-  args: { reason: v.optional(v.string()) },
+  args: { reason: v.optional(v.string()), modifiedAt: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
 

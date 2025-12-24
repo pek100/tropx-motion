@@ -665,4 +665,18 @@ export default defineSchema({
   })
     .index("by_user", ["userId", "lastUsedAt"])
     .index("by_user_tag", ["userId", "tag"]),
+
+  // ─── LWW Conflict Log (for observability) ───
+  // Records when a mutation was rejected due to LWW conflict.
+  // Cleaned up weekly by cron job.
+  lwwConflicts: defineTable({
+    userId: v.id("users"),
+    mutationPath: v.string(), // e.g., "users:setContactStar"
+    recordId: v.string(), // Affected record ID
+    clientTimestamp: v.number(), // What the client sent
+    serverTimestamp: v.number(), // What the server had
+    rejectedArgs: v.optional(v.any()), // The args that were rejected (for debugging)
+  })
+    .index("by_created", ["_creationTime"])
+    .index("by_user", ["userId"]),
 });

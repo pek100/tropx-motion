@@ -81,6 +81,7 @@ export const searchUserTags = query({
 export const syncUserTags = mutation({
   args: {
     tags: v.array(v.string()),
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx);
@@ -200,7 +201,7 @@ export const getTagsWithDefaults = query({
 
 // Seed default tags (run once)
 export const seedDefaultTags = mutation({
-  args: {},
+  args: { modifiedAt: v.optional(v.number()) },
   handler: async (ctx) => {
     const now = Date.now();
 

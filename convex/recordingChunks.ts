@@ -31,6 +31,8 @@ export const createChunk = mutation({
     leftKneeMissing: v.array(v.number()),
     rightKneeInterpolated: v.array(v.number()),
     rightKneeMissing: v.array(v.number()),
+
+    modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);

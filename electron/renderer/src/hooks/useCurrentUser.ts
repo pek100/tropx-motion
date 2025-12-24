@@ -1,7 +1,7 @@
-import { useQuery, useMutation } from "convex/react";
+import { useMutation } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "../../../../convex/_generated/api";
-import { isConvexConfigured } from "../lib/convex";
+import { isConvexConfigured, useQuery } from "../lib/convex";
 import { isElectron } from "../lib/platform";
 
 export type UserRole = "physiotherapist" | "patient" | "admin";
@@ -60,11 +60,9 @@ const DISABLED_RESULT: UseCurrentUserResult = {
 };
 
 // Hook that uses Convex - only call when Convex is configured
-// NOTE: This hook must use raw useQuery, NOT useCachedQuery, because
-// CacheProvider depends on this hook for initialization (circular dependency)
 function useCurrentUserEnabled(): UseCurrentUserResult {
   const authActions = useAuthActions();
-  const userData = useQuery(api.users.getMe);
+  const userData = useQuery(api.users.getMe, {});
   const completeOnboardingMutation = useMutation(api.users.completeOnboarding);
 
   const isLoading = userData === undefined;
