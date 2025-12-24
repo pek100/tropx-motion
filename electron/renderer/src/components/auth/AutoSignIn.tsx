@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useConvexAuth, useAction } from "@/lib/customConvex";
 import { api } from "../../../../../convex/_generated/api";
+import { isElectron } from "../../lib/platform";
 
 const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';
 const ELECTRON_CALLBACK_URL_KEY = 'tropx_electron_callback_url';
@@ -146,13 +147,19 @@ export function AutoSignIn() {
       url.searchParams.delete('electronAuth');
       url.searchParams.delete('callbackUrl');
       window.history.replaceState({}, '', url.toString());
-    } else if (pendingElectronAuth) {
-      // We're returning from OAuth redirect - restore electron auth state
+    } else if (pendingElectronAuth && isElectron()) {
+      // We're returning from OAuth redirect in ELECTRON - restore electron auth state
+      // Only restore if we're actually in Electron to prevent web auth loops
       setIsElectronAuth(true);
       if (storedCallbackUrl) {
         setCallbackUrl(storedCallbackUrl);
       }
       console.log('[AutoSignIn] Restored electronAuth from localStorage, callback:', storedCallbackUrl);
+    } else if (pendingElectronAuth && !isElectron()) {
+      // Stale Electron auth flag on web - clean it up
+      console.log('[AutoSignIn] Cleaning up stale Electron auth flags on web');
+      localStorage.removeItem(ELECTRON_AUTH_KEY);
+      localStorage.removeItem(ELECTRON_CALLBACK_URL_KEY);
     }
   }, []);
 

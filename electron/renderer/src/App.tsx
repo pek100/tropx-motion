@@ -34,6 +34,12 @@ enum PendingOp {
   STOP_STREAMING = 'stop_streaming',
 }
 
+/** Check if currently in OAuth callback (has code or error in URL) */
+function isOAuthCallback(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  return params.has('code') || params.has('error');
+}
+
 interface PendingState {
   operations: Set<PendingOp>;
   disconnecting: Set<string>;
@@ -77,7 +83,8 @@ function AppContent() {
   // Detect stale tokens and auto-trigger re-auth
   useEffect(() => {
     // Only check when auth loading is complete
-    if (isAuthLoading || hasAttemptedAutoReauth) return
+    // Skip during OAuth callback - AutoSignIn.tsx handles this
+    if (isAuthLoading || hasAttemptedAutoReauth || isOAuthCallback()) return
 
     // Check if we have tokens in localStorage but Convex says not authenticated
     const hasJWT = localStorage.getItem('__convexAuthJWT') ||

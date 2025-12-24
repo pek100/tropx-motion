@@ -98,6 +98,9 @@ function useCurrentUserEnabled(): UseCurrentUserResult {
         console.error('[useCurrentUser] Failed to clear Electron session:', err);
       }
     }
+
+    // Refresh the page to clear all cached data and show unauthenticated state
+    window.location.reload();
   };
 
   const completeOnboarding = async (role: "physiotherapist" | "patient") => {
