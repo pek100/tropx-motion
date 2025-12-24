@@ -16,9 +16,8 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { useMutation } from 'convex/react';
+import { useMutation, useQuery } from '@/lib/convex';
 import { api } from '../../../../convex/_generated/api';
-import { useSyncedQuery } from '@/lib/cache';
 import {
   XIcon,
   CloudUpload,
@@ -373,17 +372,14 @@ export function SaveModal({
   // Sync tags mutation
   const syncUserTags = useMutation(api.tags.syncUserTags);
 
-  // Fetch session data for edit mode (synced)
-  const { data: sessionData } = useSyncedQuery(
+  // Fetch session data for edit mode
+  const sessionData = useQuery(
     api.recordingSessions.getSession,
-    mode === 'edit' && sessionId ? { sessionId } : 'skip',
-    { timestamps: api.sync.getSessionTimestamps }
+    mode === 'edit' && sessionId ? { sessionId } : 'skip'
   );
 
-  // Current user (synced)
-  const { data: currentUser } = useSyncedQuery(api.users.getMe, {}, {
-    timestamps: api.sync.getUserTimestamp,
-  });
+  // Current user
+  const currentUser = useQuery(api.users.getMe, {});
 
   // Compute if user is the subject (not owner)
   const isSubject = useMemo(() => {

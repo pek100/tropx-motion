@@ -9,9 +9,9 @@
  */
 
 import { useState, useCallback, useMemo } from 'react';
-import { useConvex } from 'convex/react';
+import { useConvex, useQuery } from '@/lib/convex';
+import { useSyncOptional } from '@/lib/cache';
 import { api } from '../../../../convex/_generated/api';
-import { useSyncedQuery, useCacheOptional, cacheQuery } from '../lib/cache';
 import {
   PackedChunkData,
   AngleSample,
@@ -75,17 +75,14 @@ export interface UseRecordingSessionReturn {
 
 export function useRecordingSession(): UseRecordingSessionReturn {
   const convex = useConvex();
-  const cache = useCacheOptional();
+  const sync = useSyncOptional();
   const [loadedSession, setLoadedSession] = useState<LoadedSession | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Fetch session list (synced with timestamps)
-  const { data: sessionsQuery, isLoading: isLoadingSessions } = useSyncedQuery(
-    api.recordingSessions.listMySessions,
-    { limit: 50 },
-    { timestamps: api.sync.getSessionTimestamps }
-  );
+  // Fetch session list
+  const sessionsQuery = useQuery(api.recordingSessions.listMySessions, { limit: 50 });
+  const isLoadingSessions = sessionsQuery === undefined;
 
   const sessions: SessionMetadata[] = useMemo(() => {
     // Defensive: check it's an array before mapping
@@ -110,18 +107,27 @@ export function useRecordingSession(): UseRecordingSessionReturn {
   }, [sessionsQuery]);
 
   const loadSession = useCallback(async (sessionId: string) => {
+    console.log("[loadSession] Starting load for:", sessionId);
     setIsLoadingSession(true);
     setLoadError(null);
     setLoadedSession(null);
 
     try {
-      // Fetch session with compressed chunks (cached for offline)
-      const { data: result } = await cacheQuery(
-        cache?.store ?? null,
-        "recordingChunks.getSessionWithChunks",
-        { sessionId },
-        () => convex.query(api.recordingChunks.getSessionWithChunks, { sessionId })
-      );
+      // Check sync cache first
+      const cacheKey = `recordingChunks:getSessionWithChunks:${JSON.stringify({ sessionId })}`;
+      let result = sync?.getQuery(cacheKey) as { session: any; chunks: any[] } | undefined;
+      const fromCache = !!result;
+
+      // If not cached, fetch from Convex
+      if (!result) {
+        console.log("[loadSession] Fetching from Convex...");
+        result = await convex.query(api.recordingChunks.getSessionWithChunks, { sessionId });
+        // Cache the result
+        if (result && sync) {
+          sync.setQuery(cacheKey, result);
+        }
+      }
+      console.log("[loadSession] Got result, fromCache:", fromCache, "chunks:", result?.chunks?.length);
 
       if (!result || result.chunks.length === 0) {
         throw new Error('Session not found or empty');
@@ -202,7 +208,7 @@ export function useRecordingSession(): UseRecordingSessionReturn {
     } finally {
       setIsLoadingSession(false);
     }
-  }, [convex, cache?.store]);
+  }, [convex, sync]);
 
   const clearSession = useCallback(() => {
     setLoadedSession(null);

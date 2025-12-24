@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query } from "./_generated/server";
+import { mutation } from "./lib/functions";
 import { Id } from "./_generated/dataModel";
 import {
   getAuthUserId,
@@ -86,8 +87,7 @@ export const completeOnboarding = mutation({
       await ctx.db.patch(userId, {
         role: args.role,
         contacts: user.contacts ?? [],
-        updatedAt: Date.now(),
-      });
+              });
     }
 
     // Check for pending invites for this email and auto-accept
@@ -107,7 +107,6 @@ export const completeOnboarding = mutation({
             status: "accepted",
             acceptedAt: now,
             acceptedByUserId: userId,
-            updatedAt: now,
           });
 
           // Add contact relationship (inviter -> invitee)
@@ -121,7 +120,7 @@ export const completeOnboarding = mutation({
                 addedAt: Date.now(),
               },
             ];
-            await ctx.db.patch(invite.fromUserId, { contacts: updatedContacts, updatedAt: Date.now() });
+            await ctx.db.patch(invite.fromUserId, { contacts: updatedContacts });
           }
         }
       }
@@ -145,7 +144,7 @@ export const updateProfile = mutation({
     if (args.image !== undefined) updates.image = args.image;
 
     if (Object.keys(updates).length > 0) {
-      await ctx.db.patch(user._id, { ...updates, updatedAt: Date.now() });
+      await ctx.db.patch(user._id, { ...updates });
     }
 
     return user._id;
@@ -246,7 +245,7 @@ export const addContact = mutation({
       },
     ];
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts, updatedAt: Date.now() });
+    await ctx.db.patch(user._id, { contacts: updatedContacts });
     return user._id;
   },
 });
@@ -273,7 +272,7 @@ export const updateContactAlias = mutation({
       alias: args.alias ?? undefined,
     };
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts, updatedAt: Date.now() });
+    await ctx.db.patch(user._id, { contacts: updatedContacts });
     return user._id;
   },
 });
@@ -292,7 +291,7 @@ export const removeContact = mutation({
       throw new Error("Contact not found");
     }
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts, updatedAt: Date.now() });
+    await ctx.db.patch(user._id, { contacts: updatedContacts });
     return user._id;
   },
 });
@@ -317,7 +316,7 @@ export const toggleContactStar = mutation({
       starred: !currentStarred,
     };
 
-    await ctx.db.patch(user._id, { contacts: updatedContacts, updatedAt: Date.now() });
+    await ctx.db.patch(user._id, { contacts: updatedContacts });
     return !currentStarred; // Return new starred state
   },
 });
@@ -332,8 +331,7 @@ export const archiveMyAccount = mutation({
       isArchived: true,
       archivedAt: Date.now(),
       archiveReason: args.reason ?? "User requested account deletion",
-      updatedAt: Date.now(),
-    });
+          });
 
     return user._id;
   },

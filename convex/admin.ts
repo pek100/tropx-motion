@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query } from "./_generated/server";
+import { mutation } from "./lib/functions";
 import { requireRole } from "./lib/auth";
 import { ROLES } from "./schema";
 
@@ -146,7 +147,7 @@ export const setUserRole = mutation({
       throw new Error("Cannot change role of archived user");
     }
 
-    await ctx.db.patch(args.userId, { role: args.role, updatedAt: Date.now() });
+    await ctx.db.patch(args.userId, { role: args.role });
 
     return args.userId;
   },
@@ -180,7 +181,6 @@ export const archiveUser = mutation({
       isArchived: true,
       archivedAt: now,
       archiveReason: args.reason ?? "Archived by admin",
-      updatedAt: now,
     });
 
     return args.userId;
@@ -206,8 +206,7 @@ export const restoreUser = mutation({
       isArchived: false,
       archivedAt: undefined,
       archiveReason: undefined,
-      updatedAt: Date.now(),
-    });
+          });
 
     return args.userId;
   },
@@ -277,7 +276,7 @@ export const permanentlyDeleteUser = mutation({
         const updatedContacts = (otherUser.contacts ?? []).filter(
           (c) => c.userId !== args.userId
         );
-        await ctx.db.patch(otherUser._id, { contacts: updatedContacts, updatedAt: Date.now() });
+        await ctx.db.patch(otherUser._id, { contacts: updatedContacts });
       }
     }
 

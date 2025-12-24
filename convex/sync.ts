@@ -38,7 +38,7 @@ export const getUserTimestamp = query({
 
     return {
       _id: user._id,
-      updatedAt: user.updatedAt ?? user._creationTime,
+      updatedAt: user.modifiedAt ?? user._creationTime,
     };
   },
 });
@@ -60,7 +60,7 @@ export const getContactsTimestamp = query({
     // Contacts are embedded in user, so return user's timestamp
     return {
       _id: user._id,
-      updatedAt: user.updatedAt ?? user._creationTime,
+      updatedAt: user.modifiedAt ?? user._creationTime,
     };
   },
 });
@@ -132,7 +132,7 @@ export const getNotificationTimestamps = query({
 
     return notifications.map((n) => ({
       _id: n._id,
-      updatedAt: n.updatedAt ?? n._creationTime,
+      updatedAt: n.modifiedAt ?? n._creationTime,
     }));
   },
 });
@@ -162,7 +162,7 @@ export const getInviteTimestamps = query({
 
     return invites.map((i) => ({
       _id: i._id,
-      updatedAt: i.updatedAt ?? i._creationTime,
+      updatedAt: i.modifiedAt ?? i._creationTime,
     }));
   },
 });

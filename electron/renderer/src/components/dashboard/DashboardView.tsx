@@ -4,8 +4,8 @@
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useMutation, useConvex } from "convex/react";
-import { useSyncedQuery, useCachedQuery, useCacheOptional, cacheQuery } from "@/lib/cache";
+import { useMutation, useConvex, useQuery } from "@/lib/convex";
+import { useSyncOptional } from "@/lib/cache";
 import { api } from "../../../../../convex/_generated/api";
 import { Id } from "../../../../../convex/_generated/dataModel";
 import { mergeChunks, type PackedChunkData } from "../../../../../shared/QuaternionCodec";
@@ -158,15 +158,15 @@ export function DashboardView({ className }: DashboardViewProps) {
   // Convex client for manual queries
   const convex = useConvex();
 
-  // Cache context for imperative queries
-  const cache = useCacheOptional();
+  // Sync context for imperative caching
+  const sync = useSyncOptional();
 
-  // Queries (using synced query for offline + real-time sync)
-  const { data: metricsHistory, isLoading: isMetricsLoading } = useSyncedQuery(
+  // Queries
+  const metricsHistory = useQuery(
     api.dashboard.getPatientMetricsHistory,
-    selectedPatientId ? { subjectId: selectedPatientId } : "skip",
-    { timestamps: api.sync.getSessionTimestamps }
+    selectedPatientId ? { subjectId: selectedPatientId } : "skip"
   );
+  const isMetricsLoading = metricsHistory === undefined;
 
   // State for session waveform data (loaded on demand with decompression)
   const [sessionPackedData, setSessionPackedData] = useState<PackedChunkData | null>(null);
@@ -187,15 +187,20 @@ export function DashboardView({ className }: DashboardViewProps) {
     const loadSessionData = async () => {
       setIsSessionLoading(true);
       try {
-        // Use cacheQuery to cache recording data
-        const { data: result } = await cacheQuery(
-          cache?.store ?? null,
-          "recordingChunks.getSessionWithChunks",
-          { sessionId: selectedSessionId },
-          () => convex.query(api.recordingChunks.getSessionWithChunks, {
+        // Check sync cache first
+        const cacheKey = `recordingChunks:getSessionWithChunks:${JSON.stringify({ sessionId: selectedSessionId })}`;
+        let result = sync?.getQuery(cacheKey) as { session: any; chunks: any[] } | undefined;
+
+        // If not cached, fetch from Convex
+        if (!result) {
+          result = await convex.query(api.recordingChunks.getSessionWithChunks, {
             sessionId: selectedSessionId,
-          })
-        );
+          });
+          // Cache the result
+          if (result && sync) {
+            sync.setQuery(cacheKey, result);
+          }
+        }
 
         // Defensive: validate cached data structure
         if (!result || typeof result !== 'object') {
@@ -262,10 +267,10 @@ export function DashboardView({ className }: DashboardViewProps) {
     };
 
     loadSessionData();
-  }, [selectedSessionId, convex, cache?.store]);
+  }, [selectedSessionId, convex, sync]);
 
   // Query for asymmetry events (for SessionChart overlay)
-  const { data: asymmetryEvents } = useCachedQuery(
+  const asymmetryEvents = useQuery(
     api.recordingMetrics.getSessionAsymmetryEvents,
     selectedSessionId ? { sessionId: selectedSessionId } : "skip"
   );

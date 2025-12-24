@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { query, mutation, internalMutation, action } from "./_generated/server";
+import { query, action } from "./_generated/server";
+import { mutation, internalMutation } from "./lib/functions";
 import { internal } from "./_generated/api";
 import { requireUser, getCurrentUser } from "./lib/auth";
 import { NOTIFICATION_TYPES } from "./schema";
@@ -20,17 +21,19 @@ export const listForUser = query({
 
     const limit = Math.min(args.limit ?? 50, 100);
 
-    let query = ctx.db.query("notifications");
-
-    if (args.unreadOnly) {
-      query = query.withIndex("by_user_unread", (q) =>
-        q.eq("userId", user._id).eq("read", false)
-      );
-    } else {
-      query = query.withIndex("by_user", (q) => q.eq("userId", user._id));
-    }
-
-    const notifications = await query.order("desc").take(limit);
+    const notifications = args.unreadOnly
+      ? await ctx.db
+          .query("notifications")
+          .withIndex("by_user_unread", (q) =>
+            q.eq("userId", user._id).eq("read", false)
+          )
+          .order("desc")
+          .take(limit)
+      : await ctx.db
+          .query("notifications")
+          .withIndex("by_user", (q) => q.eq("userId", user._id))
+          .order("desc")
+          .take(limit);
 
     // Map _creationTime to createdAt for frontend compatibility
     return notifications.map((n) => ({
@@ -79,7 +82,7 @@ export const markRead = mutation({
       throw new Error("Not authorized");
     }
 
-    await ctx.db.patch(args.notificationId, { read: true, updatedAt: Date.now() });
+    await ctx.db.patch(args.notificationId, { read: true });
 
     return { success: true };
   },
@@ -98,9 +101,8 @@ export const markAllRead = mutation({
       )
       .collect();
 
-    const now = Date.now();
     for (const notification of unread) {
-      await ctx.db.patch(notification._id, { read: true, updatedAt: now });
+      await ctx.db.patch(notification._id, { read: true });
     }
 
     return { success: true, count: unread.length };
@@ -144,7 +146,6 @@ export const create = internalMutation({
     data: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
-    const now = Date.now();
     const notificationId = await ctx.db.insert("notifications", {
       userId: args.userId,
       type: args.type,
@@ -152,7 +153,6 @@ export const create = internalMutation({
       body: args.body,
       data: args.data,
       read: false,
-      updatedAt: now,
     });
 
     // Check if user wants email notifications

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useQuery } from '@/lib/convex';
 import { api } from '../../../../convex/_generated/api';
-import { useSyncedQuery } from '@/lib/cache';
 import { X, Sparkles, Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -29,10 +29,8 @@ export function TagsInput({
   const editInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch user's tags + defaults (synced with timestamps)
-  const { data: tagsData } = useSyncedQuery(api.tags.getTagsWithDefaults, { limit: 20 }, {
-    timestamps: api.sync.getTagTimestamps,
-  });
+  // Fetch user's tags + defaults
+  const tagsData = useQuery(api.tags.getTagsWithDefaults, { limit: 20 });
 
   // Merge all tags for suggestions/recent
   const allTags = useMemo(() => {

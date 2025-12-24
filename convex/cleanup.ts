@@ -1,4 +1,4 @@
-import { internalMutation } from "./_generated/server";
+import { internalMutation } from "./lib/functions";
 
 // Constants
 const ARCHIVE_RETENTION_DAYS = 30;
@@ -74,7 +74,7 @@ export const cleanupArchivedData = internalMutation({
             const updatedContacts = (otherUser.contacts ?? []).filter(
               (c) => c.userId !== user._id
             );
-            await ctx.db.patch(otherUser._id, { contacts: updatedContacts, updatedAt: Date.now() });
+            await ctx.db.patch(otherUser._id, { contacts: updatedContacts });
           }
         }
 

@@ -370,3 +370,36 @@ export const batchRecomputeAllMetrics = internalAction({
     };
   },
 });
+
+// ─────────────────────────────────────────────────────────────────
+// Timestamp Field Stats
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Count documents with/without modifiedAt field.
+ *
+ * Usage: npx convex run migrations:countTimestampStatus
+ */
+export const countTimestampStatus = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const sessions = await ctx.db.query("recordingSessions").collect();
+
+    let withTimestamp = 0;
+    let withoutTimestamp = 0;
+
+    for (const session of sessions) {
+      if (session.modifiedAt !== undefined) {
+        withTimestamp++;
+      } else {
+        withoutTimestamp++;
+      }
+    }
+
+    return {
+      total: sessions.length,
+      withTimestamp,
+      withoutTimestamp,
+    };
+  },
+});

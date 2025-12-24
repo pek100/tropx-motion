@@ -1,8 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "@/lib/convex";
 import { api } from "../../../../convex/_generated/api";
-import { useSyncedQuery } from "@/lib/cache";
 import { Id } from "../../../../convex/_generated/dataModel";
 import {
   XIcon,
@@ -55,15 +54,11 @@ export function PatientSearchModal({
   const [optimisticStars, setOptimisticStars] = useState<Map<string, boolean>>(new Map());
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch contacts from Convex (synced with timestamps)
-  const { data: contacts } = useSyncedQuery(api.users.getContacts, {}, {
-    timestamps: api.sync.getContactsTimestamp,
-  }) as { data: Contact[] | undefined };
+  // Fetch contacts from Convex
+  const contacts = useQuery(api.users.getContacts, {}) as Contact[] | undefined;
 
-  // Fetch current user for "Me" option (synced)
-  const { data: currentUser } = useSyncedQuery(api.users.getMe, {}, {
-    timestamps: api.sync.getUserTimestamp,
-  });
+  // Fetch current user for "Me" option
+  const currentUser = useQuery(api.users.getMe, {});
 
   // Create "Me" contact option
   const meContact: Contact | null = useMemo(() => {

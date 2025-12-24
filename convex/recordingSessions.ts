@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query } from "./_generated/server";
+import { mutation } from "./lib/functions";
 import { Id } from "./_generated/dataModel";
 import { requireUser, getCurrentUser } from "./lib/auth";
 import { COMPRESSION, METRIC_STATUS } from "./schema";
@@ -587,7 +588,6 @@ export const updateSession = mutation({
 
       const currentHistory = session.modificationHistory ?? [];
       updates.modificationHistory = [...currentHistory, historyEntry];
-      updates.modifiedAt = now;
 
       // Check if subject was changed to a different user (not the owner)
       const subjectDiff = diffs.find(d => d.field === "subjectId");

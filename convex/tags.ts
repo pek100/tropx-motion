@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query } from "./_generated/server";
+import { mutation } from "./lib/functions";
 import { requireAuth, getAuthUserId } from "./lib/auth";
 
 const MAX_RECENT_TAGS = 20;

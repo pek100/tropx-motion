@@ -22,9 +22,9 @@ import { useRecordingExport } from "@/hooks/useRecordingExport"
 import { useCurrentUser } from "@/hooks/useCurrentUser"
 import { persistence } from "@/lib/persistence"
 import { UIProfileProvider, useUIProfile } from "@/lib/ui-profiles"
-import { useConvex } from "convex/react"
+import { useConvex } from "@/lib/convex"
 import { api } from "../../../convex/_generated/api"
-import { useCacheOptional, cacheQuery } from "@/lib/cache"
+import { useSyncOptional } from "@/lib/cache"
 import { mergeChunks, unpackToAngles, type PackedChunkData } from "../../../shared/QuaternionCodec"
 import { decompressAllChunks, type CompressedChunk, type SessionMetadata } from "../../../shared/compression/decompressSession"
 import type { ImportedSample } from "@/lib/recording"
@@ -54,7 +54,7 @@ function AppContent() {
   const { toast } = useToast()
   const { profile, clearOverride } = useUIProfile()
   const convex = useConvex()
-  const cache = useCacheOptional()
+  const sync = useSyncOptional()
   const { isAuthenticated, isLoading: isAuthLoading, signIn } = useCurrentUser()
 
   // Auth modal state (for toast sign-in actions)
@@ -689,12 +689,15 @@ function AppContent() {
       let totalSampleCount = 0
 
       // First, try new compressed format (sessions + recordingChunks tables) - cached for offline
-      const { data: compressedResult } = await cacheQuery(
-        cache?.store ?? null,
-        "recordingChunks.getSessionWithChunks",
-        { sessionId },
-        () => convex.query(api.recordingChunks.getSessionWithChunks, { sessionId })
-      )
+      const cacheKey = `recordingChunks:getSessionWithChunks:${JSON.stringify({ sessionId })}`
+      let compressedResult = sync?.getQuery(cacheKey) as { session: any; chunks: any[] } | undefined
+
+      if (!compressedResult) {
+        compressedResult = await convex.query(api.recordingChunks.getSessionWithChunks, { sessionId })
+        if (compressedResult && sync) {
+          sync.setQuery(cacheKey, compressedResult)
+        }
+      }
 
       if (compressedResult && compressedResult.chunks.length > 0) {
         // New compressed format found - decompress
@@ -780,7 +783,7 @@ function AppContent() {
     } finally {
       setIsLoadingSession(false)
     }
-  }, [convex, cache?.store, toast])
+  }, [convex, sync, toast])
 
   // Handle CSV import from LoadModal
   const handleImportCSVFromModal = useCallback(async () => {

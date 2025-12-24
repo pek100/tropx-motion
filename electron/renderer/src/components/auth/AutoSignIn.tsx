@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuthActions } from "@convex-dev/auth/react";
-import { useConvexAuth, useAction } from "convex/react";
+import { useConvexAuth, useAction } from "@/lib/convex";
 import { api } from "../../../../../convex/_generated/api";
 
 const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';

@@ -425,6 +425,12 @@ const softDeleteFields = {
   archiveReason: v.optional(v.string()),
 };
 
+// Standard timestamp field - auto-set by triggers on every mutation
+// Note: Cannot use underscore prefix (_modifiedAt) as Convex reserves _ for system fields
+const timestampField = {
+  modifiedAt: v.optional(v.number()),
+};
+
 // ─────────────────────────────────────────────────────────────────
 // Schema
 // ─────────────────────────────────────────────────────────────────
@@ -455,11 +461,11 @@ export default defineSchema({
     kekVersion: v.optional(v.number()), // Rotation counter (increments on rotate)
     kekRotatedAt: v.optional(v.number()), // Timestamp of last rotation
 
-    // Cache sync
-    updatedAt: v.optional(v.number()),
-
     // Soft delete
     ...softDeleteFields,
+
+    // Auto-updated timestamp
+    ...timestampField,
   })
     .index("email", ["email"])
     .index("by_role", ["role"])
@@ -508,11 +514,13 @@ export default defineSchema({
     metricsStatus: v.optional(metricStatusValidator),
 
     // Audit Trail
-    modifiedAt: v.optional(v.number()),
     modificationHistory: v.optional(v.array(modificationHistoryEntryValidator)),
 
     // Soft Delete
     ...softDeleteFields,
+
+    // Auto-updated timestamp
+    ...timestampField,
   })
     .index("by_sessionId", ["sessionId"])
     .index("by_owner", ["ownerId"])
@@ -603,6 +611,9 @@ export default defineSchema({
 
     // Overall Performance Index (OPI)
     opiResult: v.optional(opiResultValidator),
+
+    // Auto-updated timestamp
+    ...timestampField,
   })
     .index("by_session", ["sessionId"])
     .index("by_status", ["status"]),
@@ -617,8 +628,9 @@ export default defineSchema({
     expiresAt: v.number(),
     acceptedAt: v.optional(v.number()),
     acceptedByUserId: v.optional(v.id("users")),
-    // Cache sync
-    updatedAt: v.optional(v.number()),
+
+    // Auto-updated timestamp
+    ...timestampField,
   })
     .index("by_token", ["token"])
     .index("by_from_user", ["fromUserId", "status"])
@@ -633,8 +645,9 @@ export default defineSchema({
     body: v.string(),
     data: v.optional(v.any()),
     read: v.boolean(),
-    // Cache sync
-    updatedAt: v.optional(v.number()),
+
+    // Auto-updated timestamp
+    ...timestampField,
   })
     .index("by_user", ["userId"])
     .index("by_user_unread", ["userId", "read"]),
@@ -646,6 +659,9 @@ export default defineSchema({
     category: v.optional(v.string()),
     lastUsedAt: v.number(),
     usageCount: v.number(),
+
+    // Auto-updated timestamp
+    ...timestampField,
   })
     .index("by_user", ["userId", "lastUsedAt"])
     .index("by_user_tag", ["userId", "tag"]),

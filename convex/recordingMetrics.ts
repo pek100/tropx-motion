@@ -4,7 +4,8 @@
  */
 
 import { v } from "convex/values";
-import { query, mutation, internalMutation, internalAction, internalQuery } from "./_generated/server";
+import { query, internalAction, internalQuery } from "./_generated/server";
+import { mutation, internalMutation } from "./lib/functions";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { METRIC_STATUS, ACTIVITY_PROFILES } from "./schema";

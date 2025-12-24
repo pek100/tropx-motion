@@ -1,45 +1,40 @@
 /**
- * Encrypted Offline Cache
+ * Unified Cache & Sync System
  *
- * Provides client-side caching for Convex queries with:
- * - AES-256-GCM encryption at rest
- * - Per-user IndexedDB storage
- * - LRU eviction (500MB limit)
- * - Offline mutation queuing
- * - Key rotation support
+ * Provides timestamp-based sync with offline caching:
+ * - SyncProvider: Unified queries Map for all cached data
+ * - Custom useQuery from @/lib/convex handles reactive queries with caching
+ * - For imperative queries, use useSyncOptional() + getQuery/setQuery directly
+ * - Offline mutation queuing via useCachedMutation
  *
  * Usage:
  * ```tsx
- * // Wrap app with CacheProvider
- * <CacheProvider>
- *   <App />
- * </CacheProvider>
+ * // Reactive queries (auto-cached)
+ * import { useQuery } from '@/lib/convex';
+ * const data = useQuery(api.users.getMe, {});
  *
- * // Use cached queries (drop-in replacement for useQuery)
- * const { data, isCached } = useCachedQuery(api.dashboard.getPatientMetricsHistory, { subjectId });
- *
- * // Use offline-aware mutations
- * const { mutate, isOffline } = useCachedMutation(api.sessions.update);
+ * // Imperative queries (manual cache)
+ * const sync = useSyncOptional();
+ * const cacheKey = `queryName:${JSON.stringify(args)}`;
+ * let result = sync?.getQuery(cacheKey);
+ * if (!result) {
+ *   result = await convex.query(api.someQuery, args);
+ *   sync?.setQuery(cacheKey, result);
+ * }
  * ```
  */
 
-// Provider
+// Sync Provider (unified cache for queries)
+export { SyncProvider, useSync, useSyncOptional } from "./SyncProvider";
+export type { SyncContextValue } from "./SyncProvider";
+
+// Cache Provider (offline mutations, security, encryption)
 export { CacheProvider, useCache, useCacheOptional } from "./CacheProvider";
 export type { CacheContextValue } from "./CacheProvider";
 
-// Hooks
-export { useCachedQuery, generateCacheKey } from "./useCachedQuery";
-export type { UseCachedQueryOptions, UseCachedQueryResult } from "./useCachedQuery";
-
-export { useSyncedQuery } from "./useSyncedQuery";
-export type { UseSyncedQueryOptions, UseSyncedQueryResult, TimestampEntry } from "./useSyncedQuery";
-
+// Offline Mutations
 export { useCachedMutation, usePendingMutations } from "./useCachedMutation";
 export type { UseCachedMutationOptions, UseCachedMutationResult } from "./useCachedMutation";
-
-// Imperative query caching (for convex.query() calls)
-export { cacheQuery, getCachedData, invalidateCache } from "./cacheQuery";
-export type { CacheQueryOptions, CacheQueryResult } from "./cacheQuery";
 
 // Store (for advanced usage)
 export { CacheStore, deleteUserCache, listCacheDatabases } from "./store";

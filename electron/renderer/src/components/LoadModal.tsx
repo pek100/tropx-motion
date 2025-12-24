@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { useQuery, useMutation } from 'convex/react';
+import { useQuery, useMutation } from '@/lib/convex';
 import { api } from '../../../../convex/_generated/api';
 import { Id } from '../../../../convex/_generated/dataModel';
 import { SvgPreviewChart, type PreviewPaths } from './SvgPreviewChart';
