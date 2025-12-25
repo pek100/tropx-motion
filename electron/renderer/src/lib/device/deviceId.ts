@@ -55,10 +55,10 @@ const OS_PATTERNS: [RegExp, string][] = [
   [/Windows NT 10/i, "Windows"],
   [/Windows NT/i, "Windows"],
   [/Mac OS X/i, "macOS"],
-  [/Linux/i, "Linux"],
-  [/Android/i, "Android"],
+  [/Android/i, "Android"], // Check Android before Linux (Android UA contains "Linux")
   [/iPhone|iPad|iPod/i, "iOS"],
   [/CrOS/i, "ChromeOS"],
+  [/Linux/i, "Linux"], // Generic Linux last
 ];
 
 /** Parse user agent string into device info */
