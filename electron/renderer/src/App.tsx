@@ -40,6 +40,25 @@ function isOAuthCallback(): boolean {
   return params.has('code') || params.has('error');
 }
 
+// Track OAuth flow via sessionStorage (persists across OAuth redirect)
+const OAUTH_IN_PROGRESS_KEY = 'tropx_oauth_in_progress';
+
+function setOAuthInProgress(): void {
+  sessionStorage.setItem(OAUTH_IN_PROGRESS_KEY, Date.now().toString());
+}
+
+function isOAuthInProgress(): boolean {
+  const timestamp = sessionStorage.getItem(OAUTH_IN_PROGRESS_KEY);
+  if (!timestamp) return false;
+  // Consider OAuth in progress if started within last 2 minutes
+  const elapsed = Date.now() - parseInt(timestamp, 10);
+  return elapsed < 2 * 60 * 1000;
+}
+
+function clearOAuthInProgress(): void {
+  sessionStorage.removeItem(OAUTH_IN_PROGRESS_KEY);
+}
+
 interface PendingState {
   operations: Set<PendingOp>;
   disconnecting: Set<string>;
@@ -83,8 +102,10 @@ function AppContent() {
   // Detect stale tokens and auto-trigger re-auth
   useEffect(() => {
     // Only check when auth loading is complete
-    // Skip during OAuth callback - AutoSignIn.tsx handles this
-    if (isAuthLoading || hasAttemptedAutoReauth || isOAuthCallback()) return
+    // Skip if: still loading, already attempted, OAuth callback in URL, or OAuth in progress
+    if (isAuthLoading || hasAttemptedAutoReauth || isOAuthCallback() || isOAuthInProgress()) {
+      return;
+    }
 
     // Check if we have tokens in localStorage but Convex says not authenticated
     const hasJWT = localStorage.getItem('__convexAuthJWT') ||
@@ -112,17 +133,25 @@ function AppContent() {
           duration: 5000,
         })
       } else {
-        // Web: Directly redirect to OAuth
+        // Web: Directly redirect to OAuth - mark as in progress
         console.log('[Auth] Redirecting to OAuth...')
+        setOAuthInProgress()
         signIn()
       }
     }
   }, [isAuthenticated, isAuthLoading, hasAttemptedAutoReauth, toast, signIn])
 
-  // Reset auto-reauth flag when user successfully authenticates
+  // Clear OAuth in progress and reset auto-reauth flag when user successfully authenticates
   useEffect(() => {
-    if (isAuthenticated && hasAttemptedAutoReauth) {
-      setHasAttemptedAutoReauth(false)
+    if (isAuthenticated) {
+      // Clear OAuth tracking after a short delay to ensure auth is stable
+      const timer = setTimeout(() => {
+        clearOAuthInProgress()
+        if (hasAttemptedAutoReauth) {
+          setHasAttemptedAutoReauth(false)
+        }
+      }, 1000)
+      return () => clearTimeout(timer)
     }
   }, [isAuthenticated, hasAttemptedAutoReauth])
   const refreshTimeoutRef = useRef<NodeJS.Timeout | null>(null)

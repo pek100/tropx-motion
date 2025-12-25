@@ -4,6 +4,17 @@ import { api } from "../../../../convex/_generated/api";
 import { isConvexConfigured, useQuery } from "../lib/customConvex";
 import { isElectron } from "../lib/platform";
 
+// Track OAuth flow via sessionStorage (shared with App.tsx)
+const OAUTH_IN_PROGRESS_KEY = 'tropx_oauth_in_progress';
+
+function setOAuthInProgress(): void {
+  sessionStorage.setItem(OAUTH_IN_PROGRESS_KEY, Date.now().toString());
+}
+
+function clearOAuthInProgress(): void {
+  sessionStorage.removeItem(OAUTH_IN_PROGRESS_KEY);
+}
+
 export type UserRole = "physiotherapist" | "patient" | "admin";
 
 export interface CurrentUser {
@@ -70,10 +81,15 @@ function useCurrentUserEnabled(): UseCurrentUserResult {
   const needsOnboarding = userData?.needsOnboarding ?? false;
 
   const signIn = async () => {
+    // Mark OAuth as in progress before redirecting
+    setOAuthInProgress();
     await authActions.signIn("google");
   };
 
   const signOut = async () => {
+    // Clear OAuth tracking
+    clearOAuthInProgress();
+
     // Clear all Convex auth tokens from localStorage
     // This ensures both namespaced and non-namespaced keys are removed
     const keysToRemove: string[] = [];
