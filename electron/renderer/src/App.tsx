@@ -59,6 +59,42 @@ function clearOAuthInProgress(): void {
   sessionStorage.removeItem(OAUTH_IN_PROGRESS_KEY);
 }
 
+/**
+ * Check if JWT was issued recently (within last 30 seconds).
+ * If so, it's likely fresh from OAuth and we shouldn't treat it as stale.
+ */
+function isJWTFresh(): boolean {
+  try {
+    // Find any Convex auth JWT in localStorage
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('__convexAuthJWT')) {
+        const jwt = localStorage.getItem(key);
+        if (!jwt) continue;
+
+        // Decode JWT payload (base64url)
+        const parts = jwt.split('.');
+        if (parts.length !== 3) continue;
+
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+
+        // Check if issued within last 30 seconds
+        if (payload.iat) {
+          const issuedAt = payload.iat * 1000; // Convert to ms
+          const elapsed = Date.now() - issuedAt;
+          if (elapsed < 30 * 1000) {
+            console.log('[Auth] JWT is fresh, issued', Math.round(elapsed / 1000), 'seconds ago');
+            return true;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Auth] Failed to check JWT freshness:', err);
+  }
+  return false;
+}
+
 interface PendingState {
   operations: Set<PendingOp>;
   disconnecting: Set<string>;
@@ -101,9 +137,24 @@ function AppContent() {
 
   // Detect stale tokens and auto-trigger re-auth
   useEffect(() => {
+    const oauthInProgress = isOAuthInProgress();
+    const oauthCallback = isOAuthCallback();
+    const jwtFresh = isJWTFresh();
+
+    console.log('[Auth] Stale token check:', {
+      isAuthLoading,
+      isAuthenticated,
+      hasAttemptedAutoReauth,
+      oauthCallback,
+      oauthInProgress,
+      jwtFresh,
+      sessionStorageFlag: sessionStorage.getItem(OAUTH_IN_PROGRESS_KEY),
+    });
+
     // Only check when auth loading is complete
-    // Skip if: still loading, already attempted, OAuth callback in URL, or OAuth in progress
-    if (isAuthLoading || hasAttemptedAutoReauth || isOAuthCallback() || isOAuthInProgress()) {
+    // Skip if: still loading, already attempted, OAuth callback in URL, OAuth in progress, or JWT is fresh
+    if (isAuthLoading || hasAttemptedAutoReauth || oauthCallback || oauthInProgress || jwtFresh) {
+      console.log('[Auth] Skipping stale token check - conditions not met');
       return;
     }
 

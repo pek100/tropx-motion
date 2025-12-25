@@ -89,6 +89,53 @@ function isOAuthCallback(): boolean {
   return params.has('code') || params.has('error');
 }
 
+// Track OAuth flow via sessionStorage (shared with App.tsx and useCurrentUser)
+const OAUTH_IN_PROGRESS_KEY = 'tropx_oauth_in_progress';
+
+function isOAuthInProgress(): boolean {
+  const timestamp = sessionStorage.getItem(OAUTH_IN_PROGRESS_KEY);
+  if (!timestamp) return false;
+  // Consider OAuth in progress if started within last 2 minutes
+  const elapsed = Date.now() - parseInt(timestamp, 10);
+  return elapsed < 2 * 60 * 1000;
+}
+
+function setOAuthInProgress(): void {
+  sessionStorage.setItem(OAUTH_IN_PROGRESS_KEY, Date.now().toString());
+}
+
+/**
+ * Check if JWT was issued recently (within last 30 seconds).
+ * If so, it's likely fresh from OAuth and we shouldn't treat it as stale.
+ */
+function isJWTFresh(): boolean {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('__convexAuthJWT')) {
+        const jwt = localStorage.getItem(key);
+        if (!jwt) continue;
+
+        const parts = jwt.split('.');
+        if (parts.length !== 3) continue;
+
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+
+        if (payload.iat) {
+          const issuedAt = payload.iat * 1000;
+          const elapsed = Date.now() - issuedAt;
+          if (elapsed < 30 * 1000) {
+            return true;
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  return false;
+}
+
 /**
  * AutoSignIn Component
  *
@@ -168,10 +215,14 @@ export function AutoSignIn() {
   useEffect(() => {
     if (isLoading || hasCheckedStaleTokens) return;
 
-    // IMPORTANT: Skip during OAuth callback - Convex Auth is still processing tokens
-    // Clearing tokens here would cause an infinite auth loop!
-    if (isOAuthCallback()) {
-      console.log('[AutoSignIn] OAuth callback detected - skipping stale token check');
+    // IMPORTANT: Skip during OAuth callback, OAuth in progress, or if JWT is fresh
+    // Convex Auth is still processing tokens - clearing them would cause an infinite auth loop!
+    if (isOAuthCallback() || isOAuthInProgress() || isJWTFresh()) {
+      console.log('[AutoSignIn] OAuth in progress or JWT fresh - skipping stale token check', {
+        isOAuthCallback: isOAuthCallback(),
+        isOAuthInProgress: isOAuthInProgress(),
+        isJWTFresh: isJWTFresh(),
+      });
       setHasCheckedStaleTokens(true);
       return;
     }
@@ -250,6 +301,9 @@ export function AutoSignIn() {
     if (isAutoSignIn && !triggered && !isAuthenticated) {
       console.log('[AutoSignIn] Triggering Google OAuth, electronAuth:', isElectronAuth);
       setTriggered(true);
+
+      // Mark OAuth as in progress before redirecting
+      setOAuthInProgress();
 
       // Trigger Google sign-in - this will redirect to Google OAuth
       signIn("google").catch((err) => {
