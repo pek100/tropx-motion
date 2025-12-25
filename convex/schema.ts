@@ -109,6 +109,34 @@ export const OPI_GRADES = {
   F: "F",
 } as const;
 
+// ─── Horus Constants ───
+
+export const HORUS_PIPELINE_STATUS = {
+  PENDING: "pending",
+  DECOMPOSITION: "decomposition",
+  RESEARCH: "research",
+  ANALYSIS: "analysis",
+  VALIDATION: "validation",
+  COMPLETE: "complete",
+  ERROR: "error",
+} as const;
+
+export const HORUS_AGENTS = {
+  DECOMPOSITION: "decomposition",
+  RESEARCH: "research",
+  ANALYSIS: "analysis",
+  VALIDATOR: "validator",
+  PROGRESS: "progress",
+} as const;
+
+export const HORUS_QUALITY_TIERS = {
+  S: "S",
+  A: "A",
+  B: "B",
+  C: "C",
+  D: "D",
+} as const;
+
 // ─────────────────────────────────────────────────────────────────
 // Validators
 // ─────────────────────────────────────────────────────────────────
@@ -194,6 +222,47 @@ const opiMovementTypeValidator = v.union(
   v.literal("bilateral"),
   v.literal("unilateral")
 );
+
+// ─── Horus Validators ───
+
+const horusPipelineStatusValidator = v.union(
+  v.literal(HORUS_PIPELINE_STATUS.PENDING),
+  v.literal(HORUS_PIPELINE_STATUS.DECOMPOSITION),
+  v.literal(HORUS_PIPELINE_STATUS.RESEARCH),
+  v.literal(HORUS_PIPELINE_STATUS.ANALYSIS),
+  v.literal(HORUS_PIPELINE_STATUS.VALIDATION),
+  v.literal(HORUS_PIPELINE_STATUS.COMPLETE),
+  v.literal(HORUS_PIPELINE_STATUS.ERROR)
+);
+
+const horusAgentValidator = v.union(
+  v.literal(HORUS_AGENTS.DECOMPOSITION),
+  v.literal(HORUS_AGENTS.RESEARCH),
+  v.literal(HORUS_AGENTS.ANALYSIS),
+  v.literal(HORUS_AGENTS.VALIDATOR),
+  v.literal(HORUS_AGENTS.PROGRESS)
+);
+
+const horusQualityTierValidator = v.union(
+  v.literal(HORUS_QUALITY_TIERS.S),
+  v.literal(HORUS_QUALITY_TIERS.A),
+  v.literal(HORUS_QUALITY_TIERS.B),
+  v.literal(HORUS_QUALITY_TIERS.C),
+  v.literal(HORUS_QUALITY_TIERS.D)
+);
+
+const horusTokenUsageValidator = v.object({
+  inputTokens: v.number(),
+  outputTokens: v.number(),
+  totalTokens: v.number(),
+  estimatedCost: v.float64(),
+});
+
+const horusErrorValidator = v.object({
+  agent: horusAgentValidator,
+  message: v.string(),
+  retryable: v.optional(v.boolean()),
+});
 
 // ─── Metric Validators ───
 
@@ -739,4 +808,113 @@ export default defineSchema({
     rejectedArgs: v.optional(v.any()), // The args that were rejected (for debugging)
   })
     .index("by_user", ["userId"]),
+
+  // ═══════════════════════════════════════════════════════════════
+  // HORUS - Multi-Agent Analysis System
+  // ═══════════════════════════════════════════════════════════════
+
+  // ─── Horus Analyses (Main Results) ───
+  horusAnalyses: defineTable({
+    sessionId: v.string(),
+    patientId: v.optional(v.id("users")),
+    status: horusPipelineStatusValidator,
+
+    // Agent outputs (stored as JSON for flexibility)
+    decomposition: v.optional(v.any()),
+    research: v.optional(v.any()),
+    analysis: v.optional(v.any()),
+    validation: v.optional(v.any()),
+
+    // Token usage per agent
+    tokenUsage: v.optional(
+      v.object({
+        decomposition: v.optional(horusTokenUsageValidator),
+        research: v.optional(horusTokenUsageValidator),
+        analysis: v.optional(horusTokenUsageValidator),
+        validator: v.optional(horusTokenUsageValidator),
+        progress: v.optional(horusTokenUsageValidator),
+      })
+    ),
+    totalCost: v.optional(v.float64()),
+
+    // Timestamps
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+
+    // Error info
+    error: v.optional(horusErrorValidator),
+
+    // Auto-updated timestamp
+    ...timestampField,
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_patient", ["patientId"])
+    .index("by_status", ["status"]),
+
+  // ─── Horus Research Cache (Vector Search) ───
+  horusResearchCache: defineTable({
+    // Embedding vector for semantic search (768 dimensions for text-embedding-004)
+    embedding: v.array(v.float64()),
+
+    // Search metadata
+    searchTerms: v.array(v.string()),
+    tier: horusQualityTierValidator,
+
+    // Content
+    citation: v.string(),
+    url: v.optional(v.string()),
+    findings: v.array(v.string()),
+    relevanceScore: v.float64(),
+
+    // Usage tracking
+    cachedAt: v.number(),
+    hitCount: v.number(),
+
+    // Auto-updated timestamp
+    ...timestampField,
+  })
+    .index("by_tier", ["tier"])
+    .vectorIndex("by_embedding", {
+      vectorField: "embedding",
+      dimensions: 768,
+      filterFields: ["tier"],
+    }),
+
+  // ─── Horus Progress (Longitudinal Analysis) ───
+  horusProgress: defineTable({
+    patientId: v.id("users"),
+
+    // Latest progress analysis (stored as JSON)
+    latestProgress: v.any(),
+
+    // Session IDs included in analysis
+    sessionIds: v.array(v.string()),
+
+    // Timestamps
+    updatedAt: v.number(),
+
+    // Auto-updated timestamp
+    ...timestampField,
+  })
+    .index("by_patient", ["patientId"]),
+
+  // ─── Horus Pipeline Status (Execution Tracking) ───
+  horusPipelineStatus: defineTable({
+    sessionId: v.string(),
+    status: horusPipelineStatusValidator,
+    currentAgent: v.optional(horusAgentValidator),
+    revisionCount: v.number(),
+
+    // Timestamps
+    startedAt: v.number(),
+    updatedAt: v.number(),
+
+    // Error info
+    error: v.optional(horusErrorValidator),
+
+    // Auto-updated timestamp
+    ...timestampField,
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_status", ["status"]),
 });

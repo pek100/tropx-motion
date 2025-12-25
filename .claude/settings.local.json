@@ -68,7 +68,11 @@
       "WebFetch(domain:svgo.dev)",
       "Bash(find:*)",
       "WebFetch(domain:stack.convex.dev)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:developers.google.com)",
+      "Bash(git grep:*)"
     ],
     "deny": [],
     "ask": [],
