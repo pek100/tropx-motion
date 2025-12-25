@@ -1,4 +1,5 @@
 <svg width="512" height="512" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="1024" height="1024" fill="#14121B"/>
 <g clip-path="url(#clip0)">
 <rect width="1024" height="1024" rx="512" fill="#14121B"/>
 <path d="M536.814 287.113C500.516 305.737 466.207 343.519 475.157 355.226C486.096 369.061 531.344 348.84 567.145 313.719C607.421 273.809 591.012 259.974 536.814 287.113Z" fill="#FF4C35"/>
