@@ -4,6 +4,7 @@
  * Tabs:
  * - General: Theme, notifications
  * - Profile: User info (read-only from OAuth)
+ * - Activity: Device management (view/revoke devices)
  * - Security: Encryption key rotation, cache management
  */
 
@@ -23,21 +24,30 @@ import {
   AlertTriangle,
   Sun,
   Moon,
-  Monitor,
   Stethoscope,
   UserRound,
   Check,
+  Activity,
+  Smartphone,
+  Globe,
+  Monitor,
+  AppWindow,
+  LogOut,
+  Laptop,
+  TabletSmartphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
-import { useCacheOptional, useMutation } from "@/lib/customConvex";
+import { useCacheOptional, useMutation, useQuery } from "@/lib/customConvex";
 import { api } from "../../../../../convex/_generated/api";
+import type { Doc, Id } from "../../../../../convex/_generated/dataModel";
+import { getDeviceId } from "@/lib/device/deviceId";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────
 
-type TabId = "general" | "profile" | "security";
+type TabId = "general" | "profile" | "activity" | "security";
 
 interface Tab {
   id: TabId;
@@ -57,6 +67,7 @@ interface SettingsModalProps {
 const TABS: Tab[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "profile", label: "Profile", icon: User },
+  { id: "activity", label: "Activity", icon: Activity },
   { id: "security", label: "Security", icon: Shield },
 ];
 
@@ -273,6 +284,251 @@ function ProfileTab() {
       <div className="p-3 bg-[var(--tropx-muted)] rounded-lg">
         <p className="text-xs text-[var(--tropx-shadow)]">
           Profile information is managed by your Google account.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Activity Tab - Device Management
+// ─────────────────────────────────────────────────────────────────
+
+const PLATFORM_CONFIG = {
+  web: { icon: Globe, label: "Web" },
+  electron: { icon: Monitor, label: "Desktop" },
+  "electron-web": { icon: AppWindow, label: "Desktop Web" },
+} as const;
+
+// OS icons - using available Lucide icons
+const OS_CONFIG: Record<string, { icon: typeof Monitor; label: string }> = {
+  Windows: { icon: Monitor, label: "Windows" },
+  macOS: { icon: Laptop, label: "macOS" },
+  Linux: { icon: Monitor, label: "Linux" },
+  Android: { icon: TabletSmartphone, label: "Android" },
+  iOS: { icon: Smartphone, label: "iOS" },
+  ChromeOS: { icon: Globe, label: "ChromeOS" },
+};
+
+// Browser icons
+const BROWSER_CONFIG: Record<string, { icon: typeof Globe; label: string }> = {
+  Desktop: { icon: Monitor, label: "Desktop App" },
+  Chrome: { icon: Globe, label: "Chrome" },
+  Edge: { icon: Globe, label: "Edge" },
+  Safari: { icon: Globe, label: "Safari" },
+  Firefox: { icon: Globe, label: "Firefox" },
+  Opera: { icon: Globe, label: "Opera" },
+};
+
+// Extract browser and OS from device name (format: "Browser | OS")
+function parseDeviceName(deviceName: string): { browser: string; os: string } {
+  const parts = deviceName.split(" | ");
+  return {
+    browser: parts[0] || "Unknown",
+    os: parts.length > 1 ? parts[1] : "Unknown",
+  };
+}
+
+function formatLastSeen(timestamp: number): string {
+  const now = Date.now();
+  const diff = now - timestamp;
+
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function ActivityTab() {
+  const { isAuthenticated } = useCurrentUser();
+  const devices = useQuery(api.devices.getMyDevices, isAuthenticated ? {} : "skip");
+  const revokeDevice = useMutation(api.devices.revokeDevice);
+  const [revokingId, setRevokingId] = useState<Id<"userDevices"> | null>(null);
+  const [showRevokeConfirm, setShowRevokeConfirm] = useState<Id<"userDevices"> | null>(null);
+  const [revokedIds, setRevokedIds] = useState<Set<Id<"userDevices">>>(new Set());
+
+  const currentDeviceId = getDeviceId();
+
+  const handleRevoke = (deviceDocId: Id<"userDevices">) => {
+    setRevokingId(deviceDocId);
+    revokeDevice({ deviceDocId }); // Fire & forget
+    setShowRevokeConfirm(null);
+    // Optimistically remove from list
+    setRevokedIds((prev) => new Set(prev).add(deviceDocId));
+    setTimeout(() => setRevokingId(null), 300);
+  };
+
+  // Filter out optimistically revoked devices
+  const visibleDevices = devices?.filter((d: Doc<"userDevices">) => !revokedIds.has(d._id));
+
+  if (!isAuthenticated) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <Activity className="size-8 text-[var(--tropx-shadow)] mb-3" />
+        <p className="text-sm text-[var(--tropx-text-sub)]">
+          Sign in to view your devices.
+        </p>
+      </div>
+    );
+  }
+
+  if (devices === undefined || visibleDevices === undefined) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="size-5 animate-spin text-[var(--tropx-vibrant)]" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-sm font-semibold text-[var(--tropx-text-main)] mb-1">
+          Active Devices
+        </h3>
+        <p className="text-xs text-[var(--tropx-text-sub)] mb-3">
+          Devices where you're signed in. Revoke access to sign out remotely.
+        </p>
+      </div>
+
+      {visibleDevices.length === 0 ? (
+        <div className="p-4 bg-[var(--tropx-muted)] rounded-lg text-center">
+          <p className="text-sm text-[var(--tropx-shadow)]">
+            No devices found
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {visibleDevices.map((device: Doc<"userDevices">) => {
+            const isCurrentDevice = device.deviceId === currentDeviceId;
+            const { browser, os } = parseDeviceName(device.deviceName);
+            const osConfig = OS_CONFIG[os] || { icon: Monitor, label: os };
+            const browserConfig = BROWSER_CONFIG[browser] || { icon: Globe, label: browser };
+            const OSIcon = osConfig.icon;
+            const BrowserIcon = browserConfig.icon;
+            const deviceTheme = device.preferences?.theme;
+
+            return (
+              <div
+                key={device._id}
+                className={cn(
+                  "p-3 rounded-xl border-2 transition-colors",
+                  isCurrentDevice
+                    ? "border-[var(--tropx-vibrant)] bg-[var(--tropx-vibrant)]/5"
+                    : "border-[var(--tropx-border)] bg-[var(--tropx-muted)]"
+                )}
+              >
+                <div className="flex items-start gap-3">
+                  {/* OS Icon with Browser badge */}
+                  <div className="relative">
+                    <div
+                      className={cn(
+                        "p-2 rounded-full",
+                        isCurrentDevice
+                          ? "bg-[var(--tropx-vibrant)] text-white"
+                          : "bg-[var(--tropx-card)] text-[var(--tropx-shadow)]"
+                      )}
+                    >
+                      <OSIcon className="size-4" />
+                    </div>
+                    {/* Browser badge */}
+                    <div
+                      className={cn(
+                        "absolute -bottom-0.5 -right-0.5 p-1 rounded-full border-2",
+                        isCurrentDevice
+                          ? "bg-white text-[var(--tropx-vibrant)] border-[var(--tropx-vibrant)]/20"
+                          : "bg-[var(--tropx-muted)] text-[var(--tropx-shadow)] border-[var(--tropx-card)]"
+                      )}
+                    >
+                      <BrowserIcon className="size-2.5" />
+                    </div>
+                  </div>
+
+                  {/* Device Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-medium text-sm text-[var(--tropx-text-main)] truncate">
+                        {device.deviceName}
+                      </h4>
+                      {isCurrentDevice && (
+                        <Check className="size-4 text-[var(--tropx-vibrant)]" />
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      {deviceTheme && (
+                        <span className="flex items-center gap-1 text-xs text-[var(--tropx-text-sub)]">
+                          {deviceTheme === "dark" ? (
+                            <Moon className="size-3" />
+                          ) : deviceTheme === "light" ? (
+                            <Sun className="size-3" />
+                          ) : (
+                            <Monitor className="size-3" />
+                          )}
+                          {deviceTheme === "system" ? "System" : deviceTheme === "dark" ? "Dark" : "Light"}
+                        </span>
+                      )}
+                      <span className="text-xs text-[var(--tropx-shadow)]">
+                        {formatLastSeen(device.lastSeenAt)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Revoke Button (not for current device) */}
+                  {!isCurrentDevice && (
+                    <>
+                      {showRevokeConfirm === device._id ? (
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => setShowRevokeConfirm(null)}
+                            disabled={revokingId === device._id}
+                            className="px-2 py-1 text-xs font-medium text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => handleRevoke(device._id)}
+                            disabled={revokingId === device._id}
+                            className="px-2 py-1 text-xs font-medium text-white bg-red-500 rounded hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {revokingId === device._id ? (
+                              <Loader2 className="size-3 animate-spin" />
+                            ) : (
+                              <LogOut className="size-3" />
+                            )}
+                            Revoke
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setShowRevokeConfirm(device._id)}
+                          className="p-1.5 rounded-lg text-[var(--tropx-shadow)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                          title="Revoke access"
+                        >
+                          <LogOut className="size-4" />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Info */}
+      <div className="p-3 bg-[var(--tropx-muted)] rounded-lg">
+        <p className="text-xs text-[var(--tropx-shadow)]">
+          Revoking a device will sign it out. The device will need to sign in again to access your account.
         </p>
       </div>
     </div>
@@ -529,6 +785,8 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
         return <GeneralTab />;
       case "profile":
         return <ProfileTab />;
+      case "activity":
+        return <ActivityTab />;
       case "security":
         return <SecurityTab />;
       default:

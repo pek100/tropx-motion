@@ -75,12 +75,14 @@ export const markRead = mutation({
     const user = await requireUser(ctx);
 
     const notification = await ctx.db.get(args.notificationId);
+    // Silently succeed if notification doesn't exist (may be stale cache)
     if (!notification) {
-      throw new Error("Notification not found");
+      return { success: true, notFound: true };
     }
 
+    // Silently succeed if not authorized (edge case)
     if (notification.userId !== user._id) {
-      throw new Error("Not authorized");
+      return { success: false, notAuthorized: true };
     }
 
     await ctx.db.patch(args.notificationId, { read: true });
@@ -122,12 +124,14 @@ export const deleteNotification = mutation({
     const user = await requireUser(ctx);
 
     const notification = await ctx.db.get(args.notificationId);
+    // Silently succeed if notification doesn't exist (may be stale cache)
     if (!notification) {
-      throw new Error("Notification not found");
+      return { success: true, notFound: true };
     }
 
+    // Silently succeed if not authorized (edge case)
     if (notification.userId !== user._id) {
-      throw new Error("Not authorized");
+      return { success: false, notAuthorized: true };
     }
 
     await ctx.db.delete(args.notificationId);

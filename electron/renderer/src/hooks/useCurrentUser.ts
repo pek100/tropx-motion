@@ -3,17 +3,7 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "../../../../convex/_generated/api";
 import { isConvexConfigured, useQuery } from "../lib/customConvex";
 import { isElectron } from "../lib/platform";
-
-// Track OAuth flow via sessionStorage (shared with App.tsx)
-const OAUTH_IN_PROGRESS_KEY = 'tropx_oauth_in_progress';
-
-function setOAuthInProgress(): void {
-  sessionStorage.setItem(OAUTH_IN_PROGRESS_KEY, Date.now().toString());
-}
-
-function clearOAuthInProgress(): void {
-  sessionStorage.removeItem(OAUTH_IN_PROGRESS_KEY);
-}
+import { setOAuthInProgress, clearOAuthInProgress } from "../lib/auth/oauthState";
 
 export type UserRole = "physiotherapist" | "patient" | "admin";
 
@@ -87,35 +77,23 @@ function useCurrentUserEnabled(): UseCurrentUserResult {
   };
 
   const signOut = async () => {
-    // Clear OAuth tracking
     clearOAuthInProgress();
 
     // Clear all Convex auth tokens from localStorage
-    // This ensures both namespaced and non-namespaced keys are removed
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
       const key = localStorage.key(i);
-      if (key && key.startsWith('__convexAuth')) {
-        keysToRemove.push(key);
+      if (key?.startsWith('__convexAuth')) {
+        localStorage.removeItem(key);
       }
     }
-    keysToRemove.forEach(key => localStorage.removeItem(key));
-    console.log('[useCurrentUser] Cleared localStorage keys:', keysToRemove);
 
-    // Call Convex Auth signOut
     await authActions.signOut();
 
-    // In Electron, also call the main process sign out to clear session cookies
+    // In Electron, also clear session cookies
     if (isElectron() && window.electronAPI?.auth?.signOut) {
-      try {
-        await window.electronAPI.auth.signOut();
-        console.log('[useCurrentUser] Cleared Electron session');
-      } catch (err) {
-        console.error('[useCurrentUser] Failed to clear Electron session:', err);
-      }
+      await window.electronAPI.auth.signOut().catch(() => {});
     }
 
-    // Refresh the page to clear all cached data and show unauthenticated state
     window.location.reload();
   };
 

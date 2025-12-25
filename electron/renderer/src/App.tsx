@@ -12,6 +12,7 @@ import { AuthModal } from "@/components/auth"
 import { ThemeToggle } from "@/components/ThemeToggle"
 import { ConnectionStatusBar } from "@/components/ConnectionStatusBar"
 import { isElectron, isWeb } from "@/lib/platform"
+import { setOAuthInProgress, isOAuthInProgress, clearOAuthInProgress, shouldSkipStaleTokenCheck } from "@/lib/auth/oauthState"
 import { platformInfo } from "@/lib/platform"
 import { useState, useRef, useEffect, useMemo, useCallback, lazy, Suspense } from "react"
 import { useToast } from "@/hooks/use-toast"
@@ -20,6 +21,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useDevices, type UIDevice, DeviceId } from "@/hooks/useDevices"
 import { useRecordingExport } from "@/hooks/useRecordingExport"
 import { useCurrentUser } from "@/hooks/useCurrentUser"
+import { useDeviceRegistration } from "@/hooks/useDeviceRegistration"
+import { useThemeSync } from "@/hooks/useThemeSync"
 import { persistence } from "@/lib/persistence"
 import { UIProfileProvider, useUIProfile } from "@/lib/ui-profiles"
 import { useConvex, useSyncOptional } from "@/lib/customConvex"
@@ -32,67 +35,6 @@ import type { ImportedSample } from "@/lib/recording"
 enum PendingOp {
   STOP_LOCATE = 'stop_locate',
   STOP_STREAMING = 'stop_streaming',
-}
-
-/** Check if currently in OAuth callback (has code or error in URL) */
-function isOAuthCallback(): boolean {
-  const params = new URLSearchParams(window.location.search);
-  return params.has('code') || params.has('error');
-}
-
-// Track OAuth flow via sessionStorage (persists across OAuth redirect)
-const OAUTH_IN_PROGRESS_KEY = 'tropx_oauth_in_progress';
-
-function setOAuthInProgress(): void {
-  sessionStorage.setItem(OAUTH_IN_PROGRESS_KEY, Date.now().toString());
-}
-
-function isOAuthInProgress(): boolean {
-  const timestamp = sessionStorage.getItem(OAUTH_IN_PROGRESS_KEY);
-  if (!timestamp) return false;
-  // Consider OAuth in progress if started within last 2 minutes
-  const elapsed = Date.now() - parseInt(timestamp, 10);
-  return elapsed < 2 * 60 * 1000;
-}
-
-function clearOAuthInProgress(): void {
-  sessionStorage.removeItem(OAUTH_IN_PROGRESS_KEY);
-}
-
-/**
- * Check if JWT was issued recently (within last 30 seconds).
- * If so, it's likely fresh from OAuth and we shouldn't treat it as stale.
- */
-function isJWTFresh(): boolean {
-  try {
-    // Find any Convex auth JWT in localStorage
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('__convexAuthJWT')) {
-        const jwt = localStorage.getItem(key);
-        if (!jwt) continue;
-
-        // Decode JWT payload (base64url)
-        const parts = jwt.split('.');
-        if (parts.length !== 3) continue;
-
-        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-
-        // Check if issued within last 30 seconds
-        if (payload.iat) {
-          const issuedAt = payload.iat * 1000; // Convert to ms
-          const elapsed = Date.now() - issuedAt;
-          if (elapsed < 30 * 1000) {
-            console.log('[Auth] JWT is fresh, issued', Math.round(elapsed / 1000), 'seconds ago');
-            return true;
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.error('[Auth] Failed to check JWT freshness:', err);
-  }
-  return false;
 }
 
 interface PendingState {
@@ -117,6 +59,10 @@ function AppContent() {
   const sync = useSyncOptional()
   const { isAuthenticated, isLoading: isAuthLoading, signIn } = useCurrentUser()
 
+  // Device registration and theme sync (per-device preferences)
+  useDeviceRegistration()
+  useThemeSync()
+
   // Auth modal state (for toast sign-in actions)
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
 
@@ -137,24 +83,8 @@ function AppContent() {
 
   // Detect stale tokens and auto-trigger re-auth
   useEffect(() => {
-    const oauthInProgress = isOAuthInProgress();
-    const oauthCallback = isOAuthCallback();
-    const jwtFresh = isJWTFresh();
-
-    console.log('[Auth] Stale token check:', {
-      isAuthLoading,
-      isAuthenticated,
-      hasAttemptedAutoReauth,
-      oauthCallback,
-      oauthInProgress,
-      jwtFresh,
-      sessionStorageFlag: sessionStorage.getItem(OAUTH_IN_PROGRESS_KEY),
-    });
-
-    // Only check when auth loading is complete
-    // Skip if: still loading, already attempted, OAuth callback in URL, OAuth in progress, or JWT is fresh
-    if (isAuthLoading || hasAttemptedAutoReauth || oauthCallback || oauthInProgress || jwtFresh) {
-      console.log('[Auth] Skipping stale token check - conditions not met');
+    // Skip if: still loading, already attempted, or OAuth in progress
+    if (isAuthLoading || hasAttemptedAutoReauth || shouldSkipStaleTokenCheck()) {
       return;
     }
 
@@ -163,8 +93,6 @@ function AppContent() {
                    localStorage.getItem('__convexAuthJWT_httpstoughanteater529convexcloud')
 
     if (hasJWT && !isAuthenticated) {
-      console.log('[Auth] Stale token detected - clearing and triggering re-auth')
-
       // Clear stale tokens
       const keysToRemove = Object.keys(localStorage).filter(k =>
         k.includes('convexAuth') || k.includes('__convexAuth')
@@ -176,7 +104,6 @@ function AppContent() {
 
       // Auto-trigger re-auth
       if (isElectron()) {
-        // Electron: Open auth modal (popup OAuth flow)
         setIsAuthModalOpen(true)
         toast({
           title: "Session Expired",
@@ -184,27 +111,20 @@ function AppContent() {
           duration: 5000,
         })
       } else {
-        // Web: Directly redirect to OAuth - mark as in progress
-        console.log('[Auth] Redirecting to OAuth...')
         setOAuthInProgress()
         signIn()
       }
     }
   }, [isAuthenticated, isAuthLoading, hasAttemptedAutoReauth, toast, signIn])
 
-  // Clear OAuth in progress and reset auto-reauth flag when user successfully authenticates
+  // Handle successful authentication - refresh page if just completed OAuth
   useEffect(() => {
-    if (isAuthenticated) {
-      // Clear OAuth tracking after a short delay to ensure auth is stable
-      const timer = setTimeout(() => {
-        clearOAuthInProgress()
-        if (hasAttemptedAutoReauth) {
-          setHasAttemptedAutoReauth(false)
-        }
-      }, 1000)
-      return () => clearTimeout(timer)
+    if (isAuthenticated && isOAuthInProgress()) {
+      clearOAuthInProgress()
+      sessionStorage.removeItem(AUTO_REAUTH_KEY)
+      window.location.reload()
     }
-  }, [isAuthenticated, hasAttemptedAutoReauth])
+  }, [isAuthenticated])
   const refreshTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const locateDelayTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 

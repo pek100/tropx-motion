@@ -40,6 +40,19 @@ export const NOTIFICATION_TYPES = {
   RECORDING_SHARED: "recording_shared",
   INVITE_ACCEPTED: "invite_accepted",
   ADDED_AS_SUBJECT: "added_as_subject",
+  NEW_DEVICE_LOGIN: "new_device_login",
+} as const;
+
+export const DEVICE_PLATFORMS = {
+  WEB: "web",
+  ELECTRON: "electron",
+  ELECTRON_WEB: "electron-web",
+} as const;
+
+export const THEME_OPTIONS = {
+  LIGHT: "light",
+  DARK: "dark",
+  SYSTEM: "system",
 } as const;
 
 export const RECORDING_SOURCES = {
@@ -111,6 +124,22 @@ const inviteStatusValidator = v.union(
   v.literal(INVITE_STATUS.ACCEPTED),
   v.literal(INVITE_STATUS.EXPIRED)
 );
+
+const devicePlatformValidator = v.union(
+  v.literal(DEVICE_PLATFORMS.WEB),
+  v.literal(DEVICE_PLATFORMS.ELECTRON),
+  v.literal(DEVICE_PLATFORMS.ELECTRON_WEB)
+);
+
+const themeValidator = v.union(
+  v.literal(THEME_OPTIONS.LIGHT),
+  v.literal(THEME_OPTIONS.DARK),
+  v.literal(THEME_OPTIONS.SYSTEM)
+);
+
+const devicePreferencesValidator = v.object({
+  theme: v.optional(themeValidator),
+});
 
 const metricStatusValidator = v.union(
   v.literal(METRIC_STATUS.PENDING),
@@ -412,6 +441,11 @@ const subjectNoteValidator = v.object({
   createdAt: v.number(), // Keep: embedded data, not a document
 });
 
+// User preferences (synced across devices)
+const userPreferencesValidator = v.object({
+  theme: v.optional(v.union(v.literal("light"), v.literal("dark"), v.literal("system"))),
+});
+
 // Minified SVG paths for preview charts (x, y, z axis projections)
 const previewPathsValidator = v.object({
   x: v.string(),
@@ -470,6 +504,33 @@ export default defineSchema({
     .index("email", ["email"])
     .index("by_role", ["role"])
     .index("by_archived", ["isArchived"]),
+
+  // ─── User Devices (Session Tracking & Per-Device Preferences) ───
+  userDevices: defineTable({
+    userId: v.id("users"),
+
+    // Device identification
+    deviceId: v.string(), // UUID generated client-side
+    deviceName: v.string(), // "Chrome on Windows"
+
+    // Device info
+    platform: devicePlatformValidator,
+    userAgent: v.optional(v.string()),
+    lastIp: v.optional(v.string()),
+
+    // Session tracking
+    lastSeenAt: v.number(),
+    createdAt: v.number(),
+
+    // Per-device preferences (overrides defaults)
+    preferences: v.optional(devicePreferencesValidator),
+
+    // Security
+    isRevoked: v.optional(v.boolean()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_device", ["deviceId"])
+    .index("by_user_device", ["userId", "deviceId"]),
 
   // ─── Recording Sessions (Session Metadata + Preview) ───
   recordingSessions: defineTable({

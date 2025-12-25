@@ -397,12 +397,12 @@ export class OAuthHandler {
 
   async signOut(): Promise<void> {
     try {
-      // Clear the shared session partition
+      // Clear only cookies (not localStorage - we want to preserve theme/layout settings)
       const authSession = session.fromPartition('persist:convex-auth');
       await authSession.clearStorageData({
-        storages: ['cookies', 'localstorage'],
+        storages: ['cookies'],
       });
-      console.log('[OAuthHandler] Session cleared');
+      console.log('[OAuthHandler] Session cookies cleared');
     } catch (err) {
       console.error('[OAuthHandler] Failed to clear session:', err);
     }

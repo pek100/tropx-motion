@@ -5,6 +5,7 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useConvexAuth, useAction } from "@/lib/customConvex";
 import { api } from "../../../../../convex/_generated/api";
 import { isElectron } from "../../lib/platform";
+import { setOAuthInProgress, shouldSkipStaleTokenCheck } from "@/lib/auth/oauthState";
 
 const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';
 const ELECTRON_CALLBACK_URL_KEY = 'tropx_electron_callback_url';
@@ -37,19 +38,9 @@ function postToCallback(
 }
 
 // Find Convex Auth tokens in localStorage by prefix
-// Convex Auth stores as __convexAuthJWT_<namespace> and __convexAuthRefreshToken_<namespace>
 function findConvexAuthTokens(): { jwt: string | null; refreshToken: string | null } {
   let jwt: string | null = null;
   let refreshToken: string | null = null;
-
-  // Debug: log all localStorage keys
-  const allKeys: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key) allKeys.push(key);
-  }
-  console.log('[AutoSignIn] All localStorage keys:', allKeys);
-  console.log('[AutoSignIn] Convex-related keys:', allKeys.filter(k => k.includes('convex') || k.includes('Convex')));
 
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
@@ -57,10 +48,8 @@ function findConvexAuthTokens(): { jwt: string | null; refreshToken: string | nu
 
     if (key.startsWith('__convexAuthJWT')) {
       jwt = localStorage.getItem(key);
-      console.log('[AutoSignIn] Found JWT with key:', key, 'length:', jwt?.length);
     } else if (key.startsWith('__convexAuthRefreshToken')) {
       refreshToken = localStorage.getItem(key);
-      console.log('[AutoSignIn] Found refreshToken with key:', key, 'length:', refreshToken?.length);
     }
   }
 
@@ -73,65 +62,6 @@ function hasConvexAuthJWT(): boolean {
     if (key && key.startsWith('__convexAuthJWT')) {
       return true;
     }
-  }
-  return false;
-}
-
-/**
- * Check if we're currently in an OAuth callback.
- * OAuth callbacks have 'code' or 'error' params from the OAuth provider.
- * We should NOT clear tokens during a callback - Convex Auth is processing them.
- */
-function isOAuthCallback(): boolean {
-  const params = new URLSearchParams(window.location.search);
-  // OAuth 2.0 authorization code flow adds 'code' param
-  // OAuth errors add 'error' param
-  return params.has('code') || params.has('error');
-}
-
-// Track OAuth flow via sessionStorage (shared with App.tsx and useCurrentUser)
-const OAUTH_IN_PROGRESS_KEY = 'tropx_oauth_in_progress';
-
-function isOAuthInProgress(): boolean {
-  const timestamp = sessionStorage.getItem(OAUTH_IN_PROGRESS_KEY);
-  if (!timestamp) return false;
-  // Consider OAuth in progress if started within last 2 minutes
-  const elapsed = Date.now() - parseInt(timestamp, 10);
-  return elapsed < 2 * 60 * 1000;
-}
-
-function setOAuthInProgress(): void {
-  sessionStorage.setItem(OAUTH_IN_PROGRESS_KEY, Date.now().toString());
-}
-
-/**
- * Check if JWT was issued recently (within last 30 seconds).
- * If so, it's likely fresh from OAuth and we shouldn't treat it as stale.
- */
-function isJWTFresh(): boolean {
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('__convexAuthJWT')) {
-        const jwt = localStorage.getItem(key);
-        if (!jwt) continue;
-
-        const parts = jwt.split('.');
-        if (parts.length !== 3) continue;
-
-        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-
-        if (payload.iat) {
-          const issuedAt = payload.iat * 1000;
-          const elapsed = Date.now() - issuedAt;
-          if (elapsed < 30 * 1000) {
-            return true;
-          }
-        }
-      }
-    }
-  } catch {
-    // Ignore errors
   }
   return false;
 }
@@ -195,56 +125,42 @@ export function AutoSignIn() {
       url.searchParams.delete('callbackUrl');
       window.history.replaceState({}, '', url.toString());
     } else if (pendingElectronAuth && isElectron()) {
-      // We're returning from OAuth redirect in ELECTRON - restore electron auth state
-      // Only restore if we're actually in Electron to prevent web auth loops
+      // Returning from OAuth redirect in Electron - restore state
       setIsElectronAuth(true);
       if (storedCallbackUrl) {
         setCallbackUrl(storedCallbackUrl);
       }
-      console.log('[AutoSignIn] Restored electronAuth from localStorage, callback:', storedCallbackUrl);
     } else if (pendingElectronAuth && !isElectron()) {
       // Stale Electron auth flag on web - clean it up
-      console.log('[AutoSignIn] Cleaning up stale Electron auth flags on web');
       localStorage.removeItem(ELECTRON_AUTH_KEY);
       localStorage.removeItem(ELECTRON_CALLBACK_URL_KEY);
     }
   }, []);
 
   // Check for stale tokens and clear them if invalid
-  // This ensures we don't proceed with invalid tokens
   useEffect(() => {
     if (isLoading || hasCheckedStaleTokens) return;
 
-    // IMPORTANT: Skip during OAuth callback, OAuth in progress, or if JWT is fresh
-    // Convex Auth is still processing tokens - clearing them would cause an infinite auth loop!
-    if (isOAuthCallback() || isOAuthInProgress() || isJWTFresh()) {
-      console.log('[AutoSignIn] OAuth in progress or JWT fresh - skipping stale token check', {
-        isOAuthCallback: isOAuthCallback(),
-        isOAuthInProgress: isOAuthInProgress(),
-        isJWTFresh: isJWTFresh(),
-      });
+    // Skip if OAuth is in progress - Convex Auth is still processing tokens
+    if (shouldSkipStaleTokenCheck()) {
       setHasCheckedStaleTokens(true);
       return;
     }
 
     // Check if we have tokens in localStorage but Convex says not authenticated
     if (hasConvexAuthJWT() && !isAuthenticated) {
-      console.log('[AutoSignIn] Stale token detected - clearing all auth tokens');
-
       // Clear ALL Convex auth tokens to ensure clean state
       const keysToRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key && key.startsWith('__convexAuth')) {
+        if (key?.startsWith('__convexAuth')) {
           keysToRemove.push(key);
         }
       }
-      console.log('[AutoSignIn] Removing keys:', keysToRemove);
       keysToRemove.forEach(key => localStorage.removeItem(key));
 
       // If we're in electron auth flow, trigger OAuth automatically
       if (isElectronAuth && !triggered) {
-        console.log('[AutoSignIn] Auto-triggering OAuth after stale token cleanup');
         setIsAutoSignIn(true);
       }
     }
@@ -252,37 +168,27 @@ export function AutoSignIn() {
     setHasCheckedStaleTokens(true);
   }, [isLoading, isAuthenticated, hasCheckedStaleTokens, isElectronAuth, triggered]);
 
-  // When auth completes for Electron, create a SEPARATE session for Electron
-  // This ensures web and Electron have independent sessions
+  // When auth completes for Electron, create a separate session
   useEffect(() => {
     if (isElectronAuth && isAuthenticated && !isLoading && !redirected && callbackUrl && !creatingElectronSession) {
-      console.log('[AutoSignIn] Auth complete, creating separate Electron session...');
       setCreatingElectronSession(true);
 
-      // Create a new session specifically for Electron (separate from web's session)
       createElectronSession()
         .then((tokens) => {
           if (tokens) {
-            console.log('[AutoSignIn] Electron session created, JWT length:', tokens.jwt.length);
-
-            // Clear pending flags
             localStorage.removeItem(ELECTRON_AUTH_KEY);
             localStorage.removeItem(ELECTRON_CALLBACK_URL_KEY);
-
-            // POST tokens to callback (more secure than URL params)
             setRedirected(true);
             postToCallback(callbackUrl, {
               jwt: tokens.jwt,
               refreshToken: tokens.refreshToken,
             });
           } else {
-            console.error('[AutoSignIn] Failed to create Electron session');
             setAuthError('Failed to create Electron session');
             setCreatingElectronSession(false);
           }
         })
         .catch((err) => {
-          console.error('[AutoSignIn] Error creating Electron session:', err);
           setAuthError(err.message || 'Failed to create Electron session');
           setCreatingElectronSession(false);
         });
@@ -299,22 +205,13 @@ export function AutoSignIn() {
     if (isLoading) return;
 
     if (isAutoSignIn && !triggered && !isAuthenticated) {
-      console.log('[AutoSignIn] Triggering Google OAuth, electronAuth:', isElectronAuth);
       setTriggered(true);
-
-      // Mark OAuth as in progress before redirecting
       setOAuthInProgress();
-
-      // Trigger Google sign-in - this will redirect to Google OAuth
       signIn("google").catch((err) => {
-        console.error('[AutoSignIn] OAuth error:', err);
         setAuthError(err.message || 'OAuth failed');
-        // Clear pending flag on error
         localStorage.removeItem(ELECTRON_AUTH_KEY);
       });
     } else if (isAutoSignIn && isAuthenticated && !triggered) {
-      // Already authenticated - skip OAuth
-      console.log('[AutoSignIn] Already authenticated, skipping OAuth');
       setTriggered(true);
     }
   }, [isAutoSignIn, triggered, signIn, isElectronAuth, isAuthenticated, isLoading]);

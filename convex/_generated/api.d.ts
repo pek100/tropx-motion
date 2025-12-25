@@ -14,6 +14,7 @@ import type * as cache from "../cache.js";
 import type * as cleanup from "../cleanup.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
+import type * as devices from "../devices.js";
 import type * as electronAuth from "../electronAuth.js";
 import type * as fetchById from "../fetchById.js";
 import type * as http from "../http.js";
@@ -55,6 +56,7 @@ declare const fullApi: ApiFromModules<{
   cleanup: typeof cleanup;
   crons: typeof crons;
   dashboard: typeof dashboard;
+  devices: typeof devices;
   electronAuth: typeof electronAuth;
   fetchById: typeof fetchById;
   http: typeof http;

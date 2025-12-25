@@ -26,6 +26,11 @@ import {
   Activity,
   Eye,
   LucideIcon,
+  Monitor,
+  Laptop,
+  Smartphone,
+  Globe,
+  TabletSmartphone,
 } from "lucide-react";
 import { cn, formatTimeAgo } from "@/lib/utils";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -107,6 +112,22 @@ const NOTIFICATION_TEMPLATES: Record<string, NotificationTemplate> = {
     iconColor: "text-orange-500",
     bgColor: "bg-orange-50 dark:bg-orange-900/30",
   },
+  // New device login
+  [NOTIFICATION_TYPES.NEW_DEVICE_LOGIN]: {
+    icon: Monitor,
+    iconColor: "text-amber-500",
+    bgColor: "bg-amber-50 dark:bg-amber-900/30",
+  },
+};
+
+// OS icons for device notifications
+const OS_ICONS: Record<string, LucideIcon> = {
+  Windows: Monitor,
+  macOS: Laptop,
+  Linux: Monitor,
+  Android: TabletSmartphone,
+  iOS: Smartphone,
+  ChromeOS: Globe,
 };
 
 // Fallback template for unknown types
@@ -329,6 +350,80 @@ function GenericNotificationItem({
     );
   }
 
+  // New device login notification with OS icon
+  const isNewDeviceLogin = notification.type === NOTIFICATION_TYPES.NEW_DEVICE_LOGIN;
+  if (isNewDeviceLogin) {
+    const os = notification.data?.os as string | undefined;
+    const browser = notification.data?.browser as string | undefined;
+    const platform = notification.data?.platform as string | undefined;
+    const OSIcon = os ? (OS_ICONS[os] || Monitor) : Monitor;
+    const BrowserIcon = browser === "Desktop" ? Monitor : Globe;
+
+    return (
+      <div
+        className={cn(
+          "px-3 py-2.5 flex items-center gap-2.5 border-b border-[var(--tropx-border)] last:border-b-0 transition-all hover:bg-[var(--tropx-muted)]/50",
+          notification.read ? "bg-[var(--tropx-card)]" : "bg-amber-50/30 dark:bg-amber-950/20"
+        )}
+      >
+        {/* OS Icon with Browser badge */}
+        <div className="relative flex-shrink-0">
+          <div className={cn("size-8 rounded-full flex items-center justify-center", template.bgColor)}>
+            <OSIcon className={cn("size-4", template.iconColor)} />
+          </div>
+          <div className="absolute -bottom-0.5 -right-0.5 size-4 rounded-full bg-[var(--tropx-card)] flex items-center justify-center ring-1 ring-[var(--tropx-border)]">
+            <BrowserIcon className="size-2.5 text-[var(--tropx-shadow)]" />
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          <p className={cn(
+            "text-xs leading-tight",
+            notification.read ? "text-[var(--tropx-shadow)]" : "text-[var(--tropx-text-main)]"
+          )}>
+            <span className="font-medium">New sign-in</span>
+            {" on "}
+            <span className="text-[var(--tropx-shadow)]">{browser} | {os}</span>
+          </p>
+          <p className="text-[10px] text-[var(--tropx-text-sub)] mt-0.5">
+            {formatTimeAgo(notification.createdAt)}
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {!notification.read && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={(e) => {
+                e.stopPropagation();
+                onMarkRead(notification._id);
+              }}
+              className="size-6 text-[var(--tropx-text-sub)] hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-950/30"
+              title="Mark as read"
+            >
+              <Check className="size-3" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(notification._id);
+            }}
+            className="size-6 text-[var(--tropx-text-sub)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+            title="Delete"
+          >
+            <X className="size-3" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   // Default layout for other notification types
   return (
     <div
@@ -439,6 +534,10 @@ export function NotificationBell({
   const [internalIsOpen, setInternalIsOpen] = useState(false);
   const [processingInviteId, setProcessingInviteId] = useState<Id<"invites"> | null>(null);
 
+  // Optimistic state for notifications
+  const [deletedIds, setDeletedIds] = useState<Set<Id<"notifications">>>(new Set());
+  const [readIds, setReadIds] = useState<Set<Id<"notifications">>>(new Set());
+
   // Use controlled or internal state
   const isControlled = controlledIsOpen !== undefined;
   const isOpen = isControlled ? controlledIsOpen : internalIsOpen;
@@ -448,10 +547,16 @@ export function NotificationBell({
   const invitations = useQuery(api.invites.getMyPendingInvitations, {}) as Invitation[] | undefined;
 
   // Fetch generic notifications
-  const notifications = useQuery(api.notifications.listForUser, { limit: 20 }) as GenericNotification[] | undefined;
+  const rawNotifications = useQuery(api.notifications.listForUser, { limit: 20 }) as GenericNotification[] | undefined;
 
-  // Unread count for generic notifications
-  const unreadNotificationCount = useQuery(api.notifications.getUnreadCount, {}) ?? 0;
+  // Apply optimistic updates to notifications
+  const notifications = rawNotifications
+    ?.filter((n) => !deletedIds.has(n._id))
+    .map((n) => (readIds.has(n._id) ? { ...n, read: true } : n));
+
+  // Unread count (adjusted for optimistic reads)
+  const rawUnreadCount = useQuery(api.notifications.getUnreadCount, {}) ?? 0;
+  const unreadNotificationCount = Math.max(0, rawUnreadCount - readIds.size);
 
   // Mutations
   const acceptInvite = useMutation(api.invites.acceptInviteById);
@@ -515,29 +620,29 @@ export function NotificationBell({
     }
   };
 
-  // Notification handlers
-  const handleMarkRead = async (id: Id<"notifications">) => {
-    try {
-      await markRead({ notificationId: id });
-    } catch (error) {
-      console.error("Failed to mark notification as read:", error);
-    }
+  // Notification handlers with optimistic updates
+  const handleMarkRead = (id: Id<"notifications">) => {
+    // Optimistically mark as read
+    setReadIds((prev) => new Set(prev).add(id));
+    // Fire & forget
+    markRead({ notificationId: id });
   };
 
-  const handleMarkAllRead = async () => {
-    try {
-      await markAllRead({});
-    } catch (error) {
-      console.error("Failed to mark all notifications as read:", error);
+  const handleMarkAllRead = () => {
+    // Optimistically mark all as read
+    if (notifications) {
+      const allIds = new Set(notifications.filter((n) => !n.read).map((n) => n._id));
+      setReadIds((prev) => new Set([...prev, ...allIds]));
     }
+    // Fire & forget
+    markAllRead({});
   };
 
-  const handleDeleteNotification = async (id: Id<"notifications">) => {
-    try {
-      await deleteNotification({ notificationId: id });
-    } catch (error) {
-      console.error("Failed to delete notification:", error);
-    }
+  const handleDeleteNotification = (id: Id<"notifications">) => {
+    // Optimistically delete
+    setDeletedIds((prev) => new Set(prev).add(id));
+    // Fire & forget
+    deleteNotification({ notificationId: id });
   };
 
   const isLoading = invitations === undefined || notifications === undefined;
