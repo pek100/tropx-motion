@@ -60,6 +60,7 @@ export const runPipeline = action({
     metrics: v.any(), // SessionMetrics
     previousMetrics: v.optional(v.any()), // SessionMetrics
     patientId: v.optional(v.id("users")),
+    skipComplete: v.optional(v.boolean()), // Don't mark complete if progress agent will run
   },
   handler: async (ctx, args): Promise<PipelineResult> => {
     const startTime = Date.now();
@@ -210,15 +211,17 @@ export const runPipeline = action({
         totalCost,
       });
 
-      // 6. Mark complete
-      await ctx.runMutation(internal.horus.orchestrator.updatePipelineStatus, {
-        sessionId: args.sessionId,
-        status: "complete",
-      });
+      // 6. Mark complete (unless skipComplete is set for progress agent)
+      if (!args.skipComplete) {
+        await ctx.runMutation(internal.horus.orchestrator.updatePipelineStatus, {
+          sessionId: args.sessionId,
+          status: "complete",
+        });
+      }
 
       return {
         success: true,
-        status: "complete",
+        status: args.skipComplete ? "validation" : "complete",
         analysis: analysis!,
         totalTokens,
         totalCost,
@@ -313,6 +316,43 @@ export const retryAgent = action({
 // ─────────────────────────────────────────────────────────────────
 
 /**
+ * Reset pipeline status before starting a new analysis.
+ * Call this BEFORE triggering Horus to clear any old error state.
+ */
+export const resetPipelineStatus = internalMutation({
+  args: {
+    sessionId: v.string(),
+  },
+  handler: async (ctx, { sessionId }) => {
+    const now = Date.now();
+
+    // Reset pipeline status to pending (clears any error)
+    const pipelineStatus = await ctx.db
+      .query("horusPipelineStatus")
+      .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+      .first();
+
+    if (pipelineStatus) {
+      await ctx.db.patch(pipelineStatus._id, {
+        status: "pending",
+        currentAgent: undefined,
+        error: undefined,
+        updatedAt: now,
+      });
+    } else {
+      // Create new status record if it doesn't exist
+      await ctx.db.insert("horusPipelineStatus", {
+        sessionId,
+        status: "pending",
+        revisionCount: 0,
+        startedAt: now,
+        updatedAt: now,
+      });
+    }
+  },
+});
+
+/**
  * Initialize a new pipeline.
  */
 export const initializePipeline = internalMutation({
@@ -390,6 +430,7 @@ export const updatePipelineStatus = internalMutation({
       v.literal("research"),
       v.literal("analysis"),
       v.literal("validation"),
+      v.literal("progress"),
       v.literal("complete"),
       v.literal("error")
     ),
@@ -455,6 +496,17 @@ export const savePipelineResults = internalMutation({
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .first();
 
+    // Debug logging
+    console.log("[savePipelineResults] Saving analysis:", {
+      sessionId: args.sessionId,
+      hasAnalysis: !!args.analysis,
+      hasVisualization: !!(args.analysis as any)?.visualization,
+      overallBlockCount: (args.analysis as any)?.visualization?.overallBlocks?.length ?? 0,
+      sessionBlockCount: (args.analysis as any)?.visualization?.sessionBlocks?.length ?? 0,
+      insightCount: (args.analysis as any)?.insights?.length ?? 0,
+      recordExists: !!record,
+    });
+
     if (record) {
       await ctx.db.patch(record._id, {
         decomposition: args.decomposition,
@@ -464,6 +516,9 @@ export const savePipelineResults = internalMutation({
         totalCost: args.totalCost,
         completedAt: Date.now(),
       });
+      console.log("[savePipelineResults] Analysis saved successfully for:", args.sessionId);
+    } else {
+      console.error("[savePipelineResults] No record found for session:", args.sessionId);
     }
   },
 });
@@ -485,6 +540,13 @@ export const recordPipelineError = internalMutation({
     retryable: v.boolean(),
   },
   handler: async (ctx, { sessionId, agent, message, retryable }) => {
+    console.error("[recordPipelineError] Recording error:", {
+      sessionId,
+      agent,
+      message,
+      retryable,
+    });
+
     const now = Date.now();
     const error = { agent, message, retryable };
 

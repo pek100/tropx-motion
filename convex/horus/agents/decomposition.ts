@@ -14,7 +14,8 @@ import {
   parseDecompositionResponse,
   preDetectPatterns,
 } from "../prompts/decomposition";
-import { extractJSON, safeJSONParse, validateDecompositionOutput } from "../llm/parser";
+import { safeJSONParse, validateDecompositionOutput } from "../llm/parser";
+import { DECOMPOSITION_RESPONSE_SCHEMA } from "../llm/schemas";
 
 // ─────────────────────────────────────────────────────────────────
 // Agent Execution
@@ -36,8 +37,11 @@ export const runDecomposition = action({
     const previousMetrics = args.previousMetrics as SessionMetrics | undefined;
 
     try {
+      console.log("[runDecomposition] Starting for session:", args.sessionId);
+
       // 1. Pre-detect obvious patterns programmatically
       const preDetectedPatterns = preDetectPatterns(metrics, previousMetrics);
+      console.log("[runDecomposition] Pre-detected patterns:", preDetectedPatterns.length);
 
       // 2. Build prompts
       const systemPrompt = DECOMPOSITION_SYSTEM_PROMPT;
@@ -48,16 +52,17 @@ export const runDecomposition = action({
         ? `${userPrompt}\n\n## Pre-detected Patterns (for reference)\n${JSON.stringify(preDetectedPatterns, null, 2)}\n\nYou may use, refine, or add to these patterns.`
         : userPrompt;
 
-      // 4. Call Vertex AI
+      // 4. Call Vertex AI with structured output
       const llmResponse = await ctx.runAction(internal.horus.llm.vertex.callVertexAI, {
         systemPrompt,
         userPrompt: enhancedUserPrompt,
         temperature: 0.2,
+        maxTokens: 16384, // Gemini 2.5 Flash supports up to 65536
+        responseSchema: DECOMPOSITION_RESPONSE_SCHEMA,
       });
 
-      // 5. Parse and validate response
-      const jsonStr = extractJSON(llmResponse.text);
-      const parseResult = safeJSONParse<unknown>(jsonStr);
+      // 5. Parse response (structured output is already JSON)
+      const parseResult = safeJSONParse<unknown>(llmResponse.text);
 
       if (!parseResult.success) {
         throw new Error(`Failed to parse LLM response: ${parseResult.error}`);
@@ -103,9 +108,15 @@ export const runDecomposition = action({
         durationMs: Date.now() - startTime,
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error("[runDecomposition] Error:", {
+        sessionId: args.sessionId,
+        error: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: errorMessage,
         tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCost: 0 },
         durationMs: Date.now() - startTime,
       };

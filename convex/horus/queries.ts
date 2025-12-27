@@ -20,16 +20,39 @@ import type {
 
 /**
  * Get analysis for a session.
+ * The optional _cacheKey arg is ignored but changes the cache key for customConvex.
  */
 export const getAnalysis = query({
-  args: { sessionId: v.string() },
+  args: {
+    sessionId: v.string(),
+    _cacheKey: v.optional(v.number()), // For cache invalidation with customConvex
+  },
   handler: async (ctx, { sessionId }) => {
     const analysis = await ctx.db
       .query("horusAnalyses")
       .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
       .first();
 
-    if (!analysis) return null;
+    if (!analysis) {
+      console.log("[getAnalysis] No analysis record found for session:", sessionId);
+      return null;
+    }
+
+    // Get pipeline status for modifiedAt
+    const pipelineStatus = await ctx.db
+      .query("horusPipelineStatus")
+      .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+      .first();
+
+    // Debug logging
+    console.log("[getAnalysis] Found analysis:", {
+      sessionId,
+      status: analysis.status,
+      hasAnalysisData: !!analysis.analysis,
+      hasVisualization: !!(analysis.analysis as any)?.visualization,
+      overallBlockCount: (analysis.analysis as any)?.visualization?.overallBlocks?.length ?? 0,
+      sessionBlockCount: (analysis.analysis as any)?.visualization?.sessionBlocks?.length ?? 0,
+    });
 
     return {
       sessionId: analysis.sessionId,
@@ -43,6 +66,7 @@ export const getAnalysis = query({
       startedAt: analysis.startedAt,
       completedAt: analysis.completedAt,
       error: analysis.error,
+      modifiedAt: pipelineStatus?.updatedAt ?? analysis.startedAt, // For cache invalidation
     };
   },
 });
@@ -233,6 +257,7 @@ export const getActivePipelines = query({
       "research",
       "analysis",
       "validation",
+      "progress",
     ];
 
     const pipelines = await ctx.db

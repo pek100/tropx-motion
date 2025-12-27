@@ -12,6 +12,7 @@ import type {
   ValidatorOutput,
   ProgressOutput,
 } from "../types";
+import type { AnalysisVisualization, VisualizationBlock } from "../visualization/types";
 
 // ─────────────────────────────────────────────────────────────────
 // Parse Result Type
@@ -50,18 +51,66 @@ export function extractJSON(responseText: string): string {
 }
 
 /**
- * Safely parse JSON with error handling.
+ * Attempt to repair common JSON errors from LLM output.
+ */
+function repairJSON(jsonStr: string): string {
+  let repaired = jsonStr;
+
+  // Remove trailing commas before ] or }
+  repaired = repaired.replace(/,(\s*[}\]])/g, "$1");
+
+  // Add missing commas between array elements (common LLM error)
+  // Pattern: }\n{ or ]\n[ without comma
+  repaired = repaired.replace(/\}(\s*)\{/g, "},$1{");
+  repaired = repaired.replace(/\](\s*)\[/g, "],$1[");
+
+  // Fix unescaped quotes in strings (basic attempt)
+  // This is tricky and may not always work
+
+  // Remove any text after the last valid closing brace/bracket
+  const lastBrace = repaired.lastIndexOf("}");
+  const lastBracket = repaired.lastIndexOf("]");
+  const lastValid = Math.max(lastBrace, lastBracket);
+  if (lastValid > 0 && lastValid < repaired.length - 1) {
+    repaired = repaired.substring(0, lastValid + 1);
+  }
+
+  // Balance brackets - count and add missing ones
+  const openBraces = (repaired.match(/\{/g) || []).length;
+  const closeBraces = (repaired.match(/\}/g) || []).length;
+  const openBrackets = (repaired.match(/\[/g) || []).length;
+  const closeBrackets = (repaired.match(/\]/g) || []).length;
+
+  // Add missing closing braces/brackets
+  repaired += "]".repeat(Math.max(0, openBrackets - closeBrackets));
+  repaired += "}".repeat(Math.max(0, openBraces - closeBraces));
+
+  return repaired;
+}
+
+/**
+ * Safely parse JSON with error handling and repair attempts.
  */
 export function safeJSONParse<T>(jsonStr: string): ParseResult<T> {
+  // First attempt: parse as-is
   try {
     const data = JSON.parse(jsonStr) as T;
     return { success: true, data, rawResponse: jsonStr };
-  } catch (error) {
-    return {
-      success: false,
-      error: `JSON parse error: ${error instanceof Error ? error.message : "Unknown error"}`,
-      rawResponse: jsonStr,
-    };
+  } catch (firstError) {
+    // Second attempt: try to repair the JSON
+    try {
+      const repaired = repairJSON(jsonStr);
+      const data = JSON.parse(repaired) as T;
+      console.log("[Parser] JSON repaired successfully");
+      return { success: true, data, rawResponse: repaired };
+    } catch (repairError) {
+      // Both attempts failed
+      return {
+        success: false,
+        error: `JSON parse error: ${firstError instanceof Error ? firstError.message : "Unknown error"}`,
+        rawResponse: jsonStr,
+      };
+    }
   }
 }
 
@@ -348,6 +397,20 @@ export function validateAnalysisOutput(
       strengths: Array.isArray(obj.strengths) ? (obj.strengths as string[]) : [],
       weaknesses: Array.isArray(obj.weaknesses) ? (obj.weaknesses as string[]) : [],
       analyzedAt: Date.now(),
+      visualization: obj.visualization
+        ? {
+            overallBlocks: Array.isArray(
+              (obj.visualization as Record<string, unknown>).overallBlocks
+            )
+              ? ((obj.visualization as Record<string, unknown>).overallBlocks as VisualizationBlock[])
+              : [],
+            sessionBlocks: Array.isArray(
+              (obj.visualization as Record<string, unknown>).sessionBlocks
+            )
+              ? ((obj.visualization as Record<string, unknown>).sessionBlocks as VisualizationBlock[])
+              : [],
+          }
+        : undefined,
     },
     rawResponse: JSON.stringify(data),
   };

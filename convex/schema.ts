@@ -117,6 +117,7 @@ export const HORUS_PIPELINE_STATUS = {
   RESEARCH: "research",
   ANALYSIS: "analysis",
   VALIDATION: "validation",
+  PROGRESS: "progress",
   COMPLETE: "complete",
   ERROR: "error",
 } as const;
@@ -231,6 +232,7 @@ const horusPipelineStatusValidator = v.union(
   v.literal(HORUS_PIPELINE_STATUS.RESEARCH),
   v.literal(HORUS_PIPELINE_STATUS.ANALYSIS),
   v.literal(HORUS_PIPELINE_STATUS.VALIDATION),
+  v.literal(HORUS_PIPELINE_STATUS.PROGRESS),
   v.literal(HORUS_PIPELINE_STATUS.COMPLETE),
   v.literal(HORUS_PIPELINE_STATUS.ERROR)
 );

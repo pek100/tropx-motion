@@ -67,6 +67,32 @@ const config: Config = {
         'tropx-white': 'var(--tropx-white)',
         'tropx-green': 'var(--tropx-green)',
         'tropx-red': 'var(--tropx-red)',
+        // Status semantic colors (for alerts, badges, etc.)
+        'status-success': {
+          bg: 'var(--tropx-success-bg)',
+          text: 'var(--tropx-success-text)',
+        },
+        'status-warning': {
+          bg: 'var(--tropx-warning-bg)',
+          text: 'var(--tropx-warning-text)',
+        },
+        'status-info': {
+          bg: 'var(--tropx-info-bg)',
+          text: 'var(--tropx-info-text)',
+        },
+        'status-error': {
+          bg: 'hsl(var(--destructive) / 0.1)',
+          text: 'hsl(var(--destructive))',
+        },
+        // Leg colors for bilateral comparisons
+        'leg-left': {
+          fill: 'var(--leg-left-fill)',
+          band: 'var(--leg-left-band)',
+        },
+        'leg-right': {
+          fill: 'var(--leg-right-fill)',
+          band: 'var(--leg-right-band)',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',

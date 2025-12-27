@@ -66,6 +66,8 @@ export const searchResearchCache = internalAction({
 
 /**
  * Internal vector search query.
+ * NOTE: Vector search must be done via ctx.vectorSearch() in actions.
+ * This query is a fallback that returns empty when cache is empty.
  */
 export const vectorSearch = query({
   args: {
@@ -76,21 +78,21 @@ export const vectorSearch = query({
     ),
   },
   handler: async (ctx, { embedding, limit, minTier }): Promise<SearchResult[]> => {
-    // Build filter based on tier
+    // Vector indexes cannot be queried via .withIndex() - they require ctx.vectorSearch() in actions.
+    // For now, do a simple scan of the cache (will be fast when cache is small/empty).
     const tierOrder: QualityTier[] = ["S", "A", "B", "C", "D"];
     const minTierIndex = minTier ? tierOrder.indexOf(minTier) : tierOrder.length - 1;
     const allowedTiers = tierOrder.slice(0, minTierIndex + 1);
 
-    // Vector search with tier filter
-    const results = await ctx.db
-      .query("horusResearchCache")
-      .withIndex("by_embedding", (q) =>
-        q.eq("embedding", embedding as unknown as number[])
-      )
-      .take(limit * 3);
+    // Get all cache entries (will be small or empty initially)
+    const allEntries = await ctx.db.query("horusResearchCache").take(100);
 
-    // Manual filtering since Convex vector search has limited filter support
-    const filtered = results
+    if (allEntries.length === 0) {
+      return [];
+    }
+
+    // Filter by tier
+    const filtered = allEntries
       .filter((r) => allowedTiers.includes(r.tier as QualityTier))
       .slice(0, limit);
 

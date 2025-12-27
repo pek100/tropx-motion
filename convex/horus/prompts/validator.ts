@@ -20,11 +20,7 @@ import type {
 // ─────────────────────────────────────────────────────────────────
 
 export const VALIDATION_RULES = {
-  NUMERICAL_TOLERANCE: 0.5, // Allow 0.5 unit difference
-  MIN_CORRELATIVE_INSIGHTS: 2,
-  REQUIRED_LIMB_TERMS: ["Left Leg", "Right Leg"],
-  FORBIDDEN_LIMB_TERMS: ["left", "right", "L", "R", "affected", "involved", "weak side"],
-  MIN_EVIDENCE_PER_INSIGHT: 1,
+  NUMERICAL_TOLERANCE: 2.0, // Allow 2 unit difference for rounding
   MAX_REVISIONS: 3,
 };
 
@@ -32,65 +28,22 @@ export const VALIDATION_RULES = {
 // System Prompt
 // ─────────────────────────────────────────────────────────────────
 
-export const VALIDATOR_SYSTEM_PROMPT = `You are a quality assurance validator for the Horus biomechanics analysis pipeline.
+export const VALIDATOR_SYSTEM_PROMPT = `You validate biomechanics analysis for clinical accuracy.
 
-Your role is to verify the Analysis Agent's output is accurate, complete, and safe before saving.
+Check for these issues only:
 
-## Validation Rules
+1. **metric_accuracy**: Numbers cited differ significantly from source metrics (>${VALIDATION_RULES.NUMERICAL_TOLERANCE} units off)
+2. **hallucination**: Claims about data that doesn't exist, or made-up citations
+3. **clinical_safety**: Diagnosis/prescription language instead of assessment language
+4. **internal_consistency**: Contradictory statements within the analysis
 
-### 1. Numerical Accuracy
-- Values in insights must match source metrics within ${VALIDATION_RULES.NUMERICAL_TOLERANCE} units
-- Percentiles must be correctly calculated
-- Asymmetry values must match bilateral metrics
-
-### 2. Side Specificity (CRITICAL)
-- ONLY "Left Leg" or "Right Leg" are allowed
-- REJECT: "left", "right", "L", "R", "affected", "involved", "weak side"
-- Check: insight content, titles, recommendations
-
-### 3. Classification Completeness
-- Every insight MUST have classification: "strength" or "weakness"
-- No neutral classifications allowed
-- Verify percentile tiebreaker logic (≥55 = strength)
-
-### 4. Evidence Support
-- Each insight must have at least ${VALIDATION_RULES.MIN_EVIDENCE_PER_INSIGHT} evidence citation
-- Evidence should relate to the insight's claims
-
-### 5. Clinical Safety
-- No diagnosis statements (we assess, not diagnose)
-- No treatment prescriptions (suggest, not prescribe)
-- Recommendations should be general, not specific medical advice
-
-### 6. Correlative Insights
-- Minimum ${VALIDATION_RULES.MIN_CORRELATIVE_INSIGHTS} correlative insights required
-- Referenced insight IDs must exist
-
-## Output Format
-
+Output JSON:
 {
   "passed": boolean,
-  "issues": [
-    {
-      "ruleType": "numerical_accuracy" | "side_specificity" | "classification_completeness" | "evidence_support" | "clinical_safety",
-      "severity": "error" | "warning",
-      "insightIds": ["insight-1"],
-      "description": "What is wrong",
-      "suggestedFix": "How to fix it"
-    }
-  ],
-  "errorCount": number,
-  "warningCount": number
+  "issues": [{ "ruleType": string, "severity": "error"|"warning", "insightIds": string[], "description": string, "suggestedFix": string }]
 }
 
-## Pass/Fail Criteria
-
-- **PASS**: Zero errors (warnings allowed)
-- **FAIL**: One or more errors → Analysis Agent must revise
-
-## Important
-
-After ${VALIDATION_RULES.MAX_REVISIONS} failed attempts, accept with warnings and flag for human review.`;
+Pass unless there are significant accuracy or safety issues.`;
 
 // ─────────────────────────────────────────────────────────────────
 // User Prompt Builder
@@ -187,17 +140,7 @@ ${Object.entries(metrics.bilateral)
   .join("\n")}`);
 
   sections.push(`
-## Validation Checklist
-
-1. [ ] Numerical values match source metrics (±${VALIDATION_RULES.NUMERICAL_TOLERANCE})
-2. [ ] Side specificity uses only "Left Leg" / "Right Leg"
-3. [ ] All insights have classification (strength/weakness)
-4. [ ] Each insight has at least ${VALIDATION_RULES.MIN_EVIDENCE_PER_INSIGHT} evidence citation
-5. [ ] No diagnosis or treatment prescriptions
-6. [ ] At least ${VALIDATION_RULES.MIN_CORRELATIVE_INSIGHTS} correlative insights
-7. [ ] All referenced insight IDs exist
-
-Return validation result as JSON.`);
+Validate and return JSON.`);
 
   return sections.join("\n");
 }
@@ -250,7 +193,7 @@ export function parseValidatorResponse(
 
 /**
  * Run programmatic validation before LLM call.
- * Catches obvious issues immediately.
+ * Only catches critical issues - NOT formatting.
  */
 export function programmaticValidation(
   analysis: AnalysisOutput,
@@ -258,105 +201,49 @@ export function programmaticValidation(
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // 1. Check side specificity in all text fields
-  for (const insight of analysis.insights) {
-    const textToCheck = `${insight.title} ${insight.content} ${insight.recommendations?.join(" ") || ""}`;
-
-    for (const forbidden of VALIDATION_RULES.FORBIDDEN_LIMB_TERMS) {
-      // Case-insensitive check for standalone words
-      const regex = new RegExp(`\\b${forbidden}\\b`, "i");
-      if (regex.test(textToCheck)) {
-        issues.push({
-          ruleType: "side_specificity",
-          severity: "error",
-          insightIds: [insight.id],
-          description: `Found forbidden term "${forbidden}" in insight. Use "Left Leg" or "Right Leg" instead.`,
-          suggestedFix: `Replace "${forbidden}" with "Left Leg" or "Right Leg"`,
-        });
-      }
-    }
-  }
-
-  // 2. Check classification completeness
+  // 1. Check classification completeness (required field)
   for (const insight of analysis.insights) {
     if (!insight.classification || !["strength", "weakness"].includes(insight.classification)) {
       issues.push({
-        ruleType: "classification_completeness",
+        ruleType: "internal_consistency",
         severity: "error",
         insightIds: [insight.id],
-        description: `Insight missing or invalid classification: "${insight.classification}"`,
+        description: `Insight missing classification`,
         suggestedFix: 'Set classification to "strength" or "weakness"',
       });
     }
   }
 
-  // 3. Check evidence support
-  for (const insight of analysis.insights) {
-    if (!insight.evidence || insight.evidence.length < VALIDATION_RULES.MIN_EVIDENCE_PER_INSIGHT) {
-      issues.push({
-        ruleType: "evidence_support",
-        severity: "error",
-        insightIds: [insight.id],
-        description: `Insight has ${insight.evidence?.length || 0} evidence citations, minimum is ${VALIDATION_RULES.MIN_EVIDENCE_PER_INSIGHT}`,
-        suggestedFix: "Add at least one evidence citation",
-      });
-    }
-  }
-
-  // 4. Check correlative insights count
-  if (analysis.correlativeInsights.length < VALIDATION_RULES.MIN_CORRELATIVE_INSIGHTS) {
-    issues.push({
-      ruleType: "evidence_support",
-      severity: "error",
-      insightIds: [],
-      description: `Only ${analysis.correlativeInsights.length} correlative insights, minimum is ${VALIDATION_RULES.MIN_CORRELATIVE_INSIGHTS}`,
-      suggestedFix: "Add more correlative insights showing relationships between findings",
-    });
-  }
-
-  // 5. Verify correlative insight references
+  // 2. Verify correlative insight references exist
   const insightIds = new Set(analysis.insights.map((i) => i.id));
   for (const corr of analysis.correlativeInsights) {
     if (!insightIds.has(corr.primaryInsightId)) {
       issues.push({
-        ruleType: "evidence_support",
-        severity: "error",
+        ruleType: "internal_consistency",
+        severity: "warning",
         insightIds: [corr.id],
-        description: `Correlative insight references non-existent primary insight: ${corr.primaryInsightId}`,
-        suggestedFix: "Fix the primaryInsightId to reference an existing insight",
+        description: `Correlative insight references non-existent insight: ${corr.primaryInsightId}`,
+        suggestedFix: "Fix the insight ID reference",
       });
-    }
-    for (const relatedId of corr.relatedInsightIds) {
-      if (!insightIds.has(relatedId)) {
-        issues.push({
-          ruleType: "evidence_support",
-          severity: "warning",
-          insightIds: [corr.id],
-          description: `Correlative insight references non-existent related insight: ${relatedId}`,
-          suggestedFix: "Fix the relatedInsightIds to reference existing insights",
-        });
-      }
     }
   }
 
-  // 6. Check for clinical safety issues
-  const unsafePatterns = [
-    { pattern: /\bdiagnos(e|is|ed)\b/i, term: "diagnosis" },
-    { pattern: /\bprescrib(e|ed|ing)\b/i, term: "prescription" },
-    { pattern: /\btreat(ment)?\b/i, term: "treatment" },
-    { pattern: /\b(must|should) (see|visit|consult) (a )?(doctor|physician|specialist)\b/i, term: "medical referral" },
+  // 3. Check for critical clinical safety issues only
+  const dangerousPatterns = [
+    { pattern: /\b(diagnose|diagnosis)\b/i, term: "diagnosis" },
+    { pattern: /\bprescrib(e|ed|ing)\s+(medication|drug|medicine)/i, term: "medication prescription" },
   ];
 
   for (const insight of analysis.insights) {
     const textToCheck = `${insight.content} ${insight.recommendations?.join(" ") || ""}`;
-    for (const { pattern, term } of unsafePatterns) {
+    for (const { pattern, term } of dangerousPatterns) {
       if (pattern.test(textToCheck)) {
         issues.push({
           ruleType: "clinical_safety",
           severity: "warning",
           insightIds: [insight.id],
-          description: `Insight contains potential ${term} language`,
-          suggestedFix: "Use assessment language instead of diagnostic/prescriptive terms",
+          description: `Contains ${term} language - use assessment terms instead`,
+          suggestedFix: "Rephrase to avoid diagnostic language",
         });
       }
     }

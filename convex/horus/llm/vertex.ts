@@ -1,7 +1,7 @@
 /**
  * Vertex AI Client for Horus
  *
- * Gemini 2.0 Flash integration with structured output support.
+ * Gemini 2.5 Flash integration with structured output support.
  */
 
 import { action } from "../../_generated/server";
@@ -13,19 +13,20 @@ import type { TokenUsage } from "../types";
 // ─────────────────────────────────────────────────────────────────
 
 export const VERTEX_CONFIG = {
-  MODEL: "gemini-2.0-flash-001",
+  // Gemini 2.5 Flash - supports up to 65535 output tokens
+  MODEL: "gemini-2.5-flash",
   LOCATION: "us-central1",
-  // Pricing per 1M tokens (as of late 2024)
+  // Pricing per 1M tokens (Gemini 2.5 Flash pricing)
   PRICING: {
-    INPUT_PER_1M: 0.075,
-    OUTPUT_PER_1M: 0.30,
+    INPUT_PER_1M: 0.15,
+    OUTPUT_PER_1M: 0.60,
   },
   // Default generation config
   GENERATION_CONFIG: {
     temperature: 0.2,
     topP: 0.8,
     topK: 40,
-    maxOutputTokens: 8192,
+    maxOutputTokens: 65535, // Gemini 2.5 Flash max
   },
   // Safety settings (permissive for clinical content)
   SAFETY_SETTINGS: [
@@ -67,6 +68,7 @@ export const callVertexAI = action({
     userPrompt: v.string(),
     temperature: v.optional(v.number()),
     maxTokens: v.optional(v.number()),
+    responseSchema: v.optional(v.any()), // JSON Schema for structured output
   },
   handler: async (ctx, args): Promise<VertexResponse> => {
     const projectId = process.env.VERTEX_AI_PROJECT_ID;
@@ -77,9 +79,34 @@ export const callVertexAI = action({
     }
 
     // Get access token using Google Cloud default credentials
-    const accessToken = await getAccessToken();
+    let accessToken: string;
+    try {
+      accessToken = await getAccessToken();
+      console.log("[Vertex AI] Got access token (length:", accessToken.length, ")");
+    } catch (tokenError) {
+      console.error("[Vertex AI] Failed to get access token:", tokenError);
+      throw tokenError;
+    }
 
     const endpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${VERTEX_CONFIG.MODEL}:generateContent`;
+
+    // Build generation config
+    const generationConfig: Record<string, unknown> = {
+      ...VERTEX_CONFIG.GENERATION_CONFIG,
+      temperature: args.temperature ?? VERTEX_CONFIG.GENERATION_CONFIG.temperature,
+      maxOutputTokens: args.maxTokens ?? VERTEX_CONFIG.GENERATION_CONFIG.maxOutputTokens,
+      // Disable thinking mode to prevent token budget being consumed by internal reasoning
+      // See: https://discuss.ai.google.dev/t/truncated-response-issue-with-gemini-2-5-flash-preview/81258
+      thinkingConfig: {
+        thinkingBudget: 0,
+      },
+    };
+
+    // If response schema provided, enable JSON mode
+    if (args.responseSchema) {
+      generationConfig.responseMimeType = "application/json";
+      generationConfig.responseSchema = args.responseSchema;
+    }
 
     const requestBody = {
       contents: [
@@ -91,13 +118,16 @@ export const callVertexAI = action({
       systemInstruction: {
         parts: [{ text: args.systemPrompt }],
       },
-      generationConfig: {
-        ...VERTEX_CONFIG.GENERATION_CONFIG,
-        temperature: args.temperature ?? VERTEX_CONFIG.GENERATION_CONFIG.temperature,
-        maxOutputTokens: args.maxTokens ?? VERTEX_CONFIG.GENERATION_CONFIG.maxOutputTokens,
-      },
+      generationConfig,
       safetySettings: VERTEX_CONFIG.SAFETY_SETTINGS,
     };
+
+    console.log("[Vertex AI] Calling API:", {
+      model: VERTEX_CONFIG.MODEL,
+      location,
+      hasSchema: !!args.responseSchema,
+      promptLength: args.userPrompt.length,
+    });
 
     const response = await fetch(endpoint, {
       method: "POST",
@@ -108,12 +138,29 @@ export const callVertexAI = action({
       body: JSON.stringify(requestBody),
     });
 
+    console.log("[Vertex AI] Response status:", response.status, response.statusText);
+
     if (!response.ok) {
       const errorText = await response.text();
+      console.error("[Vertex AI] API Error:", {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorText,
+        endpoint,
+        hasSchema: !!args.responseSchema,
+      });
       throw new Error(`Vertex AI API error (${response.status}): ${errorText}`);
     }
 
     const data = await response.json();
+
+    // Log successful response metadata
+    console.log("[Vertex AI] Response received:", {
+      finishReason: data.candidates?.[0]?.finishReason,
+      promptTokens: data.usageMetadata?.promptTokenCount,
+      outputTokens: data.usageMetadata?.candidatesTokenCount,
+      hasContent: !!data.candidates?.[0]?.content?.parts?.[0]?.text,
+    });
 
     // Extract response text
     const candidate = data.candidates?.[0];
@@ -123,6 +170,16 @@ export const callVertexAI = action({
 
     const text = candidate.content?.parts?.[0]?.text || "";
     const finishReason = candidate.finishReason || "UNKNOWN";
+
+    // Handle truncated responses
+    if (finishReason === "MAX_TOKENS") {
+      console.error("[Vertex AI] Response truncated (MAX_TOKENS):", {
+        outputTokens: data.usageMetadata?.candidatesTokenCount,
+        textLength: text.length,
+        textPreview: text.slice(0, 500) + "...",
+      });
+      throw new Error(`Vertex AI response truncated (MAX_TOKENS). Output: ${data.usageMetadata?.candidatesTokenCount} tokens. Try reducing prompt size or increasing maxOutputTokens.`);
+    }
 
     // Extract token usage
     const usageMetadata = data.usageMetadata || {};

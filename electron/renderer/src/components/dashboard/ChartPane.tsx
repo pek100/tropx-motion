@@ -2,9 +2,9 @@
  * ChartPane - Tabbed container for Progress and Session charts.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { TrendingUp, Activity } from "lucide-react";
+import { TrendingUp, Activity, Link, Unlink } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Select,
@@ -22,7 +22,6 @@ import type { PackedChunkData } from "../../../../../shared/QuaternionCodec";
 // Types
 // ─────────────────────────────────────────────────────────────────
 
-type ChartTab = "progress" | "session";
 type TimeFilter = "7" | "30" | "90" | "all";
 
 // Asymmetry event type from backend
@@ -63,6 +62,8 @@ export interface AsymmetryEventsData {
   defaultPhaseAlignment: PhaseAlignmentData | null;
 }
 
+export type ChartTab = "progress" | "session";
+
 interface ChartPaneProps {
   sessions: SessionData[];
   selectedSessionId: string | null;
@@ -75,6 +76,14 @@ interface ChartPaneProps {
   className?: string;
   /** Callback when user applies a custom phase offset (triggers server-side recalculation) */
   onPhaseOffsetApply?: (newOffsetMs: number) => void;
+  /** Whether tabs are linked with AI Analysis pane */
+  isLinked?: boolean;
+  /** Callback when link state changes */
+  onLinkedChange?: (linked: boolean) => void;
+  /** Called when tab changes (so parent can sync other pane) */
+  onTabChange?: (tab: ChartTab) => void;
+  /** External tab to sync to when linked */
+  syncToTab?: ChartTab;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -103,8 +112,28 @@ export function ChartPane({
   borderless,
   className,
   onPhaseOffsetApply,
+  isLinked = true,
+  onLinkedChange,
+  onTabChange,
+  syncToTab,
 }: ChartPaneProps) {
   const [activeTab, setActiveTab] = useState<ChartTab>("progress");
+
+  // Sync to external tab when linked
+  useEffect(() => {
+    if (isLinked && syncToTab !== undefined && syncToTab !== activeTab) {
+      setActiveTab(syncToTab);
+    }
+  }, [syncToTab, isLinked]);
+
+  // Handle tab change
+  const handleTabChange = useCallback((tab: ChartTab) => {
+    setActiveTab(tab);
+    if (isLinked) {
+      onTabChange?.(tab);
+    }
+  }, [onTabChange, isLinked]);
+
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("7");
 
   // Filter sessions based on time filter
@@ -117,8 +146,8 @@ export function ChartPane({
   // Handle view session (select + switch to waveform tab)
   const handleViewSession = useCallback((sessionId: string) => {
     onSelectSession(sessionId);
-    setActiveTab("session");
-  }, [onSelectSession]);
+    handleTabChange("session");
+  }, [onSelectSession, handleTabChange]);
 
   return (
     <div
@@ -132,7 +161,7 @@ export function ChartPane({
     >
       <Tabs
         value={activeTab}
-        onValueChange={(v: string) => setActiveTab(v as ChartTab)}
+        onValueChange={(v: string) => handleTabChange(v as ChartTab)}
         className="flex flex-col h-full"
       >
         {/* Header */}
@@ -175,7 +204,7 @@ export function ChartPane({
                 className={cn(
                   "gap-1 sm:gap-1.5 text-xs px-2 sm:px-3 transition-all",
                   activeTab === "progress" &&
-                    "bg-[var(--tropx-vibrant)] text-white data-[state=active]:bg-[var(--tropx-vibrant)] data-[state=active]:text-white"
+                    "bg-[var(--tropx-vibrant)] text-white data-[state=active]:bg-[var(--tropx-vibrant)] data-[state=active]:text-white dark:bg-[var(--tropx-vibrant)] dark:text-white dark:data-[state=active]:bg-[var(--tropx-vibrant)] dark:data-[state=active]:text-white"
                 )}
               >
                 <TrendingUp className="size-3 sm:size-3.5" />
@@ -187,7 +216,7 @@ export function ChartPane({
                 className={cn(
                   "gap-1 sm:gap-1.5 text-xs px-2 sm:px-3 transition-all",
                   activeTab === "session" &&
-                    "bg-[var(--tropx-vibrant)] text-white data-[state=active]:bg-[var(--tropx-vibrant)] data-[state=active]:text-white"
+                    "bg-[var(--tropx-vibrant)] text-white data-[state=active]:bg-[var(--tropx-vibrant)] data-[state=active]:text-white dark:bg-[var(--tropx-vibrant)] dark:text-white dark:data-[state=active]:bg-[var(--tropx-vibrant)] dark:data-[state=active]:text-white"
                 )}
               >
                 <Activity className="size-3 sm:size-3.5" />
@@ -195,6 +224,21 @@ export function ChartPane({
                 <span className="hidden sm:inline">Waveform</span>
               </TabsTrigger>
             </TabsList>
+
+            {/* Link toggle */}
+            <button
+              type="button"
+              onClick={() => onLinkedChange?.(!isLinked)}
+              className={cn(
+                "p-1.5 rounded-md transition-colors",
+                isLinked
+                  ? "text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/10"
+                  : "text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] hover:bg-[var(--tropx-muted)]"
+              )}
+              title={isLinked ? "Unlink from AI Analysis" : "Link with AI Analysis"}
+            >
+              {isLinked ? <Link className="size-4" /> : <Unlink className="size-4" />}
+            </button>
           </div>
         </div>
 

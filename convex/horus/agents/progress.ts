@@ -16,7 +16,8 @@ import {
   preComputeTrends,
   PROGRESS_CONFIG,
 } from "../prompts/progress";
-import { extractJSON, safeJSONParse, validateProgressOutput } from "../llm/parser";
+import { safeJSONParse, validateProgressOutput } from "../llm/parser";
+import { PROGRESS_RESPONSE_SCHEMA } from "../llm/schemas";
 
 // ─────────────────────────────────────────────────────────────────
 // Agent Execution
@@ -78,16 +79,17 @@ export const runProgress = action({
         patientId
       );
 
-      // 3. Call Vertex AI
+      // 3. Call Vertex AI with structured output
       const llmResponse = await ctx.runAction(internal.horus.llm.vertex.callVertexAI, {
         systemPrompt,
         userPrompt,
         temperature: 0.3,
+        maxTokens: 16384, // Gemini 2.5 Flash supports up to 65536
+        responseSchema: PROGRESS_RESPONSE_SCHEMA,
       });
 
-      // 4. Parse and validate response
-      const jsonStr = extractJSON(llmResponse.text);
-      const parseResult = safeJSONParse<unknown>(jsonStr);
+      // 4. Parse response (structured output is already JSON)
+      const parseResult = safeJSONParse<unknown>(llmResponse.text);
 
       if (!parseResult.success) {
         throw new Error(`Failed to parse LLM response: ${parseResult.error}`);

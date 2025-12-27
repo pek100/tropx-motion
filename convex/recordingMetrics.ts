@@ -6,7 +6,7 @@
 import { v } from "convex/values";
 import { query, internalAction, internalQuery } from "./_generated/server";
 import { mutation, internalMutation } from "./lib/functions";
-import { internal } from "./_generated/api";
+import { internal, api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { METRIC_STATUS, ACTIVITY_PROFILES } from "./schema";
 import { computeAllMetrics, type RecordingChunk, type ActivityProfile } from "./lib/metrics";
@@ -312,6 +312,16 @@ export const computeMetricsInternal = internalAction({
         sessionId: args.sessionId,
         metrics: result.metrics,
         computedAt: result.computedAt,
+      });
+
+      // Reset Horus pipeline status BEFORE scheduling (clears old error state)
+      await ctx.runMutation(internal.horus.orchestrator.resetPipelineStatus, {
+        sessionId: args.sessionId,
+      });
+
+      // Trigger Horus AI analysis
+      await ctx.scheduler.runAfter(0, internal.horus.triggers.onMetricsComplete, {
+        sessionId: args.sessionId,
       });
     } catch (error) {
       // Mark as failed

@@ -19,8 +19,9 @@ import { User, Loader2, TrendingUp, BarChart3 } from "lucide-react";
 import { PatientInfoCard } from "./PatientInfoCard";
 import { PatientNotes, type PatientNote } from "./PatientNotes";
 import { SessionsCarousel } from "./SessionsCarousel";
-import { ChartPane } from "./ChartPane";
-import { MetricsDataTable } from "./MetricsDataTable";
+import { ChartPane, type ChartTab } from "./ChartPane";
+import { HorusPane, type AnalysisMode, useHorusAnalysisToast } from "./horus";
+import { CompactMetricsPane } from "./CompactMetricsPane";
 import { PatientSearchModal } from "../PatientSearchModal";
 import { METRIC_DEFINITIONS, type MovementType } from "./MetricsTable";
 import type { SessionData } from "./SessionCard";
@@ -107,6 +108,26 @@ export function DashboardView({ className }: DashboardViewProps) {
   );
   const [patientNotes, setPatientNotes] = useState<PatientNote[]>([]);
   const [hasInitialized, setHasInitialized] = useState(false);
+  const [isTabsLinked, setIsTabsLinked] = useState(true);
+
+  // Sync states for linked tabs (used to trigger sync in the other pane)
+  const [syncChartTab, setSyncChartTab] = useState<ChartTab>("progress");
+  const [syncAnalysisMode, setSyncAnalysisMode] = useState<AnalysisMode>("overall");
+
+  // Horus analysis toast
+  const { showToast: showHorusToast, ToastComponent: HorusToast } = useHorusAnalysisToast();
+
+  // When ChartPane changes, update the sync state for HorusPane
+  const handleChartTabChange = useCallback((tab: ChartTab) => {
+    setSyncChartTab(tab);
+    setSyncAnalysisMode(tab === "progress" ? "overall" : "session");
+  }, []);
+
+  // When HorusPane changes, update the sync state for ChartPane
+  const handleAnalysisModeChange = useCallback((mode: AnalysisMode) => {
+    setSyncAnalysisMode(mode);
+    setSyncChartTab(mode === "overall" ? "progress" : "session");
+  }, []);
 
   // Save state to localStorage whenever it changes
   useEffect(() => {
@@ -160,10 +181,11 @@ export function DashboardView({ className }: DashboardViewProps) {
   // Sync context for imperative caching
   const sync = useSyncOptional();
 
-  // Queries
+  // Queries - add timestamp to bust cache during development
+  const [cacheKey] = useState(() => Date.now());
   const metricsHistory = useQuery(
     api.dashboard.getPatientMetricsHistory,
-    selectedPatientId ? { subjectId: selectedPatientId } : "skip"
+    selectedPatientId ? { subjectId: selectedPatientId, _cacheKey: cacheKey } : "skip"
   );
   const isMetricsLoading = metricsHistory === undefined;
 
@@ -399,6 +421,57 @@ export function DashboardView({ className }: DashboardViewProps) {
       .filter((row) => row.value !== undefined || row.reference !== undefined);
   }, [selectedSession, metricsHistory]);
 
+  // Transform sessions for Horus AI pane (needs nested per-leg structure)
+  const horusSessions = useMemo(() => {
+    if (!Array.isArray(metricsHistory?.sessions)) return [];
+
+    const result = metricsHistory.sessions
+      .filter((s: Session) => s && typeof s.sessionId === 'string')
+      .map((s: Session) => {
+        // Access nested per-leg data (added by backend)
+        const sessionAny = s as Session & {
+          leftLeg?: Record<string, number>;
+          rightLeg?: Record<string, number>;
+          bilateral?: Record<string, number>;
+        };
+
+        // Debug: Log the raw backend data for first session
+        if (s === metricsHistory.sessions[0]) {
+          console.log("[DashboardView] First session raw data:", JSON.stringify({
+            sessionId: s.sessionId,
+            hasLeftLeg: !!sessionAny.leftLeg,
+            hasRightLeg: !!sessionAny.rightLeg,
+            hasBilateral: !!sessionAny.bilateral,
+            bilateral: sessionAny.bilateral,
+            leftLegKeys: sessionAny.leftLeg ? Object.keys(sessionAny.leftLeg) : [],
+          }, null, 2));
+        }
+
+        return {
+          sessionId: s.sessionId,
+          recordedAt: s.recordedAt,
+          metrics: (sessionAny.leftLeg && sessionAny.rightLeg)
+            ? {
+                leftLeg: sessionAny.leftLeg,
+                rightLeg: sessionAny.rightLeg,
+                bilateral: sessionAny.bilateral ?? {},
+                opiScore: s.opiScore,
+              }
+            : undefined,
+        };
+      });
+
+    // Debug: Log the total number of sessions with metrics
+    const withMetrics = result.filter(r => r.metrics).length;
+    console.log("[DashboardView] horusSessions transformed:", JSON.stringify({
+      total: result.length,
+      withMetrics,
+      firstSessionBilateral: result[0]?.metrics?.bilateral,
+    }, null, 2));
+
+    return result;
+  }, [metricsHistory]);
+
   // Handle session selection (from carousel or chart)
   const handleSelectSession = useCallback(
     (sessionId: string) => {
@@ -481,13 +554,15 @@ export function DashboardView({ className }: DashboardViewProps) {
     setIsRecomputing(true);
     try {
       await recomputeMetrics({ sessionId: selectedSessionId });
+      // Show Horus analysis toast
+      showHorusToast(selectedSessionId, `Session ${selectedSessionId.slice(-6)}`);
       // Metrics will be refetched automatically via Convex reactivity
     } catch (error) {
       console.error("Failed to recompute metrics:", error);
     } finally {
       setIsRecomputing(false);
     }
-  }, [selectedSessionId, recomputeMetrics]);
+  }, [selectedSessionId, recomputeMetrics, showHorusToast]);
 
   // Loading user state
   if (isUserLoading) {
@@ -618,27 +693,49 @@ export function DashboardView({ className }: DashboardViewProps) {
               </div>
             </div>
 
-            {/* Chart Pane */}
-            <ChartPane
-              sessions={sessions}
-              selectedSessionId={selectedSessionId}
-              onSelectSession={handleSelectSession}
-              sessionPreviewData={sessionPackedData}
-              isSessionLoading={isSessionLoading}
-              selectedMetrics={selectedMetrics}
-              asymmetryEvents={asymmetryEvents ?? null}
-              className="h-[350px] sm:h-[400px]"
-              borderless
-              onPhaseOffsetApply={handlePhaseOffsetApply}
-            />
+            {/* Chart Pane with Compact Metrics */}
+            <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4">
+              {/* Compact Metrics Pane - hidden on mobile */}
+              <div className="hidden lg:block h-[350px] sm:h-[400px]">
+                <CompactMetricsPane
+                  data={metricsTableData}
+                  sessionTitle={selectedSession?.tags[0]}
+                  selectedMetrics={selectedMetrics}
+                  onSelectionChange={setSelectedMetrics}
+                  borderless
+                  className="h-full"
+                />
+              </div>
 
-            {/* Metrics Data Table */}
-            <MetricsDataTable
-              data={metricsTableData}
-              sessionTitle={selectedSession?.tags[0]}
-              selectedMetrics={selectedMetrics}
-              onSelectionChange={setSelectedMetrics}
+              {/* Chart Pane */}
+              <ChartPane
+                sessions={sessions}
+                selectedSessionId={selectedSessionId}
+                onSelectSession={handleSelectSession}
+                sessionPreviewData={sessionPackedData}
+                isSessionLoading={isSessionLoading}
+                selectedMetrics={selectedMetrics}
+                asymmetryEvents={asymmetryEvents ?? null}
+                className="h-[350px] sm:h-[400px]"
+                borderless
+                onPhaseOffsetApply={handlePhaseOffsetApply}
+                isLinked={isTabsLinked}
+                onLinkedChange={setIsTabsLinked}
+                onTabChange={handleChartTabChange}
+                syncToTab={syncChartTab}
+              />
+            </div>
+
+            {/* Horus AI Analysis Pane */}
+            <HorusPane
+              patientId={selectedPatientId}
+              selectedSessionId={selectedSessionId}
+              sessions={horusSessions}
               borderless
+              isLinked={isTabsLinked}
+              onLinkedChange={setIsTabsLinked}
+              onModeChange={handleAnalysisModeChange}
+              syncToMode={syncAnalysisMode}
             />
           </>
         )}
@@ -651,6 +748,9 @@ export function DashboardView({ className }: DashboardViewProps) {
         onSelectPatient={handlePatientSelect}
         selectedPatientId={selectedPatientId}
       />
+
+      {/* Horus Analysis Toast */}
+      {HorusToast}
     </div>
   );
 }

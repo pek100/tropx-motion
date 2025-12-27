@@ -16,6 +16,7 @@ export const getPatientMetricsHistory = query({
   args: {
     subjectId: v.id("users"),
     limit: v.optional(v.number()),
+    _cacheKey: v.optional(v.number()), // Cache busting for development
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
@@ -91,7 +92,7 @@ export const getPatientMetricsHistory = query({
             ?? "unknown",
           movementConfidence: (metrics.movementClassification as any)?.confidence ?? 0,
 
-          // Key metrics for table/chart
+          // Flat metrics for table/chart
           metrics: {
             // Symmetry
             romAsymmetry: metrics.bilateralAnalysis?.asymmetryIndices?.averageROM,
@@ -122,6 +123,40 @@ export const getPatientMetricsHistory = query({
               ? (metrics.leftLeg.romCoV + metrics.rightLeg.romCoV) / 2
               : undefined,
             groundContactTimeMs: metrics.jumpMetrics?.groundContactTimeMs,
+          },
+
+          // Nested per-leg metrics for Horus AI visualization
+          leftLeg: metrics.leftLeg ? {
+            overallMaxRom: metrics.leftLeg.overallMaxROM,
+            averageRom: metrics.leftLeg.averageROM,
+            peakFlexion: metrics.leftLeg.peakFlexion,
+            peakExtension: metrics.leftLeg.peakExtension,
+            peakAngularVelocity: metrics.leftLeg.peakAngularVelocity,
+            explosivenessConcentric: metrics.leftLeg.explosivenessConcentric,
+            explosivenessLoading: metrics.leftLeg.explosivenessLoading,
+            rmsJerk: metrics.leftLeg.rmsJerk,
+            romCoV: metrics.leftLeg.romCoV,
+          } : undefined,
+          rightLeg: metrics.rightLeg ? {
+            overallMaxRom: metrics.rightLeg.overallMaxROM,
+            averageRom: metrics.rightLeg.averageROM,
+            peakFlexion: metrics.rightLeg.peakFlexion,
+            peakExtension: metrics.rightLeg.peakExtension,
+            peakAngularVelocity: metrics.rightLeg.peakAngularVelocity,
+            explosivenessConcentric: metrics.rightLeg.explosivenessConcentric,
+            explosivenessLoading: metrics.rightLeg.explosivenessLoading,
+            rmsJerk: metrics.rightLeg.rmsJerk,
+            romCoV: metrics.rightLeg.romCoV,
+          } : undefined,
+          bilateral: {
+            romAsymmetry: metrics.bilateralAnalysis?.asymmetryIndices?.averageROM ?? 0,
+            velocityAsymmetry: metrics.bilateralAnalysis?.asymmetryIndices?.peakAngularVelocity ?? 0,
+            crossCorrelation: metrics.bilateralAnalysis?.temporalAsymmetry?.crossCorrelation ?? 0,
+            realAsymmetryAvg: metrics.advancedAsymmetry?.avgRealAsymmetry ?? 0,
+            netGlobalAsymmetry: metrics.bilateralAnalysis?.netGlobalAsymmetry ?? 0,
+            phaseShift: metrics.bilateralAnalysis?.temporalAsymmetry?.phaseShift ?? 0,
+            temporalLag: metrics.bilateralAnalysis?.temporalAsymmetry?.temporalLag ?? 0,
+            maxFlexionTimingDiff: metrics.temporalCoordination?.maxFlexionTimingDiff ?? 0,
           },
         };
       })

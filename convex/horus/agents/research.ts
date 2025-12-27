@@ -18,7 +18,8 @@ import {
   buildResearchUserPrompt,
   parseResearchResponse,
 } from "../prompts/research";
-import { extractJSON, safeJSONParse, validateResearchOutput } from "../llm/parser";
+import { safeJSONParse, validateResearchOutput } from "../llm/parser";
+import { RESEARCH_RESPONSE_SCHEMA } from "../llm/schemas";
 
 // ─────────────────────────────────────────────────────────────────
 // Agent Execution
@@ -77,16 +78,17 @@ export const runResearch = action({
       const systemPrompt = RESEARCH_SYSTEM_PROMPT;
       const userPrompt = buildResearchUserPrompt(patterns, cachedEvidence);
 
-      // 3. Call Vertex AI
+      // 3. Call Vertex AI with structured output
       const llmResponse = await ctx.runAction(internal.horus.llm.vertex.callVertexAI, {
         systemPrompt,
         userPrompt,
         temperature: 0.3,
+        maxTokens: 32768, // Research needs more tokens for evidence
+        responseSchema: RESEARCH_RESPONSE_SCHEMA,
       });
 
-      // 4. Parse and validate response
-      const jsonStr = extractJSON(llmResponse.text);
-      const parseResult = safeJSONParse<unknown>(jsonStr);
+      // 4. Parse response (structured output is already JSON)
+      const parseResult = safeJSONParse<unknown>(llmResponse.text);
 
       if (!parseResult.success) {
         throw new Error(`Failed to parse LLM response: ${parseResult.error}`);

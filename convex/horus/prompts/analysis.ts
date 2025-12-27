@@ -4,6 +4,8 @@
  * Purpose: Generate clinical insights for UI display.
  * Produces insights with chart data, correlative insights, and normative benchmarking.
  * Enforces side specificity and binary classification (strength/weakness only).
+ *
+ * NEW: Generates VisualizationBlock arrays for HorusPane UI rendering.
  */
 
 import {
@@ -24,6 +26,8 @@ import type {
   CorrelativeInsight,
   NormativeBenchmark,
 } from "../types";
+import type { VisualizationBlock, AnalysisVisualization } from "../visualization/types";
+import { getVisualizationCatalogForPrompt } from "../visualization/catalog";
 
 // ─────────────────────────────────────────────────────────────────
 // System Prompt
@@ -39,6 +43,7 @@ Your role is to synthesize patterns and research evidence into actionable clinic
 2. **Correlative Analysis**: Find relationships between insights (minimum 2)
 3. **Normative Benchmarking**: Calculate percentiles for radar chart
 4. **Force Classification**: Every metric is either a strength or weakness (no neutral)
+5. **Generate Visualization Blocks**: Create UI blocks for the HorusPane display
 
 ## CRITICAL RULES
 
@@ -62,6 +67,11 @@ Your role is to synthesize patterns and research evidence into actionable clinic
 - Provide chart configuration for each insight
 - Use appropriate chart type (radar, bar, comparison)
 - Include reference lines for thresholds
+
+### Visualization Blocks (NEW)
+- Generate blocks for UI display (4-8 blocks per mode)
+- Use metric expressions for values (NOT actual numbers)
+- The UI will fill in real values from SessionMetrics
 
 ## Output Format
 
@@ -109,7 +119,11 @@ Your role is to synthesize patterns and research evidence into actionable clinic
   ],
   "summary": "2-3 sentence overall summary",
   "strengths": ["Top strength 1", "Top strength 2", "Top strength 3"],
-  "weaknesses": ["Top weakness 1", "Top weakness 2", "Top weakness 3"]
+  "weaknesses": ["Top weakness 1", "Top weakness 2", "Top weakness 3"],
+  "visualization": {
+    "overallBlocks": [...],
+    "sessionBlocks": [...]
+  }
 }
 
 ## Domain Colors (for charts)
@@ -118,7 +132,9 @@ Your role is to synthesize patterns and research evidence into actionable clinic
 - Symmetry: ${DOMAIN_COLORS.symmetry}
 - Power: ${DOMAIN_COLORS.power}
 - Control: ${DOMAIN_COLORS.control}
-- Timing: ${DOMAIN_COLORS.timing}`;
+- Timing: ${DOMAIN_COLORS.timing}
+
+${getVisualizationCatalogForPrompt()}`;
 
 // ─────────────────────────────────────────────────────────────────
 // User Prompt Builder
@@ -215,6 +231,17 @@ ${Object.entries(metrics.bilateral)
 5. Calculate benchmarks for all metrics (both legs)
 6. Provide chart config for primary insights
 7. Write concise summary with top 3 strengths and weaknesses
+8. Generate visualization blocks:
+   - **overallBlocks** (4-6 blocks): Longitudinal view with trends and progress
+     - Start with executive_summary
+     - Include stat_cards for key metrics with baseline/average comparisons
+     - Add comparison_card for left/right symmetry
+     - End with next_steps
+   - **sessionBlocks** (4-6 blocks): Single session deep-dive
+     - Start with executive_summary about this session
+     - Include stat_cards with previous session comparison
+     - Add alert_card if any issues detected
+     - End with next_steps for this session
 
 Return the JSON response.`);
 
@@ -225,10 +252,14 @@ Return the JSON response.`);
 // Response Parser
 // ─────────────────────────────────────────────────────────────────
 
+export interface AnalysisOutputWithVisualization extends AnalysisOutput {
+  visualization?: AnalysisVisualization;
+}
+
 export function parseAnalysisResponse(
   sessionId: string,
   responseText: string
-): AnalysisOutput {
+): AnalysisOutputWithVisualization {
   // Extract JSON
   const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
   const jsonStr = jsonMatch ? jsonMatch[1].trim() : responseText.trim();
@@ -279,6 +310,18 @@ export function parseAnalysisResponse(
     })
   );
 
+  // Parse visualization blocks
+  const visualization: AnalysisVisualization | undefined = parsed.visualization
+    ? {
+        overallBlocks: Array.isArray(parsed.visualization.overallBlocks)
+          ? (parsed.visualization.overallBlocks as VisualizationBlock[])
+          : [],
+        sessionBlocks: Array.isArray(parsed.visualization.sessionBlocks)
+          ? (parsed.visualization.sessionBlocks as VisualizationBlock[])
+          : [],
+      }
+    : undefined;
+
   return {
     sessionId,
     insights,
@@ -290,6 +333,7 @@ export function parseAnalysisResponse(
       ? (parsed.weaknesses as string[])
       : [],
     analyzedAt: Date.now(),
+    visualization,
   };
 }
 

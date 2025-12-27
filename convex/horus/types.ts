@@ -14,6 +14,7 @@ import type {
   Classification,
   BenchmarkCategory,
 } from "./metrics";
+import type { AnalysisVisualization } from "./visualization/types";
 
 // ─────────────────────────────────────────────────────────────────
 // Common Types
@@ -32,6 +33,7 @@ export type PipelineStatus =
   | "research"
   | "analysis"
   | "validation"
+  | "progress"
   | "complete"
   | "error";
 
@@ -272,6 +274,8 @@ export interface AnalysisOutput {
   weaknesses: string[];
   /** Timestamp of analysis */
   analyzedAt: number;
+  /** Visualization blocks for UI display */
+  visualization?: AnalysisVisualization;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -279,11 +283,10 @@ export interface AnalysisOutput {
 // ─────────────────────────────────────────────────────────────────
 
 export type ValidationRuleType =
-  | "numerical_accuracy"
-  | "side_specificity"
-  | "classification_completeness"
-  | "evidence_support"
-  | "clinical_safety";
+  | "metric_accuracy"
+  | "hallucination"
+  | "clinical_safety"
+  | "internal_consistency";
 
 export interface ValidationIssue {
   /** Rule that was violated */

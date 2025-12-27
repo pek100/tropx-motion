@@ -55,19 +55,28 @@ export const onMetricsComplete = action({
       }
     );
 
-    // 5. Run the pipeline
+    // 5. Run the pipeline (skipComplete=true if we'll run progress next)
+    const willRunProgress = !!session.subjectId;
     const result = await ctx.runAction(internal.horus.orchestrator.runPipeline, {
       sessionId,
       metrics,
       previousMetrics,
       patientId: session.subjectId || undefined,
+      skipComplete: willRunProgress, // Don't mark complete if progress will run
     });
 
     // 6. If successful, also run progress analysis
     if (result.success && session.subjectId) {
-      await ctx.scheduler.runAfter(0, internal.horus.triggers.runProgressAnalysis, {
+      // Run progress synchronously so we can track status properly
+      await ctx.runAction(internal.horus.triggers.runProgressAnalysis, {
         sessionId,
         patientId: session.subjectId,
+      });
+    } else if (result.success) {
+      // No progress needed, mark complete now
+      await ctx.runMutation(internal.horus.orchestrator.updatePipelineStatus, {
+        sessionId,
+        status: "complete",
       });
     }
 
@@ -168,6 +177,13 @@ export const runProgressAnalysis = action({
     const currentMetrics = sessionMetrics[sessionMetrics.length - 1];
     const historicalSessions = sessionMetrics.slice(0, -1);
 
+    // Update status to progress
+    await ctx.runMutation(internal.horus.orchestrator.updatePipelineStatus, {
+      sessionId,
+      status: "progress",
+      currentAgent: "progress",
+    });
+
     // Run progress agent
     const result = await ctx.runAction(internal.horus.agents.progress.runProgress, {
       sessionId,
@@ -182,6 +198,12 @@ export const runProgressAnalysis = action({
         patientId,
         progress: result.output,
         sessionIds: sessionMetrics.map((s) => s.sessionId),
+      });
+
+      // Mark complete
+      await ctx.runMutation(internal.horus.orchestrator.updatePipelineStatus, {
+        sessionId,
+        status: "complete",
       });
     }
 

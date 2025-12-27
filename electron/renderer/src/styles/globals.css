@@ -244,6 +244,39 @@
   background: linear-gradient(135deg, rgba(100, 100, 100, 0.15) 0%, rgba(100, 100, 100, 0.08) 100%);
 }
 
+/* Horus AI Analysis card gradients */
+.gradient-coral-card {
+  background: linear-gradient(135deg, #ffe8e4 0%, #ffd4cc 100%);
+}
+
+.dark .gradient-coral-card {
+  background: linear-gradient(135deg, rgba(255, 95, 53, 0.15) 0%, rgba(255, 95, 53, 0.08) 100%);
+}
+
+.gradient-green-card {
+  background: linear-gradient(135deg, #e6f7ed 0%, #c8ebd6 100%);
+}
+
+.dark .gradient-green-card {
+  background: linear-gradient(135deg, rgba(75, 175, 39, 0.15) 0%, rgba(75, 175, 39, 0.08) 100%);
+}
+
+.gradient-amber-card {
+  background: linear-gradient(135deg, #fef3e2 0%, #fde5c3 100%);
+}
+
+.dark .gradient-amber-card {
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.15) 0%, rgba(217, 119, 6, 0.08) 100%);
+}
+
+.gradient-info-card {
+  background: linear-gradient(135deg, #e8f2ff 0%, #d1e4ff 100%);
+}
+
+.dark .gradient-info-card {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.15) 0%, rgba(37, 99, 235, 0.08) 100%);
+}
+
 /* Adding flash animation for left pane validation feedback */
 @keyframes flash-border {
   0%,

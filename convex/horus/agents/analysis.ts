@@ -20,7 +20,8 @@ import {
   parseAnalysisResponse,
   preComputeBenchmarks,
 } from "../prompts/analysis";
-import { extractJSON, safeJSONParse, validateAnalysisOutput } from "../llm/parser";
+import { safeJSONParse, validateAnalysisOutput } from "../llm/parser";
+import { ANALYSIS_RESPONSE_SCHEMA } from "../llm/schemas";
 
 // ─────────────────────────────────────────────────────────────────
 // Agent Execution
@@ -51,21 +52,30 @@ export const runAnalysis = action({
       const systemPrompt = ANALYSIS_SYSTEM_PROMPT;
       const userPrompt = buildAnalysisUserPrompt(patterns, evidenceByPattern, metrics);
 
-      // 3. Call Vertex AI
+      // 3. Call Vertex AI with structured output
       const llmResponse = await ctx.runAction(internal.horus.llm.vertex.callVertexAI, {
         systemPrompt,
         userPrompt,
         temperature: 0.3,
-        maxTokens: 8192,
+        maxTokens: 32768, // Analysis + visualization blocks need more tokens
+        responseSchema: ANALYSIS_RESPONSE_SCHEMA,
       });
 
-      // 4. Parse and validate response
-      const jsonStr = extractJSON(llmResponse.text);
-      const parseResult = safeJSONParse<unknown>(jsonStr);
+      // 4. Parse response (structured output is already JSON)
+      const parseResult = safeJSONParse<unknown>(llmResponse.text);
 
       if (!parseResult.success) {
         throw new Error(`Failed to parse LLM response: ${parseResult.error}`);
       }
+
+      // Debug logging for parsed data
+      console.log("[runAnalysis] Parsed LLM response:", {
+        sessionId: args.sessionId,
+        hasVisualization: !!(parseResult.data as any)?.visualization,
+        overallBlockCount: (parseResult.data as any)?.visualization?.overallBlocks?.length ?? 0,
+        sessionBlockCount: (parseResult.data as any)?.visualization?.sessionBlocks?.length ?? 0,
+        rawVisualizationKeys: Object.keys((parseResult.data as any)?.visualization || {}),
+      });
 
       const validationResult = validateAnalysisOutput(parseResult.data, args.sessionId);
 
@@ -74,6 +84,15 @@ export const runAnalysis = action({
       }
 
       const output = validationResult.data!;
+
+      // Debug logging for validated output
+      console.log("[runAnalysis] Validated output:", {
+        sessionId: args.sessionId,
+        hasVisualization: !!output.visualization,
+        overallBlockCount: output.visualization?.overallBlocks?.length ?? 0,
+        sessionBlockCount: output.visualization?.sessionBlocks?.length ?? 0,
+        insightCount: output.insights?.length ?? 0,
+      });
 
       // 5. Merge/validate benchmarks with pre-computed
       output.benchmarks = mergeBenchmarks(output.benchmarks, preComputedBenchmarks);

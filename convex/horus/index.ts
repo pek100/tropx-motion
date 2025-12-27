@@ -118,6 +118,59 @@ export {
 } from "./metrics";
 
 // ─────────────────────────────────────────────────────────────────
+// Visualization (Block System)
+// ─────────────────────────────────────────────────────────────────
+
+export type {
+  // Core types
+  MetricExpression,
+  FormulaExpression,
+  RechartsType,
+  LucideIconName,
+
+  // Block types
+  VisualizationBlock,
+  BlockType,
+  ExecutiveSummaryBlock,
+  StatCardBlock,
+  AlertCardBlock,
+  NextStepsBlock,
+  ComparisonCardBlock,
+  ProgressCardBlock,
+  MetricGridBlock,
+  QuoteCardBlock,
+  ChartBlockBlock,
+
+  // Chart types
+  ChartDataSpec,
+  ChartConfig as VisChartConfig,
+
+  // Evaluated types
+  EvaluatedValue,
+  EvaluatedBlock,
+
+  // Analysis extension
+  AnalysisVisualization,
+} from "./visualization";
+
+export {
+  // Catalog functions
+  RECHARTS_CATALOG,
+  getVisualizationCatalogForPrompt,
+  getMetricPaths,
+
+  // Evaluator functions
+  isValidMetricPath,
+  resolveMetricValue,
+  evaluateMetric,
+  evaluateFormula,
+  formatValue,
+  validateFormula,
+} from "./visualization";
+
+export type { EvaluationContext } from "./visualization";
+
+// ─────────────────────────────────────────────────────────────────
 // Usage Information
 // ─────────────────────────────────────────────────────────────────
 
