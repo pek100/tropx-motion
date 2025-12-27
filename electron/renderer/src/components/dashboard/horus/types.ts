@@ -306,13 +306,57 @@ export interface EvaluatedValue {
 }
 
 /**
- * Resolve a metric path to its value from SessionMetrics
+ * Metric tag configuration.
+ * LLM uses semantic tags; we resolve to path, unit, and display name.
  */
-export function resolveMetricValue(
-  path: string | undefined,
-  metrics: SessionMetrics
-): number | undefined {
-  if (!path) return undefined;
+interface MetricTagConfig {
+  path: string;
+  unit: string;
+  displayName: string;
+  decimals?: number; // Default 1
+}
+
+const METRIC_TAG_MAP: Record<string, MetricTagConfig> = {
+  // OPI Score
+  "<OPI_SCORE>": { path: "opiScore", unit: "/100", displayName: "Performance Score", decimals: 0 },
+
+  // Per-leg metrics - Left
+  "<LEFT_PEAK_FLEXION>": { path: "leftLeg.peakFlexion", unit: "°", displayName: "Left Peak Flexion" },
+  "<LEFT_AVG_ROM>": { path: "leftLeg.averageRom", unit: "°", displayName: "Left Avg ROM" },
+  "<LEFT_MAX_ROM>": { path: "leftLeg.overallMaxRom", unit: "°", displayName: "Left Max ROM" },
+  "<LEFT_VELOCITY>": { path: "leftLeg.peakAngularVelocity", unit: "°/s", displayName: "Left Velocity", decimals: 0 },
+  "<LEFT_POWER>": { path: "leftLeg.explosivenessConcentric", unit: "°/s²", displayName: "Left Power", decimals: 0 },
+  "<LEFT_JERK>": { path: "leftLeg.rmsJerk", unit: "°/s³", displayName: "Left Smoothness", decimals: 0 },
+  "<LEFT_ROM_COV>": { path: "leftLeg.romCoV", unit: "%", displayName: "Left Consistency", decimals: 1 },
+
+  // Per-leg metrics - Right
+  "<RIGHT_PEAK_FLEXION>": { path: "rightLeg.peakFlexion", unit: "°", displayName: "Right Peak Flexion" },
+  "<RIGHT_AVG_ROM>": { path: "rightLeg.averageRom", unit: "°", displayName: "Right Avg ROM" },
+  "<RIGHT_MAX_ROM>": { path: "rightLeg.overallMaxRom", unit: "°", displayName: "Right Max ROM" },
+  "<RIGHT_VELOCITY>": { path: "rightLeg.peakAngularVelocity", unit: "°/s", displayName: "Right Velocity", decimals: 0 },
+  "<RIGHT_POWER>": { path: "rightLeg.explosivenessConcentric", unit: "°/s²", displayName: "Right Power", decimals: 0 },
+  "<RIGHT_JERK>": { path: "rightLeg.rmsJerk", unit: "°/s³", displayName: "Right Smoothness", decimals: 0 },
+  "<RIGHT_ROM_COV>": { path: "rightLeg.romCoV", unit: "%", displayName: "Right Consistency", decimals: 1 },
+
+  // Bilateral metrics
+  "<ROM_ASYMMETRY>": { path: "bilateral.romAsymmetry", unit: "%", displayName: "ROM Asymmetry", decimals: 1 },
+  "<VELOCITY_ASYMMETRY>": { path: "bilateral.velocityAsymmetry", unit: "%", displayName: "Velocity Asymmetry", decimals: 1 },
+  "<CROSS_CORRELATION>": { path: "bilateral.crossCorrelation", unit: "", displayName: "Correlation", decimals: 2 },
+  "<NET_ASYMMETRY>": { path: "bilateral.netGlobalAsymmetry", unit: "%", displayName: "Net Asymmetry", decimals: 1 },
+};
+
+/**
+ * Get metric config for a tag (includes unit, displayName, etc.)
+ */
+export function getMetricConfig(tag: string): MetricTagConfig | undefined {
+  return METRIC_TAG_MAP[tag];
+}
+
+/**
+ * Resolve a metric path to its value from SessionMetrics.
+ */
+function resolvePathToValue(path: string, metrics: SessionMetrics): number | undefined {
+  // Handle opiScore specially (top-level)
   if (path === "opiScore") return metrics.opiScore;
 
   const parts = path.split(".");
@@ -330,6 +374,61 @@ export function resolveMetricValue(
     default:
       return undefined;
   }
+}
+
+/**
+ * Resolve a metric tag or path to its value from SessionMetrics.
+ * Supports both semantic tags (e.g., <OPI_SCORE>) and raw paths (e.g., leftLeg.peakFlexion).
+ */
+export function resolveMetricValue(
+  pathOrTag: string | undefined,
+  metrics: SessionMetrics
+): number | undefined {
+  if (!pathOrTag) return undefined;
+
+  // Check if it's a semantic tag
+  const config = METRIC_TAG_MAP[pathOrTag];
+  const path = config?.path ?? pathOrTag;
+
+  return resolvePathToValue(path, metrics);
+}
+
+/**
+ * Resolve a metric tag to value WITH unit and formatting.
+ * Returns the complete display-ready result.
+ */
+export interface ResolvedMetric {
+  value: number;
+  unit: string;
+  displayName: string;
+  formatted: string;
+  success: boolean;
+}
+
+export function resolveMetricWithUnit(
+  pathOrTag: string | undefined,
+  metrics: SessionMetrics,
+  overrideUnit?: string
+): ResolvedMetric {
+  if (!pathOrTag) {
+    return { value: 0, unit: "", displayName: "", formatted: "N/A", success: false };
+  }
+
+  // Check if it's a semantic tag
+  const config = METRIC_TAG_MAP[pathOrTag];
+  const path = config?.path ?? pathOrTag;
+  const value = resolvePathToValue(path, metrics);
+
+  if (value === undefined) {
+    return { value: 0, unit: "", displayName: pathOrTag, formatted: "N/A", success: false };
+  }
+
+  const unit = overrideUnit ?? config?.unit ?? "";
+  const displayName = config?.displayName ?? pathOrTag;
+  const decimals = config?.decimals ?? 1;
+  const formatted = value.toFixed(decimals);
+
+  return { value, unit, displayName, formatted, success: true };
 }
 
 /**

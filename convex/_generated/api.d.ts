@@ -23,6 +23,7 @@ import type * as horus_agents_decomposition from "../horus/agents/decomposition.
 import type * as horus_agents_progress from "../horus/agents/progress.js";
 import type * as horus_agents_research from "../horus/agents/research.js";
 import type * as horus_agents_validator from "../horus/agents/validator.js";
+import type * as horus_correlation from "../horus/correlation.js";
 import type * as horus_index from "../horus/index.js";
 import type * as horus_llm_parser from "../horus/llm/parser.js";
 import type * as horus_llm_schemas from "../horus/llm/schemas.js";
@@ -94,6 +95,7 @@ declare const fullApi: ApiFromModules<{
   "horus/agents/progress": typeof horus_agents_progress;
   "horus/agents/research": typeof horus_agents_research;
   "horus/agents/validator": typeof horus_agents_validator;
+  "horus/correlation": typeof horus_correlation;
   "horus/index": typeof horus_index;
   "horus/llm/parser": typeof horus_llm_parser;
   "horus/llm/schemas": typeof horus_llm_schemas;

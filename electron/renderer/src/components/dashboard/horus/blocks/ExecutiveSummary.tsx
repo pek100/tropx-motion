@@ -2,17 +2,29 @@
  * ExecutiveSummary Block
  *
  * Markdown-like text block for overall analysis narrative.
+ * Enhanced with variant support for different visual contexts.
  * Supports **bold**, *italic*, and basic formatting.
  */
 
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+type SummaryVariant = "default" | "info" | "success" | "warning";
+
 interface ExecutiveSummaryProps {
   title: string;
   content: string;
+  /** Visual variant - affects gradient background */
+  variant?: SummaryVariant;
   className?: string;
 }
+
+const variantStyles: Record<SummaryVariant, string> = {
+  default: "gradient-coral-card border-none",
+  info: "gradient-info-card border-none",
+  success: "gradient-green-card border-none",
+  warning: "gradient-amber-card border-none",
+};
 
 /**
  * Simple markdown-like parser for basic formatting.
@@ -69,12 +81,17 @@ function parseSimpleMarkdown(text: string): React.ReactNode[] {
   return parts;
 }
 
-export function ExecutiveSummary({ title, content, className }: ExecutiveSummaryProps) {
+export function ExecutiveSummary({
+  title,
+  content,
+  variant = "default",
+  className,
+}: ExecutiveSummaryProps) {
   // Split content into paragraphs
   const paragraphs = (content || "").split("\n\n").filter((p) => p.trim());
 
   return (
-    <Card className={cn("py-4 gradient-coral-card border-none", className)}>
+    <Card className={cn("py-4", variantStyles[variant], className)}>
       <CardHeader className="pb-2 pt-0">
         <CardTitle className="text-base font-semibold text-[var(--tropx-text-main)]">{title}</CardTitle>
       </CardHeader>

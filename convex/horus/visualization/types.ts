@@ -8,6 +8,62 @@
 import type { MetricDomain } from "../metrics";
 
 // ─────────────────────────────────────────────────────────────────
+// Composable Slots (ShadCN-style)
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Classification for qualitative assessment
+ */
+export type Classification = "strength" | "weakness";
+
+/**
+ * Explicit limb identifier
+ */
+export type Limb = "Left Leg" | "Right Leg";
+
+/**
+ * Normative benchmark category
+ */
+export type Benchmark = "optimal" | "average" | "deficient";
+
+/**
+ * Details slot for progressive disclosure
+ */
+export interface DetailsSlot {
+  /** Research citations / evidence supporting the finding */
+  evidence?: string[];
+  /** Clinical implications of this finding */
+  implications?: string[];
+  /** Actionable recommendations */
+  recommendations?: string[];
+  /** IDs linking to related cards/findings (for correlation) */
+  relatedIds?: string[];
+}
+
+/**
+ * Common optional slots for composable cards.
+ * AI decides which slots to fill based on clinical significance.
+ */
+export interface ComposableSlots {
+  /** Unique ID for correlation linking */
+  id?: string;
+  /** Strength or weakness classification */
+  classification?: Classification;
+  /** Explicit limb identifier */
+  limb?: Limb;
+  /** Normative benchmark category */
+  benchmark?: Benchmark;
+  /** Metric domain for color coding */
+  domain?: MetricDomain;
+  /** Expandable details (progressive disclosure) */
+  details?: DetailsSlot;
+  /** Whether details are expandable (default: true) */
+  expandable?: boolean;
+  /** Whether details start expanded (default: false) */
+  defaultExpanded?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Core Expression Types
 // ─────────────────────────────────────────────────────────────────
 
@@ -128,12 +184,15 @@ export interface ExecutiveSummaryBlock {
   title: string;
   /** Markdown content with support for **bold**, *italic*, etc. */
   content: string;
+  /** Visual variant (affects gradient background) */
+  variant?: "default" | "info" | "success" | "warning";
 }
 
 /**
  * Stat Card - Single metric with optional comparison badge
+ * Enhanced with ComposableSlots for rich AI-generated findings.
  */
-export interface StatCardBlock {
+export interface StatCardBlock extends ComposableSlots {
   type: "stat_card";
   title: string;
   /** Metric path to display */
@@ -159,18 +218,34 @@ export interface StatCardBlock {
 
 /**
  * Alert Card - Warning or notification
+ * Enhanced with optional slots for limb and domain context.
  */
 export interface AlertCardBlock {
   type: "alert_card";
   title: string;
   /** Description text */
   description: string;
-  /** Severity level determines color */
-  severity: "info" | "warning" | "error" | "success";
+  /** Severity level determines color (use variant for new code) */
+  severity?: "info" | "warning" | "error" | "success";
+  /** Visual variant (preferred over severity) */
+  variant?: "info" | "warning" | "error" | "success";
   /** Icon to display */
   icon?: LucideIconName;
   /** Related metrics for context */
   relatedMetrics?: MetricExpression[];
+  // Composable slots
+  /** Unique ID for correlation linking */
+  id?: string;
+  /** Explicit limb identifier */
+  limb?: Limb;
+  /** Metric domain for color coding */
+  domain?: MetricDomain;
+  /** Expandable details (progressive disclosure) */
+  details?: DetailsSlot;
+  /** Whether details are expandable (default: true) */
+  expandable?: boolean;
+  /** Whether details start expanded (default: false) */
+  defaultExpanded?: boolean;
 }
 
 /**
@@ -193,6 +268,7 @@ export interface NextStepsBlock {
 
 /**
  * Comparison Card - Side-by-side value comparison
+ * Enhanced with deficitLimb and ComposableSlots.
  */
 export interface ComparisonCardBlock {
   type: "comparison_card";
@@ -207,10 +283,28 @@ export interface ComparisonCardBlock {
   showDifference?: boolean;
   /** Highlight the better value based on metric direction */
   highlightBetter?: boolean;
+  /** Direction for determining "better" (default: higherBetter) */
+  direction?: "higherBetter" | "lowerBetter";
+  // Composable slots
+  /** Unique ID for correlation linking */
+  id?: string;
+  /** Strength or weakness classification */
+  classification?: Classification;
+  /** Explicit deficit limb override (otherwise auto-calculated) */
+  deficitLimb?: Limb;
+  /** Metric domain for color coding */
+  domain?: MetricDomain;
+  /** Expandable details (progressive disclosure) */
+  details?: DetailsSlot;
+  /** Whether details are expandable (default: true) */
+  expandable?: boolean;
+  /** Whether details start expanded (default: false) */
+  defaultExpanded?: boolean;
 }
 
 /**
  * Progress Card - Milestone or target progress
+ * Enhanced with ComposableSlots for classification and limb context.
  */
 export interface ProgressCardBlock {
   type: "progress_card";
@@ -220,14 +314,30 @@ export interface ProgressCardBlock {
   metric: MetricExpression;
   /** Target value (number or metric expression) */
   target: number | MetricExpression;
+  /** Unit to display */
+  unit?: string;
   /** Icon to display */
   icon?: LucideIconName;
   /** Celebration level for achieved milestones */
   celebrationLevel?: "major" | "minor";
+  // Composable slots
+  /** Unique ID for correlation linking */
+  id?: string;
+  /** Strength or weakness classification */
+  classification?: Classification;
+  /** Explicit limb identifier */
+  limb?: Limb;
+  /** Expandable details (progressive disclosure) */
+  details?: DetailsSlot;
+  /** Whether details are expandable (default: true) */
+  expandable?: boolean;
+  /** Whether details start expanded (default: false) */
+  defaultExpanded?: boolean;
 }
 
 /**
  * Metric Grid - Dense multi-metric display
+ * Enhanced with per-item slots for classification and benchmark.
  */
 export interface MetricGridBlock {
   type: "metric_grid";
@@ -242,11 +352,19 @@ export interface MetricGridBlock {
     unit?: string;
     /** Show trend arrow based on previous session */
     trend?: "show" | "hide";
+    // Per-item composable slots
+    /** Strength or weakness classification */
+    classification?: Classification;
+    /** Normative benchmark category */
+    benchmark?: Benchmark;
+    /** Explicit limb identifier */
+    limb?: Limb;
   }>;
 }
 
 /**
  * Quote Card - Evidence or recommendation highlight
+ * Enhanced with id and domain for correlation linking.
  */
 export interface QuoteCardBlock {
   type: "quote_card";
@@ -258,6 +376,11 @@ export interface QuoteCardBlock {
   icon?: LucideIconName;
   /** Visual variant */
   variant?: "info" | "evidence" | "recommendation";
+  // Composable slots
+  /** Unique ID for correlation linking */
+  id?: string;
+  /** Metric domain for color coding */
+  domain?: MetricDomain;
 }
 
 /**

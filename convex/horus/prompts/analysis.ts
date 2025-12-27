@@ -28,6 +28,11 @@ import type {
 } from "../types";
 import type { VisualizationBlock, AnalysisVisualization } from "../visualization/types";
 import { getVisualizationCatalogForPrompt } from "../visualization/catalog";
+import {
+  computeAsymmetryEnrichment,
+  identifyPotentialCorrelations,
+  generateCorrelationPromptSection,
+} from "../correlation";
 
 // ─────────────────────────────────────────────────────────────────
 // System Prompt
@@ -39,11 +44,20 @@ Your role is to synthesize patterns and research evidence into actionable clinic
 
 ## Your Tasks
 
-1. **Generate Insights**: Create domain-specific insights with chart data
-2. **Correlative Analysis**: Find relationships between insights (minimum 2)
-3. **Normative Benchmarking**: Calculate percentiles for radar chart
+1. **Generate Insights**: Create 4-6 domain-specific insights (NOT more)
+2. **Correlative Analysis**: Find 2-3 relationships between insights
+3. **Normative Benchmarking**: Include 6-8 most important benchmarks only
 4. **Force Classification**: Every metric is either a strength or weakness (no neutral)
-5. **Generate Visualization Blocks**: Create UI blocks for the HorusPane display
+5. **Generate Visualization Blocks**: 4-5 blocks per mode (NOT more)
+
+## OUTPUT SIZE LIMITS (CRITICAL)
+- Maximum 4-6 insights total
+- Maximum 2-3 correlative insights
+- Maximum 6-8 benchmarks (most clinically relevant)
+- Maximum 4-5 visualization blocks per mode
+- Keep content strings concise (1-2 sentences)
+- Keep evidence arrays to 1-2 items per insight
+- Keep recommendations to 1-2 per insight
 
 ## CRITICAL RULES
 
@@ -68,10 +82,55 @@ Your role is to synthesize patterns and research evidence into actionable clinic
 - Use appropriate chart type (radar, bar, comparison)
 - Include reference lines for thresholds
 
-### Visualization Blocks (NEW)
-- Generate blocks for UI display (4-8 blocks per mode)
+### Visualization Blocks
+- Generate EXACTLY 4-5 blocks per mode (no more!)
 - Use metric expressions for values (NOT actual numbers)
 - The UI will fill in real values from SessionMetrics
+
+### Composable Slots (ShadCN-style)
+Each visualization block can have optional composable slots. Use them based on clinical significance:
+
+**MINIMAL use** (simple metrics):
+\`\`\`json
+{ "type": "stat_card", "title": "ROM", "metric": "leftLeg.peakFlexion", "unit": "°" }
+\`\`\`
+
+**RICH use** (significant findings):
+\`\`\`json
+{
+  "type": "stat_card",
+  "id": "finding-rom-1",
+  "title": "ROM Deficit",
+  "metric": "leftLeg.peakFlexion",
+  "unit": "°",
+  "limb": "Left Leg",
+  "classification": "weakness",
+  "benchmark": "deficient",
+  "domain": "range",
+  "details": {
+    "evidence": ["ROM <100° associated with functional limitations (Bade et al.)"],
+    "implications": ["May limit squatting and stair climbing"],
+    "recommendations": ["Focus on heel slides, wall slides"],
+    "relatedIds": ["finding-power-1"]
+  },
+  "expandable": true
+}
+\`\`\`
+
+**Slot Guidelines**:
+- \`id\`: Use for correlation linking (e.g., "finding-rom-1")
+- \`classification\`: "strength" or "weakness" (REQUIRED for significant findings)
+- \`limb\`: "Left Leg" or "Right Leg" (REQUIRED for per-leg metrics)
+- \`benchmark\`: "optimal", "average", or "deficient"
+- \`domain\`: "range", "symmetry", "power", "control", or "timing"
+- \`details\`: Use for clinically significant findings worth explaining
+- \`deficitLimb\`: For comparison_card, specify which limb has the deficit
+
+### BAD Examples (Avoid These)
+❌ "The affected limb shows reduced ROM" → Use "Left Leg" or "Right Leg"
+❌ "L: 98°, R: 119°" → Use "Left Leg: 98°, Right Leg: 119°"
+❌ Generic descriptions without limb → Always specify the limb
+❌ Using details slot for simple metrics → Reserve for significant findings
 
 ## Output Format
 
@@ -143,7 +202,9 @@ ${getVisualizationCatalogForPrompt()}`;
 export function buildAnalysisUserPrompt(
   patterns: DetectedPattern[],
   evidenceByPattern: Record<string, ResearchEvidence[]>,
-  metrics: SessionMetrics
+  metrics: SessionMetrics,
+  /** Pre-computed benchmarks for correlation detection */
+  benchmarks?: NormativeBenchmark[]
 ): string {
   const sections: string[] = [];
 
@@ -154,6 +215,17 @@ Generate clinical insights from the following patterns and evidence.
 **Session ID**: ${metrics.sessionId}
 **Movement Type**: ${metrics.movementType}
 ${metrics.opiScore ? `**OPI Score**: ${metrics.opiScore} (${metrics.opiGrade})` : ""}`);
+
+  // Inject pre-computed correlation data if benchmarks provided
+  if (benchmarks) {
+    const asymmetryData = computeAsymmetryEnrichment(metrics);
+    const correlations = identifyPotentialCorrelations(benchmarks, asymmetryData);
+    const correlationSection = generateCorrelationPromptSection(asymmetryData, correlations);
+
+    if (correlationSection) {
+      sections.push(`\n${correlationSection}`);
+    }
+  }
 
   // Patterns with evidence
   sections.push(`
@@ -224,24 +296,17 @@ ${Object.entries(metrics.bilateral)
   sections.push(`
 ## Instructions
 
-1. Create insights grouped by domain (prioritize domains with deficient metrics)
+1. Create 4-6 insights (prioritize domains with deficient metrics)
 2. ENFORCE side specificity: "Left Leg" or "Right Leg" only
 3. FORCE classification: strength or weakness (use 55th percentile tiebreaker)
-4. Generate at least 2 correlative insights
-5. Calculate benchmarks for all metrics (both legs)
-6. Provide chart config for primary insights
-7. Write concise summary with top 3 strengths and weaknesses
-8. Generate visualization blocks:
-   - **overallBlocks** (4-6 blocks): Longitudinal view with trends and progress
-     - Start with executive_summary
-     - Include stat_cards for key metrics with baseline/average comparisons
-     - Add comparison_card for left/right symmetry
-     - End with next_steps
-   - **sessionBlocks** (4-6 blocks): Single session deep-dive
-     - Start with executive_summary about this session
-     - Include stat_cards with previous session comparison
-     - Add alert_card if any issues detected
-     - End with next_steps for this session
+4. Generate 2-3 correlative insights linking related findings
+5. Include 6-8 benchmarks for most important metrics only
+6. Write 2-sentence summary with top 2 strengths and top 2 weaknesses
+7. Generate EXACTLY 4-5 visualization blocks per mode:
+   - **overallBlocks** (4-5 blocks): executive_summary, 2-3 stat_cards, next_steps
+   - **sessionBlocks** (4-5 blocks): executive_summary, 1-2 stat_cards, 1 comparison_card or alert_card, next_steps
+
+BE CONCISE. Quality over quantity. Avoid verbose explanations.
 
 Return the JSON response.`);
 

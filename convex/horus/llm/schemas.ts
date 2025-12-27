@@ -119,6 +119,12 @@ export const DECOMPOSITION_RESPONSE_SCHEMA = {
 
 // Each block type has its own schema with enforced required fields.
 // Using anyOf with const type values creates a discriminated union.
+//
+// NOTE: Composable slots (id, classification, limb, benchmark, domain, details)
+// are NOT included in the schema to avoid Vertex AI's "too many states" error.
+// The LLM is guided to output them via the system prompt, but they are not
+// strictly validated. The TypeScript types in visualization/types.ts define
+// the full structure including all optional slots.
 
 const EXECUTIVE_SUMMARY_BLOCK = {
   type: "object",
@@ -127,13 +133,18 @@ const EXECUTIVE_SUMMARY_BLOCK = {
     type: { type: "string", enum: ["executive_summary"] },
     title: { type: "string", description: "Block title" },
     content: { type: "string", description: "Markdown content for the summary" },
+    variant: {
+      type: "string",
+      enum: ["default", "info", "success", "warning"],
+      description: "Visual variant affecting gradient background",
+    },
   },
   required: ["type", "title", "content"],
 };
 
 const STAT_CARD_BLOCK = {
   type: "object",
-  description: "Single metric stat card",
+  description: "Single metric stat card. Can include optional composable slots (id, classification, limb, benchmark, domain, details) for rich findings.",
   properties: {
     type: { type: "string", enum: ["stat_card"] },
     title: { type: "string", description: "Block title" },
@@ -157,13 +168,14 @@ const STAT_CARD_BLOCK = {
         targetValue: { type: "number" },
       },
     },
+    // Note: composable slots (id, classification, limb, etc.) can be included but are not schema-validated
   },
   required: ["type", "title", "metric", "unit"],
 };
 
 const ALERT_CARD_BLOCK = {
   type: "object",
-  description: "Alert card for warnings or important notices",
+  description: "Alert card for warnings or important notices. Can include optional composable slots (id, limb, domain, details) for rich context.",
   properties: {
     type: { type: "string", enum: ["alert_card"] },
     title: { type: "string", description: "Block title" },
@@ -173,12 +185,18 @@ const ALERT_CARD_BLOCK = {
       enum: ["info", "warning", "error", "success"],
       description: "Alert severity level",
     },
+    variant: {
+      type: "string",
+      enum: ["info", "warning", "error", "success"],
+      description: "Visual variant (preferred over severity)",
+    },
     icon: { type: "string", description: "Lucide icon name" },
     relatedMetrics: {
       type: "array",
       items: { type: "string" },
       description: "Related metric paths",
     },
+    // Note: composable slots (id, limb, domain, details) can be included but are not schema-validated
   },
   required: ["type", "title", "description", "severity"],
 };
@@ -209,7 +227,7 @@ const NEXT_STEPS_BLOCK = {
 
 const COMPARISON_CARD_BLOCK = {
   type: "object",
-  description: "Side-by-side comparison of two metrics (e.g. left vs right leg)",
+  description: "Side-by-side comparison of two metrics (e.g. left vs right leg). Can include optional composable slots (id, classification, deficitLimb, domain, details) for asymmetry context.",
   properties: {
     type: { type: "string", enum: ["comparison_card"] },
     title: { type: "string", description: "Block title" },
@@ -226,14 +244,19 @@ const COMPARISON_CARD_BLOCK = {
     unit: { type: "string", description: "Unit for display e.g. °, %, deg/s" },
     showDifference: { type: "boolean" },
     highlightBetter: { type: "boolean" },
-    variant: { type: "string", enum: ["default", "warning"] },
+    direction: {
+      type: "string",
+      enum: ["higherBetter", "lowerBetter"],
+      description: "Direction for determining 'better' value (default: higherBetter)",
+    },
+    // Note: composable slots (id, classification, deficitLimb, domain, details) can be included but are not schema-validated
   },
   required: ["type", "title", "leftLabel", "rightLabel", "leftMetric", "rightMetric"],
 };
 
 const PROGRESS_CARD_BLOCK = {
   type: "object",
-  description: "Progress toward a target goal",
+  description: "Progress toward a target goal. Can include optional composable slots (id, classification, limb, details) for milestone context.",
   properties: {
     type: { type: "string", enum: ["progress_card"] },
     title: { type: "string", description: "Block title" },
@@ -243,15 +266,17 @@ const PROGRESS_CARD_BLOCK = {
       description: "Metric path for current value e.g. leftLeg.peakFlexion",
     },
     target: { type: "number", description: "Target value to reach" },
+    unit: { type: "string", description: "Unit for display e.g. °, %, deg/s" },
     icon: { type: "string", description: "Lucide icon name" },
     celebrationLevel: { type: "string", enum: ["major", "minor"] },
+    // Note: composable slots (id, classification, limb, details) can be included but are not schema-validated
   },
   required: ["type", "title", "metric", "target"],
 };
 
 const METRIC_GRID_BLOCK = {
   type: "object",
-  description: "Grid of multiple metrics",
+  description: "Grid of multiple metrics. Per-item composable slots (classification, benchmark, limb) can be included but are not schema-validated.",
   properties: {
     type: { type: "string", enum: ["metric_grid"] },
     title: { type: "string", description: "Block title" },
@@ -266,6 +291,7 @@ const METRIC_GRID_BLOCK = {
           metric: { type: "string", description: "Metric path e.g. leftLeg.peakFlexion" },
           unit: { type: "string", description: "Unit for display" },
           trend: { type: "string", enum: ["show", "hide"] },
+          // Note: per-item slots (classification, benchmark, limb) can be included but are not schema-validated
         },
         required: ["label", "metric"],
       },
@@ -276,10 +302,9 @@ const METRIC_GRID_BLOCK = {
 
 const QUOTE_CARD_BLOCK = {
   type: "object",
-  description: "Quote or evidence citation card",
+  description: "Quote or evidence citation card. Composable slots (id, domain) can be included for correlation linking but are not schema-validated.",
   properties: {
     type: { type: "string", enum: ["quote_card"] },
-    title: { type: "string", description: "Block title" },
     content: { type: "string", description: "Quote or evidence text" },
     citation: { type: "string", description: "Source citation" },
     icon: { type: "string", description: "Lucide icon name" },
@@ -288,8 +313,9 @@ const QUOTE_CARD_BLOCK = {
       enum: ["info", "evidence", "recommendation"],
       description: "Visual variant",
     },
+    // Note: composable slots (id, domain) can be included but are not schema-validated
   },
-  required: ["type", "title", "content"],
+  required: ["type", "content"],
 };
 
 // Discriminated union: AI must choose ONE of these block types
@@ -526,6 +552,10 @@ export const PROGRESS_RESPONSE_SCHEMA = {
               "consistent_improvement",
               "personal_best",
               "symmetry_achieved",
+              // New milestone types for enhanced correlation tracking
+              "symmetry_restored",   // Asymmetry dropped below 5%
+              "limb_caught_up",      // Deficit limb matched the other
+              "cross_metric_gain",   // Multiple metrics improved together
             ],
           },
           title: { type: "string" },
@@ -539,6 +569,7 @@ export const PROGRESS_RESPONSE_SCHEMA = {
             type: "string",
             enum: ["major", "minor"],
           },
+          limb: { type: "string", enum: ["Left Leg", "Right Leg"] },
         },
         required: ["id", "type", "title", "description", "celebrationLevel"],
       },
@@ -580,6 +611,58 @@ export const PROGRESS_RESPONSE_SCHEMA = {
           },
         },
         required: ["metricName", "projectedValue", "confidence"],
+      },
+    },
+    correlations: {
+      type: "array",
+      description: "Cross-metric correlations detected across sessions",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          type: {
+            type: "string",
+            enum: ["co_improving", "co_declining", "inverse", "compensatory"],
+            description: "Type of correlation pattern",
+          },
+          metrics: {
+            type: "array",
+            items: { type: "string" },
+            description: "Metric names involved in the correlation",
+          },
+          explanation: { type: "string", description: "Explanation of the relationship" },
+          significance: {
+            type: "string",
+            enum: ["high", "moderate", "low"],
+          },
+          limb: { type: "string", enum: ["Left Leg", "Right Leg"] },
+        },
+        required: ["id", "type", "metrics", "explanation", "significance"],
+      },
+    },
+    asymmetryTrends: {
+      type: "array",
+      description: "Asymmetry changes over time - identifies if imbalances are resolving",
+      items: {
+        type: "object",
+        properties: {
+          metricName: { type: "string" },
+          displayName: { type: "string" },
+          currentAsymmetry: { type: "number" },
+          previousAsymmetry: { type: "number" },
+          baselineAsymmetry: { type: "number" },
+          changeFromPrevious: { type: "number" },
+          changeFromBaseline: { type: "number" },
+          isResolving: { type: "boolean", description: "Is asymmetry decreasing?" },
+          deficitLimb: { type: "string", enum: ["Left Leg", "Right Leg"] },
+          isDeficitCatchingUp: { type: "boolean", description: "Is deficit limb catching up?" },
+        },
+        required: [
+          "metricName",
+          "displayName",
+          "currentAsymmetry",
+          "isResolving",
+        ],
       },
     },
     summary: { type: "string" },

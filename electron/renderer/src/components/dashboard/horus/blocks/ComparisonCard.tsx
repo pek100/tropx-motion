@@ -2,12 +2,24 @@
  * ComparisonCard Block
  *
  * Side-by-side value comparison (e.g., left vs right leg).
+ * Enhanced with composable slots for rich AI-generated findings.
  * Uses TropX theme tokens and leg colors for consistent styling.
  */
 
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeftRight, TrendingUp, Minus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { ArrowLeftRight, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import {
+  ExpandableDetails,
+  ClassificationBadge,
+  DomainBadge,
+  getIconSizeClass,
+  type DetailsSlot,
+  type Classification,
+  type Limb,
+  type MetricDomain,
+} from "../primitives";
 
 interface ComparisonCardProps {
   title: string;
@@ -21,6 +33,16 @@ interface ComparisonCardProps {
   /** Direction: higherBetter or lowerBetter - affects which side is highlighted */
   direction?: "higherBetter" | "lowerBetter";
   className?: string;
+
+  // Composable Slots (optional)
+  id?: string;
+  classification?: Classification;
+  /** Explicit deficit limb override (otherwise auto-calculated) */
+  deficitLimb?: Limb;
+  domain?: MetricDomain;
+  details?: DetailsSlot;
+  expandable?: boolean;
+  defaultExpanded?: boolean;
 }
 
 export function ComparisonCard({
@@ -34,6 +56,14 @@ export function ComparisonCard({
   highlightBetter = true,
   direction = "higherBetter",
   className,
+  // Composable slots
+  id,
+  classification,
+  deficitLimb,
+  domain,
+  details,
+  expandable = true,
+  defaultExpanded = false,
 }: ComparisonCardProps) {
   const difference = Math.abs(leftValue - rightValue);
   const percentDiff =
@@ -48,28 +78,67 @@ export function ComparisonCard({
     direction === "higherBetter" ? rightValue > leftValue : rightValue < leftValue;
   const isEqual = leftValue === rightValue;
 
+  // Auto-calculate deficit limb if not provided (limb with worse value)
+  const calculatedDeficitLimb: Limb | undefined = isEqual
+    ? undefined
+    : leftIsBetter
+      ? "Right Leg"
+      : "Left Leg";
+  const resolvedDeficitLimb = deficitLimb ?? calculatedDeficitLimb;
+
+  // Determine if asymmetry is significant (>5%) or critical (>15%)
+  const isSignificantAsymmetry = percentDiff > 5;
+  const isCriticalAsymmetry = percentDiff > 15;
+
   // Format values
   const formatValue = (val: number) => {
     if (Number.isInteger(val)) return val.toString();
     return val.toFixed(1);
   };
 
+  // Check if any badges are present
+  const hasBadges = classification || domain;
+
   return (
-    <Card className={cn("py-4 bg-[var(--tropx-card)] border-[var(--tropx-border)]", className)}>
+    <Card className={cn("py-4 bg-[var(--tropx-card)] border-[var(--tropx-border)]", className)} data-finding-id={id}>
       <CardHeader className="pb-2 pt-0">
-        <div className="flex items-center gap-2">
-          <ArrowLeftRight className="h-4 w-4 text-[var(--tropx-text-sub)]" />
-          <CardTitle className="text-base font-semibold text-[var(--tropx-text-main)]">{title}</CardTitle>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ArrowLeftRight className={cn(getIconSizeClass("sm"), "text-[var(--tropx-text-sub)]")} />
+            <CardTitle className="text-base font-semibold text-[var(--tropx-text-main)]">{title}</CardTitle>
+          </div>
+          {/* Asymmetry badge inline */}
+          {!isEqual && isSignificantAsymmetry && (
+            <Badge
+              className={cn(
+                "font-medium border-none",
+                isCriticalAsymmetry
+                  ? "bg-[var(--tropx-warning-bg)] text-[var(--tropx-warning-text)]"
+                  : "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)]"
+              )}
+            >
+              {percentDiff.toFixed(1)}% asymmetry
+            </Badge>
+          )}
         </div>
+        {/* Composable badge slots */}
+        {hasBadges && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+            {classification && <ClassificationBadge classification={classification} />}
+            {domain && <DomainBadge domain={domain} />}
+          </div>
+        )}
       </CardHeader>
       <CardContent className="pt-0">
         <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-center">
-          {/* Left side - uses left leg color */}
+          {/* Left side - uses left leg color, amber ring for deficit */}
           <div
             className={cn(
               "text-center p-3 rounded-lg transition-colors",
               "bg-[var(--leg-left-fill)]/10",
-              highlightBetter && leftIsBetter && "ring-2 ring-[var(--leg-left-band)]/50"
+              highlightBetter && leftIsBetter && "ring-2 ring-[var(--leg-left-band)]/50",
+              // Amber ring for deficit limb (not red)
+              resolvedDeficitLimb === "Left Leg" && isSignificantAsymmetry && "ring-2 ring-[var(--tropx-warning-text)]/50"
             )}
           >
             <div className="text-xs text-[var(--tropx-text-sub)] uppercase tracking-wide mb-1">
@@ -82,19 +151,24 @@ export function ComparisonCard({
               </span>
             </div>
             {highlightBetter && leftIsBetter && !isEqual && (
-              <TrendingUp className="h-4 w-4 text-[var(--tropx-success-text)] mx-auto mt-1" />
+              <TrendingUp className={cn(getIconSizeClass("sm"), "text-[var(--tropx-success-text)] mx-auto mt-1")} />
+            )}
+            {resolvedDeficitLimb === "Left Leg" && isSignificantAsymmetry && (
+              <TrendingDown className={cn(getIconSizeClass("sm"), "text-[var(--tropx-warning-text)] mx-auto mt-1")} />
             )}
           </div>
 
           {/* Center divider */}
           <div className="text-[var(--tropx-text-sub)] text-sm">vs</div>
 
-          {/* Right side - uses right leg color */}
+          {/* Right side - uses right leg color, amber ring for deficit */}
           <div
             className={cn(
               "text-center p-3 rounded-lg transition-colors",
               "bg-[var(--leg-right-fill)]/10",
-              highlightBetter && rightIsBetter && "ring-2 ring-[var(--leg-right-band)]/50"
+              highlightBetter && rightIsBetter && "ring-2 ring-[var(--leg-right-band)]/50",
+              // Amber ring for deficit limb (not red)
+              resolvedDeficitLimb === "Right Leg" && isSignificantAsymmetry && "ring-2 ring-[var(--tropx-warning-text)]/50"
             )}
           >
             <div className="text-xs text-[var(--tropx-text-sub)] uppercase tracking-wide mb-1">
@@ -107,7 +181,10 @@ export function ComparisonCard({
               </span>
             </div>
             {highlightBetter && rightIsBetter && !isEqual && (
-              <TrendingUp className="h-4 w-4 text-[var(--tropx-success-text)] mx-auto mt-1" />
+              <TrendingUp className={cn(getIconSizeClass("sm"), "text-[var(--tropx-success-text)] mx-auto mt-1")} />
+            )}
+            {resolvedDeficitLimb === "Right Leg" && isSignificantAsymmetry && (
+              <TrendingDown className={cn(getIconSizeClass("sm"), "text-[var(--tropx-warning-text)] mx-auto mt-1")} />
             )}
           </div>
         </div>
@@ -117,7 +194,7 @@ export function ComparisonCard({
           <div className="mt-3 pt-3 border-t border-[var(--tropx-border)] flex items-center justify-center gap-2 text-sm text-[var(--tropx-text-sub)]">
             {isEqual ? (
               <>
-                <Minus className="h-4 w-4" />
+                <Minus className={getIconSizeClass("sm")} />
                 <span>Equal</span>
               </>
             ) : (
@@ -127,10 +204,21 @@ export function ComparisonCard({
                   {formatValue(difference)}
                   {unit}
                 </span>
-                <span className="text-[var(--tropx-text-sub)]">({percentDiff.toFixed(1)}%)</span>
+                {resolvedDeficitLimb && (
+                  <span className="text-[var(--tropx-warning-text)]">({resolvedDeficitLimb} deficit)</span>
+                )}
               </>
             )}
           </div>
+        )}
+
+        {/* Expandable details slot */}
+        {expandable && details && (
+          <ExpandableDetails
+            details={details}
+            defaultExpanded={defaultExpanded}
+            hoverPreview={true}
+          />
         )}
       </CardContent>
     </Card>

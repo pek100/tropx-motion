@@ -367,7 +367,11 @@ export interface Milestone {
     | "mcid_improvement"
     | "streak"
     | "personal_best"
-    | "asymmetry_resolved";
+    | "asymmetry_resolved"
+    // New milestone types for enhanced correlation tracking
+    | "symmetry_restored"     // Asymmetry dropped below 5%
+    | "limb_caught_up"        // Deficit limb matched the other
+    | "cross_metric_gain";    // Multiple metrics improved together
   /** Title */
   title: string;
   /** Description */
@@ -378,6 +382,8 @@ export interface Milestone {
   metrics: string[];
   /** Celebration level */
   celebrationLevel: "major" | "minor";
+  /** Which limb if applicable */
+  limb?: SpecificLimb;
 }
 
 export interface Regression {
@@ -409,6 +415,52 @@ export interface Projection {
   assumptions: string[];
 }
 
+/**
+ * Cross-metric correlation detected across sessions.
+ * Identifies when multiple metrics are improving or declining together.
+ */
+export interface ProgressCorrelation {
+  /** Unique ID */
+  id: string;
+  /** Type of correlation pattern */
+  type: "co_improving" | "co_declining" | "inverse" | "compensatory";
+  /** Metric names involved in the correlation */
+  metrics: string[];
+  /** Explanation of the relationship */
+  explanation: string;
+  /** Clinical significance level */
+  significance: "high" | "moderate" | "low";
+  /** Limb if consistent across correlation */
+  limb?: SpecificLimb;
+}
+
+/**
+ * Tracks asymmetry changes over time.
+ * Identifies if bilateral imbalances are resolving or worsening.
+ */
+export interface AsymmetryTrend {
+  /** Which metric's asymmetry is being tracked */
+  metricName: string;
+  /** Display name for UI */
+  displayName: string;
+  /** Current asymmetry percentage */
+  currentAsymmetry: number;
+  /** Previous session asymmetry */
+  previousAsymmetry: number;
+  /** Baseline asymmetry (first session) */
+  baselineAsymmetry: number;
+  /** Change in asymmetry from previous session */
+  changeFromPrevious: number;
+  /** Change in asymmetry from baseline */
+  changeFromBaseline: number;
+  /** Is asymmetry resolving (decreasing)? */
+  isResolving: boolean;
+  /** Which limb has the deficit (if any) */
+  deficitLimb?: SpecificLimb;
+  /** Is the deficit limb catching up? */
+  isDeficitCatchingUp?: boolean;
+}
+
 export interface ProgressInput {
   sessionId: string;
   currentMetrics: SessionMetrics;
@@ -429,6 +481,10 @@ export interface ProgressOutput {
   regressions: Regression[];
   /** Projections (if enough data) */
   projections: Projection[];
+  /** Cross-metric correlations detected (e.g., velocity improved alongside ROM) */
+  correlations?: ProgressCorrelation[];
+  /** Asymmetry trends over time (e.g., left leg ROM gap closing) */
+  asymmetryTrends?: AsymmetryTrend[];
   /** Overall progress summary */
   summary: string;
   /** Sessions analyzed count */

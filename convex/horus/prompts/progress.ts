@@ -20,6 +20,8 @@ import type {
   Milestone,
   Regression,
   Projection,
+  ProgressCorrelation,
+  AsymmetryTrend,
 } from "../types";
 import type { Id } from "../../_generated/dataModel";
 
@@ -70,6 +72,21 @@ Your role is to track patient progress across multiple sessions, identify meanin
 - Use "Left Leg" or "Right Leg" (never "left", "L", etc.)
 - Track each leg independently
 
+## Cross-Metric Correlations (NEW)
+
+Detect when multiple metrics are improving or declining together:
+- **co_improving**: Multiple metrics improving simultaneously (e.g., "velocity improved alongside ROM")
+- **co_declining**: Multiple metrics declining together
+- **inverse**: One metric improving while another declines (compensation pattern)
+- **compensatory**: Same limb shows strength in one area compensating for weakness
+
+## Asymmetry Trend Tracking (NEW)
+
+Track if bilateral imbalances are resolving or worsening:
+- Compare current asymmetry to previous and baseline
+- Identify if deficit limb is "catching up" to the other
+- Flag when asymmetry drops below 5% (symmetry restored)
+
 ## Output Format
 
 {
@@ -93,12 +110,13 @@ Your role is to track patient progress across multiple sessions, identify meanin
   "milestones": [
     {
       "id": "string",
-      "type": "threshold_achieved" | "mcid_improvement" | "streak" | "personal_best" | "asymmetry_resolved",
+      "type": "threshold_achieved" | "mcid_improvement" | "streak" | "personal_best" | "asymmetry_resolved" | "symmetry_restored" | "limb_caught_up" | "cross_metric_gain",
       "title": "string",
       "description": "string",
       "achievedAt": timestamp,
       "metrics": ["metricName"],
-      "celebrationLevel": "major" | "minor"
+      "celebrationLevel": "major" | "minor",
+      "limb": "Left Leg" | "Right Leg" | null
     }
   ],
   "regressions": [
@@ -119,6 +137,30 @@ Your role is to track patient progress across multiple sessions, identify meanin
       "targetDate": timestamp,
       "confidence": 0-100,
       "assumptions": ["assumption1"]
+    }
+  ],
+  "correlations": [
+    {
+      "id": "string",
+      "type": "co_improving" | "co_declining" | "inverse" | "compensatory",
+      "metrics": ["metricName1", "metricName2"],
+      "explanation": "How these metrics are related",
+      "significance": "high" | "moderate" | "low",
+      "limb": "Left Leg" | "Right Leg" | null
+    }
+  ],
+  "asymmetryTrends": [
+    {
+      "metricName": "string",
+      "displayName": "string",
+      "currentAsymmetry": number,
+      "previousAsymmetry": number,
+      "baselineAsymmetry": number,
+      "changeFromPrevious": number,
+      "changeFromBaseline": number,
+      "isResolving": boolean,
+      "deficitLimb": "Left Leg" | "Right Leg" | null,
+      "isDeficitCatchingUp": boolean
     }
   ],
   "summary": "2-3 sentence progress summary",
@@ -222,9 +264,21 @@ ${opiHistory.map((h) => `- ${new Date(h.date).toLocaleDateString()}: ${h.score}`
 1. Calculate trends for all metrics (per-leg tracked separately)
 2. Apply MCID thresholds to determine clinical significance
 3. Detect milestones (threshold achievements, personal bests, streaks of ${PROGRESS_CONFIG.STREAK_THRESHOLD}+)
+   - Use new milestone types when applicable:
+     - \`symmetry_restored\`: When asymmetry drops below 5%
+     - \`limb_caught_up\`: When deficit limb matches the other
+     - \`cross_metric_gain\`: When multiple metrics improve together
 4. Flag regressions exceeding ${PROGRESS_CONFIG.REGRESSION_THRESHOLD_PERCENTAGE}%
 5. ${allSessions.length >= PROGRESS_CONFIG.MIN_SESSIONS_FOR_PROJECTION ? `Generate projections for ${PROGRESS_CONFIG.PROJECTION_HORIZON_DAYS} days` : "Not enough sessions for projections"}
-6. Use "Left Leg" / "Right Leg" terminology
+6. Use "Left Leg" / "Right Leg" terminology (NEVER "left", "L", "affected", etc.)
+7. Detect cross-metric correlations:
+   - Look for metrics improving/declining together
+   - Identify compensation patterns (e.g., power compensating for ROM deficit)
+   - Note limb-consistent patterns
+8. Track asymmetry trends:
+   - Compare asymmetry values across sessions
+   - Identify if deficit limb is catching up
+   - Flag when asymmetry is resolving vs worsening
 
 Return the JSON response.`);
 
@@ -309,6 +363,34 @@ export function parseProgressResponse(
     })
   );
 
+  // Transform correlations (NEW)
+  const correlations: ProgressCorrelation[] = (parsed.correlations || []).map(
+    (c: Record<string, unknown>, idx: number) => ({
+      id: (c.id as string) || `corr-${idx}`,
+      type: (c.type as ProgressCorrelation["type"]) || "co_improving",
+      metrics: Array.isArray(c.metrics) ? (c.metrics as string[]) : [],
+      explanation: (c.explanation as string) || "",
+      significance: (c.significance as "high" | "moderate" | "low") || "moderate",
+      limb: c.limb as ProgressCorrelation["limb"],
+    })
+  );
+
+  // Transform asymmetry trends (NEW)
+  const asymmetryTrends: AsymmetryTrend[] = (parsed.asymmetryTrends || []).map(
+    (a: Record<string, unknown>) => ({
+      metricName: (a.metricName as string) || "",
+      displayName: (a.displayName as string) || "",
+      currentAsymmetry: (a.currentAsymmetry as number) || 0,
+      previousAsymmetry: (a.previousAsymmetry as number) || 0,
+      baselineAsymmetry: (a.baselineAsymmetry as number) || 0,
+      changeFromPrevious: (a.changeFromPrevious as number) || 0,
+      changeFromBaseline: (a.changeFromBaseline as number) || 0,
+      isResolving: (a.isResolving as boolean) || false,
+      deficitLimb: a.deficitLimb as AsymmetryTrend["deficitLimb"],
+      isDeficitCatchingUp: a.isDeficitCatchingUp as boolean | undefined,
+    })
+  );
+
   return {
     sessionId,
     patientId,
@@ -316,6 +398,8 @@ export function parseProgressResponse(
     milestones,
     regressions,
     projections,
+    correlations: correlations.length > 0 ? correlations : undefined,
+    asymmetryTrends: asymmetryTrends.length > 0 ? asymmetryTrends : undefined,
     summary: (parsed.summary as string) || "",
     sessionsAnalyzed: sessionsCount,
     dateRange: parsed.dateRange as { start: number; end: number } || {

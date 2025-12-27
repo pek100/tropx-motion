@@ -2,18 +2,32 @@
  * MetricGrid Block
  *
  * Dense multi-metric display in grid layout.
+ * Enhanced with per-item composable slots for classification badges.
  * Uses TropX theme tokens for consistent styling.
  */
 
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import {
+  ClassificationBadge,
+  BenchmarkBadge,
+  LimbBadge,
+  getIconSizeClass,
+  type Classification,
+  type Benchmark,
+  type Limb,
+} from "../primitives";
 
 interface MetricItem {
   label: string;
   value: number | string;
   unit?: string;
   trend?: "up" | "down" | "stable" | null;
+  // Per-item composable slots (optional)
+  classification?: Classification;
+  benchmark?: Benchmark;
+  limb?: Limb;
 }
 
 interface MetricGridProps {
@@ -65,26 +79,48 @@ export function MetricGrid({
           {metrics.map((metric, index) => {
             const TrendIcon = metric.trend ? trendIcons[metric.trend] : null;
             const trendColor = metric.trend ? trendColors[metric.trend] : "";
+            const hasSlots = metric.classification || metric.benchmark || metric.limb;
+
+            // Color-code value based on benchmark
+            const valueColorClass = metric.benchmark
+              ? metric.benchmark === "optimal"
+                ? "text-[var(--tropx-success-text)]"
+                : metric.benchmark === "deficient"
+                  ? "text-[var(--tropx-warning-text)]"
+                  : "text-[var(--tropx-text-main)]"
+              : "text-[var(--tropx-text-main)]";
 
             return (
               <div
                 key={index}
-                className="p-2 rounded-lg bg-[var(--tropx-muted)] text-center"
+                className={cn(
+                  "p-2 rounded-lg bg-[var(--tropx-muted)] text-center",
+                  // Add subtle ring for classification
+                  metric.classification === "strength" && "ring-1 ring-[var(--tropx-success-text)]/30",
+                  metric.classification === "weakness" && "ring-1 ring-[var(--tropx-warning-text)]/30"
+                )}
               >
                 <div className="text-xs text-[var(--tropx-text-sub)] uppercase tracking-wide mb-0.5 truncate">
                   {metric.label}
                 </div>
                 <div className="flex items-center justify-center gap-1">
-                  <span className="text-lg font-bold text-[var(--tropx-text-main)]">
+                  <span className={cn("text-lg font-bold", valueColorClass)}>
                     {formatValue(metric.value)}
                   </span>
                   {metric.unit && (
                     <span className="text-xs text-[var(--tropx-text-sub)]">{metric.unit}</span>
                   )}
                   {TrendIcon && (
-                    <TrendIcon className={cn("h-3 w-3 ml-1", trendColor)} />
+                    <TrendIcon className={cn(getIconSizeClass("sm"), "ml-1", trendColor)} />
                   )}
                 </div>
+                {/* Per-item badges */}
+                {hasSlots && (
+                  <div className="flex flex-wrap items-center justify-center gap-1 mt-1.5">
+                    {metric.limb && <LimbBadge limb={metric.limb} size="sm" />}
+                    {metric.benchmark && <BenchmarkBadge benchmark={metric.benchmark} size="sm" showIcon={false} />}
+                  </div>
+                )}
               </div>
             );
           })}

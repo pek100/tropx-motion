@@ -417,21 +417,15 @@ EXAMPLE:
 
 ### stat_card (for key metrics)
 ⚠️ CRITICAL: metric field is MANDATORY - block will FAIL without it!
-REQUIRED: type, title, metric, unit
-RECOMMENDED: icon, variant, comparison
+REQUIRED: type, title, metric (tag)
+RECOMMENDED: icon, variant
 EXAMPLE:
 {
   "type": "stat_card",
-  "title": "Peak Flexion",
-  "metric": "leftLeg.peakFlexion",
-  "unit": "°",
-  "icon": "TrendingUp",
-  "variant": "success",
-  "comparison": {
-    "type": "previous",
-    "formula": "((current - previous) / previous) * 100",
-    "label": "vs last session"
-  }
+  "title": "Performance Score",
+  "metric": "<OPI_SCORE>",
+  "icon": "Gauge",
+  "variant": "success"
 }
 
 ### alert_card (for warnings/notifications)
@@ -449,31 +443,20 @@ EXAMPLE:
 
 ### comparison_card (for left vs right)
 ⚠️ CRITICAL: leftMetric and rightMetric are MANDATORY - block will FAIL without them!
-REQUIRED: type, title, leftLabel, rightLabel, leftMetric, rightMetric
-RECOMMENDED: unit, showDifference, highlightBetter
+REQUIRED: type, title, leftLabel, rightLabel, leftMetric (tag), rightMetric (tag)
+RECOMMENDED: showDifference, highlightBetter
 
-VALID EXAMPLE:
+EXAMPLE:
 {
   "type": "comparison_card",
   "title": "Peak Flexion Comparison",
   "leftLabel": "Left Leg",
   "rightLabel": "Right Leg",
-  "leftMetric": "leftLeg.peakFlexion",
-  "rightMetric": "rightLeg.peakFlexion",
-  "unit": "°",
+  "leftMetric": "<LEFT_PEAK_FLEXION>",
+  "rightMetric": "<RIGHT_PEAK_FLEXION>",
   "showDifference": true,
   "highlightBetter": true
 }
-
-INVALID EXAMPLE (DO NOT DO THIS - missing metrics!):
-{
-  "type": "comparison_card",
-  "title": "ROM Asymmetry Trend",
-  "leftLabel": "Left Leg",
-  "rightLabel": "Right Leg",
-  "unit": "%"
-}
-// ❌ WRONG - This will break the UI because leftMetric and rightMetric are missing!
 
 ### next_steps (for recommendations)
 REQUIRED: type, title, items (each with text)
@@ -490,31 +473,30 @@ EXAMPLE:
 }
 
 ### progress_card (for milestones)
-REQUIRED: type, title, description, metric, target
+REQUIRED: type, title, description, metric (tag), target (number)
 RECOMMENDED: icon, celebrationLevel
 EXAMPLE:
 {
   "type": "progress_card",
   "title": "ROM Goal Progress",
-  "description": "Working toward 120° flexion target",
-  "metric": "leftLeg.peakFlexion",
+  "description": "Working toward 120° target",
+  "metric": "<LEFT_PEAK_FLEXION>",
   "target": 120,
-  "icon": "Target",
-  "celebrationLevel": "minor"
+  "icon": "Target"
 }
 
 ### metric_grid (for multiple metrics)
-REQUIRED: type, title, metrics (array with label, metric)
-RECOMMENDED: columns, unit for each
+REQUIRED: type, title, metrics (array with label, metric tag)
+RECOMMENDED: columns
 EXAMPLE:
 {
   "type": "metric_grid",
   "title": "Left Leg Overview",
-  "columns": 3,
+  "columns": "3",
   "metrics": [
-    { "label": "Peak Flexion", "metric": "leftLeg.peakFlexion", "unit": "°" },
-    { "label": "Peak Velocity", "metric": "leftLeg.peakAngularVelocity", "unit": "°/s" },
-    { "label": "Explosiveness", "metric": "leftLeg.explosivenessConcentric", "unit": "°/s²" }
+    { "label": "Peak ROM", "metric": "<LEFT_PEAK_FLEXION>" },
+    { "label": "Velocity", "metric": "<LEFT_VELOCITY>" },
+    { "label": "Power", "metric": "<LEFT_POWER>" }
   ]
 }
 
@@ -537,33 +519,36 @@ EXAMPLE:
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * Generate complete visualization catalog for AI system prompt
+ * Generate compact visualization catalog for AI system prompt.
+ * Optimized for token efficiency - includes only essential info.
  */
 export function getVisualizationCatalogForPrompt(): string {
   return `
-# Horus Visualization Catalog
+# Visualization Blocks (Compact Reference)
 
-You must output visualization blocks that specify WHAT to show.
-The frontend will fill in actual values from SessionMetrics.
+## Block Types (unit is automatic from tag!)
+- **executive_summary**: title, content (markdown), variant?
+- **stat_card**: title, metric (tag), icon?, comparison?
+- **alert_card**: title, description, severity (info|warning|error), icon?
+- **comparison_card**: title, leftLabel, rightLabel, leftMetric (tag), rightMetric (tag)
+- **next_steps**: title, items: [{text, priority?}]
+- **progress_card**: title, description, metric (tag), target, icon?
+- **metric_grid**: title, columns (2|3|4), metrics: [{label, metric (tag)}]
 
-${getBlockTypeCatalogForPrompt()}
+## Metric Tags (use these in metric fields)
+- <OPI_SCORE> - Overall Performance Index (0-100)
+- <LEFT_PEAK_FLEXION>, <RIGHT_PEAK_FLEXION> - Peak ROM (°)
+- <LEFT_AVG_ROM>, <RIGHT_AVG_ROM> - Average ROM (°)
+- <LEFT_VELOCITY>, <RIGHT_VELOCITY> - Peak Angular Velocity (°/s)
+- <LEFT_POWER>, <RIGHT_POWER> - Explosiveness Concentric (°/s²)
+- <ROM_ASYMMETRY>, <VELOCITY_ASYMMETRY> - Bilateral Asymmetry (%)
 
-## Chart Types
-${getChartCatalogForPrompt()}
+## Common Icons
+TrendingUp, TrendingDown, AlertTriangle, CheckCircle, Target, Zap, Activity, Scale
 
-${getMetricCatalogForPrompt()}
-
-## Icons
-${getIconCatalogForPrompt()}
-
-## Important Guidelines
-
-1. **Never generate actual values** - Use metric expressions and formulas
-2. **Be specific with metric paths** - Use exact paths like "leftLeg.peakFlexion"
-3. **Choose appropriate block types** - Match visualization to insight type
-4. **Limit blocks to 4-8 per analysis** - Focus on most important insights
-5. **Use consistent icons** - Match icon to content meaning
-6. **Order blocks logically** - Start with summary, end with actions
-7. **Use charts for trends** - Time-series data is best visualized
+## Rules
+1. Use metric paths NOT actual values
+2. EXACTLY 4-5 blocks per mode
+3. Start with executive_summary, end with next_steps
 `;
 }

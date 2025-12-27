@@ -15,6 +15,8 @@ import {
   evaluateMetric,
   evaluateFormula,
   resolveMetricValue,
+  resolveMetricWithUnit,
+  getMetricConfig,
 } from "./types";
 import {
   ExecutiveSummary,
@@ -73,11 +75,14 @@ export function BlockRenderer({ block, context, className }: BlockRendererProps)
           <ExecutiveSummary
             title={block.title}
             content={block.content}
+            variant={block.variant}
             className={className}
           />
         );
 
       case "stat_card": {
+        // Use resolveMetricWithUnit to get value AND unit from tag
+        const resolved = resolveMetricWithUnit(block.metric, context.current, block.unit);
         const metricResult = evaluateMetric(block.metric, context);
 
         // Compute comparison if specified
@@ -161,12 +166,21 @@ export function BlockRenderer({ block, context, className }: BlockRendererProps)
         return (
           <StatCard
             title={block.title}
-            value={metricResult.success ? metricResult.value.toFixed(1) : "N/A"}
-            unit={block.unit}
+            value={resolved.success ? resolved.formatted : "N/A"}
+            unit={resolved.unit}
             comparison={comparison}
             icon={block.icon}
             variant={block.variant}
             className={className}
+            // Composable slots
+            id={block.id}
+            classification={block.classification}
+            limb={block.limb}
+            benchmark={block.benchmark}
+            domain={block.domain}
+            details={block.details}
+            expandable={block.expandable}
+            defaultExpanded={block.defaultExpanded}
           />
         );
       }
@@ -177,8 +191,16 @@ export function BlockRenderer({ block, context, className }: BlockRendererProps)
             title={block.title}
             description={block.description}
             severity={block.severity}
+            variant={block.variant}
             icon={block.icon}
             className={className}
+            // Composable slots
+            id={block.id}
+            limb={block.limb}
+            domain={block.domain}
+            details={block.details}
+            expandable={block.expandable}
+            defaultExpanded={block.defaultExpanded}
           />
         );
 
@@ -214,26 +236,37 @@ export function BlockRenderer({ block, context, className }: BlockRendererProps)
           );
         }
 
-        const leftResult = evaluateMetric(block.leftMetric, context);
-        const rightResult = evaluateMetric(block.rightMetric, context);
+        // Use resolveMetricWithUnit to get value AND unit from tags
+        const leftResolved = resolveMetricWithUnit(block.leftMetric, context.current, block.unit);
+        const rightResolved = resolveMetricWithUnit(block.rightMetric, context.current, block.unit);
 
         return (
           <ComparisonCard
             title={block.title}
             leftLabel={block.leftLabel}
             rightLabel={block.rightLabel}
-            leftValue={leftResult.success ? leftResult.value : 0}
-            rightValue={rightResult.success ? rightResult.value : 0}
-            unit={block.unit}
+            leftValue={leftResolved.success ? leftResolved.value : 0}
+            rightValue={rightResolved.success ? rightResolved.value : 0}
+            unit={leftResolved.unit || rightResolved.unit}
             showDifference={block.showDifference}
             highlightBetter={block.highlightBetter}
+            direction={block.direction}
             className={className}
+            // Composable slots
+            id={block.id}
+            classification={block.classification}
+            deficitLimb={block.deficitLimb}
+            domain={block.domain}
+            details={block.details}
+            expandable={block.expandable}
+            defaultExpanded={block.defaultExpanded}
           />
         );
       }
 
       case "progress_card": {
-        const currentResult = evaluateMetric(block.metric, context);
+        // Use resolveMetricWithUnit to get value AND unit from tag
+        const resolved = resolveMetricWithUnit(block.metric, context.current, block.unit);
         const targetValue =
           typeof block.target === "number"
             ? block.target
@@ -243,25 +276,38 @@ export function BlockRenderer({ block, context, className }: BlockRendererProps)
           <ProgressCard
             title={block.title}
             description={block.description}
-            current={currentResult.success ? currentResult.value : 0}
+            current={resolved.success ? resolved.value : 0}
             target={targetValue}
+            unit={resolved.unit}
             icon={block.icon}
             celebrationLevel={block.celebrationLevel}
             className={className}
+            // Composable slots
+            id={block.id}
+            classification={block.classification}
+            limb={block.limb}
+            details={block.details}
+            expandable={block.expandable}
+            defaultExpanded={block.defaultExpanded}
           />
         );
       }
 
       case "metric_grid": {
         const metrics = block.metrics.map((m) => {
-          const result = evaluateMetric(m.metric, context);
+          // Use resolveMetricWithUnit to get value AND unit from tag
+          const resolved = resolveMetricWithUnit(m.metric, context.current, m.unit);
           const trend = m.trend === "show" ? computeTrend(m.metric, context) : null;
 
           return {
             label: m.label,
-            value: result.success ? result.value : "N/A",
-            unit: m.unit,
+            value: resolved.success ? resolved.value : "N/A",
+            unit: resolved.unit,
             trend,
+            // Per-item composable slots
+            classification: m.classification,
+            benchmark: m.benchmark,
+            limb: m.limb,
           };
         });
 
@@ -288,6 +334,9 @@ export function BlockRenderer({ block, context, className }: BlockRendererProps)
             icon={block.icon}
             variant={block.variant}
             className={className}
+            // Composable slots
+            id={block.id}
+            domain={block.domain}
           />
         );
 
@@ -335,18 +384,6 @@ export function BlockRenderer({ block, context, className }: BlockRendererProps)
         }
 
         if (block.dataSpec.timeSeries && context.history) {
-          // Debug: Check if any bilateral metrics are in time series
-          const hasBilateralMetric = block.dataSpec.timeSeries.metrics.some(
-            (m) => m?.startsWith("bilateral.")
-          );
-          if (hasBilateralMetric) {
-            console.log("[BlockRenderer] Time series with bilateral metrics:", JSON.stringify({
-              metrics: block.dataSpec.timeSeries.metrics,
-              historyCount: context.history.length,
-              firstSessionBilateral: context.history[0]?.bilateral,
-            }, null, 2));
-          }
-
           // For time series: build data from history
           block.dataSpec.timeSeries.metrics.forEach((metricPath) => {
             if (!metricPath) return;
@@ -356,20 +393,12 @@ export function BlockRenderer({ block, context, className }: BlockRendererProps)
             });
           });
 
-          context.history.forEach((session, idx) => {
+          context.history.forEach((session) => {
             const point: Record<string, string | number> = {
               name: new Date(session.recordedAt).toLocaleDateString(),
             };
             block.dataSpec.timeSeries?.metrics.forEach((metricPath) => {
               const value = resolveMetricValue(metricPath, session);
-              // Debug: Log bilateral value resolution for first session
-              if (idx === 0 && metricPath?.startsWith("bilateral.")) {
-                console.log("[BlockRenderer] Time series bilateral value:", JSON.stringify({
-                  metricPath,
-                  value,
-                  sessionBilateral: session.bilateral,
-                }, null, 2));
-              }
               if (value !== undefined) {
                 point[metricPath] = value;
               }

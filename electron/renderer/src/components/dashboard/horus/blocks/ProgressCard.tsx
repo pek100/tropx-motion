@@ -2,6 +2,7 @@
  * ProgressCard Block
  *
  * Milestone or target progress indicator.
+ * Enhanced with composable slots for classification and limb badges.
  * Uses TropX theme tokens for consistent styling.
  */
 
@@ -11,6 +12,15 @@ import { Progress } from "@/components/ui/progress";
 import * as Icons from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { LucideIconName } from "../types";
+import {
+  ExpandableDetails,
+  ClassificationBadge,
+  LimbBadge,
+  getIconSizeClass,
+  type DetailsSlot,
+  type Classification,
+  type Limb,
+} from "../primitives";
 
 interface ProgressCardProps {
   title: string;
@@ -21,6 +31,14 @@ interface ProgressCardProps {
   icon?: LucideIconName;
   celebrationLevel?: "major" | "minor";
   className?: string;
+
+  // Composable Slots (optional)
+  id?: string;
+  classification?: Classification;
+  limb?: Limb;
+  details?: DetailsSlot;
+  expandable?: boolean;
+  defaultExpanded?: boolean;
 }
 
 export function ProgressCard({
@@ -32,6 +50,13 @@ export function ProgressCard({
   icon,
   celebrationLevel,
   className,
+  // Composable slots
+  id,
+  classification,
+  limb,
+  details,
+  expandable = true,
+  defaultExpanded = false,
 }: ProgressCardProps) {
   const percentage = target > 0 ? Math.min((current / target) * 100, 100) : 0;
   const isComplete = percentage >= 100;
@@ -48,6 +73,9 @@ export function ProgressCard({
         ? ""
         : "";
 
+  // Check if any badges are present
+  const hasBadges = classification || limb;
+
   return (
     <Card
       className={cn(
@@ -55,6 +83,7 @@ export function ProgressCard({
         isComplete ? "gradient-green-card border-none" : "bg-[var(--tropx-card)] border-[var(--tropx-border)]",
         className
       )}
+      data-finding-id={id}
     >
       <CardContent className="px-4 py-0">
         <div className="flex items-start gap-3">
@@ -68,7 +97,7 @@ export function ProgressCard({
               celebrationClass
             )}
           >
-            <IconComponent className="h-5 w-5" />
+            <IconComponent className={getIconSizeClass("md")} />
           </div>
 
           {/* Content */}
@@ -86,6 +115,14 @@ export function ProgressCard({
             </div>
 
             <p className="text-xs text-[var(--tropx-text-sub)] mb-2">{description}</p>
+
+            {/* Composable badge slots */}
+            {hasBadges && (
+              <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                {classification && <ClassificationBadge classification={classification} />}
+                {limb && <LimbBadge limb={limb} />}
+              </div>
+            )}
 
             {/* Progress bar */}
             <Progress
@@ -107,6 +144,15 @@ export function ProgressCard({
                 {unit}
               </span>
             </div>
+
+            {/* Expandable details slot */}
+            {expandable && details && (
+              <ExpandableDetails
+                details={details}
+                defaultExpanded={defaultExpanded}
+                hoverPreview={true}
+              />
+            )}
           </div>
         </div>
       </CardContent>
