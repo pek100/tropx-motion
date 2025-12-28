@@ -435,39 +435,18 @@ export function DashboardView({ className }: DashboardViewProps) {
           bilateral?: Record<string, number>;
         };
 
-        // Debug: Log the raw backend data for first session
-        if (s === metricsHistory.sessions[0]) {
-          console.log("[DashboardView] First session raw data:", JSON.stringify({
-            sessionId: s.sessionId,
-            hasLeftLeg: !!sessionAny.leftLeg,
-            hasRightLeg: !!sessionAny.rightLeg,
-            hasBilateral: !!sessionAny.bilateral,
-            bilateral: sessionAny.bilateral,
-            leftLegKeys: sessionAny.leftLeg ? Object.keys(sessionAny.leftLeg) : [],
-          }, null, 2));
-        }
-
+        // Always provide metrics object with opiScore, use empty objects if leg data missing
         return {
           sessionId: s.sessionId,
           recordedAt: s.recordedAt,
-          metrics: (sessionAny.leftLeg && sessionAny.rightLeg)
-            ? {
-                leftLeg: sessionAny.leftLeg,
-                rightLeg: sessionAny.rightLeg,
-                bilateral: sessionAny.bilateral ?? {},
-                opiScore: s.opiScore,
-              }
-            : undefined,
+          metrics: {
+            leftLeg: sessionAny.leftLeg ?? {},
+            rightLeg: sessionAny.rightLeg ?? {},
+            bilateral: sessionAny.bilateral ?? {},
+            opiScore: s.opiScore,
+          },
         };
       });
-
-    // Debug: Log the total number of sessions with metrics
-    const withMetrics = result.filter(r => r.metrics).length;
-    console.log("[DashboardView] horusSessions transformed:", JSON.stringify({
-      total: result.length,
-      withMetrics,
-      firstSessionBilateral: result[0]?.metrics?.bilateral,
-    }, null, 2));
 
     return result;
   }, [metricsHistory]);
@@ -696,7 +675,7 @@ export function DashboardView({ className }: DashboardViewProps) {
             {/* Chart Pane with Compact Metrics */}
             <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4">
               {/* Compact Metrics Pane - hidden on mobile */}
-              <div className="hidden lg:block h-[350px] sm:h-[400px]">
+              <div className="hidden lg:block h-[400px] sm:h-[480px]">
                 <CompactMetricsPane
                   data={metricsTableData}
                   sessionTitle={selectedSession?.tags[0]}
@@ -716,7 +695,7 @@ export function DashboardView({ className }: DashboardViewProps) {
                 isSessionLoading={isSessionLoading}
                 selectedMetrics={selectedMetrics}
                 asymmetryEvents={asymmetryEvents ?? null}
-                className="h-[350px] sm:h-[400px]"
+                className="h-[400px] sm:h-[480px]"
                 borderless
                 onPhaseOffsetApply={handlePhaseOffsetApply}
                 isLinked={isTabsLinked}

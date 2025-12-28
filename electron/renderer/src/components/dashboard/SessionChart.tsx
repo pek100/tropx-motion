@@ -8,17 +8,19 @@ import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import {
   AreaChart,
   Area,
+  ScatterChart,
+  Scatter,
   XAxis,
   YAxis,
+  ZAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
   ReferenceLine,
   ReferenceArea,
 } from "recharts";
 import { cn } from "@/lib/utils";
-import { Loader2, Layers, GitCompareArrows, SlidersHorizontal } from "lucide-react";
+import { Loader2, Layers, GitCompareArrows, SlidersHorizontal, Check, Play, Pause, ZoomIn, RotateCcw } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { PhaseAdjustModal } from "./PhaseAdjustModal";
 import {
@@ -48,13 +50,21 @@ interface ChartDataPoint {
   right: number | null;
 }
 
+interface PhaseDataPoint {
+  x: number; // right knee
+  y: number; // left knee
+  time: number;
+}
+
+type ChartViewMode = "waveform" | "phase";
+
 // ─────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────
 
 const LEFT_KNEE_COLOR = "#f97066"; // coral
 const RIGHT_KNEE_COLOR = "#60a5fa"; // blue
-const TARGET_POINTS = 200;
+const ZOOM_WINDOW_SAMPLES = 200; // Number of samples to show when zoomed
 
 // Asymmetry overlay colors
 const LEFT_DOMINANT_COLOR = "#f97066"; // coral (same as left knee)
@@ -178,9 +188,26 @@ export function SessionChart({
   className,
   onPhaseOffsetApply,
 }: SessionChartProps) {
+  // Chart view mode (waveform vs phase diagram)
+  const [chartViewMode, setChartViewMode] = useState<ChartViewMode>("waveform");
+
+  // Knee visibility toggle states
+  const [kneeVisibility, setKneeVisibility] = useState({
+    left: true,
+    right: true,
+  });
+
   // Toggle states
   const [showAsymmetryOverlay, setShowAsymmetryOverlay] = useState(true);
   const [applyPhaseShift, setApplyPhaseShift] = useState(false);
+
+  // Toggle knee visibility
+  const toggleKneeVisibility = useCallback((knee: "left" | "right") => {
+    setKneeVisibility((prev) => ({
+      ...prev,
+      [knee]: !prev[knee],
+    }));
+  }, []);
 
   // Modal state
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
@@ -188,6 +215,17 @@ export function SessionChart({
   // Animation state (0 = unshifted, 1 = fully shifted)
   const [animationProgress, setAnimationProgress] = useState(0);
   const animationRef = useRef<number | null>(null);
+
+  // Playback state
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [timeRange, setTimeRange] = useState<[number, number]>([0, 0]); // [startTime, endTime] in ms
+  const [isZoomed, setIsZoomed] = useState(true); // Zoom to window (enabled by default)
+  const playbackRef = useRef<number | null>(null);
+  const lastFrameTimeRef = useRef<number>(0);
+
+  // For center drag on range slider
+  const [isDraggingCenter, setIsDraggingCenter] = useState(false);
+  const dragStartRef = useRef<{ x: number; range: [number, number] } | null>(null);
 
   // Check if asymmetry data is available
   const hasAsymmetryData = asymmetryEvents?.events && asymmetryEvents.events.length > 0;
@@ -293,7 +331,7 @@ export function SessionChart({
       : 0;
 
     // Downsample step
-    const step = Math.max(1, Math.floor(angleSamples.length / TARGET_POINTS));
+    const step = 1; // Use all data points
 
     return {
       baseData: { samples: angleSamples, durationMs, step },
@@ -367,6 +405,183 @@ export function SessionChart({
     return [Math.floor(min - padding), Math.ceil(max + padding)];
   }, [chartData]);
 
+  // Get session duration from chart data (must be before other calculations)
+  const sessionDuration = useMemo(() => {
+    if (chartData.length === 0) return 0;
+    return chartData[chartData.length - 1].time;
+  }, [chartData]);
+
+  // Reset timeRange when new session data loads
+  useEffect(() => {
+    if (sessionDuration > 0) {
+      setTimeRange([0, sessionDuration]);
+      setIsPlaying(false);
+    }
+  }, [packedData]); // Reset when packedData changes (new session loaded)
+
+  // Update end time if session duration changes (e.g., after initial load)
+  useEffect(() => {
+    if (sessionDuration > 0 && timeRange[1] === 0) {
+      setTimeRange([0, sessionDuration]);
+    }
+  }, [sessionDuration]);
+
+  // Visible chart data - filter by timeRange
+  const visibleChartData = useMemo(() => {
+    if (chartData.length === 0) return [];
+
+    const [startTime, endTime] = timeRange;
+
+    // If range covers full session, return all data
+    if (startTime === 0 && endTime >= sessionDuration) {
+      return chartData;
+    }
+
+    // Filter samples within the time range
+    return chartData.filter((p) => p.time >= startTime && p.time <= endTime);
+  }, [chartData, timeRange, sessionDuration]);
+
+  // X-axis domain - zoomed uses timeRange, not zoomed shows full session
+  const xAxisDomain = useMemo((): [number, number] => {
+    if (!isZoomed) return [0, sessionDuration];
+    const [startTime, endTime] = timeRange;
+    if (startTime === endTime) return [0, sessionDuration];
+    return [startTime, endTime];
+  }, [isZoomed, timeRange, sessionDuration]);
+
+  // Phase diagram data (right knee = X, left knee = Y)
+  // Uses same visible data for consistency
+  const phaseData = useMemo<PhaseDataPoint[]>(() => {
+    return visibleChartData
+      .filter((p) => p.left !== null && p.right !== null)
+      .map((p) => ({
+        x: p.right as number,
+        y: p.left as number,
+        time: p.time,
+      }));
+  }, [visibleChartData]);
+
+  // Phase diagram axis domain (fixed scale for consistency)
+  const phaseDomain: [number, number] = [-20, 180];
+
+  // Calculate default window size based on zoom samples
+  const defaultWindowSize = useMemo(() => {
+    if (chartData.length === 0 || sessionDuration === 0) return sessionDuration;
+    return (ZOOM_WINDOW_SAMPLES / chartData.length) * sessionDuration;
+  }, [chartData.length, sessionDuration]);
+
+  // Playback animation loop - slides the window forward
+  useEffect(() => {
+    if (!isPlaying || sessionDuration === 0) {
+      if (playbackRef.current) {
+        cancelAnimationFrame(playbackRef.current);
+        playbackRef.current = null;
+      }
+      return;
+    }
+
+    const playbackSpeed = 1; // 1x speed
+    lastFrameTimeRef.current = performance.now();
+
+    const animate = (currentTime: number) => {
+      const deltaTime = currentTime - lastFrameTimeRef.current;
+      lastFrameTimeRef.current = currentTime;
+
+      setTimeRange((prev) => {
+        const windowSize = prev[1] - prev[0];
+        const newEnd = prev[1] + deltaTime * playbackSpeed;
+
+        if (newEnd >= sessionDuration) {
+          setIsPlaying(false);
+          return [sessionDuration - windowSize, sessionDuration];
+        }
+
+        return [newEnd - windowSize, newEnd];
+      });
+
+      playbackRef.current = requestAnimationFrame(animate);
+    };
+
+    playbackRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (playbackRef.current) {
+        cancelAnimationFrame(playbackRef.current);
+        playbackRef.current = null;
+      }
+    };
+  }, [isPlaying, sessionDuration]);
+
+  // Toggle play/pause
+  const togglePlayback = useCallback(() => {
+    setIsPlaying((prev) => {
+      if (!prev) {
+        // Starting playback - set up window if at end or showing full session
+        if (timeRange[1] >= sessionDuration || (timeRange[0] === 0 && timeRange[1] === sessionDuration)) {
+          setTimeRange([0, Math.min(defaultWindowSize, sessionDuration)]);
+        }
+      }
+      return !prev;
+    });
+  }, [timeRange, sessionDuration, defaultWindowSize]);
+
+  // Handle range slider change
+  const handleRangeChange = useCallback((newRange: [number, number]) => {
+    setTimeRange(newRange);
+  }, []);
+
+  // Handle center drag of range slider
+  const handleCenterDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    dragStartRef.current = { x: clientX, range: [...timeRange] as [number, number] };
+    setIsDraggingCenter(true);
+  }, [timeRange]);
+
+  const handleCenterDragMove = useCallback((e: MouseEvent | TouchEvent) => {
+    if (!dragStartRef.current || !isDraggingCenter) return;
+
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const sliderWidth = (e.target as HTMLElement)?.closest('.range-slider-container')?.clientWidth || 1;
+    const deltaX = clientX - dragStartRef.current.x;
+    const deltaTime = (deltaX / sliderWidth) * sessionDuration;
+
+    const windowSize = dragStartRef.current.range[1] - dragStartRef.current.range[0];
+    let newStart = dragStartRef.current.range[0] + deltaTime;
+    let newEnd = dragStartRef.current.range[1] + deltaTime;
+
+    // Clamp to valid range
+    if (newStart < 0) {
+      newStart = 0;
+      newEnd = windowSize;
+    }
+    if (newEnd > sessionDuration) {
+      newEnd = sessionDuration;
+      newStart = sessionDuration - windowSize;
+    }
+
+    setTimeRange([newStart, newEnd]);
+  }, [isDraggingCenter, sessionDuration]);
+
+  const handleCenterDragEnd = useCallback(() => {
+    setIsDraggingCenter(false);
+    dragStartRef.current = null;
+  }, []);
+
+  // Add global mouse/touch listeners for center drag
+  useEffect(() => {
+    if (isDraggingCenter) {
+      window.addEventListener('mousemove', handleCenterDragMove);
+      window.addEventListener('mouseup', handleCenterDragEnd);
+      window.addEventListener('touchmove', handleCenterDragMove);
+      window.addEventListener('touchend', handleCenterDragEnd);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleCenterDragMove);
+      window.removeEventListener('mouseup', handleCenterDragEnd);
+      window.removeEventListener('touchmove', handleCenterDragMove);
+      window.removeEventListener('touchend', handleCenterDragEnd);
+    };
+  }, [isDraggingCenter, handleCenterDragMove, handleCenterDragEnd]);
 
   // Loading state
   if (isLoading) {
@@ -401,9 +616,65 @@ export function SessionChart({
 
   return (
     <div className={cn("w-full h-full flex flex-col", className)}>
-      {/* Chart controls - card-based toggles */}
-      {(hasAsymmetryData || hasPhaseShift || asymmetryEvents === undefined) && (
-        <div className="flex items-center justify-end gap-2 mb-2 px-1 flex-wrap">
+      {/* Chart controls - unified row */}
+      <div className="flex items-center justify-between gap-2 mb-2 px-1 flex-wrap">
+        {/* Left side: Chart view select + Knee visibility toggles */}
+        <div className="flex items-center gap-2">
+          {/* Chart view mode select */}
+          <select
+            value={chartViewMode}
+            onChange={(e) => setChartViewMode(e.target.value as ChartViewMode)}
+            className={cn(
+              "px-2 py-1 rounded-lg text-xs font-medium",
+              "bg-[var(--tropx-muted)] border border-[var(--tropx-border)]",
+              "text-[var(--tropx-text-main)]",
+              "focus:outline-none focus:ring-1 focus:ring-[var(--tropx-vibrant)]",
+              "cursor-pointer"
+            )}
+          >
+            <option value="waveform">Waveform</option>
+            <option value="phase">Phase Plot</option>
+          </select>
+
+          {/* Knee visibility toggles (only show for waveform mode) */}
+          {chartViewMode === "waveform" && (
+            <div className="flex gap-1.5">
+              <button
+                onClick={() => toggleKneeVisibility("left")}
+                className={cn(
+                  "px-2.5 py-1 rounded-full text-xs font-medium transition-all",
+                  "flex items-center gap-1 border shadow-sm",
+                  "hover:scale-105 active:scale-95",
+                  kneeVisibility.left
+                    ? "bg-[#f97066]/10 text-[#f97066] border-[#f97066]/50 hover:bg-[#f97066]/20"
+                    : "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] border-[var(--tropx-border)] hover:bg-[var(--tropx-hover)]"
+                )}
+              >
+                {kneeVisibility.left && <Check className="size-3" />}
+                <span className="hidden xs:inline">Left</span>
+                <span className="xs:hidden">L</span>
+              </button>
+              <button
+                onClick={() => toggleKneeVisibility("right")}
+                className={cn(
+                  "px-2.5 py-1 rounded-full text-xs font-medium transition-all",
+                  "flex items-center gap-1 border shadow-sm",
+                  "hover:scale-105 active:scale-95",
+                  kneeVisibility.right
+                    ? "bg-[#60a5fa]/10 text-[#60a5fa] border-[#60a5fa]/50 hover:bg-[#60a5fa]/20"
+                    : "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] border-[var(--tropx-border)] hover:bg-[var(--tropx-hover)]"
+                )}
+              >
+                {kneeVisibility.right && <Check className="size-3" />}
+                <span className="hidden xs:inline">Right</span>
+                <span className="xs:hidden">R</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Right side: Phase/Asymmetry controls */}
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Phase Alignment Card */}
           {hasPhaseShift && (
             <div
@@ -528,7 +799,7 @@ export function SessionChart({
             </div>
           )}
         </div>
-      )}
+      </div>
 
       {/* Phase Adjust Modal */}
       <PhaseAdjustModal
@@ -545,156 +816,394 @@ export function SessionChart({
 
       <div className="flex-1 min-h-0">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart
-            data={chartData as any}
-            margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
-          >
-            <defs>
-              <linearGradient id="leftKneeGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.4} />
-                <stop offset="95%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.1} />
-              </linearGradient>
-              <linearGradient id="rightKneeGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.4} />
-                <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.1} />
-              </linearGradient>
-              {/* Diagonal stripe pattern for overlapping asymmetry regions */}
-              <pattern
-                id="diagonalStripes"
-                patternUnits="userSpaceOnUse"
-                width="8"
-                height="8"
-                patternTransform="rotate(45)"
-              >
-                <line
-                  x1="0" y1="0" x2="0" y2="8"
-                  stroke={LEFT_DOMINANT_COLOR}
-                  strokeWidth="4"
-                  strokeOpacity="0.4"
-                />
-                <line
-                  x1="4" y1="0" x2="4" y2="8"
-                  stroke={RIGHT_DOMINANT_COLOR}
-                  strokeWidth="4"
-                  strokeOpacity="0.4"
-                />
-              </pattern>
-            </defs>
-
-            <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-zinc-700" />
-
-            <XAxis
-              dataKey="time"
-              type="number"
-              domain={["dataMin", "dataMax"]}
-              tickFormatter={(ms) => formatTimeMs(ms)}
-              className="text-gray-400 dark:text-gray-500"
-              tick={{ fill: "currentColor" }}
-              fontSize={11}
-              tickLine={false}
-              axisLine={false}
-            />
-
-            <YAxis
-              domain={yDomain}
-              reversed
-              className="text-gray-400 dark:text-gray-500"
-              tick={{ fill: "currentColor" }}
-              fontSize={11}
-              tickLine={false}
-              axisLine={false}
-              width={40}
-              tickFormatter={(v) => `${v}°`}
-            />
-
-            {/* Asymmetry event overlays - rendered behind the waveforms */}
-            {/* Each overlay shifts with its corresponding signal:
-                - Left dominant (red) events anchor to left signal → shifts +currentShiftMs (forward)
-                - Right dominant (blue) events anchor to right signal → shifts -currentShiftMs (backward) */}
-            {showAsymmetryOverlay &&
-              hasAsymmetryData &&
-              asymmetryEvents!.events.map((event, index) => {
-                // Left signal shifts forward (+), right signal shifts backward (-)
-                const eventShift = event.direction === "left_dominant"
-                  ? currentShiftMs
-                  : -currentShiftMs;
-                return (
-                  <ReferenceArea
-                    key={`asymmetry-${index}`}
-                    x1={event.startTimeMs + eventShift}
-                    x2={event.endTimeMs + eventShift}
-                    fill={
-                      event.direction === "left_dominant"
-                        ? LEFT_DOMINANT_COLOR
-                        : RIGHT_DOMINANT_COLOR
-                    }
-                    fillOpacity={ASYMMETRY_OPACITY + (event.avgAsymmetry / 100) * 0.15}
-                    stroke={
-                      event.direction === "left_dominant"
-                        ? LEFT_DOMINANT_COLOR
-                        : RIGHT_DOMINANT_COLOR
-                    }
-                    strokeOpacity={0.3}
-                    strokeWidth={1}
-                    ifOverflow="extendDomain"
+          {chartViewMode === "waveform" ? (
+            <AreaChart
+              data={visibleChartData as any}
+              margin={{ top: 10, right: 20, left: 0, bottom: 10 }}
+            >
+              <defs>
+                <linearGradient id="leftKneeGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.4} />
+                  <stop offset="95%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.1} />
+                </linearGradient>
+                <linearGradient id="rightKneeGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.4} />
+                  <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.1} />
+                </linearGradient>
+                {/* Diagonal stripe pattern for overlapping asymmetry regions */}
+                <pattern
+                  id="diagonalStripes"
+                  patternUnits="userSpaceOnUse"
+                  width="8"
+                  height="8"
+                  patternTransform="rotate(45)"
+                >
+                  <line
+                    x1="0" y1="0" x2="0" y2="8"
+                    stroke={LEFT_DOMINANT_COLOR}
+                    strokeWidth="4"
+                    strokeOpacity="0.4"
                   />
-                );
-              })}
+                  <line
+                    x1="4" y1="0" x2="4" y2="8"
+                    stroke={RIGHT_DOMINANT_COLOR}
+                    strokeWidth="4"
+                    strokeOpacity="0.4"
+                  />
+                </pattern>
+              </defs>
 
-            {/* Overlapping asymmetry regions - diagonal stripes where L and R dominant events intersect */}
-            {showAsymmetryOverlay &&
-              overlappingRegions.map((overlap, index) => (
-                <ReferenceArea
-                  key={`overlap-${index}`}
-                  x1={overlap.startTimeMs}
-                  x2={overlap.endTimeMs}
-                  fill="url(#diagonalStripes)"
-                  fillOpacity={1}
-                  stroke={OVERLAP_COLOR}
-                  strokeOpacity={0.5}
-                  strokeWidth={1}
-                  strokeDasharray="4 2"
-                  ifOverflow="extendDomain"
+              <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-zinc-700" />
+
+              <XAxis
+                dataKey="time"
+                type="number"
+                domain={xAxisDomain}
+                allowDataOverflow={false}
+                tickFormatter={(ms) => formatTimeMs(ms)}
+                className="text-gray-400 dark:text-gray-500"
+                tick={{ fill: "currentColor" }}
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+              />
+
+              <YAxis
+                domain={yDomain}
+                reversed
+                className="text-gray-400 dark:text-gray-500"
+                tick={{ fill: "currentColor" }}
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+                width={40}
+                tickFormatter={(v) => `${v}°`}
+              />
+
+              {/* Asymmetry event overlays - rendered behind the waveforms */}
+              {showAsymmetryOverlay &&
+                hasAsymmetryData &&
+                asymmetryEvents!.events.map((event, index) => {
+                  const eventShift = event.direction === "left_dominant"
+                    ? currentShiftMs
+                    : -currentShiftMs;
+                  return (
+                    <ReferenceArea
+                      key={`asymmetry-${index}`}
+                      x1={event.startTimeMs + eventShift}
+                      x2={event.endTimeMs + eventShift}
+                      fill={
+                        event.direction === "left_dominant"
+                          ? LEFT_DOMINANT_COLOR
+                          : RIGHT_DOMINANT_COLOR
+                      }
+                      fillOpacity={ASYMMETRY_OPACITY + (event.avgAsymmetry / 100) * 0.15}
+                      stroke={
+                        event.direction === "left_dominant"
+                          ? LEFT_DOMINANT_COLOR
+                          : RIGHT_DOMINANT_COLOR
+                      }
+                      strokeOpacity={0.3}
+                      strokeWidth={1}
+                      ifOverflow="hidden"
+                    />
+                  );
+                })}
+
+              {/* Overlapping asymmetry regions */}
+              {showAsymmetryOverlay &&
+                overlappingRegions.map((overlap, index) => (
+                  <ReferenceArea
+                    key={`overlap-${index}`}
+                    x1={overlap.startTimeMs}
+                    x2={overlap.endTimeMs}
+                    fill="url(#diagonalStripes)"
+                    fillOpacity={1}
+                    stroke={OVERLAP_COLOR}
+                    strokeOpacity={0.5}
+                    strokeWidth={1}
+                    strokeDasharray="4 2"
+                    ifOverflow="hidden"
+                  />
+                ))}
+
+              {/* Zero reference line */}
+              <ReferenceLine y={0} className="stroke-gray-300 dark:stroke-zinc-600" strokeWidth={1} />
+
+              <Tooltip content={<CustomTooltip />} />
+
+              {kneeVisibility.left && (
+                <Area
+                  type="monotone"
+                  dataKey="left"
+                  name="left"
+                  stroke={LEFT_KNEE_COLOR}
+                  strokeWidth={2}
+                  fill="url(#leftKneeGradient)"
+                  activeDot={{ r: 4, fill: LEFT_KNEE_COLOR }}
                 />
-              ))}
+              )}
 
-            {/* Zero reference line */}
-            <ReferenceLine y={0} className="stroke-gray-300 dark:stroke-zinc-600" strokeWidth={1} />
+              {kneeVisibility.right && (
+                <Area
+                  type="monotone"
+                  dataKey="right"
+                  name="right"
+                  stroke={RIGHT_KNEE_COLOR}
+                  strokeWidth={2}
+                  fill="url(#rightKneeGradient)"
+                  activeDot={{ r: 4, fill: RIGHT_KNEE_COLOR }}
+                />
+              )}
+            </AreaChart>
+          ) : (
+            /* Phase Plot: Right Knee (X) vs Left Knee (Y) */
+            <ScatterChart
+              margin={{ top: 10, right: 20, left: 0, bottom: 10 }}
+            >
+              <defs>
+                {/* Gradient for phase trail - 0-90% constant opacity, 90-100% gradient to full */}
+                <linearGradient id="phaseTrailGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="var(--tropx-vibrant)" stopOpacity={0.3} />
+                  <stop offset="90%" stopColor="var(--tropx-vibrant)" stopOpacity={0.4} />
+                  <stop offset="100%" stopColor="var(--tropx-vibrant)" stopOpacity={1} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-zinc-700" />
 
-            <Tooltip content={<CustomTooltip />} />
+              <XAxis
+                type="number"
+                dataKey="x"
+                name="Right Knee"
+                domain={phaseDomain}
+                className="text-gray-400 dark:text-gray-500"
+                tick={{ fill: "currentColor" }}
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => `${v}°`}
+                label={{
+                  value: "Right Knee",
+                  position: "bottom",
+                  offset: -5,
+                  style: { fill: RIGHT_KNEE_COLOR, fontSize: 11 },
+                }}
+              />
 
-            <Legend
-              verticalAlign="top"
-              height={36}
-              formatter={(value) => (
-                <span className="text-xs text-[var(--tropx-text-main)]">
-                  {value === "left" ? "Left Knee" : "Right Knee"}
-                </span>
+              <YAxis
+                type="number"
+                dataKey="y"
+                name="Left Knee"
+                domain={phaseDomain}
+                className="text-gray-400 dark:text-gray-500"
+                tick={{ fill: "currentColor" }}
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+                width={40}
+                tickFormatter={(v) => `${v}°`}
+                label={{
+                  value: "Left Knee",
+                  angle: -90,
+                  position: "insideLeft",
+                  offset: 10,
+                  style: { fill: LEFT_KNEE_COLOR, fontSize: 11 },
+                }}
+              />
+
+              {/* Diagonal reference line (perfect symmetry) */}
+              <ReferenceLine
+                segment={[
+                  { x: phaseDomain[0], y: phaseDomain[0] },
+                  { x: phaseDomain[1], y: phaseDomain[1] },
+                ]}
+                stroke="var(--tropx-vibrant)"
+                strokeDasharray="4 4"
+                strokeOpacity={0.5}
+                strokeWidth={1}
+              />
+
+              <Tooltip
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const data = payload[0].payload as PhaseDataPoint;
+                  return (
+                    <div className="px-3 py-2 rounded-lg shadow-lg border border-[var(--tropx-border)] bg-[var(--tropx-card)] text-xs">
+                      <p className="text-[var(--tropx-text-sub)] mb-1">{formatTimeMs(data.time)}</p>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="size-2 rounded-full" style={{ backgroundColor: LEFT_KNEE_COLOR }} />
+                          <span className="text-[var(--tropx-text-main)]">
+                            Left: <strong>{data.y.toFixed(1)}°</strong>
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="size-2 rounded-full" style={{ backgroundColor: RIGHT_KNEE_COLOR }} />
+                          <span className="text-[var(--tropx-text-main)]">
+                            Right: <strong>{data.x.toFixed(1)}°</strong>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }}
+              />
+
+              <Scatter
+                name="Phase"
+                data={phaseData}
+                fill="transparent"
+                line={{ stroke: "url(#phaseTrailGradient)", strokeWidth: 1.5 }}
+                isAnimationActive={false}
+                shape={{ r: 0 }}
+                activeDot={{
+                  r: 5,
+                  fill: "var(--tropx-vibrant)",
+                  stroke: "white",
+                  strokeWidth: 2,
+                  cursor: "crosshair",
+                }}
+              />
+
+            </ScatterChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+
+      {/* Playback timeline with dual-range slider */}
+      {sessionDuration > 0 && (
+        <div className="flex items-center gap-2 px-2 py-1.5 border-t border-[var(--tropx-border)]">
+          <button
+            onClick={togglePlayback}
+            className={cn(
+              "p-1 rounded-md transition-colors",
+              "hover:bg-[var(--tropx-muted)]",
+              isPlaying ? "text-[var(--tropx-vibrant)]" : "text-[var(--tropx-text-sub)]"
+            )}
+          >
+            {isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
+          </button>
+
+          <span className="text-[10px] font-mono text-[var(--tropx-text-sub)] w-14 text-right">
+            {formatTimeMs(timeRange[0])}
+          </span>
+
+          {/* Dual-range slider - always visible, behavior changes with zoom */}
+          <div className="flex-1 relative h-6 flex items-center range-slider-container">
+            {/* Track background */}
+            <div className="absolute inset-x-0 h-1.5 bg-[var(--tropx-muted)] rounded-full" />
+
+            {/* Selected range highlight with center drag zone */}
+            <div
+              className={cn(
+                "absolute h-1.5 rounded-full z-20 cursor-grab active:cursor-grabbing",
+                isDraggingCenter ? "cursor-grabbing" : ""
+              )}
+              style={{
+                left: `${(timeRange[0] / sessionDuration) * 100}%`,
+                right: `${100 - (timeRange[1] / sessionDuration) * 100}%`,
+                background: `repeating-linear-gradient(
+                  90deg,
+                  color-mix(in srgb, var(--tropx-vibrant) 70%, white) 0px,
+                  color-mix(in srgb, var(--tropx-vibrant) 70%, white) 2px,
+                  color-mix(in srgb, var(--tropx-vibrant) 40%, white) 2px,
+                  color-mix(in srgb, var(--tropx-vibrant) 40%, white) 4px
+                )`,
+              }}
+              onMouseDown={handleCenterDragStart}
+              onTouchStart={handleCenterDragStart}
+            />
+
+            {/* Left thumb */}
+            <input
+              type="range"
+              min={0}
+              max={sessionDuration}
+              value={timeRange[0]}
+              onChange={(e) => {
+                const newStart = Math.min(parseFloat(e.target.value), timeRange[1] - 100);
+                handleRangeChange([Math.max(0, newStart), timeRange[1]]);
+              }}
+              className={cn(
+                "absolute w-full h-6 appearance-none bg-transparent pointer-events-none z-30",
+                "[&::-webkit-slider-thumb]:appearance-none",
+                "[&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4",
+                "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[var(--tropx-vibrant)]",
+                "[&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer",
+                "[&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white",
+                "[&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:hover:scale-125",
+                "[&::-webkit-slider-thumb]:pointer-events-auto",
+                "[&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4",
+                "[&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[var(--tropx-vibrant)]",
+                "[&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white",
+                "[&::-moz-range-thumb]:cursor-pointer",
+                "[&::-moz-range-thumb]:pointer-events-auto"
               )}
             />
 
-            <Area
-              type="monotone"
-              dataKey="left"
-              name="left"
-              stroke={LEFT_KNEE_COLOR}
-              strokeWidth={2}
-              fill="url(#leftKneeGradient)"
-              activeDot={{ r: 4, fill: LEFT_KNEE_COLOR }}
+            {/* Right thumb */}
+            <input
+              type="range"
+              min={0}
+              max={sessionDuration}
+              value={timeRange[1]}
+              onChange={(e) => {
+                const newEnd = Math.max(parseFloat(e.target.value), timeRange[0] + 100);
+                handleRangeChange([timeRange[0], Math.min(sessionDuration, newEnd)]);
+              }}
+              className={cn(
+                "absolute w-full h-6 appearance-none bg-transparent pointer-events-none z-30",
+                "[&::-webkit-slider-thumb]:appearance-none",
+                "[&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4",
+                "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[var(--tropx-vibrant)]",
+                "[&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer",
+                "[&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white",
+                "[&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:hover:scale-125",
+                "[&::-webkit-slider-thumb]:pointer-events-auto",
+                "[&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4",
+                "[&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[var(--tropx-vibrant)]",
+                "[&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white",
+                "[&::-moz-range-thumb]:cursor-pointer",
+                "[&::-moz-range-thumb]:pointer-events-auto"
+              )}
             />
+          </div>
 
-            <Area
-              type="monotone"
-              dataKey="right"
-              name="right"
-              stroke={RIGHT_KNEE_COLOR}
-              strokeWidth={2}
-              fill="url(#rightKneeGradient)"
-              activeDot={{ r: 4, fill: RIGHT_KNEE_COLOR }}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+          <span className="text-[10px] font-mono text-[var(--tropx-text-sub)] w-14">
+            {formatTimeMs(timeRange[1])}
+          </span>
+
+          {/* Zoom toggle button - only affects chart axis scale */}
+          <button
+            onClick={() => setIsZoomed(!isZoomed)}
+            className={cn(
+              "p-1 rounded-md transition-colors",
+              "hover:bg-[var(--tropx-muted)]",
+              isZoomed ? "text-[var(--tropx-vibrant)]" : "text-[var(--tropx-text-sub)]"
+            )}
+            title={isZoomed ? "Show full time scale" : "Zoom to selection"}
+          >
+            <ZoomIn className="size-4" />
+          </button>
+
+          {/* Reset button */}
+          <button
+            onClick={() => {
+              setTimeRange([0, sessionDuration]);
+              setIsZoomed(false);
+              setIsPlaying(false);
+            }}
+            className={cn(
+              "p-1 rounded-md transition-colors",
+              "hover:bg-[var(--tropx-muted)]",
+              "text-[var(--tropx-text-sub)]"
+            )}
+            title="Reset to full session"
+          >
+            <RotateCcw className="size-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
