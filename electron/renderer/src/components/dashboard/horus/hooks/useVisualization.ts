@@ -43,6 +43,9 @@ interface UseVisualizationResult {
 function toSessionMetrics(session: SessionData | null): SessionMetrics | undefined {
   if (!session?.metrics) return undefined;
 
+  // Debug: trace opiScore through the data flow
+  console.log("[toSessionMetrics] session.metrics.opiScore:", session.metrics.opiScore);
+
   return {
     sessionId: session.sessionId,
     leftLeg: {

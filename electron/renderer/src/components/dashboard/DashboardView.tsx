@@ -435,6 +435,9 @@ export function DashboardView({ className }: DashboardViewProps) {
           bilateral?: Record<string, number>;
         };
 
+        // Debug: trace opiScore through transformation
+        console.log("[horusSessions] session opiScore:", s.sessionId.slice(-6), s.opiScore);
+
         // Always provide metrics object with opiScore, use empty objects if leg data missing
         return {
           sessionId: s.sessionId,
