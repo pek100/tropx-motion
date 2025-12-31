@@ -22,6 +22,7 @@ interface SessionData {
     leftLeg: Record<string, number>;
     rightLeg: Record<string, number>;
     bilateral: Record<string, number>;
+    smoothness?: Record<string, number>;
     opiScore?: number;
   };
   recordedAt: number;
@@ -42,9 +43,6 @@ interface UseVisualizationResult {
 
 function toSessionMetrics(session: SessionData | null): SessionMetrics | undefined {
   if (!session?.metrics) return undefined;
-
-  // Debug: trace opiScore through the data flow
-  console.log("[toSessionMetrics] session.metrics.opiScore:", session.metrics.opiScore);
 
   return {
     sessionId: session.sessionId,
@@ -80,6 +78,11 @@ function toSessionMetrics(session: SessionData | null): SessionMetrics | undefin
       temporalLag: session.metrics.bilateral?.temporalLag ?? 0,
       maxFlexionTimingDiff: session.metrics.bilateral?.maxFlexionTimingDiff ?? 0,
     },
+    smoothness: session.metrics.smoothness ? {
+      sparc: session.metrics.smoothness.sparc,
+      ldlj: session.metrics.smoothness.ldlj,
+      nVelocityPeaks: session.metrics.smoothness.nVelocityPeaks,
+    } : undefined,
     opiScore: session.metrics.opiScore,
     movementType: "bilateral" as const,
     recordedAt: session.recordedAt,

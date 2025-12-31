@@ -2,6 +2,7 @@
  * Horus Triggers
  *
  * Automatic and on-demand triggers for the Horus pipeline.
+ * Uses the UNIFIED two-phase orchestrator for combined analysis + progress.
  */
 
 import { action, mutation, internalMutation } from "../_generated/server";
@@ -17,6 +18,10 @@ import type { SessionMetrics, ProgressOutput } from "./types";
 /**
  * Trigger Horus analysis when metrics computation completes.
  * Called from the metrics computation pipeline.
+ *
+ * Uses the UNIFIED orchestrator with two phases:
+ * - Phase 1: Session Analysis (no vector DB)
+ * - Phase 2: Progress Analysis (with vector DB + Phase 1 context)
  */
 export const onMetricsComplete = action({
   args: {
@@ -46,44 +51,31 @@ export const onMetricsComplete = action({
     // 3. Build SessionMetrics object
     const metrics = buildSessionMetrics(sessionId, session, metricsDoc);
 
-    // 4. Get previous session metrics (if available)
-    const previousMetrics = await ctx.runAction(
-      internal.horus.triggers.getPreviousSessionMetrics,
-      {
-        subjectId: session.subjectId || session.ownerId,
-        currentSessionId: sessionId,
-      }
-    );
+    // 4. Get historical sessions for progress analysis (if patient exists)
+    let historicalSessions: SessionMetrics[] = [];
+    if (session.subjectId) {
+      historicalSessions = await ctx.runAction(
+        internal.horus.triggers.getPatientHistoricalMetrics,
+        {
+          patientId: session.subjectId,
+          excludeSessionId: sessionId,
+        }
+      );
+    }
 
-    // 5. Run the pipeline (skipComplete=true if we'll run progress next)
-    const willRunProgress = !!session.subjectId;
-    const result = await ctx.runAction(internal.horus.orchestrator.runPipeline, {
+    // 5. Run the UNIFIED pipeline (handles both analysis and progress in two phases)
+    const result = await ctx.runAction(internal.horus.unifiedOrchestrator.runUnifiedPipeline, {
       sessionId,
       metrics,
-      previousMetrics,
+      historicalSessions,
       patientId: session.subjectId || undefined,
-      skipComplete: willRunProgress, // Don't mark complete if progress will run
     });
-
-    // 6. If successful, also run progress analysis
-    if (result.success && session.subjectId) {
-      // Run progress synchronously so we can track status properly
-      await ctx.runAction(internal.horus.triggers.runProgressAnalysis, {
-        sessionId,
-        patientId: session.subjectId,
-      });
-    } else if (result.success) {
-      // No progress needed, mark complete now
-      await ctx.runMutation(internal.horus.orchestrator.updatePipelineStatus, {
-        sessionId,
-        status: "complete",
-      });
-    }
 
     return {
       triggered: true,
       success: result.success,
       error: result.error,
+      hasProgress: !!result.progress,
     };
   },
 });
@@ -130,7 +122,9 @@ export const triggerProgressAnalysis = action({
 });
 
 /**
- * Run progress analysis for a patient.
+ * Run progress analysis for a patient (standalone, outside unified pipeline).
+ * This is used for on-demand progress re-analysis.
+ * Saves progress embedding to vector DB for consistency.
  */
 export const runProgressAnalysis = action({
   args: {
@@ -199,6 +193,40 @@ export const runProgressAnalysis = action({
         progress: result.output,
         sessionIds: sessionMetrics.map((s) => s.sessionId),
       });
+
+      // Save progress embedding to vector DB for consistency
+      try {
+        const progress = result.output as ProgressOutput;
+        const keyFindings: string[] = [];
+
+        // Extract key findings for embedding
+        if (progress.summary) {
+          keyFindings.push(progress.summary);
+        }
+        if (progress.milestones) {
+          for (const m of progress.milestones as Array<{ title: string }>) {
+            keyFindings.push(m.title);
+          }
+        }
+        if (progress.regressions) {
+          for (const r of progress.regressions as Array<{ metricName: string }>) {
+            keyFindings.push(`Regression: ${r.metricName}`);
+          }
+        }
+
+        await ctx.runAction(internal.horus.vectordb.analysisSearch.saveAnalysisEmbedding, {
+          sessionId,
+          patientId,
+          type: "progress" as const,
+          summaryText: progress.summary || "Progress analysis",
+          keyFindings: keyFindings.slice(0, 15),
+          opiScore: currentMetrics.opiScore,
+          analyzedAt: Date.now(),
+        });
+      } catch (embeddingError) {
+        console.error("[Horus] Failed to save progress embedding:", embeddingError);
+        // Non-fatal, continue
+      }
 
       // Mark complete
       await ctx.runMutation(internal.horus.orchestrator.updatePipelineStatus, {
@@ -276,6 +304,41 @@ export const getPreviousSessionMetrics = action({
     if (!metricsDoc || metricsDoc.status !== "complete") return null;
 
     return buildSessionMetrics(mostRecent.sessionId, mostRecent, metricsDoc);
+  },
+});
+
+/**
+ * Get all historical metrics for a patient (for unified pipeline).
+ */
+export const getPatientHistoricalMetrics = action({
+  args: {
+    patientId: v.id("users"),
+    excludeSessionId: v.string(),
+  },
+  handler: async (ctx, { patientId, excludeSessionId }): Promise<SessionMetrics[]> => {
+    // Get all sessions for this patient, excluding current
+    const sessions = await ctx.runQuery(
+      internal.horus.triggers.getPatientSessionsExcluding,
+      {
+        patientId,
+        excludeSessionId,
+      }
+    );
+
+    const results: SessionMetrics[] = [];
+
+    for (const session of sessions) {
+      const metricsDoc = await ctx.runQuery(internal.horus.triggers.getRecordingMetrics, {
+        sessionId: session.sessionId,
+      });
+
+      if (metricsDoc && metricsDoc.status === "complete") {
+        results.push(buildSessionMetrics(session.sessionId, session, metricsDoc));
+      }
+    }
+
+    // Sort by date (oldest first for chronological analysis)
+    return results.sort((a, b) => a.recordedAt - b.recordedAt);
   },
 });
 

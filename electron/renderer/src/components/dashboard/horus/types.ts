@@ -117,11 +117,18 @@ export interface BilateralMetrics {
   maxFlexionTimingDiff: number;
 }
 
+export interface SmoothnessMetrics {
+  sparc?: number;
+  ldlj?: number;
+  nVelocityPeaks?: number;
+}
+
 export interface SessionMetrics {
   sessionId: string;
   leftLeg: PerLegMetrics;
   rightLeg: PerLegMetrics;
   bilateral: BilateralMetrics;
+  smoothness?: SmoothnessMetrics;
   opiScore?: number;
   opiGrade?: string;
   movementType: "bilateral" | "unilateral";
@@ -317,33 +324,120 @@ interface MetricTagConfig {
 }
 
 const METRIC_TAG_MAP: Record<string, MetricTagConfig> = {
+  // ═══════════════════════════════════════════════════════════════════
   // OPI Score
+  // ═══════════════════════════════════════════════════════════════════
   "<OPI_SCORE>": { path: "opiScore", unit: "/100", displayName: "Performance Score", decimals: 0 },
 
+  // ═══════════════════════════════════════════════════════════════════
   // Per-leg metrics - Left
+  // ═══════════════════════════════════════════════════════════════════
   "<LEFT_PEAK_FLEXION>": { path: "leftLeg.peakFlexion", unit: "°", displayName: "Left Peak Flexion" },
+  "<LEFT_PEAK_EXTENSION>": { path: "leftLeg.peakExtension", unit: "°", displayName: "Left Peak Extension" },
   "<LEFT_AVG_ROM>": { path: "leftLeg.averageRom", unit: "°", displayName: "Left Avg ROM" },
   "<LEFT_MAX_ROM>": { path: "leftLeg.overallMaxRom", unit: "°", displayName: "Left Max ROM" },
   "<LEFT_VELOCITY>": { path: "leftLeg.peakAngularVelocity", unit: "°/s", displayName: "Left Velocity", decimals: 0 },
   "<LEFT_POWER>": { path: "leftLeg.explosivenessConcentric", unit: "°/s²", displayName: "Left Power", decimals: 0 },
+  "<LEFT_LOADING_POWER>": { path: "leftLeg.explosivenessLoading", unit: "°/s²", displayName: "Left Loading Power", decimals: 0 },
   "<LEFT_JERK>": { path: "leftLeg.rmsJerk", unit: "°/s³", displayName: "Left Smoothness", decimals: 0 },
   "<LEFT_ROM_COV>": { path: "leftLeg.romCoV", unit: "%", displayName: "Left Consistency", decimals: 1 },
 
+  // ═══════════════════════════════════════════════════════════════════
   // Per-leg metrics - Right
+  // ═══════════════════════════════════════════════════════════════════
   "<RIGHT_PEAK_FLEXION>": { path: "rightLeg.peakFlexion", unit: "°", displayName: "Right Peak Flexion" },
+  "<RIGHT_PEAK_EXTENSION>": { path: "rightLeg.peakExtension", unit: "°", displayName: "Right Peak Extension" },
   "<RIGHT_AVG_ROM>": { path: "rightLeg.averageRom", unit: "°", displayName: "Right Avg ROM" },
   "<RIGHT_MAX_ROM>": { path: "rightLeg.overallMaxRom", unit: "°", displayName: "Right Max ROM" },
   "<RIGHT_VELOCITY>": { path: "rightLeg.peakAngularVelocity", unit: "°/s", displayName: "Right Velocity", decimals: 0 },
   "<RIGHT_POWER>": { path: "rightLeg.explosivenessConcentric", unit: "°/s²", displayName: "Right Power", decimals: 0 },
+  "<RIGHT_LOADING_POWER>": { path: "rightLeg.explosivenessLoading", unit: "°/s²", displayName: "Right Loading Power", decimals: 0 },
   "<RIGHT_JERK>": { path: "rightLeg.rmsJerk", unit: "°/s³", displayName: "Right Smoothness", decimals: 0 },
   "<RIGHT_ROM_COV>": { path: "rightLeg.romCoV", unit: "%", displayName: "Right Consistency", decimals: 1 },
 
-  // Bilateral metrics
+  // ═══════════════════════════════════════════════════════════════════
+  // Averaged metrics (computed from left+right / 2)
+  // ═══════════════════════════════════════════════════════════════════
+  "<AVG_PEAK_FLEXION>": { path: "avg:peakFlexion", unit: "°", displayName: "Avg Peak Flexion" },
+  "<AVG_PEAK_EXTENSION>": { path: "avg:peakExtension", unit: "°", displayName: "Avg Peak Extension" },
+  "<AVG_ROM>": { path: "avg:averageRom", unit: "°", displayName: "Avg ROM" },
+  "<AVG_MAX_ROM>": { path: "avg:overallMaxRom", unit: "°", displayName: "Avg Max ROM" },
+  "<AVG_VELOCITY>": { path: "avg:peakAngularVelocity", unit: "°/s", displayName: "Avg Velocity", decimals: 0 },
+  "<AVG_POWER>": { path: "avg:explosivenessConcentric", unit: "°/s²", displayName: "Avg Power", decimals: 0 },
+  "<AVG_LOADING_POWER>": { path: "avg:explosivenessLoading", unit: "°/s²", displayName: "Avg Loading Power", decimals: 0 },
+  "<AVG_JERK>": { path: "avg:rmsJerk", unit: "°/s³", displayName: "Avg Smoothness", decimals: 0 },
+  "<AVG_ROM_COV>": { path: "avg:romCoV", unit: "%", displayName: "Avg Consistency", decimals: 1 },
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Bilateral/Symmetry metrics
+  // ═══════════════════════════════════════════════════════════════════
   "<ROM_ASYMMETRY>": { path: "bilateral.romAsymmetry", unit: "%", displayName: "ROM Asymmetry", decimals: 1 },
   "<VELOCITY_ASYMMETRY>": { path: "bilateral.velocityAsymmetry", unit: "%", displayName: "Velocity Asymmetry", decimals: 1 },
-  "<CROSS_CORRELATION>": { path: "bilateral.crossCorrelation", unit: "", displayName: "Correlation", decimals: 2 },
-  "<NET_ASYMMETRY>": { path: "bilateral.netGlobalAsymmetry", unit: "%", displayName: "Net Asymmetry", decimals: 1 },
+  "<CROSS_CORRELATION>": { path: "bilateral.crossCorrelation", unit: "", displayName: "Movement Similarity", decimals: 2 },
+  "<NET_ASYMMETRY>": { path: "bilateral.netGlobalAsymmetry", unit: "%", displayName: "Overall Asymmetry", decimals: 1 },
+  "<REAL_ASYMMETRY>": { path: "bilateral.realAsymmetryAvg", unit: "°", displayName: "Movement Imbalance", decimals: 1 },
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Timing metrics
+  // ═══════════════════════════════════════════════════════════════════
+  "<PHASE_SHIFT>": { path: "bilateral.phaseShift", unit: "°", displayName: "Phase Shift", decimals: 1 },
+  "<TEMPORAL_LAG>": { path: "bilateral.temporalLag", unit: "ms", displayName: "Temporal Lag", decimals: 0 },
+  "<TIMING_DIFF>": { path: "bilateral.maxFlexionTimingDiff", unit: "ms", displayName: "Timing Difference", decimals: 0 },
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Smoothness metrics (from flat metrics)
+  // ═══════════════════════════════════════════════════════════════════
+  "<SPARC>": { path: "smoothness.sparc", unit: "", displayName: "SPARC Smoothness", decimals: 2 },
+  "<LDLJ>": { path: "smoothness.ldlj", unit: "", displayName: "LDLJ Smoothness", decimals: 2 },
+  "<VELOCITY_PEAKS>": { path: "smoothness.nVelocityPeaks", unit: "", displayName: "Velocity Peaks", decimals: 0 },
 };
+
+/**
+ * Export list of all valid metric tags for schema validation.
+ * This is the SINGLE SOURCE OF TRUTH for valid tags.
+ */
+export const VALID_METRIC_TAGS = Object.keys(METRIC_TAG_MAP) as readonly string[];
+
+/**
+ * Check if a string is a valid metric tag.
+ */
+export function isValidMetricTag(tag: string): boolean {
+  return tag in METRIC_TAG_MAP;
+}
+
+/**
+ * Validate a metric tag and return validation result with details.
+ */
+export interface TagValidationResult {
+  isValid: boolean;
+  tag: string;
+  error?: string;
+  suggestion?: string;
+}
+
+export function validateMetricTag(tag: string | undefined): TagValidationResult {
+  if (!tag) {
+    return { isValid: false, tag: "", error: "Metric tag is missing or empty" };
+  }
+
+  if (isValidMetricTag(tag)) {
+    return { isValid: true, tag };
+  }
+
+  // Try to suggest a similar valid tag
+  const tagUpper = tag.toUpperCase().replace(/[<>]/g, "");
+  const suggestions = VALID_METRIC_TAGS.filter((valid) => {
+    const validUpper = valid.toUpperCase().replace(/[<>]/g, "");
+    return validUpper.includes(tagUpper) || tagUpper.includes(validUpper);
+  });
+
+  return {
+    isValid: false,
+    tag,
+    error: `Invalid metric tag: "${tag}"`,
+    suggestion: suggestions.length > 0 ? suggestions[0] : undefined,
+  };
+}
 
 /**
  * Get metric config for a tag (includes unit, displayName, etc.)
@@ -354,10 +448,33 @@ export function getMetricConfig(tag: string): MetricTagConfig | undefined {
 
 /**
  * Resolve a metric path to its value from SessionMetrics.
+ * Supports multiple path patterns:
+ * - "opiScore" - top-level OPI score
+ * - "leftLeg.X" / "rightLeg.X" - per-leg metrics
+ * - "bilateral.X" - bilateral/symmetry metrics
+ * - "avg:X" - computed average of left and right leg metric X
+ * - "smoothness.X" - smoothness metrics
  */
 function resolvePathToValue(path: string, metrics: SessionMetrics): number | undefined {
   // Handle opiScore specially (top-level)
   if (path === "opiScore") return metrics.opiScore;
+
+  // Handle averaged metrics (avg:metricName)
+  if (path.startsWith("avg:")) {
+    const metricName = path.slice(4); // Remove "avg:" prefix
+    const leftValue = (metrics.leftLeg as unknown as Record<string, number>)?.[metricName];
+    const rightValue = (metrics.rightLeg as unknown as Record<string, number>)?.[metricName];
+    if (leftValue !== undefined && rightValue !== undefined) {
+      return (leftValue + rightValue) / 2;
+    }
+    return leftValue ?? rightValue; // Return whichever is available
+  }
+
+  // Handle smoothness metrics (from flat metrics object if available)
+  if (path.startsWith("smoothness.")) {
+    const metricName = path.slice(11); // Remove "smoothness." prefix
+    return (metrics.smoothness as unknown as Record<string, number>)?.[metricName];
+  }
 
   const parts = path.split(".");
   if (parts.length !== 2) return undefined;

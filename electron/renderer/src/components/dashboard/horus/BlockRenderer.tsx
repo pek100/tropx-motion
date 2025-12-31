@@ -85,15 +85,6 @@ export function BlockRenderer({ block, context, className }: BlockRendererProps)
         const resolved = resolveMetricWithUnit(block.metric, context.current, block.unit);
         const metricResult = evaluateMetric(block.metric, context);
 
-        // Debug: trace OPI resolution
-        if (block.metric === "<OPI_SCORE>") {
-          console.log("[BlockRenderer] OPI_SCORE resolution:", {
-            metric: block.metric,
-            resolved,
-            contextOpiScore: context.current.opiScore,
-          });
-        }
-
         // Compute comparison if specified
         let comparison:
           | { value: number; label?: string; type?: "baseline" | "previous" | "average" | "target" }

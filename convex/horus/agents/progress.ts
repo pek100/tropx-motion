@@ -2,6 +2,7 @@
  * Progress Agent Execution
  *
  * Runs the progress agent for longitudinal analysis.
+ * Enhanced with Phase 1 context and historical analysis embeddings.
  */
 
 import { action } from "../../_generated/server";
@@ -12,6 +13,7 @@ import type { SessionMetrics, ProgressOutput, AgentExecutionResult } from "../ty
 import {
   PROGRESS_SYSTEM_PROMPT,
   buildProgressUserPrompt,
+  buildEnhancedProgressUserPrompt,
   parseProgressResponse,
   preComputeTrends,
   PROGRESS_CONFIG,
@@ -20,12 +22,24 @@ import { safeJSONParse, validateProgressOutput } from "../llm/parser";
 import { PROGRESS_RESPONSE_SCHEMA } from "../llm/schemas";
 
 // ─────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────
+
+interface HistoricalAnalysis {
+  sessionId: string;
+  summaryText: string;
+  keyFindings: string[];
+  opiScore?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Agent Execution
 // ─────────────────────────────────────────────────────────────────
 
 /**
  * Run the progress agent.
  * Analyzes longitudinal trends across sessions.
+ * Now enhanced with Phase 1 context and vector DB historical analyses.
  */
 export const runProgress = action({
   args: {
@@ -33,12 +47,18 @@ export const runProgress = action({
     currentMetrics: v.any(), // SessionMetrics
     historicalSessions: v.any(), // SessionMetrics[]
     patientId: v.id("users"),
+    // Enhanced context from Phase 1 (optional for backward compatibility)
+    phase1Summary: v.optional(v.string()),
+    phase1Strengths: v.optional(v.array(v.string())),
+    phase1Weaknesses: v.optional(v.array(v.string())),
+    historicalAnalyses: v.optional(v.any()), // HistoricalAnalysis[]
   },
   handler: async (ctx, args): Promise<AgentExecutionResult<ProgressOutput>> => {
     const startTime = Date.now();
     const currentMetrics = args.currentMetrics as SessionMetrics;
     const historicalSessions = args.historicalSessions as SessionMetrics[];
     const patientId = args.patientId as Id<"users">;
+    const historicalAnalyses = (args.historicalAnalyses as HistoricalAnalysis[]) || [];
 
     try {
       // Check minimum sessions
@@ -71,13 +91,27 @@ export const runProgress = action({
       // 1. Pre-compute trends programmatically
       const preComputedTrends = preComputeTrends(currentMetrics, historicalSessions);
 
-      // 2. Build prompts
+      // 2. Build prompts (use enhanced prompt if we have Phase 1 context)
       const systemPrompt = PROGRESS_SYSTEM_PROMPT;
-      const userPrompt = buildProgressUserPrompt(
-        currentMetrics,
-        historicalSessions,
-        patientId
-      );
+      const hasPhase1Context = args.phase1Summary || historicalAnalyses.length > 0;
+
+      const userPrompt = hasPhase1Context
+        ? buildEnhancedProgressUserPrompt(
+            currentMetrics,
+            historicalSessions,
+            patientId,
+            {
+              summary: args.phase1Summary,
+              strengths: args.phase1Strengths,
+              weaknesses: args.phase1Weaknesses,
+            },
+            historicalAnalyses
+          )
+        : buildProgressUserPrompt(
+            currentMetrics,
+            historicalSessions,
+            patientId
+          );
 
       // 3. Call Vertex AI with structured output
       const llmResponse = await ctx.runAction(internal.horus.llm.vertex.callVertexAI, {

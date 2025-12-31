@@ -528,27 +528,76 @@ export function getVisualizationCatalogForPrompt(): string {
 
 ## Block Types (unit is automatic from tag!)
 - **executive_summary**: title, content (markdown), variant?
-- **stat_card**: title, metric (tag), icon?, comparison?
+- **stat_card**: title, metric (tag REQUIRED), icon?, comparison?
 - **alert_card**: title, description, severity (info|warning|error), icon?
 - **comparison_card**: title, leftLabel, rightLabel, leftMetric (tag), rightMetric (tag)
 - **next_steps**: title, items: [{text, priority?}]
 - **progress_card**: title, description, metric (tag), target, icon?
 - **metric_grid**: title, columns (2|3|4), metrics: [{label, metric (tag)}]
 
-## Metric Tags (use these in metric fields)
+## VALID METRIC TAGS - USE ONLY THESE (schema-enforced!)
+
+### Performance
 - <OPI_SCORE> - Overall Performance Index (0-100)
-- <LEFT_PEAK_FLEXION>, <RIGHT_PEAK_FLEXION> - Peak ROM (°)
-- <LEFT_AVG_ROM>, <RIGHT_AVG_ROM> - Average ROM (°)
-- <LEFT_VELOCITY>, <RIGHT_VELOCITY> - Peak Angular Velocity (°/s)
-- <LEFT_POWER>, <RIGHT_POWER> - Explosiveness Concentric (°/s²)
-- <ROM_ASYMMETRY>, <VELOCITY_ASYMMETRY> - Bilateral Asymmetry (%)
+
+### Left Leg Metrics
+- <LEFT_PEAK_FLEXION> - Peak Flexion (°)
+- <LEFT_PEAK_EXTENSION> - Peak Extension (°)
+- <LEFT_AVG_ROM> - Average ROM (°)
+- <LEFT_MAX_ROM> - Maximum ROM (°)
+- <LEFT_VELOCITY> - Peak Angular Velocity (°/s)
+- <LEFT_POWER> - Explosiveness Concentric (°/s²)
+- <LEFT_LOADING_POWER> - Loading Power (°/s²)
+- <LEFT_JERK> - Jerkiness/Smoothness (°/s³)
+- <LEFT_ROM_COV> - ROM Consistency (%)
+
+### Right Leg Metrics
+- <RIGHT_PEAK_FLEXION> - Peak Flexion (°)
+- <RIGHT_PEAK_EXTENSION> - Peak Extension (°)
+- <RIGHT_AVG_ROM> - Average ROM (°)
+- <RIGHT_MAX_ROM> - Maximum ROM (°)
+- <RIGHT_VELOCITY> - Peak Angular Velocity (°/s)
+- <RIGHT_POWER> - Explosiveness Concentric (°/s²)
+- <RIGHT_LOADING_POWER> - Loading Power (°/s²)
+- <RIGHT_JERK> - Jerkiness/Smoothness (°/s³)
+- <RIGHT_ROM_COV> - ROM Consistency (%)
+
+### Averaged Metrics (both legs combined)
+- <AVG_PEAK_FLEXION> - Average Peak Flexion (°)
+- <AVG_PEAK_EXTENSION> - Average Peak Extension (°)
+- <AVG_ROM> - Average ROM (°)
+- <AVG_MAX_ROM> - Average Max ROM (°)
+- <AVG_VELOCITY> - Average Velocity (°/s)
+- <AVG_POWER> - Average Power (°/s²)
+- <AVG_LOADING_POWER> - Average Loading Power (°/s²)
+- <AVG_JERK> - Average Jerkiness (°/s³)
+- <AVG_ROM_COV> - Average Consistency (%)
+
+### Bilateral/Symmetry Metrics
+- <ROM_ASYMMETRY> - ROM Asymmetry (%)
+- <VELOCITY_ASYMMETRY> - Velocity Asymmetry (%)
+- <CROSS_CORRELATION> - Movement Similarity (0-1)
+- <NET_ASYMMETRY> - Overall Asymmetry (%)
+- <REAL_ASYMMETRY> - Movement Imbalance (°)
+
+### Timing Metrics
+- <PHASE_SHIFT> - Phase Shift (°)
+- <TEMPORAL_LAG> - Temporal Lag (ms)
+- <TIMING_DIFF> - Timing Difference (ms)
+
+### Smoothness/Control Metrics
+- <SPARC> - SPARC Smoothness Score
+- <LDLJ> - LDLJ Smoothness Score
+- <VELOCITY_PEAKS> - Number of Velocity Peaks
 
 ## Common Icons
 TrendingUp, TrendingDown, AlertTriangle, CheckCircle, Target, Zap, Activity, Scale
 
-## Rules
-1. Use metric paths NOT actual values
-2. EXACTLY 4-5 blocks per mode
-3. Start with executive_summary, end with next_steps
+## CRITICAL RULES
+1. ONLY use tags from the list above - custom tags will be REJECTED
+2. Use semantic tags NOT raw metric paths or values
+3. EXACTLY 4-5 blocks per mode
+4. Start with executive_summary, end with next_steps
+5. Unit is auto-filled from tag - don't specify manually
 `;
 }

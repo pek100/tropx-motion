@@ -286,6 +286,97 @@ Return the JSON response.`);
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Enhanced User Prompt Builder (with Phase 1 Context)
+// ─────────────────────────────────────────────────────────────────
+
+interface Phase1Context {
+  summary?: string;
+  strengths?: string[];
+  weaknesses?: string[];
+}
+
+interface HistoricalAnalysis {
+  sessionId: string;
+  summaryText: string;
+  keyFindings: string[];
+  opiScore?: number;
+}
+
+/**
+ * Build enhanced progress user prompt with Phase 1 context and historical analyses.
+ * Used in the unified two-phase pipeline.
+ */
+export function buildEnhancedProgressUserPrompt(
+  currentMetrics: SessionMetrics,
+  historicalSessions: SessionMetrics[],
+  patientId: Id<"users">,
+  phase1Context: Phase1Context,
+  historicalAnalyses: HistoricalAnalysis[]
+): string {
+  // Start with base prompt
+  let prompt = buildProgressUserPrompt(currentMetrics, historicalSessions, patientId);
+
+  // Add Phase 1 context section
+  if (phase1Context.summary || phase1Context.strengths?.length || phase1Context.weaknesses?.length) {
+    prompt += `
+
+## Current Session Analysis Context (from Phase 1)
+
+This is what we found in the current session analysis. Use this to inform your progress insights.
+
+${phase1Context.summary ? `**Summary**: ${phase1Context.summary}` : ""}
+
+${phase1Context.strengths?.length ? `**Current Strengths**:
+${phase1Context.strengths.map((s) => `- ${s}`).join("\n")}` : ""}
+
+${phase1Context.weaknesses?.length ? `**Current Weaknesses**:
+${phase1Context.weaknesses.map((w) => `- ${w}`).join("\n")}` : ""}
+`;
+  }
+
+  // Add historical analyses from vector DB
+  if (historicalAnalyses.length > 0) {
+    prompt += `
+
+## Historical Analysis Insights (from Vector DB)
+
+These are relevant findings from previous sessions. Compare with current findings to identify patterns.
+
+${historicalAnalyses
+  .map(
+    (ha, i) => `### Session ${i + 1}: ${ha.sessionId}
+${ha.opiScore ? `**OPI Score**: ${ha.opiScore}` : ""}
+**Summary**: ${ha.summaryText}
+**Key Findings**:
+${ha.keyFindings.map((f) => `- ${f}`).join("\n")}`
+  )
+  .join("\n\n")}
+`;
+  }
+
+  // Add enhanced instructions
+  prompt += `
+
+## Enhanced Instructions for Two-Phase Analysis
+
+You have access to:
+1. **Current session metrics** (raw data)
+2. **Historical session metrics** (raw data timeline)
+3. **Current session analysis** (Phase 1 insights, strengths, weaknesses)
+4. **Historical analyses** (semantic search results from vector DB)
+
+Use ALL of this context to:
+1. Identify which current weaknesses are improving vs persistent
+2. Track if current strengths are new achievements or maintained
+3. Find patterns that connect to historical analysis findings
+4. Provide more contextual and meaningful progress insights
+
+Focus on the narrative: How is this patient's rehabilitation journey evolving?`;
+
+  return prompt;
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Response Parser
 // ─────────────────────────────────────────────────────────────────
 

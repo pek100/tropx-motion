@@ -3,6 +3,11 @@
  *
  * JSON schemas for Gemini structured output mode.
  * These ensure consistent, parseable responses from the LLM.
+ *
+ * NOTE: Metric tags are NOT enum-validated in the schema due to Vertex AI's
+ * "too many states" limitation. Instead, validation happens via:
+ * 1. Prompt instructions listing valid tags
+ * 2. Programmatic validation after generation (blockValidator.ts)
  */
 
 // ─────────────────────────────────────────────────────────────────
@@ -150,9 +155,9 @@ const STAT_CARD_BLOCK = {
     title: { type: "string", description: "Block title" },
     metric: {
       type: "string",
-      description: "Metric path e.g. leftLeg.peakFlexion, bilateral.romAsymmetry, rightLeg.averageRom",
+      description: "REQUIRED: Semantic metric tag from catalog (e.g. <OPI_SCORE>, <LEFT_PEAK_FLEXION>). ONLY use valid tags!",
     },
-    unit: { type: "string", description: "Unit for display e.g. °, %, deg/s" },
+    unit: { type: "string", description: "Unit for display (auto-filled from tag)" },
     variant: {
       type: "string",
       enum: ["default", "success", "warning", "danger"],
@@ -170,7 +175,7 @@ const STAT_CARD_BLOCK = {
     },
     // Note: composable slots (id, classification, limb, etc.) can be included but are not schema-validated
   },
-  required: ["type", "title", "metric", "unit"],
+  required: ["type", "title", "metric"],
 };
 
 const ALERT_CARD_BLOCK = {
@@ -235,13 +240,13 @@ const COMPARISON_CARD_BLOCK = {
     rightLabel: { type: "string", description: "Right side label e.g. Right Leg" },
     leftMetric: {
       type: "string",
-      description: "Left metric path - REQUIRED! e.g. leftLeg.peakFlexion, leftLeg.averageRom",
+      description: "REQUIRED: Left metric tag (use <LEFT_*> tags from catalog)",
     },
     rightMetric: {
       type: "string",
-      description: "Right metric path - REQUIRED! e.g. rightLeg.peakFlexion, rightLeg.averageRom",
+      description: "REQUIRED: Right metric tag (use <RIGHT_*> tags from catalog)",
     },
-    unit: { type: "string", description: "Unit for display e.g. °, %, deg/s" },
+    unit: { type: "string", description: "Unit for display (auto-filled from tag)" },
     showDifference: { type: "boolean" },
     highlightBetter: { type: "boolean" },
     direction: {
@@ -263,10 +268,10 @@ const PROGRESS_CARD_BLOCK = {
     description: { type: "string", description: "Progress description" },
     metric: {
       type: "string",
-      description: "Metric path for current value e.g. leftLeg.peakFlexion",
+      description: "REQUIRED: Semantic metric tag for current value (from catalog)",
     },
     target: { type: "number", description: "Target value to reach" },
-    unit: { type: "string", description: "Unit for display e.g. °, %, deg/s" },
+    unit: { type: "string", description: "Unit for display (auto-filled from tag)" },
     icon: { type: "string", description: "Lucide icon name" },
     celebrationLevel: { type: "string", enum: ["major", "minor"] },
     // Note: composable slots (id, classification, limb, details) can be included but are not schema-validated
@@ -288,8 +293,11 @@ const METRIC_GRID_BLOCK = {
         type: "object",
         properties: {
           label: { type: "string", description: "Display label" },
-          metric: { type: "string", description: "Metric path e.g. leftLeg.peakFlexion" },
-          unit: { type: "string", description: "Unit for display" },
+          metric: {
+            type: "string",
+            description: "REQUIRED: Semantic metric tag (from catalog)",
+          },
+          unit: { type: "string", description: "Unit for display (auto-filled from tag)" },
           trend: { type: "string", enum: ["show", "hide"] },
           // Note: per-item slots (classification, benchmark, limb) can be included but are not schema-validated
         },

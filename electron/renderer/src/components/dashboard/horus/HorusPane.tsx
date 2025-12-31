@@ -24,8 +24,17 @@ import {
   Target,
   Link,
   Unlink,
+  Loader2,
+  MessageSquare,
+  X,
+  Pencil,
+  Trash2,
+  User,
 } from "lucide-react";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { AtomSpin } from "@/components/AtomSpin";
+import { useAction, useQuery, useMutation } from "convex/react";
+import { api } from "../../../../../../convex/_generated/api";
 import type { Id } from "../../../../../../convex/_generated/dataModel";
 import type { VisualizationBlock, EvaluationContext } from "./types";
 import { BlockRenderer } from "./BlockRenderer";
@@ -54,6 +63,14 @@ import { Check, Play, CircleDot, ArrowRight } from "lucide-react";
 
 export type AnalysisMode = "overall" | "session";
 
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  blocks?: unknown[];
+  timestamp: number;
+}
+
 interface SessionData {
   sessionId: string;
   metrics?: {
@@ -81,6 +98,8 @@ interface HorusPaneProps {
   onModeChange?: (mode: AnalysisMode) => void;
   /** External mode to sync to when linked */
   syncToMode?: AnalysisMode;
+  /** User's profile image URL for chat avatar */
+  userImage?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -109,6 +128,7 @@ export function HorusPane({
   onLinkedChange,
   onModeChange,
   syncToMode,
+  userImage,
 }: HorusPaneProps) {
   const [mode, setModeInternal] = useState<AnalysisMode>("overall");
 
@@ -128,6 +148,232 @@ export function HorusPane({
   }, [onModeChange, isLinked]);
 
   const [chatInput, setChatInput] = useState("");
+
+  // Chat state
+  const [chatLoading, setChatLoading] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState("");
+
+  // Confirmation dialogs
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  // Load chat history from Convex
+  const chatHistory = useQuery(
+    api.horus.chat.getChatHistory,
+    selectedSessionId ? { sessionId: selectedSessionId } : "skip"
+  ) ?? [];
+
+  // Mutations
+  const addMessagesMutation = useMutation(api.horus.chat.addMessages);
+  const deleteMessageMutation = useMutation(api.horus.chat.deleteMessage);
+  const clearHistoryMutation = useMutation(api.horus.chat.clearHistory);
+
+  // User query action
+  const askAnalysis = useAction(api.horus.userQuery.askAnalysis);
+
+  // Generate unique ID
+  const generateId = useCallback(() => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`, []);
+
+  // Handle sending a question
+  const handleSendQuestion = useCallback(async () => {
+    if (!chatInput.trim() || !selectedSessionId) return;
+
+    const userMessage: ChatMessage = {
+      id: generateId(),
+      role: "user",
+      content: chatInput.trim(),
+      timestamp: Date.now(),
+    };
+
+    const inputText = chatInput.trim();
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      // Build chat history context (limit to last 10 messages)
+      const historyForContext = chatHistory
+        .slice(-10)
+        .map((msg: ChatMessage) => ({
+          role: msg.role,
+          content: msg.content,
+        }));
+
+      const result = await askAnalysis({
+        sessionId: selectedSessionId,
+        userPrompt: inputText,
+        patientId: patientId ?? undefined,
+        chatHistory: historyForContext,
+      });
+
+      if (result.success && result.response) {
+        const assistantMessage: ChatMessage = {
+          id: generateId(),
+          role: "assistant",
+          content: result.response.textResponse ?? "",
+          blocks: result.response.blocks,
+          timestamp: Date.now(),
+        };
+
+        // Save both messages to Convex
+        await addMessagesMutation({
+          sessionId: selectedSessionId,
+          patientId: patientId ?? undefined,
+          messages: [userMessage, assistantMessage],
+        });
+      } else {
+        // Save user message and error response
+        const errorMessage: ChatMessage = {
+          id: generateId(),
+          role: "assistant",
+          content: result.error || "Failed to process question",
+          timestamp: Date.now(),
+        };
+        await addMessagesMutation({
+          sessionId: selectedSessionId,
+          patientId: patientId ?? undefined,
+          messages: [userMessage, errorMessage],
+        });
+      }
+    } catch (err) {
+      // Save user message and error
+      const errorMessage: ChatMessage = {
+        id: generateId(),
+        role: "assistant",
+        content: err instanceof Error ? err.message : "Something went wrong",
+        timestamp: Date.now(),
+      };
+      await addMessagesMutation({
+        sessionId: selectedSessionId,
+        patientId: patientId ?? undefined,
+        messages: [userMessage, errorMessage],
+      });
+    } finally {
+      setChatLoading(false);
+    }
+  }, [chatInput, selectedSessionId, patientId, chatHistory, askAnalysis, generateId, addMessagesMutation]);
+
+  // Handle Enter key
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey && chatInput.trim() && !chatLoading) {
+      e.preventDefault();
+      handleSendQuestion();
+    }
+  }, [chatInput, chatLoading, handleSendQuestion]);
+
+  // Clear chat history (with confirmation)
+  const handleClearChat = useCallback(async () => {
+    if (!selectedSessionId) return;
+    await clearHistoryMutation({ sessionId: selectedSessionId });
+    setShowClearConfirm(false);
+  }, [selectedSessionId, clearHistoryMutation]);
+
+  // Delete a message (with confirmation)
+  const handleDeleteMessage = useCallback(async () => {
+    if (!selectedSessionId || !deleteConfirmId) return;
+    await deleteMessageMutation({ sessionId: selectedSessionId, messageId: deleteConfirmId });
+    setDeleteConfirmId(null);
+  }, [selectedSessionId, deleteConfirmId, deleteMessageMutation]);
+
+  // Start editing a message
+  const startEditing = useCallback((message: ChatMessage) => {
+    setEditingMessageId(message.id);
+    setEditingContent(message.content);
+  }, []);
+
+  // Cancel editing
+  const cancelEditing = useCallback(() => {
+    setEditingMessageId(null);
+    setEditingContent("");
+  }, []);
+
+  // Submit edited message (delete old and immediately resend)
+  const submitEdit = useCallback(async () => {
+    if (!editingMessageId || !editingContent.trim() || !selectedSessionId) return;
+
+    // Find the message being edited
+    const messageIdx = chatHistory.findIndex((m: ChatMessage) => m.id === editingMessageId);
+    if (messageIdx === -1) return;
+
+    const newContent = editingContent.trim();
+
+    // Delete the old message from DB
+    await deleteMessageMutation({ sessionId: selectedSessionId, messageId: editingMessageId });
+
+    // Clear edit state
+    setEditingMessageId(null);
+    setEditingContent("");
+
+    // Immediately send the edited message
+    setChatLoading(true);
+
+    const userMessage: ChatMessage = {
+      id: generateId(),
+      role: "user",
+      content: newContent,
+      timestamp: Date.now(),
+    };
+
+    try {
+      // Build chat history context (excluding the deleted message)
+      const historyForContext = chatHistory
+        .filter((m: ChatMessage) => m.id !== editingMessageId)
+        .slice(-10)
+        .map((msg: ChatMessage) => ({
+          role: msg.role,
+          content: msg.content,
+        }));
+
+      const result = await askAnalysis({
+        sessionId: selectedSessionId,
+        userPrompt: newContent,
+        patientId: patientId ?? undefined,
+        chatHistory: historyForContext,
+      });
+
+      if (result.success && result.response) {
+        const assistantMessage: ChatMessage = {
+          id: generateId(),
+          role: "assistant",
+          content: result.response.textResponse ?? "",
+          blocks: result.response.blocks,
+          timestamp: Date.now(),
+        };
+
+        await addMessagesMutation({
+          sessionId: selectedSessionId,
+          patientId: patientId ?? undefined,
+          messages: [userMessage, assistantMessage],
+        });
+      } else {
+        const errorMessage: ChatMessage = {
+          id: generateId(),
+          role: "assistant",
+          content: result.error || "Failed to process question",
+          timestamp: Date.now(),
+        };
+        await addMessagesMutation({
+          sessionId: selectedSessionId,
+          patientId: patientId ?? undefined,
+          messages: [userMessage, errorMessage],
+        });
+      }
+    } catch (err) {
+      const errorMessage: ChatMessage = {
+        id: generateId(),
+        role: "assistant",
+        content: err instanceof Error ? err.message : "Something went wrong",
+        timestamp: Date.now(),
+      };
+      await addMessagesMutation({
+        sessionId: selectedSessionId,
+        patientId: patientId ?? undefined,
+        messages: [userMessage, errorMessage],
+      });
+    } finally {
+      setChatLoading(false);
+    }
+  }, [editingMessageId, editingContent, chatHistory, selectedSessionId, patientId, deleteMessageMutation, generateId, askAnalysis, addMessagesMutation]);
 
   // Get visualization data
   const { isLoading, hasAnalysis, context, overallBlocks, sessionBlocks, error } =
@@ -413,6 +659,216 @@ export function HorusPane({
         </div>
       </ScrollArea>
 
+      {/* Chat History Display */}
+      {(chatHistory.length > 0 || chatLoading) && (
+        <div className="border-t border-[var(--tropx-border)] bg-[var(--tropx-muted)]/30 shrink-0 max-h-[40%] overflow-auto">
+          <div className="px-4 sm:px-5 py-2 flex items-center justify-between border-b border-[var(--tropx-border)]/50">
+            <span className="text-xs font-medium text-[var(--tropx-text-sub)]">Chat</span>
+            {chatHistory.length > 0 && (
+              showClearConfirm ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-[var(--tropx-text-sub)]">Clear chat?</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 px-2 text-xs text-status-error-text hover:bg-status-error-bg"
+                    onClick={handleClearChat}
+                  >
+                    Yes
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 px-2 text-xs text-[var(--tropx-text-sub)]"
+                    onClick={() => setShowClearConfirm(false)}
+                  >
+                    No
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)]"
+                  onClick={() => setShowClearConfirm(true)}
+                >
+                  Clear
+                </Button>
+              )
+            )}
+          </div>
+          <div className="px-4 sm:px-5 py-3 space-y-3">
+            {chatHistory.map((message: ChatMessage) => (
+              <div
+                key={message.id}
+                className={cn(
+                  "flex gap-2 group",
+                  message.role === "user" ? "justify-end" : "justify-start"
+                )}
+              >
+                {/* Bot avatar - AtomSpin icon */}
+                {message.role === "assistant" && (
+                  <div className="shrink-0 mt-0.5">
+                    <div className="size-7 rounded-full bg-tropx-vibrant/10 flex items-center justify-center">
+                      <AtomSpin className="size-4" />
+                    </div>
+                  </div>
+                )}
+
+                {/* Message bubble */}
+                <div className="relative max-w-[80%]">
+                  {/* User message actions - show on hover */}
+                  {message.role === "user" && !editingMessageId && (
+                    <>
+                      {/* Edit/Delete buttons - positioned to the left */}
+                      {deleteConfirmId !== message.id && (
+                        <div className="absolute -left-14 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] hover:bg-[var(--tropx-muted)]"
+                            onClick={() => startEditing(message)}
+                            title="Edit message"
+                          >
+                            <Pencil className="size-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-[var(--tropx-text-sub)] hover:text-status-error-text hover:bg-status-error-bg"
+                            onClick={() => setDeleteConfirmId(message.id)}
+                            title="Delete message"
+                          >
+                            <Trash2 className="size-3" />
+                          </Button>
+                        </div>
+                      )}
+                      {/* Delete confirmation - positioned above the message */}
+                      {deleteConfirmId === message.id && (
+                        <div className="absolute -top-8 right-0 flex items-center gap-1.5 bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-lg px-2 py-1 shadow-sm z-10">
+                          <span className="text-xs text-[var(--tropx-text-sub)] whitespace-nowrap">Delete?</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 px-1.5 text-xs text-status-error-text hover:bg-status-error-bg"
+                            onClick={handleDeleteMessage}
+                          >
+                            Yes
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 px-1.5 text-xs text-[var(--tropx-text-sub)]"
+                            onClick={() => setDeleteConfirmId(null)}
+                          >
+                            No
+                          </Button>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  <div
+                    className={cn(
+                      "rounded-xl px-3.5 py-2.5",
+                      message.role === "user"
+                        ? "gradient-diagonal border border-[var(--tropx-border)]"
+                        : "bg-[var(--tropx-card)] border border-[var(--tropx-border)]"
+                    )}
+                  >
+                    {editingMessageId === message.id ? (
+                      <div className="space-y-2 min-w-[280px]">
+                        <textarea
+                          value={editingContent}
+                          onChange={(e) => setEditingContent(e.target.value)}
+                          className="w-full min-h-[80px] px-3 py-2 text-sm rounded-lg border border-[var(--tropx-border)] bg-[var(--tropx-muted)] text-[var(--tropx-text-main)] resize-none focus:outline-none focus:ring-2 focus:ring-tropx-vibrant/50"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              submitEdit();
+                            }
+                            if (e.key === "Escape") {
+                              cancelEditing();
+                            }
+                          }}
+                        />
+                        <div className="flex gap-1.5 justify-end">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-3 text-xs"
+                            onClick={cancelEditing}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            size="sm"
+                            className="h-7 px-3 text-xs bg-tropx-vibrant hover:bg-tropx-vibrant/90 text-white"
+                            onClick={submitEdit}
+                            disabled={chatLoading || !editingContent.trim()}
+                          >
+                            {chatLoading ? "Sending..." : "Edit & Resend"}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-sm leading-relaxed text-[var(--tropx-text-main)]">
+                          {message.content}
+                        </p>
+                        {/* Response Blocks */}
+                        {message.blocks && message.blocks.length > 0 && (
+                          <div className="space-y-2 pt-2 mt-2 border-t border-[var(--tropx-border)]/50">
+                            {message.blocks.map((block: unknown, idx: number) => (
+                              <BlockRenderer
+                                key={idx}
+                                block={block as VisualizationBlock}
+                                context={effectiveContext}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* User avatar - Google profile image */}
+                {message.role === "user" && (
+                  <div className="shrink-0 mt-0.5">
+                    <Avatar className="size-7">
+                      {userImage ? (
+                        <AvatarImage src={userImage} alt="You" />
+                      ) : null}
+                      <AvatarFallback className="bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)]">
+                        <User className="size-3.5" />
+                      </AvatarFallback>
+                    </Avatar>
+                  </div>
+                )}
+              </div>
+            ))}
+            {/* Loading indicator */}
+            {chatLoading && (
+              <div className="flex gap-2 justify-start">
+                <div className="shrink-0 mt-0.5">
+                  <div className="size-7 rounded-full bg-tropx-vibrant/10 flex items-center justify-center">
+                    <AtomSpin className="size-4" />
+                  </div>
+                </div>
+                <div className="bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-xl px-3.5 py-2.5">
+                  <div className="flex items-center gap-2 text-sm text-[var(--tropx-text-sub)]">
+                    <Loader2 className="size-4 animate-spin" />
+                    <span>Thinking...</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Chat Input - shrink-0 to prevent compression */}
       <div className="border-t border-[var(--tropx-border)] px-4 sm:px-5 py-3 shrink-0">
         <div className="flex items-center gap-2">
@@ -420,24 +876,41 @@ export function HorusPane({
             variant="ghost"
             size="icon"
             className="h-9 w-9 shrink-0 text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)]"
+            onClick={() => setShowClearConfirm(true)}
+            title="Clear chat"
+            disabled={chatHistory.length === 0}
           >
             <Plus className="size-4" />
           </Button>
           <Input
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
-            placeholder="Ask a question about this analysis or request a specific metric breakdown..."
+            onKeyDown={handleKeyDown}
+            placeholder="Ask a question about this analysis..."
             className="h-9 text-sm bg-[var(--tropx-muted)] border-0"
+            disabled={chatLoading || !selectedSessionId}
           />
           <Button
             size="icon"
-            className="h-9 w-9 shrink-0 bg-tropx-vibrant hover:bg-tropx-vibrant/90"
-            disabled={!chatInput.trim()}
+            variant="ghost"
+            className={cn(
+              "h-9 w-9 shrink-0 transition-colors",
+              chatInput.trim()
+                ? "text-tropx-vibrant hover:text-tropx-vibrant/80 hover:bg-tropx-vibrant/10"
+                : "text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)]"
+            )}
+            disabled={!chatInput.trim() || chatLoading || !selectedSessionId}
+            onClick={handleSendQuestion}
           >
-            <Send className="size-4" />
+            {chatLoading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Send className="size-4" />
+            )}
           </Button>
         </div>
       </div>
+
     </div>
   );
 }

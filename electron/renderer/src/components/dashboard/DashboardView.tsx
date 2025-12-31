@@ -428,17 +428,15 @@ export function DashboardView({ className }: DashboardViewProps) {
     const result = metricsHistory.sessions
       .filter((s: Session) => s && typeof s.sessionId === 'string')
       .map((s: Session) => {
-        // Access nested per-leg data (added by backend)
+        // Access nested per-leg data and flat metrics (added by backend)
         const sessionAny = s as Session & {
           leftLeg?: Record<string, number>;
           rightLeg?: Record<string, number>;
           bilateral?: Record<string, number>;
         };
+        const flatMetrics = s.metrics as Record<string, number | undefined> | undefined;
 
-        // Debug: trace opiScore through transformation
-        console.log("[horusSessions] session opiScore:", s.sessionId.slice(-6), s.opiScore);
-
-        // Always provide metrics object with opiScore, use empty objects if leg data missing
+        // Always provide metrics object with all data
         return {
           sessionId: s.sessionId,
           recordedAt: s.recordedAt,
@@ -446,6 +444,11 @@ export function DashboardView({ className }: DashboardViewProps) {
             leftLeg: sessionAny.leftLeg ?? {},
             rightLeg: sessionAny.rightLeg ?? {},
             bilateral: sessionAny.bilateral ?? {},
+            smoothness: flatMetrics ? {
+              sparc: flatMetrics.sparc,
+              ldlj: flatMetrics.ldlj,
+              nVelocityPeaks: flatMetrics.nVelocityPeaks,
+            } : undefined,
             opiScore: s.opiScore,
           },
         };
@@ -718,6 +721,7 @@ export function DashboardView({ className }: DashboardViewProps) {
               onLinkedChange={setIsTabsLinked}
               onModeChange={handleAnalysisModeChange}
               syncToMode={syncAnalysisMode}
+              userImage={selectedPatient?.image}
             />
           </>
         )}

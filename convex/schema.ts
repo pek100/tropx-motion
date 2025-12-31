@@ -900,6 +900,45 @@ export default defineSchema({
   })
     .index("by_patient", ["patientId"]),
 
+  // ─── Horus Analysis Embeddings (Vector Search for Historical Analyses) ───
+  horusAnalysisEmbeddings: defineTable({
+    // Link to the analysis
+    sessionId: v.string(),
+    patientId: v.optional(v.id("users")),
+
+    // Type: "session" for Phase 1 analysis, "progress" for Phase 2 progress report
+    type: v.union(v.literal("session"), v.literal("progress")),
+
+    // Embedding vector for semantic search (768 dimensions for text-embedding-004)
+    embedding: v.array(v.float64()),
+
+    // Searchable summary text (used to generate embedding)
+    summaryText: v.string(),
+
+    // Key findings for quick retrieval
+    keyFindings: v.array(v.string()),
+
+    // Metadata for filtering
+    opiScore: v.optional(v.float64()),
+    primaryDomain: v.optional(v.string()), // symmetry, power, control, etc.
+
+    // Timestamps
+    analyzedAt: v.number(),
+    embeddedAt: v.number(),
+
+    // Auto-updated timestamp
+    ...timestampField,
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_patient", ["patientId"])
+    .index("by_type", ["type"])
+    .index("by_patient_type", ["patientId", "type"])
+    .vectorIndex("by_embedding", {
+      vectorField: "embedding",
+      dimensions: 768,
+      filterFields: ["patientId", "type"],
+    }),
+
   // ─── Horus Pipeline Status (Execution Tracking) ───
   horusPipelineStatus: defineTable({
     sessionId: v.string(),
@@ -919,4 +958,26 @@ export default defineSchema({
   })
     .index("by_session", ["sessionId"])
     .index("by_status", ["status"]),
+
+  // ─── Horus Chat History (User Query Conversations) ───
+  horusChatHistory: defineTable({
+    sessionId: v.string(),
+    patientId: v.optional(v.id("users")),
+
+    // Array of chat messages
+    messages: v.array(
+      v.object({
+        id: v.string(),
+        role: v.union(v.literal("user"), v.literal("assistant")),
+        content: v.string(),
+        blocks: v.optional(v.any()), // Visualization blocks for assistant responses
+        timestamp: v.number(),
+      })
+    ),
+
+    // Auto-updated timestamp
+    ...timestampField,
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_patient", ["patientId"]),
 });
