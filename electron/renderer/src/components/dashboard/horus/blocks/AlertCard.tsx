@@ -100,21 +100,21 @@ export function AlertCard({
   const hasBadges = limb || domain;
 
   return (
-    <Card className={cn("py-3 border", styles.container, className)} data-finding-id={id}>
-      <CardContent className="px-4 py-0">
-        <div className="flex gap-3">
+    <Card className={cn("py-2 border", styles.container, className)} data-finding-id={id}>
+      <CardContent className="px-3 py-0">
+        <div className="flex gap-2">
           {IconComponent && (
             <div className="flex-shrink-0 mt-0.5">
-              <IconComponent className={cn(getIconSizeClass("md"), styles.icon)} />
+              <IconComponent className={cn(getIconSizeClass("sm"), styles.icon)} />
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <h4 className={cn("text-sm font-semibold", styles.title)}>{title}</h4>
-            <p className={cn("text-sm mt-0.5", styles.description)}>{description}</p>
+            <h4 className={cn("text-xs font-semibold", styles.title)}>{title}</h4>
+            <p className={cn("text-xs mt-0.5 leading-relaxed", styles.description)}>{description}</p>
 
             {/* Composable badge slots */}
             {hasBadges && (
-              <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              <div className="flex flex-wrap items-center gap-1 mt-1.5">
                 {limb && <LimbBadge limb={limb} />}
                 {domain && <DomainBadge domain={domain} />}
               </div>

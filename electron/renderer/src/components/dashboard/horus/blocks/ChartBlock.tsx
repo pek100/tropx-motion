@@ -119,7 +119,7 @@ export function ChartBlock({
   className,
 }: ChartBlockProps) {
   const {
-    height = 250,
+    height = 180,
     showLegend = true,
     showTooltip = true,
     showGrid = true,

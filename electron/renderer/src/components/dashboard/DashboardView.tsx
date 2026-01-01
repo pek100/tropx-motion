@@ -721,7 +721,7 @@ export function DashboardView({ className }: DashboardViewProps) {
               onLinkedChange={setIsTabsLinked}
               onModeChange={handleAnalysisModeChange}
               syncToMode={syncAnalysisMode}
-              userImage={selectedPatient?.image}
+              userImage={user?.image}
             />
           </>
         )}

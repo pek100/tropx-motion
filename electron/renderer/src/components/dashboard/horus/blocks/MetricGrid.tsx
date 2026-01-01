@@ -68,14 +68,14 @@ export function MetricGrid({
   };
 
   return (
-    <Card className={cn("py-4 bg-[var(--tropx-card)] border-[var(--tropx-border)]", className)}>
+    <Card className={cn("py-2.5 bg-[var(--tropx-card)] border-[var(--tropx-border)]", className)}>
       {title && (
-        <CardHeader className="pb-2 pt-0">
-          <CardTitle className="text-base font-semibold text-[var(--tropx-text-main)]">{title}</CardTitle>
+        <CardHeader className="pb-1.5 pt-0 px-3">
+          <CardTitle className="text-sm font-semibold text-[var(--tropx-text-main)]">{title}</CardTitle>
         </CardHeader>
       )}
-      <CardContent className={cn(!title && "pt-0", "pt-0")}>
-        <div className={cn("grid gap-3", columnStyles[columns])}>
+      <CardContent className={cn(!title && "pt-0", "pt-0 px-3")}>
+        <div className={cn("grid gap-1.5", columnStyles[columns])}>
           {metrics.map((metric, index) => {
             const TrendIcon = metric.trend ? trendIcons[metric.trend] : null;
             const trendColor = metric.trend ? trendColors[metric.trend] : "";
@@ -94,29 +94,29 @@ export function MetricGrid({
               <div
                 key={index}
                 className={cn(
-                  "p-2 rounded-lg bg-[var(--tropx-muted)] text-center",
+                  "p-1.5 rounded-md bg-[var(--tropx-muted)] text-center",
                   // Add subtle ring for classification
                   metric.classification === "strength" && "ring-1 ring-[var(--tropx-success-text)]/30",
                   metric.classification === "weakness" && "ring-1 ring-[var(--tropx-warning-text)]/30"
                 )}
               >
-                <div className="text-xs text-[var(--tropx-text-sub)] uppercase tracking-wide mb-0.5 truncate">
+                <div className="text-[10px] text-[var(--tropx-text-sub)] uppercase tracking-wide mb-0.5 truncate">
                   {metric.label}
                 </div>
-                <div className="flex items-center justify-center gap-1">
-                  <span className={cn("text-lg font-bold", valueColorClass)}>
+                <div className="flex items-center justify-center gap-0.5">
+                  <span className={cn("text-sm font-bold", valueColorClass)}>
                     {formatValue(metric.value)}
                   </span>
                   {metric.unit && (
-                    <span className="text-xs text-[var(--tropx-text-sub)]">{metric.unit}</span>
+                    <span className="text-[10px] text-[var(--tropx-text-sub)]">{metric.unit}</span>
                   )}
                   {TrendIcon && (
-                    <TrendIcon className={cn(getIconSizeClass("sm"), "ml-1", trendColor)} />
+                    <TrendIcon className={cn(getIconSizeClass("xs"), "ml-0.5", trendColor)} />
                   )}
                 </div>
                 {/* Per-item badges */}
                 {hasSlots && (
-                  <div className="flex flex-wrap items-center justify-center gap-1 mt-1.5">
+                  <div className="flex flex-wrap items-center justify-center gap-0.5 mt-1">
                     {metric.limb && <LimbBadge limb={metric.limb} size="sm" />}
                     {metric.benchmark && <BenchmarkBadge benchmark={metric.benchmark} size="sm" showIcon={false} />}
                   </div>

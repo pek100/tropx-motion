@@ -12,16 +12,19 @@ import {
   Scatter,
   XAxis,
   YAxis,
-  ZAxis,
   CartesianGrid,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   ResponsiveContainer,
   ReferenceLine,
   ReferenceArea,
 } from "recharts";
 import { cn } from "@/lib/utils";
-import { Loader2, Layers, GitCompareArrows, SlidersHorizontal, Check, Play, Pause, ZoomIn, RotateCcw } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
+import { Loader2, Layers, GitCompareArrows, SlidersHorizontal, Play, Pause, ZoomIn, RotateCcw, Combine } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { PhaseAdjustModal } from "./PhaseAdjustModal";
 import {
   PackedChunkData,
@@ -48,6 +51,8 @@ interface ChartDataPoint {
   timeLabel: string;
   left: number | null;
   right: number | null;
+  // Multi-axis data: left_x, left_y, left_z, right_x, right_y, right_z
+  [key: string]: number | string | null;
 }
 
 interface PhaseDataPoint {
@@ -65,6 +70,13 @@ type ChartViewMode = "waveform" | "phase";
 const LEFT_KNEE_COLOR = "#f97066"; // coral
 const RIGHT_KNEE_COLOR = "#60a5fa"; // blue
 const ZOOM_WINDOW_SAMPLES = 200; // Number of samples to show when zoomed
+
+// Multi-axis mode colors (Tailwind tokens)
+const AXIS_COLORS = {
+  x: "#d946ef", // fuchsia-500
+  y: "#06b6d4", // cyan-500
+  z: "#8b5cf6", // violet-500
+} as const;
 
 // Asymmetry overlay colors
 const LEFT_DOMINANT_COLOR = "#f97066"; // coral (same as left knee)
@@ -155,22 +167,39 @@ function CustomTooltip({
 
   const timeLabel = (payload[0] as any)?.payload?.timeLabel;
 
+  // Parse dataKey to get knee side and axis (e.g., "left_x" -> { knee: "Left", axis: "X" })
+  const parseDataKey = (dataKey: string) => {
+    if (dataKey === "left") return { knee: "Left", axis: null };
+    if (dataKey === "right") return { knee: "Right", axis: null };
+    const match = dataKey.match(/^(left|right)_([xyz])$/);
+    if (match) {
+      return {
+        knee: match[1] === "left" ? "Left" : "Right",
+        axis: match[2].toUpperCase(),
+      };
+    }
+    return { knee: dataKey, axis: null };
+  };
+
   return (
     <div className="px-3 py-2 rounded-lg shadow-lg border border-[var(--tropx-border)] bg-[var(--tropx-card)] text-xs">
       <p className="text-[var(--tropx-text-sub)] mb-1">{timeLabel}</p>
       <div className="space-y-1">
-        {payload.map((item) => (
-          <div key={item.dataKey} className="flex items-center gap-2">
-            <span
-              className="size-2 rounded-full"
-              style={{ backgroundColor: item.color }}
-            />
-            <span className="text-[var(--tropx-text-main)]">
-              {item.dataKey === "left" ? "Left" : "Right"}:{" "}
-              <strong>{item.value.toFixed(1)}°</strong>
-            </span>
-          </div>
-        ))}
+        {payload.map((item) => {
+          const { knee, axis } = parseDataKey(item.dataKey);
+          const label = axis ? `${knee} (${axis})` : knee;
+          return (
+            <div key={item.dataKey} className="flex items-center gap-2">
+              <span
+                className="size-2 rounded-full"
+                style={{ backgroundColor: item.color }}
+              />
+              <span className="text-[var(--tropx-text-main)]">
+                {label}: <strong>{item.value.toFixed(1)}°</strong>
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -190,6 +219,46 @@ export function SessionChart({
 }: SessionChartProps) {
   // Chart view mode (waveform vs phase diagram)
   const [chartViewMode, setChartViewMode] = useState<ChartViewMode>("waveform");
+
+  // Axis selection for angle extraction (x, y, z)
+  const [selectedAxis, setSelectedAxis] = useState<"x" | "y" | "z">("y");
+
+  // Multi-axis mode: allows selecting multiple axes at once
+  const [multiAxisMode, setMultiAxisMode] = useState(false);
+  const [selectedAxes, setSelectedAxes] = useState<Set<"x" | "y" | "z">>(new Set(["y"]));
+
+  // Toggle axis in multi-mode
+  const toggleAxis = useCallback((axis: "x" | "y" | "z") => {
+    if (multiAxisMode) {
+      setSelectedAxes((prev) => {
+        const next = new Set(prev);
+        if (next.has(axis)) {
+          // Don't allow deselecting if it's the only one
+          if (next.size > 1) next.delete(axis);
+        } else {
+          next.add(axis);
+        }
+        return next;
+      });
+    } else {
+      setSelectedAxis(axis);
+    }
+  }, [multiAxisMode]);
+
+  // Toggle multi-axis mode
+  const toggleMultiAxisMode = useCallback(() => {
+    setMultiAxisMode((prev) => {
+      if (!prev) {
+        // Entering multi-mode: initialize selectedAxes with current single axis
+        setSelectedAxes(new Set([selectedAxis]));
+      } else {
+        // Exiting multi-mode: set single axis to first of selected
+        const firstAxis = Array.from(selectedAxes)[0] || "y";
+        setSelectedAxis(firstAxis);
+      }
+      return !prev;
+    });
+  }, [selectedAxis, selectedAxes]);
 
   // Knee visibility toggle states
   const [kneeVisibility, setKneeVisibility] = useState({
@@ -287,45 +356,60 @@ export function SessionChart({
     };
   }, []);
 
+  // Determine which axes to compute
+  const axesToCompute = multiAxisMode ? Array.from(selectedAxes) : [selectedAxis];
+
   // Pre-compute base data and shift info (expensive unpack only once)
-  const { baseData, maxHalfShift } = useMemo(() => {
+  const { baseData, multiAxisData, maxHalfShift } = useMemo(() => {
+    type AxisSamples = { left: number; right: number }[];
+    const emptyResult = {
+      baseData: { samples: [] as AxisSamples, durationMs: 0, step: 1 },
+      multiAxisData: {} as Record<"x" | "y" | "z", AxisSamples>,
+      maxHalfShift: 0,
+    };
+
     // Defensive: validate packedData structure (could be corrupted cache)
     if (!packedData || typeof packedData !== 'object') {
-      return { baseData: { samples: [] as { left: number; right: number }[], durationMs: 0, step: 1 }, maxHalfShift: 0 };
+      return emptyResult;
     }
 
     if (typeof packedData.sampleCount !== 'number' || packedData.sampleCount === 0) {
-      return { baseData: { samples: [] as { left: number; right: number }[], durationMs: 0, step: 1 }, maxHalfShift: 0 };
+      return emptyResult;
     }
 
     // Defensive: ensure required properties exist
     if (typeof packedData.startTime !== 'number' || typeof packedData.endTime !== 'number') {
-      return { baseData: { samples: [] as { left: number; right: number }[], durationMs: 0, step: 1 }, maxHalfShift: 0 };
-    }
-
-    let angleSamples: { left: number; right: number }[];
-    try {
-      angleSamples = unpackToAngles(packedData, "y");
-    } catch (error) {
-      console.error("[SessionChart] Failed to unpack angles:", error);
-      return { baseData: { samples: [] as { left: number; right: number }[], durationMs: 0, step: 1 }, maxHalfShift: 0 };
-    }
-    if (angleSamples.length === 0) {
-      return { baseData: { samples: [], durationMs: 0, step: 1 }, maxHalfShift: 0 };
+      return emptyResult;
     }
 
     const durationMs = packedData.endTime - packedData.startTime;
 
+    // For multi-axis mode, compute all selected axes
+    const axisData: Record<"x" | "y" | "z", AxisSamples> = { x: [], y: [], z: [] };
+    let primarySamples: AxisSamples = [];
+
+    for (const axis of axesToCompute) {
+      try {
+        const samples = unpackToAngles(packedData, axis);
+        axisData[axis] = samples;
+        if (axis === axesToCompute[0]) {
+          primarySamples = samples;
+        }
+      } catch (error) {
+        console.error(`[SessionChart] Failed to unpack angles for axis ${axis}:`, error);
+      }
+    }
+
+    if (primarySamples.length === 0) {
+      return emptyResult;
+    }
+
     // Calculate EFFECTIVE sample rate from actual data
-    // This is crucial: the chart data may have different sample count than original recording
-    // e.g., if we have 6000 samples over 60 seconds, effective rate is 100Hz
-    // but if we have 100 preview samples over 60 seconds, effective rate is ~1.67Hz
     const effectiveSampleRate = durationMs > 0
-      ? (angleSamples.length / durationMs) * 1000
+      ? (primarySamples.length / durationMs) * 1000
       : (asymmetryEvents?.sampleRate ?? packedData.sampleRate);
 
     // Calculate max phase shift using EFFECTIVE sample rate of displayed data
-    // Use the currently applied phaseOffsetMs (not the default)
     const maxPhaseShiftSamples = phaseOffsetMs !== 0
       ? Math.round((phaseOffsetMs / 1000) * effectiveSampleRate)
       : 0;
@@ -334,10 +418,11 @@ export function SessionChart({
     const step = 1; // Use all data points
 
     return {
-      baseData: { samples: angleSamples, durationMs, step },
+      baseData: { samples: primarySamples, durationMs, step },
+      multiAxisData: axisData,
       maxHalfShift: Math.round(maxPhaseShiftSamples / 2),
     };
-  }, [packedData, phaseOffsetMs, asymmetryEvents?.sampleRate]);
+  }, [packedData, phaseOffsetMs, asymmetryEvents?.sampleRate, axesToCompute.join(",")]);
 
   // Calculate current shift in milliseconds (for asymmetry overlay positioning)
   const currentShiftMs = useMemo(() => {
@@ -351,12 +436,13 @@ export function SessionChart({
   }, [baseData, maxHalfShift, animationProgress]);
 
   // Calculate overlapping asymmetry regions (where left and right dominant events overlap after shifting)
+  // Only compute when overlay is visible to avoid unnecessary recalculations
   const overlappingRegions = useMemo(() => {
-    if (!asymmetryEvents?.events || asymmetryEvents.events.length === 0) {
+    if (!showAsymmetryOverlay || !asymmetryEvents?.events || asymmetryEvents.events.length === 0) {
       return [];
     }
     return findOverlappingRegions(asymmetryEvents.events, currentShiftMs);
-  }, [asymmetryEvents?.events, currentShiftMs]);
+  }, [showAsymmetryOverlay, asymmetryEvents?.events, currentShiftMs]);
 
   // Apply animated shift to create chart data (cheap - just index math)
   const chartData = useMemo<ChartDataPoint[]>(() => {
@@ -374,7 +460,7 @@ export function SessionChart({
       const leftIndex = i - currentHalfShift;
       const rightIndex = i + currentHalfShift;
 
-      points.push({
+      const point: ChartDataPoint = {
         time: timeMs,
         timeLabel: formatTimeMs(timeMs),
         left: (leftIndex >= 0 && leftIndex < samples.length)
@@ -383,19 +469,51 @@ export function SessionChart({
         right: (rightIndex >= 0 && rightIndex < samples.length)
           ? samples[rightIndex].right
           : null,
-      });
+      };
+
+      // Add multi-axis data when in multi-axis mode
+      if (multiAxisMode) {
+        for (const axis of axesToCompute) {
+          const axisSamples = multiAxisData[axis];
+          if (axisSamples && axisSamples.length > 0) {
+            point[`left_${axis}`] = (leftIndex >= 0 && leftIndex < axisSamples.length)
+              ? axisSamples[leftIndex].left
+              : null;
+            point[`right_${axis}`] = (rightIndex >= 0 && rightIndex < axisSamples.length)
+              ? axisSamples[rightIndex].right
+              : null;
+          }
+        }
+      }
+
+      points.push(point);
     }
 
     return points;
-  }, [baseData, maxHalfShift, animationProgress]);
+  }, [baseData, multiAxisData, maxHalfShift, animationProgress, multiAxisMode, axesToCompute]);
 
   // Calculate Y-axis domain
   const yDomain = useMemo(() => {
     if (chartData.length === 0) return [-45, 90];
 
-    const allValues = chartData
-      .flatMap((p) => [p.left, p.right])
-      .filter((v): v is number => v !== null);
+    let allValues: number[];
+
+    if (multiAxisMode) {
+      // In multi-axis mode, collect values from all selected axes
+      allValues = chartData.flatMap((p) => {
+        const values: (number | null)[] = [];
+        for (const axis of axesToCompute) {
+          values.push(p[`left_${axis}`] as number | null);
+          values.push(p[`right_${axis}`] as number | null);
+        }
+        return values;
+      }).filter((v): v is number => v !== null);
+    } else {
+      allValues = chartData
+        .flatMap((p) => [p.left, p.right])
+        .filter((v): v is number => v !== null);
+    }
+
     if (allValues.length === 0) return [-45, 90];
 
     const min = Math.min(...allValues);
@@ -403,7 +521,7 @@ export function SessionChart({
     const padding = (max - min) * 0.1;
 
     return [Math.floor(min - padding), Math.ceil(max + padding)];
-  }, [chartData]);
+  }, [chartData, multiAxisMode, axesToCompute]);
 
   // Get session duration from chart data (must be before other calculations)
   const sessionDuration = useMemo(() => {
@@ -618,185 +736,265 @@ export function SessionChart({
     <div className={cn("w-full h-full flex flex-col", className)}>
       {/* Chart controls - unified row */}
       <div className="flex items-center justify-between gap-2 mb-2 px-1 flex-wrap">
-        {/* Left side: Chart view select + Knee visibility toggles */}
-        <div className="flex items-center gap-2">
-          {/* Chart view mode select */}
+        {/* Left side: Unified tabs for chart type + L/R toggles */}
+        <div className="inline-flex items-center gap-0.5 p-1 rounded-lg bg-[var(--tropx-muted)] border border-[var(--tropx-border)]">
+          {/* Chart view mode dropdown styled as tab */}
           <select
             value={chartViewMode}
             onChange={(e) => setChartViewMode(e.target.value as ChartViewMode)}
             className={cn(
-              "px-2 py-1 rounded-lg text-xs font-medium",
-              "bg-[var(--tropx-muted)] border border-[var(--tropx-border)]",
+              "h-6 px-2 rounded-md text-xs font-medium cursor-pointer",
+              "bg-transparent border-0",
               "text-[var(--tropx-text-main)]",
-              "focus:outline-none focus:ring-1 focus:ring-[var(--tropx-vibrant)]",
-              "cursor-pointer"
+              "focus:outline-none focus:ring-0",
+              "hover:bg-[var(--tropx-card)]"
             )}
           >
             <option value="waveform">Waveform</option>
             <option value="phase">Phase Plot</option>
           </select>
 
-          {/* Knee visibility toggles (only show for waveform mode) */}
+          {/* Divider + Multi-axis toggle + Axis selection tabs (X, Y, Z) */}
+          <div className="w-px h-4 bg-[var(--tropx-border)]" />
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={toggleMultiAxisMode}
+                className={cn(
+                  "size-6 rounded-md flex items-center justify-center transition-all",
+                  "hover:scale-105 active:scale-95",
+                  multiAxisMode
+                    ? "bg-[var(--tropx-vibrant)] text-white shadow-sm"
+                    : "bg-transparent text-[var(--tropx-text-sub)] hover:bg-[var(--tropx-card)]"
+                )}
+              >
+                <Combine className="size-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">
+              {multiAxisMode ? "Single axis mode" : "Multi-axis mode"}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => toggleAxis("x")}
+                className={cn(
+                  "size-6 rounded-md flex items-center justify-center transition-all",
+                  "hover:scale-105 active:scale-95",
+                  (multiAxisMode ? selectedAxes.has("x") : selectedAxis === "x")
+                    ? "bg-fuchsia-500 text-white shadow-sm"
+                    : "bg-transparent text-[var(--tropx-text-sub)] hover:bg-[var(--tropx-card)]"
+                )}
+              >
+                <span className="text-xs font-bold">X</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">
+              X-Axis (Roll)
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => toggleAxis("y")}
+                className={cn(
+                  "size-6 rounded-md flex items-center justify-center transition-all",
+                  "hover:scale-105 active:scale-95",
+                  (multiAxisMode ? selectedAxes.has("y") : selectedAxis === "y")
+                    ? "bg-cyan-500 text-white shadow-sm"
+                    : "bg-transparent text-[var(--tropx-text-sub)] hover:bg-[var(--tropx-card)]"
+                )}
+              >
+                <span className="text-xs font-bold">Y</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">
+              Y-Axis (Pitch)
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => toggleAxis("z")}
+                className={cn(
+                  "size-6 rounded-md flex items-center justify-center transition-all",
+                  "hover:scale-105 active:scale-95",
+                  (multiAxisMode ? selectedAxes.has("z") : selectedAxis === "z")
+                    ? "bg-violet-500 text-white shadow-sm"
+                    : "bg-transparent text-[var(--tropx-text-sub)] hover:bg-[var(--tropx-card)]"
+                )}
+              >
+                <span className="text-xs font-bold">Z</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">
+              Z-Axis (Yaw)
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Divider + Knee visibility toggles (only show for waveform mode) */}
           {chartViewMode === "waveform" && (
-            <div className="flex gap-1.5">
-              <button
-                onClick={() => toggleKneeVisibility("left")}
-                className={cn(
-                  "px-2.5 py-1 rounded-full text-xs font-medium transition-all",
-                  "flex items-center gap-1 border shadow-sm",
-                  "hover:scale-105 active:scale-95",
-                  kneeVisibility.left
-                    ? "bg-[#f97066]/10 text-[#f97066] border-[#f97066]/50 hover:bg-[#f97066]/20"
-                    : "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] border-[var(--tropx-border)] hover:bg-[var(--tropx-hover)]"
-                )}
-              >
-                {kneeVisibility.left && <Check className="size-3" />}
-                <span className="hidden xs:inline">Left</span>
-                <span className="xs:hidden">L</span>
-              </button>
-              <button
-                onClick={() => toggleKneeVisibility("right")}
-                className={cn(
-                  "px-2.5 py-1 rounded-full text-xs font-medium transition-all",
-                  "flex items-center gap-1 border shadow-sm",
-                  "hover:scale-105 active:scale-95",
-                  kneeVisibility.right
-                    ? "bg-[#60a5fa]/10 text-[#60a5fa] border-[#60a5fa]/50 hover:bg-[#60a5fa]/20"
-                    : "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] border-[var(--tropx-border)] hover:bg-[var(--tropx-hover)]"
-                )}
-              >
-                {kneeVisibility.right && <Check className="size-3" />}
-                <span className="hidden xs:inline">Right</span>
-                <span className="xs:hidden">R</span>
-              </button>
-            </div>
+            <>
+              <div className="w-px h-4 bg-[var(--tropx-border)]" />
+              <Tooltip delayDuration={0}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => toggleKneeVisibility("left")}
+                    className={cn(
+                      "size-6 rounded-md flex items-center justify-center transition-all",
+                      "hover:scale-105 active:scale-95",
+                      kneeVisibility.left
+                        ? "bg-blue-400 text-white shadow-sm"
+                        : "bg-transparent text-[var(--tropx-text-sub)] hover:bg-[var(--tropx-card)]"
+                    )}
+                  >
+                    <span className="text-xs font-bold">L</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  {kneeVisibility.left ? "Hide" : "Show"} Left Knee
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip delayDuration={0}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => toggleKneeVisibility("right")}
+                    className={cn(
+                      "size-6 rounded-md flex items-center justify-center transition-all",
+                      "hover:scale-105 active:scale-95",
+                      kneeVisibility.right
+                        ? "bg-red-400 text-white shadow-sm"
+                        : "bg-transparent text-[var(--tropx-text-sub)] hover:bg-[var(--tropx-card)]"
+                    )}
+                  >
+                    <span className="text-xs font-bold">R</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  {kneeVisibility.right ? "Hide" : "Show"} Right Knee
+                </TooltipContent>
+              </Tooltip>
+            </>
           )}
         </div>
 
         {/* Right side: Phase/Asymmetry controls */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Phase Alignment Card */}
+          {/* Phase Alignment Controls */}
           {hasPhaseShift && (
-            <div
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all",
-                applyPhaseShift
-                  ? "bg-emerald-500/10 border-emerald-500/30"
-                  : "bg-[var(--tropx-muted)] border-[var(--tropx-border)]"
-              )}
-            >
+            <div className="flex items-center gap-1">
               {/* Adjust button */}
               {onPhaseOffsetApply && (
-                <button
-                  onClick={() => setIsAdjustModalOpen(true)}
-                  className={cn(
-                    "flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors",
-                    "bg-[var(--tropx-card)] border border-[var(--tropx-border)]",
-                    "hover:border-[var(--tropx-vibrant)] hover:text-[var(--tropx-vibrant)]"
-                  )}
-                >
-                  <SlidersHorizontal className="size-3" />
-                  Adjust
-                </button>
+                <Tooltip delayDuration={0}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => setIsAdjustModalOpen(true)}
+                      className={cn(
+                        "size-7 rounded-md flex items-center justify-center transition-all",
+                        "border shadow-sm hover:scale-105 active:scale-95",
+                        "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] border-[var(--tropx-border)]",
+                        "hover:border-[var(--tropx-vibrant)] hover:text-[var(--tropx-vibrant)]"
+                      )}
+                    >
+                      <SlidersHorizontal className="size-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-xs">
+                    Adjust Phase Offset ({phaseOffsetMs.toFixed(0)}ms)
+                  </TooltipContent>
+                </Tooltip>
               )}
 
-              <div className="w-px h-4 bg-[var(--tropx-border)]" />
-
-              <Switch
-                id="phase-shift-toggle"
-                checked={applyPhaseShift}
-                onCheckedChange={handlePhaseShiftToggle}
-                className="data-[state=checked]:bg-emerald-500 scale-90"
-              />
-              <label
-                htmlFor="phase-shift-toggle"
-                className="text-xs text-[var(--tropx-text-sub)] cursor-pointer flex items-center gap-1.5"
-              >
-                <GitCompareArrows className="size-3.5" />
-                <span className="hidden sm:inline">Phase Align</span>
-                <span className="text-[10px] font-mono opacity-70">
-                  {phaseOffsetMs.toFixed(0)}ms
-                </span>
-              </label>
+              {/* Phase align toggle */}
+              <Tooltip delayDuration={0}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => handlePhaseShiftToggle(!applyPhaseShift)}
+                    className={cn(
+                      "size-7 rounded-md flex items-center justify-center transition-all",
+                      "border hover:scale-105 active:scale-95",
+                      applyPhaseShift
+                        ? "bg-[var(--tropx-vibrant)] text-white border-[var(--tropx-vibrant)] shadow-md shadow-[var(--tropx-vibrant)]/25"
+                        : "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] border-[var(--tropx-border)] shadow-sm"
+                    )}
+                  >
+                    <GitCompareArrows className="size-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  {applyPhaseShift ? "Disable" : "Enable"} Phase Alignment ({phaseOffsetMs.toFixed(0)}ms)
+                </TooltipContent>
+              </Tooltip>
             </div>
           )}
 
-          {/* Asymmetry Overlay Card */}
+          {/* Asymmetry Overlay Toggle */}
           {hasAsymmetryData && (
-            <div
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all",
-                showAsymmetryOverlay
-                  ? "bg-[var(--tropx-vibrant)]/10 border-[var(--tropx-vibrant)]/30"
-                  : "bg-[var(--tropx-muted)] border-[var(--tropx-border)]"
-              )}
-            >
-              <Switch
-                id="asymmetry-toggle"
-                checked={showAsymmetryOverlay}
-                onCheckedChange={setShowAsymmetryOverlay}
-                className="data-[state=checked]:bg-[var(--tropx-vibrant)] scale-90"
-              />
-              <label
-                htmlFor="asymmetry-toggle"
-                className="text-xs text-[var(--tropx-text-sub)] cursor-pointer flex items-center gap-1.5"
-              >
-                <Layers className="size-3.5" />
-                <span className="hidden sm:inline">Asymmetry</span>
-                <span className="text-[10px] opacity-70">
-                  ({asymmetryEvents!.events.length})
-                </span>
-              </label>
-
-              {/* Legend indicators */}
-              {showAsymmetryOverlay && (
-                <>
-                  <div className="w-px h-4 bg-[var(--tropx-border)]" />
-                  <div className="flex items-center gap-2 text-[10px] text-[var(--tropx-text-sub)]">
-                    <span className="flex items-center gap-0.5">
-                      <span
-                        className="size-2 rounded-sm"
-                        style={{ backgroundColor: LEFT_DOMINANT_COLOR, opacity: 0.5 }}
-                      />
-                      L
-                    </span>
-                    <span className="flex items-center gap-0.5">
-                      <span
-                        className="size-2 rounded-sm"
-                        style={{ backgroundColor: RIGHT_DOMINANT_COLOR, opacity: 0.5 }}
-                      />
-                      R
-                    </span>
-                    {overlappingRegions.length > 0 && (
-                      <span className="flex items-center gap-0.5">
+            <Tooltip delayDuration={0}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setShowAsymmetryOverlay(!showAsymmetryOverlay)}
+                  className={cn(
+                    "size-7 rounded-md flex items-center justify-center transition-all",
+                    "border hover:scale-105 active:scale-95",
+                    showAsymmetryOverlay
+                      ? "bg-[var(--tropx-vibrant)] text-white border-[var(--tropx-vibrant)] shadow-md shadow-[var(--tropx-vibrant)]/25"
+                      : "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] border-[var(--tropx-border)] shadow-sm"
+                  )}
+                >
+                  <Layers className="size-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">
+                <div className="flex flex-col gap-1">
+                  <span>{showAsymmetryOverlay ? "Hide" : "Show"} Asymmetry Events ({asymmetryEvents!.events.length})</span>
+                  {showAsymmetryOverlay && (
+                    <div className="flex items-center gap-2 pt-1 border-t border-[var(--tropx-border)]">
+                      <span className="flex items-center gap-1">
                         <span
-                          className="size-2 rounded-sm border border-purple-400"
-                          style={{
-                            background: `repeating-linear-gradient(
-                              45deg,
-                              ${LEFT_DOMINANT_COLOR}66,
-                              ${LEFT_DOMINANT_COLOR}66 2px,
-                              ${RIGHT_DOMINANT_COLOR}66 2px,
-                              ${RIGHT_DOMINANT_COLOR}66 4px
-                            )`,
-                          }}
+                          className="size-2 rounded-sm"
+                          style={{ backgroundColor: LEFT_DOMINANT_COLOR, opacity: 0.6 }}
                         />
-                        L+R
+                        Left
                       </span>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
+                      <span className="flex items-center gap-1">
+                        <span
+                          className="size-2 rounded-sm"
+                          style={{ backgroundColor: RIGHT_DOMINANT_COLOR, opacity: 0.6 }}
+                        />
+                        Right
+                      </span>
+                      {overlappingRegions.length > 0 && (
+                        <span className="flex items-center gap-1">
+                          <span
+                            className="size-2 rounded-sm border border-purple-400"
+                            style={{
+                              background: `repeating-linear-gradient(45deg, ${LEFT_DOMINANT_COLOR}66, ${LEFT_DOMINANT_COLOR}66 2px, ${RIGHT_DOMINANT_COLOR}66 2px, ${RIGHT_DOMINANT_COLOR}66 4px)`,
+                            }}
+                          />
+                          Overlap
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </TooltipContent>
+            </Tooltip>
           )}
 
           {/* Loading state */}
           {asymmetryEvents === undefined && !hasAsymmetryData && !hasPhaseShift && (
-            <div className="px-3 py-1.5 rounded-lg bg-[var(--tropx-muted)] border border-[var(--tropx-border)]">
-              <span className="text-[10px] text-[var(--tropx-text-sub)] opacity-50">
+            <Tooltip delayDuration={0}>
+              <TooltipTrigger asChild>
+                <div className="size-7 rounded-md flex items-center justify-center bg-[var(--tropx-muted)] border border-[var(--tropx-border)]">
+                  <Loader2 className="size-3.5 animate-spin text-[var(--tropx-text-sub)] opacity-50" />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">
                 Loading metrics...
-              </span>
-            </div>
+              </TooltipContent>
+            </Tooltip>
           )}
         </div>
       </div>
@@ -829,6 +1027,31 @@ export function SessionChart({
                 <linearGradient id="rightKneeGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.4} />
                   <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.1} />
+                </linearGradient>
+                {/* Multi-axis mode gradients - subtle fill per axis */}
+                <linearGradient id="leftKneeGradient_x" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.2} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.05} />
+                </linearGradient>
+                <linearGradient id="rightKneeGradient_x" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.2} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.05} />
+                </linearGradient>
+                <linearGradient id="leftKneeGradient_y" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.2} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.05} />
+                </linearGradient>
+                <linearGradient id="rightKneeGradient_y" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.2} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.05} />
+                </linearGradient>
+                <linearGradient id="leftKneeGradient_z" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.2} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.05} />
+                </linearGradient>
+                <linearGradient id="rightKneeGradient_z" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.2} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.05} />
                 </linearGradient>
                 {/* Diagonal stripe pattern for overlapping asymmetry regions */}
                 <pattern
@@ -930,9 +1153,10 @@ export function SessionChart({
               {/* Zero reference line */}
               <ReferenceLine y={0} className="stroke-gray-300 dark:stroke-zinc-600" strokeWidth={1} />
 
-              <Tooltip content={<CustomTooltip />} />
+              <RechartsTooltip content={<CustomTooltip />} />
 
-              {kneeVisibility.left && (
+              {/* Single-axis mode: render standard left/right areas */}
+              {!multiAxisMode && kneeVisibility.left && (
                 <Area
                   type="monotone"
                   dataKey="left"
@@ -944,7 +1168,7 @@ export function SessionChart({
                 />
               )}
 
-              {kneeVisibility.right && (
+              {!multiAxisMode && kneeVisibility.right && (
                 <Area
                   type="monotone"
                   dataKey="right"
@@ -955,6 +1179,73 @@ export function SessionChart({
                   activeDot={{ r: 4, fill: RIGHT_KNEE_COLOR }}
                 />
               )}
+
+              {/* Multi-axis mode: render alternating dash pattern (knee color + axis color) */}
+              {/* Left knee - base layer (knee color, dashed) */}
+              {multiAxisMode && kneeVisibility.left && Array.from(selectedAxes).map((axis) => (
+                <Area
+                  key={`left_${axis}_base`}
+                  type="monotone"
+                  dataKey={`left_${axis}`}
+                  name={`Left (${axis.toUpperCase()})`}
+                  stroke={LEFT_KNEE_COLOR}
+                  strokeWidth={2}
+                  strokeDasharray="6 6"
+                  fill={`url(#leftKneeGradient_${axis})`}
+                  activeDot={{ r: 4, fill: AXIS_COLORS[axis], stroke: LEFT_KNEE_COLOR, strokeWidth: 2 }}
+                  dot={false}
+                  legendType="none"
+                />
+              ))}
+              {/* Left knee - overlay layer (axis color, dashed with offset) */}
+              {multiAxisMode && kneeVisibility.left && Array.from(selectedAxes).map((axis) => (
+                <Area
+                  key={`left_${axis}_overlay`}
+                  type="monotone"
+                  dataKey={`left_${axis}`}
+                  stroke={AXIS_COLORS[axis]}
+                  strokeWidth={2}
+                  strokeDasharray="6 6"
+                  strokeDashoffset={6}
+                  fill="none"
+                  activeDot={false}
+                  dot={false}
+                  legendType="none"
+                />
+              ))}
+
+              {/* Right knee - base layer (knee color, dashed) */}
+              {multiAxisMode && kneeVisibility.right && Array.from(selectedAxes).map((axis) => (
+                <Area
+                  key={`right_${axis}_base`}
+                  type="monotone"
+                  dataKey={`right_${axis}`}
+                  name={`Right (${axis.toUpperCase()})`}
+                  stroke={RIGHT_KNEE_COLOR}
+                  strokeWidth={2}
+                  strokeDasharray="6 6"
+                  fill={`url(#rightKneeGradient_${axis})`}
+                  activeDot={{ r: 4, fill: AXIS_COLORS[axis], stroke: RIGHT_KNEE_COLOR, strokeWidth: 2 }}
+                  dot={false}
+                  legendType="none"
+                />
+              ))}
+              {/* Right knee - overlay layer (axis color, dashed with offset) */}
+              {multiAxisMode && kneeVisibility.right && Array.from(selectedAxes).map((axis) => (
+                <Area
+                  key={`right_${axis}_overlay`}
+                  type="monotone"
+                  dataKey={`right_${axis}`}
+                  stroke={AXIS_COLORS[axis]}
+                  strokeWidth={2}
+                  strokeDasharray="6 6"
+                  strokeDashoffset={6}
+                  fill="none"
+                  activeDot={false}
+                  dot={false}
+                  legendType="none"
+                />
+              ))}
             </AreaChart>
           ) : (
             /* Phase Plot: Right Knee (X) vs Left Knee (Y) */
@@ -1023,7 +1314,7 @@ export function SessionChart({
                 strokeWidth={1}
               />
 
-              <Tooltip
+              <RechartsTooltip
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const data = payload[0].payload as PhaseDataPoint;
@@ -1073,16 +1364,23 @@ export function SessionChart({
       {/* Playback timeline with dual-range slider */}
       {sessionDuration > 0 && (
         <div className="flex items-center gap-2 px-2 py-1.5 border-t border-[var(--tropx-border)]">
-          <button
-            onClick={togglePlayback}
-            className={cn(
-              "p-1 rounded-md transition-colors",
-              "hover:bg-[var(--tropx-muted)]",
-              isPlaying ? "text-[var(--tropx-vibrant)]" : "text-[var(--tropx-text-sub)]"
-            )}
-          >
-            {isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
-          </button>
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={togglePlayback}
+                className={cn(
+                  "p-1 rounded-md transition-colors",
+                  "hover:bg-[var(--tropx-muted)]",
+                  isPlaying ? "text-[var(--tropx-vibrant)]" : "text-[var(--tropx-text-sub)]"
+                )}
+              >
+                {isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              {isPlaying ? "Pause" : "Play"}
+            </TooltipContent>
+          </Tooltip>
 
           <span className="text-[10px] font-mono text-[var(--tropx-text-sub)] w-14 text-right">
             {formatTimeMs(timeRange[0])}
@@ -1174,34 +1472,46 @@ export function SessionChart({
           </span>
 
           {/* Zoom toggle button - only affects chart axis scale */}
-          <button
-            onClick={() => setIsZoomed(!isZoomed)}
-            className={cn(
-              "p-1 rounded-md transition-colors",
-              "hover:bg-[var(--tropx-muted)]",
-              isZoomed ? "text-[var(--tropx-vibrant)]" : "text-[var(--tropx-text-sub)]"
-            )}
-            title={isZoomed ? "Show full time scale" : "Zoom to selection"}
-          >
-            <ZoomIn className="size-4" />
-          </button>
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setIsZoomed(!isZoomed)}
+                className={cn(
+                  "p-1 rounded-md transition-colors",
+                  "hover:bg-[var(--tropx-muted)]",
+                  isZoomed ? "text-[var(--tropx-vibrant)]" : "text-[var(--tropx-text-sub)]"
+                )}
+              >
+                <ZoomIn className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              {isZoomed ? "Show full time scale" : "Zoom to selection"}
+            </TooltipContent>
+          </Tooltip>
 
           {/* Reset button */}
-          <button
-            onClick={() => {
-              setTimeRange([0, sessionDuration]);
-              setIsZoomed(false);
-              setIsPlaying(false);
-            }}
-            className={cn(
-              "p-1 rounded-md transition-colors",
-              "hover:bg-[var(--tropx-muted)]",
-              "text-[var(--tropx-text-sub)]"
-            )}
-            title="Reset to full session"
-          >
-            <RotateCcw className="size-4" />
-          </button>
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => {
+                  setTimeRange([0, sessionDuration]);
+                  setIsZoomed(false);
+                  setIsPlaying(false);
+                }}
+                className={cn(
+                  "p-1 rounded-md transition-colors",
+                  "hover:bg-[var(--tropx-muted)]",
+                  "text-[var(--tropx-text-sub)]"
+                )}
+              >
+                <RotateCcw className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              Reset to full session
+            </TooltipContent>
+          </Tooltip>
         </div>
       )}
     </div>

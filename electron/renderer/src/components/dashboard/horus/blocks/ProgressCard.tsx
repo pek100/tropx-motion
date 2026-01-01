@@ -79,34 +79,34 @@ export function ProgressCard({
   return (
     <Card
       className={cn(
-        "py-4",
+        "py-2.5",
         isComplete ? "gradient-green-card border-none" : "bg-[var(--tropx-card)] border-[var(--tropx-border)]",
         className
       )}
       data-finding-id={id}
     >
-      <CardContent className="px-4 py-0">
-        <div className="flex items-start gap-3">
+      <CardContent className="px-3 py-0">
+        <div className="flex items-start gap-2">
           {/* Icon */}
           <div
             className={cn(
-              "flex-shrink-0 p-2 rounded-lg",
+              "flex-shrink-0 p-1.5 rounded-lg",
               isComplete
                 ? "bg-white/50 dark:bg-black/20 text-[var(--tropx-success-text)]"
                 : "bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)]",
               celebrationClass
             )}
           >
-            <IconComponent className={getIconSizeClass("md")} />
+            <IconComponent className={getIconSizeClass("sm")} />
           </div>
 
           {/* Content */}
           <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between mb-1">
-              <h4 className="text-sm font-semibold text-[var(--tropx-text-main)]">{title}</h4>
+            <div className="flex items-center justify-between mb-0.5">
+              <h4 className="text-xs font-semibold text-[var(--tropx-text-main)]">{title}</h4>
               <span
                 className={cn(
-                  "text-sm font-medium",
+                  "text-xs font-medium",
                   isComplete ? "text-[var(--tropx-success-text)]" : "text-[var(--tropx-text-sub)]"
                 )}
               >
@@ -114,11 +114,11 @@ export function ProgressCard({
               </span>
             </div>
 
-            <p className="text-xs text-[var(--tropx-text-sub)] mb-2">{description}</p>
+            <p className="text-[10px] text-[var(--tropx-text-sub)] mb-1.5 leading-relaxed">{description}</p>
 
             {/* Composable badge slots */}
             {hasBadges && (
-              <div className="flex flex-wrap items-center gap-1.5 mb-2">
+              <div className="flex flex-wrap items-center gap-1 mb-1.5">
                 {classification && <ClassificationBadge classification={classification} />}
                 {limb && <LimbBadge limb={limb} />}
               </div>
@@ -128,19 +128,19 @@ export function ProgressCard({
             <Progress
               value={percentage}
               className={cn(
-                "h-2",
+                "h-1.5",
                 isComplete && "[&>div]:bg-[var(--tropx-success-text)]"
               )}
             />
 
             {/* Values */}
-            <div className="flex justify-between mt-1 text-xs text-[var(--tropx-text-sub)]">
+            <div className="flex justify-between mt-0.5 text-[10px] text-[var(--tropx-text-sub)]">
               <span>
-                Current: {current}
+                {current}
                 {unit}
               </span>
               <span>
-                Target: {target}
+                → {target}
                 {unit}
               </span>
             </div>

@@ -58,19 +58,19 @@ export function QuoteCard({
   const IconComponent = Icons[iconName as keyof typeof Icons] as LucideIcon;
 
   return (
-    <Card className={cn("py-3 rounded-l-none border-[var(--tropx-border)]", styles.container, className)} data-finding-id={id}>
-      <CardContent className="px-4 py-0">
-        <div className="flex gap-3">
+    <Card className={cn("py-2 rounded-l-none border-[var(--tropx-border)]", styles.container, className)} data-finding-id={id}>
+      <CardContent className="px-3 py-0">
+        <div className="flex gap-2">
           {IconComponent && (
             <div className="flex-shrink-0 mt-0.5">
               <IconComponent className={cn(getIconSizeClass("sm"), styles.icon)} />
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <blockquote className="text-sm italic text-[var(--tropx-text-main)]">&ldquo;{content}&rdquo;</blockquote>
-            <div className="flex items-center gap-2 mt-1">
+            <blockquote className="text-xs italic leading-relaxed text-[var(--tropx-text-main)]">&ldquo;{content}&rdquo;</blockquote>
+            <div className="flex items-center gap-1.5 mt-0.5">
               {citation && (
-                <cite className="text-xs text-[var(--tropx-text-sub)] not-italic">
+                <cite className="text-[10px] text-[var(--tropx-text-sub)] not-italic">
                   — {citation}
                 </cite>
               )}

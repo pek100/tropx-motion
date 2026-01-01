@@ -91,14 +91,14 @@ export function ExecutiveSummary({
   const paragraphs = (content || "").split("\n\n").filter((p) => p.trim());
 
   return (
-    <Card className={cn("py-4", variantStyles[variant], className)}>
-      <CardHeader className="pb-2 pt-0">
-        <CardTitle className="text-base font-semibold text-[var(--tropx-text-main)]">{title}</CardTitle>
+    <Card className={cn("py-2.5", variantStyles[variant], className)}>
+      <CardHeader className="pb-1.5 pt-0">
+        <CardTitle className="text-sm font-semibold text-[var(--tropx-text-main)]">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="pt-0">
-        <div className="space-y-2">
+      <CardContent className="pt-0 px-4">
+        <div className="space-y-1.5">
           {paragraphs.map((paragraph, index) => (
-            <p key={index} className="text-sm text-[var(--tropx-text-main)]">
+            <p key={index} className="text-xs leading-relaxed text-[var(--tropx-text-main)]">
               {parseSimpleMarkdown(paragraph)}
             </p>
           ))}

@@ -52,18 +52,18 @@ export function NextSteps({
   const [isOpen, setIsOpen] = useState(!defaultCollapsed);
 
   const content = (
-    <ol className="space-y-2">
+    <ol className="space-y-1.5">
       {items.map((item, index) => {
         const priority = item.priority || "medium";
         const styles = priorityStyles[priority];
         const BulletIcon = styles.bullet;
 
         return (
-          <li key={index} className="flex items-start gap-2">
+          <li key={index} className="flex items-start gap-1.5">
             <span className="flex-shrink-0 mt-0.5">
-              <BulletIcon className={cn("h-4 w-4", styles.icon)} />
+              <BulletIcon className={cn("h-3 w-3", styles.icon)} />
             </span>
-            <span className={cn("text-sm", styles.text)}>{item.text}</span>
+            <span className={cn("text-xs leading-relaxed", styles.text)}>{item.text}</span>
           </li>
         );
       })}
@@ -72,11 +72,11 @@ export function NextSteps({
 
   if (!collapsible) {
     return (
-      <Card className={cn("py-4 bg-[var(--tropx-card)] border-[var(--tropx-border)]", className)}>
-        <CardHeader className="pb-2 pt-0">
-          <CardTitle className="text-base font-semibold text-[var(--tropx-text-main)]">{title}</CardTitle>
+      <Card className={cn("py-2.5 bg-[var(--tropx-card)] border-[var(--tropx-border)]", className)}>
+        <CardHeader className="pb-1.5 pt-0 px-3">
+          <CardTitle className="text-sm font-semibold text-[var(--tropx-text-main)]">{title}</CardTitle>
         </CardHeader>
-        <CardContent className="pt-0">{content}</CardContent>
+        <CardContent className="pt-0 px-3">{content}</CardContent>
       </Card>
     );
   }
@@ -85,12 +85,12 @@ export function NextSteps({
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className={className}>
       <Card className="py-0 bg-[var(--tropx-card)] border-[var(--tropx-border)]">
         <CollapsibleTrigger className="w-full">
-          <CardHeader className="py-3 cursor-pointer hover:bg-[var(--tropx-hover)] transition-colors rounded-t-xl">
+          <CardHeader className="py-2 px-3 cursor-pointer hover:bg-[var(--tropx-hover)] transition-colors rounded-t-xl">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-semibold text-[var(--tropx-text-main)]">{title}</CardTitle>
+              <CardTitle className="text-sm font-semibold text-[var(--tropx-text-main)]">{title}</CardTitle>
               <ChevronDown
                 className={cn(
-                  "h-4 w-4 text-[var(--tropx-text-sub)] transition-transform duration-200",
+                  "h-3.5 w-3.5 text-[var(--tropx-text-sub)] transition-transform duration-200",
                   isOpen && "rotate-180"
                 )}
               />
@@ -98,7 +98,7 @@ export function NextSteps({
           </CardHeader>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <CardContent className="pt-0 pb-4">{content}</CardContent>
+          <CardContent className="pt-0 pb-2.5 px-3">{content}</CardContent>
         </CollapsibleContent>
       </Card>
     </Collapsible>

@@ -114,24 +114,24 @@ export function StatCard({
   const hasBadges = classification || limb || benchmark || domain;
 
   return (
-    <Card className={cn("py-3", styles.card, className)} data-finding-id={id}>
-      <CardContent className="px-4 py-0">
+    <Card className={cn("py-2", styles.card, className)} data-finding-id={id}>
+      <CardContent className="px-3 py-0">
         <div className="flex items-start justify-between">
           <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-1.5 mb-0.5">
               {IconComponent && (
                 <IconComponent className={cn(getIconSizeClass("sm"), styles.icon)} />
               )}
-              <span className="text-sm font-medium text-[var(--tropx-text-sub)]">{title}</span>
+              <span className="text-xs font-medium text-[var(--tropx-text-sub)]">{title}</span>
             </div>
             <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold tracking-tight text-[var(--tropx-text-main)]">{value}</span>
-              {unit && <span className="text-sm text-[var(--tropx-text-sub)]">{unit}</span>}
+              <span className="text-xl font-bold tracking-tight text-[var(--tropx-text-main)]">{value}</span>
+              {unit && <span className="text-xs text-[var(--tropx-text-sub)]">{unit}</span>}
             </div>
 
             {/* Composable badge slots */}
             {hasBadges && (
-              <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              <div className="flex flex-wrap items-center gap-1 mt-1.5">
                 {classification && <ClassificationBadge classification={classification} />}
                 {limb && <LimbBadge limb={limb} />}
                 {benchmark && <BenchmarkBadge benchmark={benchmark} />}
