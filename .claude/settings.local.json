@@ -83,7 +83,8 @@
       "WebFetch(domain:flowbite.com)",
       "WebFetch(domain:docs.cloud.google.com)",
       "WebFetch(domain:ai.google.dev)",
-      "WebFetch(domain:discuss.ai.google.dev)"
+      "WebFetch(domain:discuss.ai.google.dev)",
+      "WebFetch(domain:recharts.github.io)"
     ],
     "deny": [],
     "ask": [],

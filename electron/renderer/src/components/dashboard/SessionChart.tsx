@@ -28,7 +28,8 @@ import {
 import { PhaseAdjustModal } from "./PhaseAdjustModal";
 import {
   PackedChunkData,
-  unpackToAngles,
+  unpack,
+  quaternionToAngle,
 } from "../../../../../shared/QuaternionCodec";
 import type { AsymmetryEventsData } from "./ChartPane";
 
@@ -356,52 +357,106 @@ export function SessionChart({
     };
   }, []);
 
-  // Determine which axes to compute
-  const axesToCompute = multiAxisMode ? Array.from(selectedAxes) : [selectedAxis];
+  // Determine which axes to compute - memoized to prevent unnecessary recalculations
+  const axesToCompute = useMemo(
+    () => multiAxisMode ? Array.from(selectedAxes) : [selectedAxis],
+    [multiAxisMode, selectedAxes, selectedAxis]
+  );
 
-  // Pre-compute base data and shift info (expensive unpack only once)
+  // Stable string key for dependency arrays
+  const axesKey = axesToCompute.join(",");
+
+  // Lazy-load axis data: compute primary axis immediately, others on demand
+  type AxisSamples = { left: number; right: number }[];
+  const [lazyAxisData, setLazyAxisData] = useState<Record<"x" | "y" | "z", AxisSamples>>({ x: [], y: [], z: [] });
+  const unpackedSamplesRef = useRef<ReturnType<typeof unpack> | null>(null);
+
+  // Compute primary axis immediately when packedData changes
+  const primaryAxisData = useMemo(() => {
+    if (!packedData || typeof packedData !== 'object') return [];
+    if (typeof packedData.sampleCount !== 'number' || packedData.sampleCount === 0) return [];
+    if (typeof packedData.startTime !== 'number' || typeof packedData.endTime !== 'number') return [];
+
+    try {
+      // Unpack once and cache for lazy loading
+      const samples = unpack(packedData);
+      unpackedSamplesRef.current = samples;
+
+      // Compute primary axis (selectedAxis in single mode, first selected in multi mode)
+      const primaryAxis = multiAxisMode ? Array.from(selectedAxes)[0] || 'y' : selectedAxis;
+      const data: AxisSamples = new Array(samples.length);
+
+      for (let i = 0; i < samples.length; i++) {
+        const s = samples[i];
+        data[i] = {
+          left: s.lq ? Math.round(quaternionToAngle(s.lq, primaryAxis) * 10) / 10 : 0,
+          right: s.rq ? Math.round(quaternionToAngle(s.rq, primaryAxis) * 10) / 10 : 0,
+        };
+      }
+
+      // Update lazy data with primary axis
+      setLazyAxisData(prev => ({ ...prev, [primaryAxis]: data }));
+
+      return data;
+    } catch (error) {
+      console.error(`[SessionChart] Failed to unpack angles:`, error);
+      return [];
+    }
+  }, [packedData, selectedAxis, multiAxisMode, selectedAxes]);
+
+  // Lazy-load additional axes when multi-axis mode is enabled or axes change
+  useEffect(() => {
+    if (!multiAxisMode || !unpackedSamplesRef.current) return;
+
+    const samples = unpackedSamplesRef.current;
+    const axesToLoad = Array.from(selectedAxes).filter(axis => lazyAxisData[axis].length === 0);
+
+    if (axesToLoad.length === 0) return;
+
+    // Use requestIdleCallback for non-blocking computation (or setTimeout fallback)
+    const computeAxis = (axis: "x" | "y" | "z") => {
+      const data: AxisSamples = new Array(samples.length);
+      for (let i = 0; i < samples.length; i++) {
+        const s = samples[i];
+        data[i] = {
+          left: s.lq ? Math.round(quaternionToAngle(s.lq, axis) * 10) / 10 : 0,
+          right: s.rq ? Math.round(quaternionToAngle(s.rq, axis) * 10) / 10 : 0,
+        };
+      }
+      setLazyAxisData(prev => ({ ...prev, [axis]: data }));
+    };
+
+    // Compute each missing axis with a small delay to avoid blocking
+    axesToLoad.forEach((axis, index) => {
+      setTimeout(() => computeAxis(axis), index * 16); // Stagger by ~1 frame
+    });
+  }, [multiAxisMode, selectedAxes, lazyAxisData]);
+
+  // Combined axis data (primary + lazy-loaded)
+  const allAxisData = lazyAxisData;
+
+  // Derive baseData and multiAxisData from pre-computed allAxisData
   const { baseData, multiAxisData, maxHalfShift } = useMemo(() => {
-    type AxisSamples = { left: number; right: number }[];
     const emptyResult = {
       baseData: { samples: [] as AxisSamples, durationMs: 0, step: 1 },
       multiAxisData: {} as Record<"x" | "y" | "z", AxisSamples>,
       maxHalfShift: 0,
     };
 
-    // Defensive: validate packedData structure (could be corrupted cache)
-    if (!packedData || typeof packedData !== 'object') {
-      return emptyResult;
-    }
-
-    if (typeof packedData.sampleCount !== 'number' || packedData.sampleCount === 0) {
-      return emptyResult;
-    }
-
-    // Defensive: ensure required properties exist
-    if (typeof packedData.startTime !== 'number' || typeof packedData.endTime !== 'number') {
-      return emptyResult;
-    }
+    if (!packedData) return emptyResult;
 
     const durationMs = packedData.endTime - packedData.startTime;
 
-    // For multi-axis mode, compute all selected axes
+    // Get primary samples from the first selected axis
+    const primaryAxis = axesToCompute[0];
+    const primarySamples = allAxisData[primaryAxis] || [];
+
+    if (primarySamples.length === 0) return emptyResult;
+
+    // Build multiAxisData from selected axes only
     const axisData: Record<"x" | "y" | "z", AxisSamples> = { x: [], y: [], z: [] };
-    let primarySamples: AxisSamples = [];
-
     for (const axis of axesToCompute) {
-      try {
-        const samples = unpackToAngles(packedData, axis);
-        axisData[axis] = samples;
-        if (axis === axesToCompute[0]) {
-          primarySamples = samples;
-        }
-      } catch (error) {
-        console.error(`[SessionChart] Failed to unpack angles for axis ${axis}:`, error);
-      }
-    }
-
-    if (primarySamples.length === 0) {
-      return emptyResult;
+      axisData[axis] = allAxisData[axis] || [];
     }
 
     // Calculate EFFECTIVE sample rate from actual data
@@ -414,15 +469,12 @@ export function SessionChart({
       ? Math.round((phaseOffsetMs / 1000) * effectiveSampleRate)
       : 0;
 
-    // Downsample step
-    const step = 1; // Use all data points
-
     return {
-      baseData: { samples: primarySamples, durationMs, step },
+      baseData: { samples: primarySamples, durationMs, step: 1 },
       multiAxisData: axisData,
       maxHalfShift: Math.round(maxPhaseShiftSamples / 2),
     };
-  }, [packedData, phaseOffsetMs, asymmetryEvents?.sampleRate, axesToCompute.join(",")]);
+  }, [packedData, allAxisData, phaseOffsetMs, asymmetryEvents?.sampleRate, axesKey]);
 
   // Calculate current shift in milliseconds (for asymmetry overlay positioning)
   const currentShiftMs = useMemo(() => {
@@ -490,7 +542,7 @@ export function SessionChart({
     }
 
     return points;
-  }, [baseData, multiAxisData, maxHalfShift, animationProgress, multiAxisMode, axesToCompute]);
+  }, [baseData, multiAxisData, maxHalfShift, animationProgress, multiAxisMode, axesKey]);
 
   // Calculate Y-axis domain
   const yDomain = useMemo(() => {
@@ -521,7 +573,7 @@ export function SessionChart({
     const padding = (max - min) * 0.1;
 
     return [Math.floor(min - padding), Math.ceil(max + padding)];
-  }, [chartData, multiAxisMode, axesToCompute]);
+  }, [chartData, multiAxisMode, axesKey]);
 
   // Get session duration from chart data (must be before other calculations)
   const sessionDuration = useMemo(() => {
@@ -578,6 +630,25 @@ export function SessionChart({
         time: p.time,
       }));
   }, [visibleChartData]);
+
+  // Multi-axis phase data: one array per selected axis
+  const multiAxisPhaseData = useMemo<Record<"x" | "y" | "z", PhaseDataPoint[]>>(() => {
+    const result: Record<"x" | "y" | "z", PhaseDataPoint[]> = { x: [], y: [], z: [] };
+
+    if (!multiAxisMode) return result;
+
+    for (const axis of axesToCompute) {
+      result[axis] = visibleChartData
+        .filter((p) => p[`left_${axis}`] !== null && p[`right_${axis}`] !== null)
+        .map((p) => ({
+          x: p[`right_${axis}`] as number,
+          y: p[`left_${axis}`] as number,
+          time: p.time,
+        }));
+    }
+
+    return result;
+  }, [visibleChartData, multiAxisMode, axesKey]);
 
   // Phase diagram axis domain (fixed scale for consistency)
   const phaseDomain: [number, number] = [-20, 180];
@@ -1028,30 +1099,30 @@ export function SessionChart({
                   <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.4} />
                   <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.1} />
                 </linearGradient>
-                {/* Multi-axis mode gradients - subtle fill per axis */}
+                {/* Multi-axis mode fill gradients */}
                 <linearGradient id="leftKneeGradient_x" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.2} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.05} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.02} />
                 </linearGradient>
                 <linearGradient id="rightKneeGradient_x" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.2} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.05} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.02} />
                 </linearGradient>
                 <linearGradient id="leftKneeGradient_y" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.2} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.05} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.02} />
                 </linearGradient>
                 <linearGradient id="rightKneeGradient_y" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.2} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.05} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.02} />
                 </linearGradient>
                 <linearGradient id="leftKneeGradient_z" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.2} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.05} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.02} />
                 </linearGradient>
                 <linearGradient id="rightKneeGradient_z" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.2} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.05} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.02} />
                 </linearGradient>
                 {/* Diagonal stripe pattern for overlapping asymmetry regions */}
                 <pattern
@@ -1165,6 +1236,7 @@ export function SessionChart({
                   strokeWidth={2}
                   fill="url(#leftKneeGradient)"
                   activeDot={{ r: 4, fill: LEFT_KNEE_COLOR }}
+                  isAnimationActive={false}
                 />
               )}
 
@@ -1177,72 +1249,72 @@ export function SessionChart({
                   strokeWidth={2}
                   fill="url(#rightKneeGradient)"
                   activeDot={{ r: 4, fill: RIGHT_KNEE_COLOR }}
+                  isAnimationActive={false}
                 />
               )}
 
-              {/* Multi-axis mode: render alternating dash pattern (knee color + axis color) */}
-              {/* Left knee - base layer (knee color, dashed) */}
+              {/* Multi-axis mode: alternating pattern (8px knee color, 4px axis color, no gaps) */}
+              {/* Layer 1: knee color segments (8px on, 4px off) */}
               {multiAxisMode && kneeVisibility.left && Array.from(selectedAxes).map((axis) => (
                 <Area
-                  key={`left_${axis}_base`}
+                  key={`left_${axis}_knee`}
                   type="monotone"
                   dataKey={`left_${axis}`}
                   name={`Left (${axis.toUpperCase()})`}
                   stroke={LEFT_KNEE_COLOR}
                   strokeWidth={2}
-                  strokeDasharray="6 6"
+                  strokeDasharray="8 4"
                   fill={`url(#leftKneeGradient_${axis})`}
                   activeDot={{ r: 4, fill: AXIS_COLORS[axis], stroke: LEFT_KNEE_COLOR, strokeWidth: 2 }}
                   dot={false}
-                  legendType="none"
+                  isAnimationActive={false}
                 />
               ))}
-              {/* Left knee - overlay layer (axis color, dashed with offset) */}
-              {multiAxisMode && kneeVisibility.left && Array.from(selectedAxes).map((axis) => (
-                <Area
-                  key={`left_${axis}_overlay`}
-                  type="monotone"
-                  dataKey={`left_${axis}`}
-                  stroke={AXIS_COLORS[axis]}
-                  strokeWidth={2}
-                  strokeDasharray="6 6"
-                  strokeDashoffset={6}
-                  fill="none"
-                  activeDot={false}
-                  dot={false}
-                  legendType="none"
-                />
-              ))}
-
-              {/* Right knee - base layer (knee color, dashed) */}
               {multiAxisMode && kneeVisibility.right && Array.from(selectedAxes).map((axis) => (
                 <Area
-                  key={`right_${axis}_base`}
+                  key={`right_${axis}_knee`}
                   type="monotone"
                   dataKey={`right_${axis}`}
                   name={`Right (${axis.toUpperCase()})`}
                   stroke={RIGHT_KNEE_COLOR}
                   strokeWidth={2}
-                  strokeDasharray="6 6"
+                  strokeDasharray="8 4"
                   fill={`url(#rightKneeGradient_${axis})`}
                   activeDot={{ r: 4, fill: AXIS_COLORS[axis], stroke: RIGHT_KNEE_COLOR, strokeWidth: 2 }}
                   dot={false}
+                  isAnimationActive={false}
+                />
+              ))}
+              {/* Layer 2: axis color segments (4px on, 8px off, offset to fill gaps) */}
+              {multiAxisMode && kneeVisibility.left && Array.from(selectedAxes).map((axis) => (
+                <Area
+                  key={`left_${axis}_axis`}
+                  type="monotone"
+                  dataKey={`left_${axis}`}
+                  stroke={AXIS_COLORS[axis]}
+                  strokeWidth={2}
+                  strokeDasharray="4 8"
+                  strokeDashoffset={-8}
+                  fill="none"
+                  dot={false}
+                  activeDot={false}
+                  isAnimationActive={false}
                   legendType="none"
                 />
               ))}
-              {/* Right knee - overlay layer (axis color, dashed with offset) */}
               {multiAxisMode && kneeVisibility.right && Array.from(selectedAxes).map((axis) => (
                 <Area
-                  key={`right_${axis}_overlay`}
+                  key={`right_${axis}_axis`}
                   type="monotone"
                   dataKey={`right_${axis}`}
                   stroke={AXIS_COLORS[axis]}
                   strokeWidth={2}
-                  strokeDasharray="6 6"
-                  strokeDashoffset={6}
+                  strokeDasharray="4 8"
+                  strokeDashoffset={-8}
                   fill="none"
-                  activeDot={false}
                   dot={false}
+                  activeDot={false}
+                  isAnimationActive={false}
                   legendType="none"
                 />
               ))}
@@ -1318,9 +1390,13 @@ export function SessionChart({
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const data = payload[0].payload as PhaseDataPoint;
+                  const axisLabel = (payload[0] as any)?.name?.match(/\(([XYZ])\)/)?.[1];
                   return (
                     <div className="px-3 py-2 rounded-lg shadow-lg border border-[var(--tropx-border)] bg-[var(--tropx-card)] text-xs">
-                      <p className="text-[var(--tropx-text-sub)] mb-1">{formatTimeMs(data.time)}</p>
+                      <p className="text-[var(--tropx-text-sub)] mb-1">
+                        {formatTimeMs(data.time)}
+                        {axisLabel && <span className="ml-1 opacity-70">({axisLabel}-axis)</span>}
+                      </p>
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <span className="size-2 rounded-full" style={{ backgroundColor: LEFT_KNEE_COLOR }} />
@@ -1340,21 +1416,68 @@ export function SessionChart({
                 }}
               />
 
-              <Scatter
-                name="Phase"
-                data={phaseData}
-                fill="transparent"
-                line={{ stroke: "url(#phaseTrailGradient)", strokeWidth: 1.5 }}
-                isAnimationActive={false}
-                shape={{ r: 0 }}
-                activeDot={{
-                  r: 5,
-                  fill: "var(--tropx-vibrant)",
-                  stroke: "white",
-                  strokeWidth: 2,
-                  cursor: "crosshair",
-                }}
-              />
+              {/* Single-axis mode: standard phase trail */}
+              {!multiAxisMode && (
+                <Scatter
+                  name="Phase"
+                  data={phaseData}
+                  fill="transparent"
+                  line={{ stroke: "url(#phaseTrailGradient)", strokeWidth: 1.5 }}
+                  isAnimationActive={false}
+                  shape={{ r: 0 }}
+                  activeDot={{
+                    r: 5,
+                    fill: "var(--tropx-vibrant)",
+                    stroke: "white",
+                    strokeWidth: 2,
+                    cursor: "crosshair",
+                  }}
+                />
+              )}
+
+              {/* Multi-axis mode: alternating pattern (8px vibrant, 4px axis color, no gaps) */}
+              {/* Layer 1: vibrant segments (8px on, 4px off) */}
+              {multiAxisMode && Array.from(selectedAxes).map((axis) => (
+                <Scatter
+                  key={`phase_${axis}_vibrant`}
+                  name={`Phase (${axis.toUpperCase()})`}
+                  data={multiAxisPhaseData[axis]}
+                  fill="transparent"
+                  line={{
+                    stroke: "var(--tropx-vibrant)",
+                    strokeWidth: 2,
+                    strokeDasharray: "8 4",
+                  }}
+                  isAnimationActive={false}
+                  shape={{ r: 0 }}
+                  activeDot={{
+                    r: 5,
+                    fill: AXIS_COLORS[axis],
+                    stroke: "white",
+                    strokeWidth: 2,
+                    cursor: "crosshair",
+                  }}
+                />
+              ))}
+              {/* Layer 2: axis color segments (4px on, 8px off, offset to fill gaps) */}
+              {multiAxisMode && Array.from(selectedAxes).map((axis) => (
+                <Scatter
+                  key={`phase_${axis}_axis`}
+                  name={`Phase axis ${axis}`}
+                  data={multiAxisPhaseData[axis]}
+                  fill="transparent"
+                  line={{
+                    stroke: AXIS_COLORS[axis],
+                    strokeWidth: 2,
+                    strokeDasharray: "4 8",
+                    strokeDashoffset: -8,
+                  }}
+                  isAnimationActive={false}
+                  shape={{ r: 0 }}
+                  activeDot={false}
+                  legendType="none"
+                />
+              ))}
 
             </ScatterChart>
           )}
