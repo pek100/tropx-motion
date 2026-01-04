@@ -12,6 +12,7 @@ import { TropxWSClient } from '../lib/tropx-ws-client';
 import { EVENT_TYPES, MESSAGE_TYPES } from '../lib/tropx-ws-client';
 import type { ClientMetadata } from '../lib/tropx-ws-client/types/messages';
 import { RecordingBuffer } from '../lib/recording';
+import { quaternionToAngle } from '../../../../shared/QuaternionCodec';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -67,12 +68,21 @@ export interface BLEDevice {
   isVibrating: boolean;
 }
 
+export interface Quaternion {
+  w: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface KneeData {
   current: number;
   sensorTimestamp: number;
   velocity: number;
   acceleration: number;
   quality: number;
+  /** Raw quaternion for real-time axis selection */
+  quaternion: Quaternion;
 }
 
 /**
@@ -215,6 +225,9 @@ export function useDevices() {
   const [isConnected, setIsConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<number>(0);
 
+  // Identity quaternion (no rotation)
+  const IDENTITY_QUAT: Quaternion = { w: 1, x: 0, y: 0, z: 0 };
+
   // ─── Motion Data ──────────────────────────────────────────────────────
   const [leftKneeData, setLeftKneeData] = useState<KneeData>({
     current: 0,
@@ -222,6 +235,7 @@ export function useDevices() {
     velocity: 0,
     acceleration: 0,
     quality: 100,
+    quaternion: IDENTITY_QUAT,
   });
   const [rightKneeData, setRightKneeData] = useState<KneeData>({
     current: 0,
@@ -229,6 +243,7 @@ export function useDevices() {
     velocity: 0,
     acceleration: 0,
     quality: 100,
+    quaternion: IDENTITY_QUAT,
   });
 
 
@@ -354,23 +369,26 @@ export function useDevices() {
         });
 
         // ─── Motion Data Handler ───────────────────────────────────────
+        // Data format: [lqW, lqX, lqY, lqZ, rqW, rqX, rqY, rqZ] (quaternions only)
         client.on(EVENT_TYPES.MOTION_DATA, (message: any) => {
           lastMotionDataTimeRef.current = Date.now();
 
           const raw = message?.data;
-          let leftCurrent = 0;
-          let rightCurrent = 0;
+          let leftQuat: Quaternion = IDENTITY_QUAT;
+          let rightQuat: Quaternion = IDENTITY_QUAT;
 
-          if (raw instanceof Float32Array) {
-            leftCurrent = raw[0] || 0;
-            rightCurrent = raw[1] || 0;
-          } else if (Array.isArray(raw)) {
-            leftCurrent = raw[0] || 0;
-            rightCurrent = raw[1] || 0;
-          } else if (raw && typeof raw === 'object' && 'left' in raw && 'right' in raw) {
-            leftCurrent = raw.left?.current ?? 0;
-            rightCurrent = raw.right?.current ?? 0;
+          if (raw instanceof Float32Array && raw.length >= 8) {
+            // Quaternion-only format
+            leftQuat = { w: raw[0], x: raw[1], y: raw[2], z: raw[3] };
+            rightQuat = { w: raw[4], x: raw[5], y: raw[6], z: raw[7] };
+          } else if (Array.isArray(raw) && raw.length >= 8) {
+            leftQuat = { w: raw[0], x: raw[1], y: raw[2], z: raw[3] };
+            rightQuat = { w: raw[4], x: raw[5], y: raw[6], z: raw[7] };
           }
+
+          // Decode Y-axis angle for default display (backwards compatibility)
+          const leftCurrent = quaternionToAngle(leftQuat, 'y');
+          const rightCurrent = quaternionToAngle(rightQuat, 'y');
 
           const timestamp = message?.timestamp || Date.now();
 
@@ -380,6 +398,7 @@ export function useDevices() {
             velocity: 0,
             acceleration: 0,
             quality: 100,
+            quaternion: leftQuat,
           });
 
           setRightKneeData({
@@ -388,9 +407,10 @@ export function useDevices() {
             velocity: 0,
             acceleration: 0,
             quality: 100,
+            quaternion: rightQuat,
           });
 
-          // Push to recording buffer
+          // Push to recording buffer (Y-axis angle for compatibility)
           RecordingBuffer.push(timestamp, leftCurrent, rightCurrent);
         });
 

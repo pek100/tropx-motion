@@ -121,17 +121,17 @@ export function slerp(q1: Quaternion, q2: Quaternion, t: number): Quaternion {
 
 /**
  * Convert quaternion to Euler angle for a specific axis using rotation matrix.
- * Uses ZYX (aerospace) convention for decomposition.
+ * Uses the same formula as the backend AngleCalculationService for consistency.
  *
  * Rotation matrix from quaternion q = (w, x, y, z):
- * R = | 1-2(y²+z²)   2(xy-wz)    2(xz+wy) |
- *     | 2(xy+wz)    1-2(x²+z²)   2(yz-wx) |
- *     | 2(xz-wy)    2(yz+wx)    1-2(x²+y²) |
+ * matrix[0] = 1 - 2(y² + z²)   matrix[1] = 2(xy - wz)      matrix[2] = 2(xz + wy)
+ * matrix[3] = 2(xy + wz)       matrix[4] = 1 - 2(x² + z²)  matrix[5] = 2(yz - wx)
+ * matrix[6] = 2(xz - wy)       matrix[7] = 2(yz + wx)      matrix[8] = 1 - 2(x² + y²)
  *
- * Euler angles (ZYX order):
- * - X (Roll):  atan2(R₃₂, R₃₃) = atan2(2(yz+wx), 1-2(x²+y²))
- * - Y (Pitch): asin(-R₃₁) = asin(2(wy-xz)), with gimbal lock handling
- * - Z (Yaw):   atan2(R₂₁, R₁₁) = atan2(2(xy+wz), 1-2(y²+z²))
+ * Axis extraction (matching backend AngleCalculationService):
+ * - X: atan2(matrix[5], matrix[4]) = atan2(2(yz - wx), 1 - 2(x² + z²))
+ * - Y: atan2(matrix[2], matrix[0]) = atan2(2(xz + wy), 1 - 2(y² + z²))
+ * - Z: atan2(matrix[1], matrix[3]) = atan2(2(xy - wz), 2(xy + wz))
  *
  * @param q - Quaternion to convert
  * @param axis - Target axis ('x', 'y', or 'z'), defaults to 'y'
@@ -139,37 +139,44 @@ export function slerp(q1: Quaternion, q2: Quaternion, t: number): Quaternion {
  */
 export function quaternionToAngle(q: Quaternion, axis: EulerAxis = 'y'): number {
   const { w, x, y, z } = q;
+
+  // Compute rotation matrix elements (same as QuaternionService.quaternionToMatrix)
+  const x2 = x + x, y2 = y + y, z2 = z + z;
+  const xx = x * x2, xy = x * y2, xz = x * z2;
+  const yy = y * y2, yz = y * z2, zz = z * z2;
+  const wx = w * x2, wy = w * y2, wz = w * z2;
+
+  // matrix[0] = 1 - (yy + zz);  matrix[1] = xy - wz;       matrix[2] = xz + wy;
+  // matrix[3] = xy + wz;        matrix[4] = 1 - (xx + zz); matrix[5] = yz - wx;
+  // matrix[6] = xz - wy;        matrix[7] = yz + wx;       matrix[8] = 1 - (xx + yy);
+
   let angle: number;
 
+  // Use same extraction formula as backend AngleCalculationService
   switch (axis) {
     case 'x': {
-      // Roll: atan2(2(yz + wx), 1 - 2(x² + y²))
-      const sinr_cosp = 2 * (y * z + w * x);
-      const cosr_cosp = 1 - 2 * (x * x + y * y);
-      angle = Math.atan2(sinr_cosp, cosr_cosp);
+      // atan2(matrix[5], matrix[4])
+      const m5 = yz - wx;
+      const m4 = 1 - (xx + zz);
+      angle = Math.atan2(m5, m4);
       break;
     }
     case 'y': {
-      // Pitch: asin(2(wy - xz)) with gimbal lock handling
-      const sinp = 2 * (w * y - z * x);
-      if (Math.abs(sinp) >= 1) {
-        // Gimbal lock: clamp to ±90°
-        angle = (Math.PI / 2) * Math.sign(sinp);
-      } else {
-        angle = Math.asin(sinp);
-      }
+      // atan2(matrix[2], matrix[0])
+      const m2 = xz + wy;
+      const m0 = 1 - (yy + zz);
+      angle = Math.atan2(m2, m0);
       break;
     }
     case 'z': {
-      // Yaw: atan2(2(xy + wz), 1 - 2(y² + z²))
-      const siny_cosp = 2 * (x * y + w * z);
-      const cosy_cosp = 1 - 2 * (y * y + z * z);
-      angle = Math.atan2(siny_cosp, cosy_cosp);
+      // atan2(matrix[1], matrix[3])
+      const m1 = xy - wz;
+      const m3 = xy + wz;
+      angle = Math.atan2(m1, m3);
       break;
     }
   }
 
-  // Convert radians to degrees
   return angle * (180 / Math.PI);
 }
 

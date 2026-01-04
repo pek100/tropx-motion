@@ -11,12 +11,10 @@ import { AngleCalculationService } from './jointProcessing/AngleCalculationServi
 export interface SynchronizedJointPair {
     timestamp: number;
     leftKnee: {
-        angle: number;
         relativeQuat: Quaternion;
         deviceIds: string[];
     };
     rightKnee: {
-        angle: number;
         relativeQuat: Quaternion;
         deviceIds: string[];
     };
@@ -280,72 +278,52 @@ export class MotionProcessingCoordinator {
 
     /**
      * Process aligned samples from BatchSynchronizer.
-     * Calculates joint angles and routes to UIProcessor and RecordingBuffer.
-     * Requires BOTH thigh and shin for angle calculation.
+     * Computes relative quaternions and routes to UIProcessor and RecordingBuffer.
+     * Requires BOTH thigh and shin for quaternion calculation.
      */
     private processAlignedSamples(aligned: AlignedSampleSet): void {
         // Check if we have complete data for at least one joint (both thigh AND shin)
         const leftComplete = aligned.leftKnee?.thigh && aligned.leftKnee?.shin;
         const rightComplete = aligned.rightKnee?.thigh && aligned.rightKnee?.shin;
 
-        // Early return if no complete joint data
         if (!leftComplete && !rightComplete) return;
 
-        let leftAngle = 0;
-        let leftQuat: Quaternion = { w: 1, x: 0, y: 0, z: 0 };
-        let rightAngle = 0;
-        let rightQuat: Quaternion = { w: 1, x: 0, y: 0, z: 0 };
+        const IDENTITY: Quaternion = { w: 1, x: 0, y: 0, z: 0 };
+        let leftQuat: Quaternion = IDENTITY;
+        let rightQuat: Quaternion = IDENTITY;
 
-        // Calculate left knee angle if both sensors available
+        // Compute left knee relative quaternion
         if (leftComplete && this.leftKneeAngleCalc) {
-            const result = this.leftKneeAngleCalc.calculateFromQuaternions(
+            const quat = this.leftKneeAngleCalc.calculateFromQuaternions(
                 aligned.leftKnee!.thigh!.quaternion,
-                aligned.leftKnee!.shin!.quaternion,
-                'y'
+                aligned.leftKnee!.shin!.quaternion
             );
-            if (result) {
-                leftAngle = result.angle;
-                leftQuat = result.relativeQuat;
-            }
+            if (quat) leftQuat = quat;
         }
 
-        // Calculate right knee angle if both sensors available
+        // Compute right knee relative quaternion
         if (rightComplete && this.rightKneeAngleCalc) {
-            const result = this.rightKneeAngleCalc.calculateFromQuaternions(
+            const quat = this.rightKneeAngleCalc.calculateFromQuaternions(
                 aligned.rightKnee!.thigh!.quaternion,
-                aligned.rightKnee!.shin!.quaternion,
-                'y'
+                aligned.rightKnee!.shin!.quaternion
             );
-            if (result) {
-                rightAngle = result.angle;
-                rightQuat = result.relativeQuat;
-            }
+            if (quat) rightQuat = quat;
         }
 
-        // Create synchronized pair for downstream consumers
         const pair: SynchronizedJointPair = {
             timestamp: aligned.timestamp,
             leftKnee: {
-                angle: leftAngle,
                 relativeQuat: leftQuat,
                 deviceIds: leftComplete ? ['0x11', '0x12'] : []
             },
             rightKnee: {
-                angle: rightAngle,
                 relativeQuat: rightQuat,
                 deviceIds: rightComplete ? ['0x21', '0x22'] : []
             }
         };
 
-        // Route to UIProcessor for display
         this.uiProcessor.broadcastCompletePair(pair);
-
-        // Route to RecordingBuffer for recording
-        RecordingBuffer.pushSynchronizedPair(
-            pair.timestamp,
-            pair.leftKnee.relativeQuat,
-            pair.rightKnee.relativeQuat
-        );
+        RecordingBuffer.pushSynchronizedPair(pair.timestamp, leftQuat, rightQuat);
     }
 
     setPerformanceOptions(opts: { bypassInterpolation?: boolean; asyncNotify?: boolean }): void {

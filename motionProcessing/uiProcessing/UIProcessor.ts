@@ -1,5 +1,6 @@
 import { JointAngleData, UIJointData, APIRecording } from '../shared/types';
 import { JointName } from "../shared/config";
+import { QuaternionService } from '../shared/QuaternionService';
 import { SynchronizedJointPair } from '../MotionProcessingCoordinator';
 
 interface UIState {
@@ -83,7 +84,14 @@ export class UIProcessor {
         }
 
         try {
-            const data = new Float32Array([pair.leftKnee.angle, pair.rightKnee.angle]);
+            // Send only quaternions - frontend decodes to any axis
+            // Format: [lqW, lqX, lqY, lqZ, rqW, rqX, rqY, rqZ]
+            const lq = pair.leftKnee.relativeQuat;
+            const rq = pair.rightKnee.relativeQuat;
+            const data = new Float32Array([
+                lq.w, lq.x, lq.y, lq.z,
+                rq.w, rq.x, rq.y, rq.z
+            ]);
 
             const message = {
                 type: 0x30, // MESSAGE_TYPES.MOTION_DATA
@@ -108,13 +116,15 @@ export class UIProcessor {
         const rightData = this.jointDataMap.get(JointName.RIGHT_KNEE);
 
         if (leftData) {
-            leftData.current = this.roundToOneDecimal(pair.leftKnee.angle);
+            const angle = QuaternionService.toEulerAngle(pair.leftKnee.relativeQuat, 'y');
+            leftData.current = this.roundToOneDecimal(angle);
             leftData.lastUpdate = pair.timestamp;
             leftData.devices = pair.leftKnee.deviceIds;
         }
 
         if (rightData) {
-            rightData.current = this.roundToOneDecimal(pair.rightKnee.angle);
+            const angle = QuaternionService.toEulerAngle(pair.rightKnee.relativeQuat, 'y');
+            rightData.current = this.roundToOneDecimal(angle);
             rightData.lastUpdate = pair.timestamp;
             rightData.devices = pair.rightKnee.deviceIds;
         }

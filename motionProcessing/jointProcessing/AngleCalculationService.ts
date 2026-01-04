@@ -3,32 +3,22 @@ import { SYSTEM } from '../shared/constants';
 import { QuaternionService } from '../shared/QuaternionService';
 import { DeviceID, isValidDeviceID, getSortOrder } from '../../ble-management';
 
-/** Result containing both angle and relative quaternion for recording. */
-export interface AngleCalculationResult {
-  angle: number;
-  relativeQuat: Quaternion;
-}
-
 /**
- * Service for calculating joint angles from quaternion data of paired sensors.
- * Uses ble-management DeviceID operations for consistent sensor ordering.
+ * Service for computing relative quaternions from paired sensor data.
+ * Angle extraction is done in frontend via QuaternionCodec.quaternionToAngle().
  */
 export class AngleCalculationService {
-  private jointPrefix: string;
   private readonly workingQuat1 = new Float32Array(4);
   private readonly workingQuat2 = new Float32Array(4);
   private readonly workingQuatRel = new Float32Array(4);
-  private readonly workingMatrix = new Float32Array(9);
 
-  constructor(private jointConfig: JointConfig, _motionConfig: MotionConfig) {
-    this.jointPrefix = jointConfig.name;
-  }
+  constructor(private jointConfig: JointConfig, _motionConfig: MotionConfig) {}
 
   /**
-   * Calculates joint angle and relative quaternion from device quaternion data.
-   * Returns both for recording purposes - angle for display, quaternion for SLERP interpolation.
+   * Computes relative quaternion from device quaternion data.
+   * @returns Relative quaternion (proximal⁻¹ × distal) or null if invalid
    */
-  calculateJointAngle(devices: DeviceData[], axis: 'x' | 'y' | 'z' = 'y'): AngleCalculationResult | null {
+  calculateRelativeQuaternion(devices: DeviceData[]): Quaternion | null {
     if (devices.length < SYSTEM.MINIMUM_DEVICES_FOR_JOINT) return null;
 
     const sorted = this.sortBySensorDefinition(devices);
@@ -37,31 +27,19 @@ export class AngleCalculationService {
     const [proximal, distal] = sorted;
 
     try {
-      const { angle, relativeQuat } = this.calculateAngleWithQuat(proximal.quaternion, distal.quaternion, axis);
-      return {
-        angle: this.applyCalibration(angle),
-        relativeQuat
-      };
+      return this.computeRelativeQuat(proximal.quaternion, distal.quaternion);
     } catch {
       return null;
     }
   }
 
   /**
-   * Calculate joint angle directly from thigh (proximal) and shin (distal) quaternions.
+   * Computes relative quaternion directly from thigh and shin quaternions.
    * Used by BatchSynchronizer path where sensors are already aligned.
-   *
-   * @param thighQuat - Proximal (thigh) sensor quaternion
-   * @param shinQuat - Distal (shin) sensor quaternion
-   * @param axis - Rotation axis to extract angle from
    */
-  calculateFromQuaternions(thighQuat: Quaternion, shinQuat: Quaternion, axis: 'x' | 'y' | 'z' = 'y'): AngleCalculationResult | null {
+  calculateFromQuaternions(thighQuat: Quaternion, shinQuat: Quaternion): Quaternion | null {
     try {
-      const { angle, relativeQuat } = this.calculateAngleWithQuat(thighQuat, shinQuat, axis);
-      return {
-        angle: this.applyCalibration(angle),
-        relativeQuat
-      };
+      return this.computeRelativeQuat(thighQuat, shinQuat);
     } catch {
       return null;
     }
@@ -124,36 +102,15 @@ export class AngleCalculationService {
   }
 
   /**
-   * Applies joint-specific calibration offset and multiplier.
+   * Computes relative quaternion: q1⁻¹ × q2
+   * Returns copy to avoid race conditions with shared buffer.
    */
-  private applyCalibration(angle: number): number {
-    if (!this.jointConfig.calibration) return angle;
-    return (angle + this.jointConfig.calibration.offset) * this.jointConfig.calibration.multiplier;
-  }
-
-  /**
-   * Calculates relative angle and quaternion between two quaternions.
-   * Returns copy of relative quaternion to avoid race conditions with shared buffer.
-   */
-  private calculateAngleWithQuat(q1: Quaternion, q2: Quaternion, axis: 'x' | 'y' | 'z'): { angle: number; relativeQuat: Quaternion } {
+  private computeRelativeQuat(q1: Quaternion, q2: Quaternion): Quaternion {
     QuaternionService.writeToBuffer(q1, this.workingQuat1);
     QuaternionService.writeToBuffer(q2, this.workingQuat2);
     QuaternionService.getInverseQuaternion(this.workingQuat1, this.workingQuat1);
     QuaternionService.multiplyQuaternions(this.workingQuat1, this.workingQuat2, this.workingQuatRel);
-    QuaternionService.quaternionToMatrix(this.workingQuatRel, this.workingMatrix);
 
-    const axisExtractionMap = {
-      x: [5, 4],
-      y: [2, 0],
-      z: [1, 3],
-    };
-
-    const [a, b] = axisExtractionMap[axis];
-    const angle = Math.atan2(this.workingMatrix[a], this.workingMatrix[b]) * (180 / Math.PI);
-
-    // Return copy to avoid race condition with shared workingQuatRel buffer
-    const relativeQuat = QuaternionService.readFromBuffer(this.workingQuatRel);
-
-    return { angle, relativeQuat };
+    return QuaternionService.readFromBuffer(this.workingQuatRel);
   }
 }

@@ -84,7 +84,8 @@
       "WebFetch(domain:docs.cloud.google.com)",
       "WebFetch(domain:ai.google.dev)",
       "WebFetch(domain:discuss.ai.google.dev)",
-      "WebFetch(domain:recharts.github.io)"
+      "WebFetch(domain:recharts.github.io)",
+      "WebFetch(domain:recharts.org)"
     ],
     "deny": [],
     "ask": [],

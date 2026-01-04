@@ -1,5 +1,6 @@
 import { JointConfig, DeviceData, JointAngleData, MotionConfig, Quaternion } from '../shared/types';
-import { AngleCalculationService, AngleCalculationResult } from './AngleCalculationService';
+import { AngleCalculationService } from './AngleCalculationService';
+import { QuaternionService } from '../shared/QuaternionService';
 import { roundToPrecision } from '../shared/utils';
 import { SYSTEM } from "../shared/constants";
 
@@ -112,24 +113,26 @@ export abstract class JointProcessor {
         }
 
         const deviceArray = Array.from(devices.values());
-        const result = this.calculateJointAngle(deviceArray);
+        const relativeQuat = this.calculateRelativeQuat(deviceArray);
 
-        if (!result || !this.isValidAngle(result.angle)) {
-            // Track calculation failures per joint
+        if (!relativeQuat) {
             const count = (JointProcessor.debugCalcFailCount.get(this.jointConfig.name) || 0) + 1;
             JointProcessor.debugCalcFailCount.set(this.jointConfig.name, count);
             if (count <= 5 || count % 100 === 0) {
-                console.warn(`⚠️ [JointProcessor] ${this.jointConfig.name}: angle calc failed (count=${count}), result=${JSON.stringify(result)}`);
+                console.warn(`⚠️ [JointProcessor] ${this.jointConfig.name}: quat calc failed (count=${count})`);
             }
             return null;
         }
 
-        // Use the triggering device's timestamp (spread at source) instead of max()
-        // This ensures each sample gets the correct timestamp from the device that just updated,
-        // rather than a stale timestamp from another device that hasn't sent data yet
+        // Compute angle from quaternion
+        const angle = QuaternionService.toEulerAngle(relativeQuat, 'y');
+        if (!this.isValidAngle(angle)) {
+            return null;
+        }
+
         const timestamp = triggeringTimestamp ?? Math.max(...deviceArray.map(d => d.timestamp));
         const deviceIds = Array.from(devices.keys());
-        return this.createAndProcessAngleData(result.angle, result.relativeQuat, timestamp, deviceIds);
+        return this.createAndProcessAngleData(angle, relativeQuat, timestamp, deviceIds);
     }
 
     subscribe(callback: (angleData: JointAngleDataWithQuat) => void): () => void {
@@ -168,7 +171,7 @@ export abstract class JointProcessor {
         console.log(`⏱️ [JointProcessor] Sorting buffer reset`);
     }
 
-    protected abstract calculateJointAngle(devices: DeviceData[]): AngleCalculationResult | null;
+    protected abstract calculateRelativeQuat(devices: DeviceData[]): Quaternion | null;
 
     private validateJointConfig(config: JointConfig): void {
         if (!config.name || !config.topSensorPattern || !config.bottomSensorPattern) {
@@ -219,10 +222,10 @@ export abstract class JointProcessor {
 }
 
 /**
- * Specialized joint processor for knee joint angle calculations.
+ * Specialized joint processor for knee joints.
  */
 export class KneeJointProcessor extends JointProcessor {
-    protected calculateJointAngle(devices: DeviceData[]): AngleCalculationResult | null {
-        return this.angleCalculator.calculateJointAngle(devices, 'y');
+    protected calculateRelativeQuat(devices: DeviceData[]): Quaternion | null {
+        return this.angleCalculator.calculateRelativeQuaternion(devices);
     }
 }

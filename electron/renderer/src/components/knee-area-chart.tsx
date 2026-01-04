@@ -4,7 +4,9 @@ import React from "react"
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { ComposedChart, Area, XAxis, YAxis, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip } from "recharts"
 import { ChartContainer } from "@/components/ui/chart"
-import { Check } from "lucide-react"
+import { ChartTooltip } from "./ChartTooltip"
+import { GlossyChartControls, type Axis } from "./GlossyChartControls"
+import { quaternionToAngle, type EulerAxis } from "../../../../shared/QuaternionCodec"
 
 // Debug trace logging (disabled in production)
 const DEBUG_TRACE = false;
@@ -21,6 +23,13 @@ interface ChartDataPoint {
   time: number
   leftAngle: number
   rightAngle: number
+  // Multi-axis data
+  left_x?: number
+  left_y?: number
+  left_z?: number
+  right_x?: number
+  right_y?: number
+  right_z?: number
   _updateId: number
 }
 
@@ -93,6 +102,13 @@ const Colors = {
   REFERENCE_LINE: "#9CA3AF",
 }
 
+// Multi-axis mode colors (matching SessionChart)
+const AXIS_COLORS = {
+  x: "#d946ef", // fuchsia-500
+  y: "#06b6d4", // cyan-500
+  z: "#8b5cf6", // violet-500
+} as const
+
 const DataKeys = {
   TIME: "time",
   LEFT_ANGLE: "leftAngle",
@@ -107,9 +123,6 @@ const Labels = {
 }
 
 const CssClasses = {
-  BUTTON_BASE:
-    "px-4 py-2 rounded-full text-sm font-medium transition-all backdrop-blur-md flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95 border shadow-lg",
-  FLEX_CONTROLS: "flex gap-2 mb-3 justify-center",
   CHART_CONTAINER: "w-full h-[350px] flex flex-col",
 }
 
@@ -121,6 +134,13 @@ const TimeFormat = {
   } as const,
 }
 
+interface Quaternion {
+  w: number
+  x: number
+  y: number
+  z: number
+}
+
 interface KneeData {
   current: number
   max?: number
@@ -128,6 +148,7 @@ interface KneeData {
   rom?: number
   sensorTimestamp?: number
   lastUpdate?: number
+  quaternion?: Quaternion
 }
 
 interface ImportedDataPoint {
@@ -147,35 +168,6 @@ interface KneeAreaChartProps {
   importedData?: ImportedDataPoint[] // Static imported data to display
 }
 
-const KNEE_CONFIGS = [
-  {
-    key: "left",
-    label: Labels.LEFT_KNEE,
-    dataKey: DataKeys.LEFT_ANGLE,
-    primaryColor: Colors.LEFT_KNEE_PRIMARY,
-    secondaryColor: "#93c5fd",
-    buttonColors: {
-      active: "bg-blue-500/10 text-blue-600 border-blue-500/50 hover:bg-blue-500/20",
-      inactive: "bg-white/5 text-gray-600 border-white/20 hover:bg-white/10",
-    },
-  },
-  {
-    key: "right",
-    label: Labels.RIGHT_KNEE,
-    dataKey: DataKeys.RIGHT_ANGLE,
-    primaryColor: Colors.RIGHT_KNEE_PRIMARY,
-    secondaryColor: "#fca5a5",
-    buttonColors: {
-      active: "bg-red-500/10 text-red-600 border-red-500/50 hover:bg-red-500/20",
-      inactive: "bg-white/5 text-gray-600 border-white/20 hover:bg-white/10",
-    },
-  },
-]
-
-const OPACITY = {
-  AREA_FILL_PRIMARY: 0.2,
-  AREA_FILL_SECONDARY: 0.1,
-}
 
 const MAX_DATA_POINTS = 150
 
@@ -193,6 +185,41 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
     right: true,
   })
 
+  // Axis selection (matching SessionChart)
+  const [selectedAxis, setSelectedAxis] = useState<Axis>("y");
+  const [multiAxisMode, setMultiAxisMode] = useState(false);
+  const [selectedAxes, setSelectedAxes] = useState<Set<Axis>>(new Set(["y"]));
+
+  // Toggle axis in multi-mode
+  const toggleAxis = useCallback((axis: Axis) => {
+    if (multiAxisMode) {
+      setSelectedAxes((prev) => {
+        const next = new Set<Axis>(prev);
+        if (next.has(axis)) {
+          if (next.size > 1) next.delete(axis);
+        } else {
+          next.add(axis);
+        }
+        return next;
+      });
+    } else {
+      setSelectedAxis(axis);
+    }
+  }, [multiAxisMode]);
+
+  // Toggle multi-axis mode
+  const toggleMultiAxisMode = useCallback(() => {
+    setMultiAxisMode((prev) => {
+      if (!prev) {
+        setSelectedAxes(new Set([selectedAxis]));
+      } else {
+        const firstAxis = Array.from(selectedAxes)[0] || "y";
+        setSelectedAxis(firstAxis);
+      }
+      return !prev;
+    });
+  }, [selectedAxis, selectedAxes]);
+
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [chartKey, setChartKey] = useState(0) // Force remount when chart breaks
 
@@ -209,12 +236,32 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   // This prevents 100 useEffect cleanups per second at 100Hz data rate
   const leftKneeRef = useRef(leftKnee)
   const rightKneeRef = useRef(rightKnee)
+  const selectedAxisRef = useRef<Axis>(selectedAxis)
+  const multiAxisModeRef = useRef(multiAxisMode)
+  const selectedAxesRef = useRef(selectedAxes)
 
-  // Keep refs in sync with props
+  // Keep refs in sync with props/state
   useEffect(() => {
     leftKneeRef.current = leftKnee
     rightKneeRef.current = rightKnee
   }, [leftKnee, rightKnee])
+
+  useEffect(() => {
+    selectedAxisRef.current = selectedAxis
+    // Clear buffer when axis changes (single mode) to avoid mixing different axis data
+    if (!multiAxisModeRef.current) {
+      dataBufferRef.current.clear()
+      setChartData([])
+    }
+  }, [selectedAxis])
+
+  useEffect(() => {
+    multiAxisModeRef.current = multiAxisMode
+    selectedAxesRef.current = selectedAxes
+    // Clear buffer when switching modes
+    dataBufferRef.current.clear()
+    setChartData([])
+  }, [multiAxisMode, selectedAxes])
 
   const toggleKneeVisibility = (kneeKey: string) => {
     setKneeVisibility((prev) => ({
@@ -267,11 +314,32 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   // Use imported data if available, otherwise use streaming data
   const displayData = importedChartData || chartData;
 
+  // Helper to compute angle from quaternion or use pre-computed angle
+  const getAngleFromKneeData = useCallback((data: KneeData | undefined, axis: Axis): number => {
+    if (!data) return ANGLE_CONSTRAINTS.STRAIGHT_LEG
+
+    // If axis is Y (default), use pre-computed angle
+    if (axis === "y") {
+      return data.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG
+    }
+
+    // For X or Z axis, decode from quaternion if available
+    if (data.quaternion) {
+      return quaternionToAngle(data.quaternion, axis as EulerAxis)
+    }
+
+    // Fallback to current angle if no quaternion
+    return data.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG
+  }, [])
+
   // Use refs in callback to avoid recreating on every prop change
   // This is critical for high-frequency updates (100Hz)
   const updateData = useCallback(() => {
     const left = leftKneeRef.current
     const right = rightKneeRef.current
+    const axis = selectedAxisRef.current
+    const isMultiAxis = multiAxisModeRef.current
+    const axes = selectedAxesRef.current
 
     if (!left && !right) {
       trace('CHART', 'updateData skipped - no knee data');
@@ -282,11 +350,25 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
     const timestamp = left?.sensorTimestamp || right?.sensorTimestamp || Date.now()
     updateCounterRef.current++
 
+    // Compute angles based on selected axis (decodes from quaternion for X/Z)
+    const leftAngle = getAngleFromKneeData(left, axis)
+    const rightAngle = getAngleFromKneeData(right, axis)
+
     const newDataPoint: ChartDataPoint = {
       time: timestamp,
-      leftAngle: roundToOneDecimal(clampValue(left?.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG)),
-      rightAngle: roundToOneDecimal(clampValue(right?.current || ANGLE_CONSTRAINTS.STRAIGHT_LEG)),
+      leftAngle: roundToOneDecimal(clampValue(leftAngle)),
+      rightAngle: roundToOneDecimal(clampValue(rightAngle)),
       _updateId: updateCounterRef.current,
+    }
+
+    // In multi-axis mode, compute all selected axes
+    if (isMultiAxis) {
+      for (const ax of axes) {
+        const leftVal = getAngleFromKneeData(left, ax)
+        const rightVal = getAngleFromKneeData(right, ax)
+        newDataPoint[`left_${ax}` as keyof ChartDataPoint] = roundToOneDecimal(clampValue(leftVal)) as any
+        newDataPoint[`right_${ax}` as keyof ChartDataPoint] = roundToOneDecimal(clampValue(rightVal)) as any
+      }
     }
 
     trace('CHART', `updateData: left=${newDataPoint.leftAngle}, right=${newDataPoint.rightAngle}, ts=${timestamp}, updateId=${updateCounterRef.current}`);
@@ -368,53 +450,6 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
 
   const formatYAxis = (value: number) => `${value}${Labels.ANGLE_UNIT}`
 
-  const renderToggleButton = (config: (typeof KNEE_CONFIGS)[0]) => {
-    const isVisible = kneeVisibility[config.key as keyof typeof kneeVisibility]
-    const currentAngle = config.key === "left" ? leftKnee?.current : rightKnee?.current
-    const angleDisplay = currentAngle !== undefined ? `${Math.round(currentAngle)}°` : "--°"
-
-    return (
-      <button
-        key={config.key}
-        onClick={() => toggleKneeVisibility(config.key)}
-        className={`${CssClasses.BUTTON_BASE} ${isVisible ? config.buttonColors.active : config.buttonColors.inactive}`}
-      >
-        {isVisible && <Check className="w-4 h-4" />}
-        {config.label}
-        <span className="font-mono font-bold ml-1">{angleDisplay}</span>
-      </button>
-    )
-  }
-
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (!active || !payload || payload.length === 0) {
-      return null
-    }
-
-    const data = payload[0].payload
-    const timestamp = new Date(data.time).toLocaleTimeString([], TimeFormat.OPTIONS)
-
-    return (
-      <div className="bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg p-3">
-        <p className="text-sm font-medium mb-2 text-foreground">{timestamp}</p>
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: Colors.LEFT_KNEE_PRIMARY }} />
-            <span className="text-sm text-foreground">
-              {Labels.LEFT_KNEE}: {data.leftAngle}°
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: Colors.RIGHT_KNEE_PRIMARY }} />
-            <span className="text-sm text-foreground">
-              {Labels.RIGHT_KNEE}: {data.rightAngle}°
-            </span>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   const COMMON_AREA_PROPS = {
     type: "monotone" as const,
     strokeWidth: CHART_LAYOUT.STROKE_WIDTH,
@@ -422,28 +457,23 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
     connectNulls: true,
   }
 
-  const renderKneeAreas = (config: (typeof KNEE_CONFIGS)[0]) => {
-    if (!kneeVisibility[config.key as keyof typeof kneeVisibility]) return null
-
-    const gradientId = config.key === "left" ? "url(#colorLeft)" : "url(#colorRight)"
-
-    return (
-      <React.Fragment key={config.key}>
-        <Area
-          {...COMMON_AREA_PROPS}
-          dataKey={config.dataKey}
-          stroke={config.primaryColor}
-          fillOpacity={1}
-          fill={gradientId}
-          name={config.label}
-        />
-      </React.Fragment>
-    )
-  }
-
   return (
     <div className={CssClasses.CHART_CONTAINER}>
-      <div className={CssClasses.FLEX_CONTROLS}>{KNEE_CONFIGS.map(renderToggleButton)}</div>
+      {/* Glossy controls bar */}
+      <GlossyChartControls
+        leftValue={getAngleFromKneeData(leftKnee, selectedAxis)}
+        rightValue={getAngleFromKneeData(rightKnee, selectedAxis)}
+        leftVisible={kneeVisibility.left}
+        rightVisible={kneeVisibility.right}
+        onLeftToggle={() => toggleKneeVisibility("left")}
+        onRightToggle={() => toggleKneeVisibility("right")}
+        selectedAxis={selectedAxis}
+        multiAxisMode={multiAxisMode}
+        selectedAxes={selectedAxes}
+        onAxisToggle={toggleAxis}
+        onMultiAxisToggle={toggleMultiAxisMode}
+        className="mb-3"
+      />
 
       <div className="flex-1 min-h-0">
         <ChartContainer
@@ -474,6 +504,31 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
                   <stop offset="5%" stopColor={Colors.RIGHT_KNEE_PRIMARY} stopOpacity={0.15} />
                   <stop offset="95%" stopColor={Colors.RIGHT_KNEE_PRIMARY} stopOpacity={0} />
                 </linearGradient>
+                {/* Multi-axis gradients */}
+                <linearGradient id="leftGradient_x" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.02} />
+                </linearGradient>
+                <linearGradient id="rightGradient_x" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.02} />
+                </linearGradient>
+                <linearGradient id="leftGradient_y" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.02} />
+                </linearGradient>
+                <linearGradient id="rightGradient_y" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.02} />
+                </linearGradient>
+                <linearGradient id="leftGradient_z" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.02} />
+                </linearGradient>
+                <linearGradient id="rightGradient_z" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.02} />
+                </linearGradient>
               </defs>
 
               <CartesianGrid strokeDasharray={CHART_LAYOUT.GRID_DASH_ARRAY} stroke={Colors.GRID_COLOR} />
@@ -499,7 +554,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
                 tick={{ fill: "var(--tropx-shadow)" }}
               />
 
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<ChartTooltip timeKey="time" formatTime />} />
 
               <ReferenceLine
                 y={ANGLE_CONSTRAINTS.STRAIGHT_LEG}
@@ -508,7 +563,83 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
                 label={{ value: Labels.STRAIGHT_REFERENCE, position: "top" }}
               />
 
-              {KNEE_CONFIGS.map(renderKneeAreas)}
+              {/* Single-axis mode: standard left/right areas */}
+              {!multiAxisMode && kneeVisibility.left && (
+                <Area
+                  {...COMMON_AREA_PROPS}
+                  dataKey="leftAngle"
+                  stroke={Colors.LEFT_KNEE_PRIMARY}
+                  fill="url(#colorLeft)"
+                  name={Labels.LEFT_KNEE}
+                />
+              )}
+              {!multiAxisMode && kneeVisibility.right && (
+                <Area
+                  {...COMMON_AREA_PROPS}
+                  dataKey="rightAngle"
+                  stroke={Colors.RIGHT_KNEE_PRIMARY}
+                  fill="url(#colorRight)"
+                  name={Labels.RIGHT_KNEE}
+                />
+              )}
+
+              {/* Multi-axis mode: alternating pattern (8px knee color, 4px axis color) */}
+              {/* Layer 1: knee color segments */}
+              {multiAxisMode && kneeVisibility.left && Array.from(selectedAxes).map((axis) => (
+                <Area
+                  key={`left_${axis}_knee`}
+                  {...COMMON_AREA_PROPS}
+                  dataKey={`left_${axis}`}
+                  stroke={Colors.LEFT_KNEE_PRIMARY}
+                  strokeDasharray="8 4"
+                  fill={`url(#leftGradient_${axis})`}
+                  name={`Left (${axis.toUpperCase()})`}
+                  activeDot={{ r: 4, fill: AXIS_COLORS[axis], stroke: Colors.LEFT_KNEE_PRIMARY, strokeWidth: 2 }}
+                  dot={false}
+                />
+              ))}
+              {multiAxisMode && kneeVisibility.right && Array.from(selectedAxes).map((axis) => (
+                <Area
+                  key={`right_${axis}_knee`}
+                  {...COMMON_AREA_PROPS}
+                  dataKey={`right_${axis}`}
+                  stroke={Colors.RIGHT_KNEE_PRIMARY}
+                  strokeDasharray="8 4"
+                  fill={`url(#rightGradient_${axis})`}
+                  name={`Right (${axis.toUpperCase()})`}
+                  activeDot={{ r: 4, fill: AXIS_COLORS[axis], stroke: Colors.RIGHT_KNEE_PRIMARY, strokeWidth: 2 }}
+                  dot={false}
+                />
+              ))}
+              {/* Layer 2: axis color segments (offset to fill gaps) - excluded from tooltip/legend */}
+              {multiAxisMode && kneeVisibility.left && Array.from(selectedAxes).map((axis) => (
+                <Area
+                  key={`left_${axis}_axis`}
+                  {...COMMON_AREA_PROPS}
+                  dataKey={`left_${axis}`}
+                  stroke={AXIS_COLORS[axis]}
+                  strokeDasharray="4 8"
+                  strokeDashoffset={-8}
+                  fill="none"
+                  dot={false}
+                  activeDot={false}
+                  legendType="none"
+                />
+              ))}
+              {multiAxisMode && kneeVisibility.right && Array.from(selectedAxes).map((axis) => (
+                <Area
+                  key={`right_${axis}_axis`}
+                  {...COMMON_AREA_PROPS}
+                  dataKey={`right_${axis}`}
+                  stroke={AXIS_COLORS[axis]}
+                  strokeDasharray="4 8"
+                  strokeDashoffset={-8}
+                  fill="none"
+                  dot={false}
+                  activeDot={false}
+                  legendType="none"
+                />
+              ))}
             </ComposedChart>
           </ResponsiveContainer>
         </ChartContainer>

@@ -153,58 +153,7 @@ const PHASE_ANIMATION_DURATION_MS = 400;
 const ANIMATION_FRAME_INTERVAL_MS = 32; // ~30fps for smoother perf
 const EASE_OUT_CUBIC = (t: number) => 1 - Math.pow(1 - t, 3);
 
-// ─────────────────────────────────────────────────────────────────
-// Custom Tooltip
-// ─────────────────────────────────────────────────────────────────
-
-function CustomTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: Array<{ value: number; dataKey: string; color: string }>;
-}) {
-  if (!active || !payload?.length) return null;
-
-  const timeLabel = (payload[0] as any)?.payload?.timeLabel;
-
-  // Parse dataKey to get knee side and axis (e.g., "left_x" -> { knee: "Left", axis: "X" })
-  const parseDataKey = (dataKey: string) => {
-    if (dataKey === "left") return { knee: "Left", axis: null };
-    if (dataKey === "right") return { knee: "Right", axis: null };
-    const match = dataKey.match(/^(left|right)_([xyz])$/);
-    if (match) {
-      return {
-        knee: match[1] === "left" ? "Left" : "Right",
-        axis: match[2].toUpperCase(),
-      };
-    }
-    return { knee: dataKey, axis: null };
-  };
-
-  return (
-    <div className="px-3 py-2 rounded-lg shadow-lg border border-[var(--tropx-border)] bg-[var(--tropx-card)] text-xs">
-      <p className="text-[var(--tropx-text-sub)] mb-1">{timeLabel}</p>
-      <div className="space-y-1">
-        {payload.map((item) => {
-          const { knee, axis } = parseDataKey(item.dataKey);
-          const label = axis ? `${knee} (${axis})` : knee;
-          return (
-            <div key={item.dataKey} className="flex items-center gap-2">
-              <span
-                className="size-2 rounded-full"
-                style={{ backgroundColor: item.color }}
-              />
-              <span className="text-[var(--tropx-text-main)]">
-                {label}: <strong>{item.value.toFixed(1)}°</strong>
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+import { ChartTooltip } from "../ChartTooltip";
 
 // ─────────────────────────────────────────────────────────────────
 // Component
@@ -366,55 +315,67 @@ export function SessionChart({
   // Stable string key for dependency arrays
   const axesKey = axesToCompute.join(",");
 
-  // Lazy-load axis data: compute primary axis immediately, others on demand
+  // Stable session identifier to detect session changes
+  const sessionKey = useMemo(() => {
+    if (!packedData) return null;
+    return `${packedData.startTime}-${packedData.endTime}-${packedData.sampleCount}`;
+  }, [packedData]);
+
+  // ─────────────────────────────────────────────────────────────────
+  // Axis Data Cache (ref-based for synchronous updates, no React state timing issues)
+  // ─────────────────────────────────────────────────────────────────
   type AxisSamples = { left: number; right: number }[];
-  const [lazyAxisData, setLazyAxisData] = useState<Record<"x" | "y" | "z", AxisSamples>>({ x: [], y: [], z: [] });
-  const unpackedSamplesRef = useRef<ReturnType<typeof unpack> | null>(null);
+  const axisDataCacheRef = useRef<{
+    sessionKey: string | null;
+    unpackedSamples: ReturnType<typeof unpack> | null;
+    computed: Record<"x" | "y" | "z", AxisSamples>;
+  }>({
+    sessionKey: null,
+    unpackedSamples: null,
+    computed: { x: [], y: [], z: [] },
+  });
 
-  // Compute primary axis immediately when packedData changes
-  const primaryAxisData = useMemo(() => {
-    if (!packedData || typeof packedData !== 'object') return [];
-    if (typeof packedData.sampleCount !== 'number' || packedData.sampleCount === 0) return [];
-    if (typeof packedData.startTime !== 'number' || typeof packedData.endTime !== 'number') return [];
+  // Compute axis data synchronously using ref cache (no state timing issues)
+  const allAxisData = useMemo(() => {
+    const cache = axisDataCacheRef.current;
 
-    try {
-      // Unpack once and cache for lazy loading
-      const samples = unpack(packedData);
-      unpackedSamplesRef.current = samples;
+    // Reset cache if session changed
+    if (sessionKey !== cache.sessionKey) {
+      cache.sessionKey = sessionKey;
+      cache.unpackedSamples = null;
+      cache.computed = { x: [], y: [], z: [] };
+    }
 
-      // Compute primary axis (selectedAxis in single mode, first selected in multi mode)
-      const primaryAxis = multiAxisMode ? Array.from(selectedAxes)[0] || 'y' : selectedAxis;
-      const data: AxisSamples = new Array(samples.length);
+    // Early return if no data
+    if (!packedData || typeof packedData !== 'object') {
+      return cache.computed;
+    }
+    if (typeof packedData.sampleCount !== 'number' || packedData.sampleCount === 0) {
+      return cache.computed;
+    }
+    if (typeof packedData.startTime !== 'number' || typeof packedData.endTime !== 'number') {
+      return cache.computed;
+    }
 
-      for (let i = 0; i < samples.length; i++) {
-        const s = samples[i];
-        data[i] = {
-          left: s.lq ? Math.round(quaternionToAngle(s.lq, primaryAxis) * 10) / 10 : 0,
-          right: s.rq ? Math.round(quaternionToAngle(s.rq, primaryAxis) * 10) / 10 : 0,
-        };
+    // Unpack samples once per session
+    if (!cache.unpackedSamples) {
+      try {
+        cache.unpackedSamples = unpack(packedData);
+      } catch (error) {
+        console.error(`[SessionChart] Failed to unpack samples:`, error);
+        return cache.computed;
+      }
+    }
+
+    const samples = cache.unpackedSamples;
+
+    // Compute only the axes we need (synchronously, directly into cache)
+    for (const axis of axesToCompute) {
+      // Skip if already computed for this session
+      if (cache.computed[axis].length > 0) {
+        continue;
       }
 
-      // Update lazy data with primary axis
-      setLazyAxisData(prev => ({ ...prev, [primaryAxis]: data }));
-
-      return data;
-    } catch (error) {
-      console.error(`[SessionChart] Failed to unpack angles:`, error);
-      return [];
-    }
-  }, [packedData, selectedAxis, multiAxisMode, selectedAxes]);
-
-  // Lazy-load additional axes when multi-axis mode is enabled or axes change
-  useEffect(() => {
-    if (!multiAxisMode || !unpackedSamplesRef.current) return;
-
-    const samples = unpackedSamplesRef.current;
-    const axesToLoad = Array.from(selectedAxes).filter(axis => lazyAxisData[axis].length === 0);
-
-    if (axesToLoad.length === 0) return;
-
-    // Use requestIdleCallback for non-blocking computation (or setTimeout fallback)
-    const computeAxis = (axis: "x" | "y" | "z") => {
       const data: AxisSamples = new Array(samples.length);
       for (let i = 0; i < samples.length; i++) {
         const s = samples[i];
@@ -423,17 +384,12 @@ export function SessionChart({
           right: s.rq ? Math.round(quaternionToAngle(s.rq, axis) * 10) / 10 : 0,
         };
       }
-      setLazyAxisData(prev => ({ ...prev, [axis]: data }));
-    };
+      cache.computed[axis] = data;
+    }
 
-    // Compute each missing axis with a small delay to avoid blocking
-    axesToLoad.forEach((axis, index) => {
-      setTimeout(() => computeAxis(axis), index * 16); // Stagger by ~1 frame
-    });
-  }, [multiAxisMode, selectedAxes, lazyAxisData]);
-
-  // Combined axis data (primary + lazy-loaded)
-  const allAxisData = lazyAxisData;
+    // Return a new object reference to trigger downstream memos
+    return { ...cache.computed };
+  }, [packedData, sessionKey, axesKey]);
 
   // Derive baseData and multiAxisData from pre-computed allAxisData
   const { baseData, multiAxisData, maxHalfShift } = useMemo(() => {
@@ -1224,7 +1180,7 @@ export function SessionChart({
               {/* Zero reference line */}
               <ReferenceLine y={0} className="stroke-gray-300 dark:stroke-zinc-600" strokeWidth={1} />
 
-              <RechartsTooltip content={<CustomTooltip />} />
+              <RechartsTooltip content={<ChartTooltip />} />
 
               {/* Single-axis mode: render standard left/right areas */}
               {!multiAxisMode && kneeVisibility.left && (
