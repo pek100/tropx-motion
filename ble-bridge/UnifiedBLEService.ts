@@ -56,6 +56,17 @@ export class UnifiedBLEService {
   // State change subscription
   private stateChangeUnsubscribe: (() => void) | null = null;
 
+  // Lock to prevent concurrent ensureDeviceInMap calls for same device
+  private ensureDeviceInMapLocks = new Map<string, Promise<boolean>>();
+
+  // Lock to track devices being set up by setupConnectedDevice
+  // Prevents ensureDeviceInMap from creating duplicate instances during the race window
+  private setupInProgressDevices = new Set<string>();
+
+  // Lock to prevent concurrent setupConnectedDevice calls for the same device
+  // Critical: When a device is slow to connect, retries can pile up creating multiple TropXDevice instances
+  private setupConnectedDeviceLocks = new Map<string, Promise<BleConnectionResult>>();
+
   // Callbacks
   private motionDataCallback: MotionDataCallback | null = null;
   private deviceEventCallback: DeviceEventCallback | null = null;
@@ -347,9 +358,27 @@ export class UnifiedBLEService {
         // setupConnectedDevice failed - treat as connection failure
       }
 
-      // Connection failed
+      // Connection failed according to strategy
       const error = result?.error || 'Connection failed';
       console.log(`[UnifiedBLEService] Attempt ${attempt}/${maxAttempts} failed: ${error}`);
+
+      // Check for "ghost connected" state - BLE library completed connection after strategy timeout
+      if (peripheral.state === 'connected') {
+        console.log(`[UnifiedBLEService] Strategy reported failure but peripheral is connected - recovering...`);
+        const bleResult = await this.setupConnectedDevice(deviceId, peripheral);
+        if (bleResult.success) {
+          if (storeDeviceId) {
+            UnifiedBLEStateStore.updateDeviceFields(storeDeviceId, { reconnectAttempts: 0 });
+          }
+          return bleResult;
+        }
+        // setupConnectedDevice failed even though peripheral is connected - try to disconnect and retry
+        try {
+          await peripheral.disconnect();
+        } catch (e) {
+          // Ignore disconnect errors
+        }
+      }
 
       // Update reconnect attempts in state store
       if (storeDeviceId) {
@@ -400,6 +429,27 @@ export class UnifiedBLEService {
   }
 
   private async setupConnectedDevice(deviceId: string, peripheral: IPeripheral): Promise<BleConnectionResult> {
+    // CRITICAL: Prevent concurrent setupConnectedDevice calls for the same device
+    // Without this lock, retries can pile up creating multiple TropXDevice instances
+    // that all wait on the same static discovery lock forever
+    const existingLock = this.setupConnectedDeviceLocks.get(deviceId);
+    if (existingLock) {
+      console.log(`[UnifiedBLEService] setupConnectedDevice already in progress for ${peripheral.name} - waiting for existing setup`);
+      return existingLock;
+    }
+
+    // Create and store the lock promise
+    const lockPromise = this.performSetupConnectedDevice(deviceId, peripheral);
+    this.setupConnectedDeviceLocks.set(deviceId, lockPromise);
+
+    try {
+      return await lockPromise;
+    } finally {
+      this.setupConnectedDeviceLocks.delete(deviceId);
+    }
+  }
+
+  private async performSetupConnectedDevice(deviceId: string, peripheral: IPeripheral): Promise<BleConnectionResult> {
     const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(deviceId);
 
     console.log(`[UnifiedBLEService] setupConnectedDevice called with:`);
@@ -408,6 +458,24 @@ export class UnifiedBLEService {
     console.log(`[UnifiedBLEService]   peripheral.address: "${peripheral.address}"`);
     console.log(`[UnifiedBLEService]   peripheral.name: "${peripheral.name}"`);
     console.log(`[UnifiedBLEService]   storeDeviceId (numeric): ${storeDeviceId !== null ? `0x${storeDeviceId.toString(16)}` : 'null'}`);
+
+    // Mark as setup-in-progress to prevent ensureDeviceInMap from creating duplicate
+    // This closes the race window between TropXDevice creation and map insertion
+    this.setupInProgressDevices.add(deviceId);
+
+    // CRITICAL: Clean up existing TropXDevice instance if one exists
+    // This prevents duplicate instances when retry logic creates a new setup call
+    // while the previous one is still waiting for characteristic discovery
+    const existingDevice = this.devices.get(deviceId);
+    if (existingDevice) {
+      console.log(`[UnifiedBLEService] ⚠️ Existing TropXDevice found for ${peripheral.name} - cleaning up before creating new instance`);
+      try {
+        await existingDevice.disconnect();
+      } catch (e) {
+        // Ignore disconnect errors during cleanup
+      }
+      this.devices.delete(deviceId);
+    }
 
     try {
       // Create device info
@@ -477,6 +545,9 @@ export class UnifiedBLEService {
       // The retry logic in connectSingleDeviceWithRetry handles state transitions
       console.error(`[UnifiedBLEService] Connection error for ${deviceId}:`, error);
       return { success: false, deviceId, message: `Connection error: ${error}` };
+    } finally {
+      // Always clear setup-in-progress flag
+      this.setupInProgressDevices.delete(deviceId);
     }
   }
 
@@ -1263,12 +1334,52 @@ export class UnifiedBLEService {
   }
 
   private subscribeToStateChanges(): void {
-    const handler = (change: { deviceId: number; previousState: DeviceState; newState: DeviceState }) => {
+    const handler = async (change: { deviceId: number; previousState: DeviceState; newState: DeviceState }) => {
+      if (this.isCleaningUp) return;
+
       const device = UnifiedBLEStateStore.getDevice(change.deviceId);
       if (!device) return;
 
+      const bleAddress = device.bleAddress;
+
+      // CONNECTED: Ensure device is in this.devices map
       if (change.newState === DeviceState.CONNECTED) {
-        console.log(`[UnifiedBLEService] ${device.bleName} connected successfully`);
+        if (!this.devices.has(bleAddress)) {
+          console.log(`[UnifiedBLEService] State store says ${device.bleName} CONNECTED but not in devices map - syncing...`);
+          await this.ensureDeviceInMap(bleAddress);
+
+          // RACE CONDITION FIX: After async operation, verify state is still CONNECTED
+          // If state changed to DISCONNECTED/ERROR while we were setting up, clean up
+          const currentDevice = UnifiedBLEStateStore.getDevice(change.deviceId);
+          if (currentDevice && currentDevice.state !== DeviceState.CONNECTED && this.devices.has(bleAddress)) {
+            console.log(`[UnifiedBLEService] State changed to ${currentDevice.state} during ensureDeviceInMap - cleaning up`);
+            const tropxDevice = this.devices.get(bleAddress);
+            if (tropxDevice) {
+              try {
+                await tropxDevice.disconnect();
+              } catch (e) {
+                // Ignore disconnect errors during cleanup
+              }
+            }
+            this.devices.delete(bleAddress);
+          }
+        }
+      }
+
+      // DISCONNECTED/ERROR: Remove from this.devices map
+      if (change.newState === DeviceState.DISCONNECTED || change.newState === DeviceState.ERROR) {
+        if (this.devices.has(bleAddress)) {
+          console.log(`[UnifiedBLEService] State store says ${device.bleName} ${change.newState} - removing from devices map`);
+          const tropxDevice = this.devices.get(bleAddress);
+          if (tropxDevice) {
+            try {
+              await tropxDevice.disconnect();
+            } catch (e) {
+              // Ignore disconnect errors during cleanup
+            }
+          }
+          this.devices.delete(bleAddress);
+        }
       }
     };
 
@@ -1277,6 +1388,131 @@ export class UnifiedBLEService {
     this.stateChangeUnsubscribe = () => {
       UnifiedBLEStateStore.removeListener('deviceStateChanged', handler);
     };
+  }
+
+  // Ensures a device that's CONNECTED in state store is also in this.devices map
+  // Uses a per-device lock to prevent concurrent calls from creating duplicate instances
+  private async ensureDeviceInMap(bleAddress: string): Promise<boolean> {
+    if (this.devices.has(bleAddress)) {
+      return true; // Already in map
+    }
+
+    // Check if there's already a pending call for this device - wait for it
+    const existingLock = this.ensureDeviceInMapLocks.get(bleAddress);
+    if (existingLock) {
+      console.log(`[UnifiedBLEService] ensureDeviceInMap already in progress for ${bleAddress} - waiting`);
+      return existingLock;
+    }
+
+    // Create and store the lock promise
+    const lockPromise = this.performEnsureDeviceInMap(bleAddress);
+    this.ensureDeviceInMapLocks.set(bleAddress, lockPromise);
+
+    try {
+      return await lockPromise;
+    } finally {
+      this.ensureDeviceInMapLocks.delete(bleAddress);
+    }
+  }
+
+  // Actual implementation of ensureDeviceInMap (called with lock held)
+  private async performEnsureDeviceInMap(bleAddress: string): Promise<boolean> {
+    // Double-check after acquiring lock
+    if (this.devices.has(bleAddress)) {
+      return true;
+    }
+
+    // RACE FIX: If setupConnectedDevice is already handling this device, skip
+    // This prevents creating duplicate TropXDevice instances during the window
+    // between TropXDevice creation and map insertion in setupConnectedDevice
+    if (this.setupInProgressDevices.has(bleAddress)) {
+      console.log(`[UnifiedBLEService] Device ${bleAddress} is being set up by setupConnectedDevice - skipping reactive sync`);
+      return true; // Return true - setupConnectedDevice will handle it
+    }
+
+    const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(bleAddress);
+    const peripheral = this.transport.getPeripheral(bleAddress);
+
+    if (!peripheral) {
+      console.warn(`[UnifiedBLEService] Cannot sync device ${bleAddress} - peripheral not found in transport`);
+      // Fix state desync: peripheral gone but state says CONNECTED
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transitionToError(storeDeviceId, DeviceErrorType.CONNECTION_FAILED, 'Peripheral not found in transport');
+        } catch (e) {
+          console.debug(`[UnifiedBLEService] Could not transition to ERROR:`, e);
+        }
+      }
+      return false;
+    }
+
+    if (peripheral.state !== 'connected') {
+      console.warn(`[UnifiedBLEService] Cannot sync device ${bleAddress} - peripheral state is ${peripheral.state}`);
+      // Fix state desync: peripheral not connected but state says CONNECTED
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transition(storeDeviceId, DeviceState.DISCONNECTED);
+        } catch (e) {
+          console.debug(`[UnifiedBLEService] Could not transition to DISCONNECTED:`, e);
+        }
+      }
+      return false;
+    }
+
+    console.log(`[UnifiedBLEService] Setting up TropXDevice for ${peripheral.name} (reactive sync)`);
+
+    try {
+      const deviceInfo: TropXDeviceInfo = {
+        id: bleAddress,
+        name: peripheral.name,
+        address: peripheral.address,
+        rssi: peripheral.rssi,
+        state: 'connected',
+        batteryLevel: null,
+        lastSeen: new Date()
+      };
+
+      const tropxDevice = new TropXDevice(
+        peripheral,
+        deviceInfo,
+        this.motionDataCallback || undefined,
+        this.deviceEventCallback || undefined
+      );
+
+      const connected = await tropxDevice.connect();
+      if (connected) {
+        this.devices.set(bleAddress, tropxDevice);
+        console.log(`[UnifiedBLEService] Successfully synced ${peripheral.name} to devices map`);
+
+        // Check if we need to recover streaming
+        if (UnifiedBLEStateStore.getGlobalState() === GlobalState.STREAMING) {
+          await this.recoverStreamingForDevice(bleAddress);
+        }
+        return true;
+      }
+
+      // TropXDevice.connect() failed - fix state desync
+      console.warn(`[UnifiedBLEService] TropXDevice.connect() failed for ${bleAddress} during reactive sync`);
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transitionToError(storeDeviceId, DeviceErrorType.CONNECTION_FAILED, 'GATT setup failed during reactive sync');
+        } catch (e) {
+          console.debug(`[UnifiedBLEService] Could not transition to ERROR:`, e);
+        }
+      }
+    } catch (error) {
+      console.error(`[UnifiedBLEService] Failed to sync device ${bleAddress}:`, error);
+      // Fix state desync on exception
+      if (storeDeviceId) {
+        try {
+          UnifiedBLEStateStore.transitionToError(storeDeviceId, DeviceErrorType.CONNECTION_FAILED, `Reactive sync error: ${error}`);
+        } catch (e) {
+          console.debug(`[UnifiedBLEService] Could not transition to ERROR:`, e);
+        }
+      }
+    }
+
+    return false;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

@@ -21,7 +21,7 @@ export const BLE_CONFIG = {
   // - 75% of devices discovered in 1s, 100% in 2s (iOS foreground)
   // - Scans > 5s show diminishing returns
   SCAN_TIMEOUT: 2000,         // 2 seconds (optimal for 100% discovery with minimal power)
-  CONNECTION_TIMEOUT: 15000,  // 15 seconds (BLE connection can be slow)
+  // Note: Connection timeout handled by BLE library (Noble: 30s, BlueZ: ~20s)
 
   // RSSI threshold for device filtering
   // -80 dBm is ~10m range in typical indoor environment

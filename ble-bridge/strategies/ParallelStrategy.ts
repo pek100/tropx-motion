@@ -45,10 +45,10 @@ export class ParallelStrategy implements IConnectionStrategy {
         console.log(`[ParallelStrategy] Connecting to ${peripheral.name} (${deviceId})`);
         await peripheral.connect();
 
-        // Verify connection state
-        const verified = await this.verifyConnectedState(peripheral);
-        if (!verified) {
-          lastError = 'Connection state verification failed';
+        // Trust the BLE library's connection result - if connect() resolved, we're connected
+        if (peripheral.state !== 'connected') {
+          lastError = `Unexpected state after connect: ${peripheral.state}`;
+          console.warn(`[ParallelStrategy] ${peripheral.name}: ${lastError}`);
           continue;
         }
 
@@ -72,20 +72,6 @@ export class ParallelStrategy implements IConnectionStrategy {
       peripheral: null,
       error: lastError,
     };
-  }
-
-  private async verifyConnectedState(peripheral: IPeripheral): Promise<boolean> {
-    const startTime = Date.now();
-    const timeout = this.config.stateVerificationTimeoutMs;
-
-    while (Date.now() - startTime < timeout) {
-      if (peripheral.state === 'connected') {
-        return true;
-      }
-      await this.delay(50);
-    }
-
-    return false;
   }
 
   private delay(ms: number): Promise<void> {

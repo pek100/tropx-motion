@@ -91,11 +91,10 @@ export class SequentialStrategy implements IConnectionStrategy {
         // BlueZ needs extra time to stabilize the connection
         await this.delay(100);
 
-        // Verify connection state with longer timeout for BlueZ
-        const verified = await this.verifyConnectedState(peripheral);
-        if (!verified) {
-          lastError = 'Connection state verification failed';
-          console.warn(`[SequentialStrategy] State verification failed for ${peripheral.name}`);
+        // Trust the BLE library's connection result - if connect() resolved, we're connected
+        if (peripheral.state !== 'connected') {
+          lastError = `Unexpected state after connect: ${peripheral.state}`;
+          console.warn(`[SequentialStrategy] ${peripheral.name}: ${lastError}`);
           continue;
         }
 
@@ -119,34 +118,6 @@ export class SequentialStrategy implements IConnectionStrategy {
       peripheral: null,
       error: lastError,
     };
-  }
-
-  private async verifyConnectedState(peripheral: IPeripheral): Promise<boolean> {
-    const startTime = Date.now();
-    const timeout = this.config.stateVerificationTimeoutMs;
-
-    while (Date.now() - startTime < timeout) {
-      if (peripheral.state === 'connected') {
-        return true;
-      }
-
-      // For BlueZ, also check if we can get services as a secondary verification
-      if (peripheral.state === 'connecting') {
-        // Still in progress, wait a bit longer
-        await this.delay(100);
-        continue;
-      }
-
-      if (peripheral.state === 'disconnected') {
-        // Connection failed
-        return false;
-      }
-
-      await this.delay(50);
-    }
-
-    console.warn(`[SequentialStrategy] State verification timeout. Final state: ${peripheral.state}`);
-    return peripheral.state === 'connected';
   }
 
   private delay(ms: number): Promise<void> {

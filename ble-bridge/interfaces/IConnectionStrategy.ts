@@ -23,17 +23,13 @@ export interface ConnectionResult {
 export interface StrategyConfig {
   // Sequential strategy settings
   interConnectionDelayMs: number;  // Delay between connections (BlueZ needs 200ms+)
-  stateVerificationTimeoutMs: number;  // Max time to wait for connected state
-  connectionTimeoutMs: number;  // Overall connection timeout
-  maxRetries: number;  // Per-device retry attempts
-  retryDelayMs: number;  // Delay between retries
+  maxRetries: number;              // Per-device retry attempts
+  retryDelayMs: number;            // Delay between retries
 }
 
 export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   interConnectionDelayMs: 200,
-  stateVerificationTimeoutMs: 5000,   // Reduced from 10s for faster failure
-  connectionTimeoutMs: 20000,          // Reduced from 30s
-  maxRetries: 2,                       // Reduced from 3 for faster failure on Windows
+  maxRetries: 2,
   retryDelayMs: 500,
 };
 

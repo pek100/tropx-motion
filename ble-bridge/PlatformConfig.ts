@@ -67,8 +67,6 @@ export interface BLEPlatformConfig {
     gattStabilizationMs: number;
     gattRetryAttempts: number;
     gattRetryDelayMs: number;
-    stateVerificationTimeoutMs: number;
-    connectionTimeoutMs: number;
   };
 
   // Features
@@ -93,8 +91,6 @@ const NOBLE_CONFIG: BLEPlatformConfig = {
     gattStabilizationMs: 100,
     gattRetryAttempts: 2,
     gattRetryDelayMs: 300,
-    stateVerificationTimeoutMs: 5000,
-    connectionTimeoutMs: 30000,
   },
   features: {
     supportsParallelConnections: true,
@@ -113,8 +109,6 @@ const NODEBLE_CONFIG: BLEPlatformConfig = {
     gattStabilizationMs: 200,       // Wait for GATT to be ready
     gattRetryAttempts: 3,           // More retries for flaky BlueZ
     gattRetryDelayMs: 500,
-    stateVerificationTimeoutMs: 10000,  // Longer timeout for BlueZ
-    connectionTimeoutMs: 60000,     // Pi connections can be slow
   },
   features: {
     supportsParallelConnections: false,
@@ -153,8 +147,7 @@ export function getPlatformConfig(): BLEPlatformConfig {
           platform: 'linux',
           timing: {
             ...NODEBLE_CONFIG.timing,
-            // Pi-specific tweaks
-            connectionTimeoutMs: 60000,  // Pi 5 can take 45-50 seconds
+            // Pi-specific tweaks - BLE library handles connection timeout
             gattStabilizationMs: 250,    // Slightly longer for Pi
           },
         };

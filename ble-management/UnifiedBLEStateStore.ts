@@ -126,6 +126,11 @@ class UnifiedBLEStateStoreImpl extends EventEmitter {
 
     const previousState = device.state;
 
+    // No-op if already in target state
+    if (previousState === newState) {
+      return;
+    }
+
     // Validate transition
     if (!this.validateTransition(previousState, newState)) {
       throw new InvalidTransitionError(deviceId, previousState, newState);

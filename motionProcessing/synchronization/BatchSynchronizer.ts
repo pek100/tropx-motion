@@ -109,14 +109,30 @@ export class BatchSynchronizer {
         console.log(`[BatchSync] Started at ${targetHz}Hz (${this.tickIntervalMs}ms interval)`);
     }
 
-    /** Stop the time-grid output timer */
+    /** Stop the time-grid output timer and reset grid state for next session */
     stop(): void {
         if (this.tickTimer) {
             clearInterval(this.tickTimer);
             this.tickTimer = null;
         }
         this.isRunning = false;
-        console.log('[BatchSync] Stopped');
+
+        // CRITICAL: Reset grid state so next session starts fresh
+        // Without this, gridPosition retains old timestamps causing sync issues
+        this.gridPosition = 0;
+        this.gridInitialized = false;
+
+        // Clear buffers and aligners to prevent stale data affecting next session
+        this.buffers.forEach(buffer => buffer.clear());
+        this.leftKneeAligner.reset();
+        this.rightKneeAligner.reset();
+
+        // Reset stats for fresh debugging
+        this.pushCount = 0;
+        this.emitCount = 0;
+        this.tickCount = 0;
+
+        console.log('[BatchSync] Stopped and reset for next session');
     }
 
     /** Check if timer is running */

@@ -59,6 +59,9 @@ export class BLEServiceAdapter implements BLEService {
   private lastScanStart = 0;
   private readonly MIN_RESTART_INTERVAL_MS = 700;
 
+  // Guard against concurrent sync operations (BLEDomainProcessor retry can cause duplicates)
+  private syncInProgress: Promise<{ success: boolean; results: any[]; message?: string }> | null = null;
+
   // Track which devices have been synced this session (cleared on app restart)
   private syncedThisSession: Set<DeviceID> = new Set();
 
@@ -377,7 +380,27 @@ export class BLEServiceAdapter implements BLEService {
   /**
    * Manually sync all connected devices (called by sync button)
    */
-  async syncAllDevices(): Promise<{ success: boolean; results: any[] }> {
+  async syncAllDevices(): Promise<{ success: boolean; results: any[]; message?: string }> {
+    // CONCURRENCY GUARD: If sync is already in progress, wait for it instead of starting another
+    if (this.syncInProgress) {
+      console.log('⏱️ [SYNC] Sync already in progress, waiting for existing sync...');
+      return this.syncInProgress;
+    }
+
+    // Start sync with lock
+    this.syncInProgress = this.performSync();
+
+    try {
+      return await this.syncInProgress;
+    } finally {
+      this.syncInProgress = null;
+    }
+  }
+
+  /**
+   * Actual sync implementation (called with lock held)
+   */
+  private async performSync(): Promise<{ success: boolean; results: any[]; message?: string }> {
     try {
       console.log('⏱️ Manual sync: Synchronizing all connected devices...');
 

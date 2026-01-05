@@ -100,7 +100,25 @@ class TimestampDebugLoggerClass {
         try {
             // Dynamic import to avoid circular dependency
             const { MotionProcessingCoordinator } = require('../motionProcessing/MotionProcessingCoordinator');
-            MotionProcessingCoordinator.flushPipelineStats();
+            const debugStats = MotionProcessingCoordinator.getDebugStats();
+            // Map debug stats to PipelineStats format
+            if (debugStats) {
+                this.pipelineStats = {
+                    deviceProcessor: {
+                        emitCounts: debugStats.deviceProcessor?.emitCounts || {},
+                        dropCounts: debugStats.deviceProcessor?.dropCounts || {},
+                        latestSampleDevices: debugStats.deviceProcessor?.latestSampleDevices || [],
+                        deviceToJoints: debugStats.deviceProcessor?.deviceToJoints || {}
+                    },
+                    jointSynchronizer: {
+                        pushCount: debugStats.batchSync?.pushCount || 0,
+                        emitCount: debugStats.batchSync?.emitCount || 0
+                    },
+                    uiProcessor: {
+                        broadcastCount: debugStats.uiProcessor?.broadcastCount || 0
+                    }
+                };
+            }
         } catch (err) {
             console.warn('[TimestampDebugLogger] Could not collect pipeline stats:', err);
         }

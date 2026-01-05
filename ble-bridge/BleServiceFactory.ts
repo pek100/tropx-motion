@@ -119,8 +119,6 @@ export async function createBleService(
     strategy = new ParallelStrategy({
       maxRetries: config.timing.gattRetryAttempts,
       retryDelayMs: config.timing.gattRetryDelayMs,
-      connectionTimeoutMs: config.timing.connectionTimeoutMs,
-      stateVerificationTimeoutMs: config.timing.stateVerificationTimeoutMs,
       interConnectionDelayMs: config.timing.interConnectionDelayMs,
     });
   } else {
@@ -129,8 +127,6 @@ export async function createBleService(
     strategy = new SequentialStrategy({
       maxRetries: config.timing.gattRetryAttempts,
       retryDelayMs: config.timing.gattRetryDelayMs,
-      connectionTimeoutMs: config.timing.connectionTimeoutMs,
-      stateVerificationTimeoutMs: config.timing.stateVerificationTimeoutMs,
       interConnectionDelayMs: config.timing.interConnectionDelayMs,
     });
   }

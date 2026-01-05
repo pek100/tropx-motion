@@ -44,6 +44,27 @@ export class TropXDevice {
   // Per-sensor timestamp offset (calculated on first packet)
   private timestampOffset: number | null = null;
 
+  // STATIC: Per-device discovery lock (keyed by device address)
+  // Must be static so ALL instances share the same lock per physical device
+  // Prevents parallel characteristic discovery when multiple TropXDevice instances exist for same device
+  private static discoveryLocks = new Map<string, Promise<boolean>>();
+
+  // Disposed flag - set when this instance is superseded by a new one
+  // Allows pending async operations to detect they should abort
+  private disposed: boolean = false;
+
+  /** Throws if this instance has been disposed - use at start of public methods and after long async operations */
+  private assertNotDisposed(operation?: string): void {
+    if (this.disposed) {
+      throw new Error(`Device instance disposed${operation ? ` during ${operation}` : ''}`);
+    }
+  }
+
+  /** Returns true if disposed - use for silent early returns (e.g., data handlers) */
+  private checkDisposed(): boolean {
+    return this.disposed;
+  }
+
   // Static: Common reference time for all sensors (set when streaming starts)
   private static streamingReferenceTime: number = 0;
 
@@ -84,6 +105,8 @@ export class TropXDevice {
 
   // Connect to device (simplified like Python Bleak)
   async connect(): Promise<boolean> {
+    if (this.checkDisposed()) return false;
+
     const deviceId = this.wrapper.deviceInfo.id;
     const deviceName = this.wrapper.deviceInfo.name;
 
@@ -157,6 +180,9 @@ export class TropXDevice {
       this.wrapper.deviceInfo.state = 'connected';
       // NOTE: Don't fire 'connected' event yet - wait until battery is read
       // so UI gets complete device info including battery
+
+      // Check if disposed during connection
+      if (this.checkDisposed()) return false;
 
       // Simple delay like Python approach
       // Optimized: Reduced from 1000ms to 200ms for faster connections
@@ -310,8 +336,24 @@ export class TropXDevice {
     try {
       console.log(`🔌 Disconnecting from device: ${this.wrapper.deviceInfo.name}`);
 
+      // Mark as disposed - signals pending async operations to abort
+      this.disposed = true;
+
       // Mark as user-initiated to prevent auto-reconnect
       this.userInitiatedDisconnect = true;
+
+      // CRITICAL: Clear static discovery lock if this instance was holding it
+      // Without this, disposed instances can hold the lock forever (10s timeout)
+      // preventing new instances from discovering characteristics
+      const deviceId = this.wrapper.deviceInfo.id;
+      if (TropXDevice.discoveryLocks.has(deviceId)) {
+        console.log(`🔓 [${this.wrapper.deviceInfo.name}] Releasing static discovery lock on disconnect`);
+        TropXDevice.discoveryLocks.delete(deviceId);
+      }
+
+      // Remove event listeners to prevent stale callbacks on disposed instance
+      this.wrapper.dataCharacteristic?.removeAllListeners('data');
+      this.wrapper.dataCharacteristic?.removeAllListeners('error');
 
       if (this.wrapper.isStreaming) {
         await this.stopStreaming();
@@ -332,9 +374,12 @@ export class TropXDevice {
 
   // Ensure characteristics are discovered (used for both battery and streaming)
   // Includes retry logic for BLE stack recovery after intensive operations (like sync)
+  // Uses a lock to prevent concurrent discovery attempts that cause listener leaks
   private async ensureCharacteristics(retryCount = 0): Promise<boolean> {
     const MAX_RETRIES = 2;
     const RETRY_DELAY_MS = 500;
+
+    if (this.checkDisposed()) return false;
 
     // Fast path: characteristics already discovered
     if (this.wrapper.commandCharacteristic && this.wrapper.dataCharacteristic) {
@@ -361,19 +406,41 @@ export class TropXDevice {
       return false;
     }
 
-    console.log(`🔍 [${this.wrapper.deviceInfo.name}] Discovering characteristics...${retryCount > 0 ? ` (retry ${retryCount}/${MAX_RETRIES})` : ''} [peripheral: ${this.wrapper.peripheral.state}]`);
-    try {
-      // Fix EventEmitter memory leak warning
-      if (this.wrapper.service.setMaxListeners) {
-        this.wrapper.service.setMaxListeners(20);
-      }
+    // CONCURRENCY GUARD: Static lock prevents parallel discovery across ALL instances for same device
+    // This fixes the duplicate TropXDevice issue where two instances run discovery simultaneously
+    const deviceId = this.wrapper.deviceInfo.id;
+    const existingLock = TropXDevice.discoveryLocks.get(deviceId);
+    if (existingLock) {
+      console.log(`🔒 [${this.wrapper.deviceInfo.name}] Discovery already in progress (static lock), waiting...`);
+      return existingLock;
+    }
 
+    // Start discovery with static lock
+    const lockPromise = this.performCharacteristicDiscovery(retryCount, MAX_RETRIES, RETRY_DELAY_MS);
+    TropXDevice.discoveryLocks.set(deviceId, lockPromise);
+
+    try {
+      return await lockPromise;
+    } finally {
+      TropXDevice.discoveryLocks.delete(deviceId);
+    }
+  }
+
+  // Actual characteristic discovery implementation (called with lock held)
+  private async performCharacteristicDiscovery(retryCount: number, maxRetries: number, retryDelayMs: number): Promise<boolean> {
+    if (this.checkDisposed()) return false;
+
+    console.log(`🔍 [${this.wrapper.deviceInfo.name}] Discovering characteristics...${retryCount > 0 ? ` (retry ${retryCount}/${maxRetries})` : ''} [peripheral: ${this.wrapper.peripheral.state}]`);
+
+    try {
       const discoveryStartTime = Date.now();
       let characteristics: any[] = [];
 
       // ARM FIX: Discover ALL characteristics (UUID filtering doesn't work reliably on ARM)
+      console.log(`🔍 [${this.wrapper.deviceInfo.name}] Attempting to discover ALL characteristics (ARM fix)...`);
+
+      // Try async method first (Promise-based), fallback to callback method
       try {
-        console.log(`🔍 [${this.wrapper.deviceInfo.name}] Attempting to discover ALL characteristics (ARM fix)...`);
         const discoveryPromise = this.wrapper.service.discoverCharacteristicsAsync([]);
 
         // Race between discovery and timeout
@@ -387,8 +454,8 @@ export class TropXDevice {
       } catch (asyncError: any) {
         console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Async discovery failed (${asyncError.message}), trying callback method...`);
 
-        // FALLBACK: Use callback-based discovery without UUID filter (more reliable on ARM)
-        characteristics = await new Promise((resolve, reject) => {
+        // FALLBACK: Use callback-based discovery (more reliable on some platforms)
+        characteristics = await new Promise<any[]>((resolve, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error('Callback characteristic discovery timeout after 10s'));
           }, 10000);
@@ -406,7 +473,11 @@ export class TropXDevice {
         });
       }
 
+      console.log(`✅ [${this.wrapper.deviceInfo.name}] Discovered ${characteristics.length} characteristics`);
       console.log(`🔍 [${this.wrapper.deviceInfo.name}] Characteristic discovery took ${Date.now() - discoveryStartTime}ms`);
+
+      // Check if disposed during discovery
+      if (this.checkDisposed()) return false;
 
       // Map characteristics
       for (const char of characteristics) {
@@ -428,14 +499,18 @@ export class TropXDevice {
       }
 
       return true;
+
     } catch (error) {
       console.error(`❌ [${this.wrapper.deviceInfo.name}] Failed to discover characteristics:`, error);
 
+      // Don't retry if disposed
+      if (this.checkDisposed()) return false;
+
       // Retry logic for BLE stack recovery
-      if (retryCount < MAX_RETRIES) {
-        console.log(`🔄 [${this.wrapper.deviceInfo.name}] Waiting ${RETRY_DELAY_MS}ms before retry...`);
-        await this.delay(RETRY_DELAY_MS);
-        return this.ensureCharacteristics(retryCount + 1);
+      if (retryCount < maxRetries) {
+        console.log(`🔄 [${this.wrapper.deviceInfo.name}] Waiting ${retryDelayMs}ms before retry...`);
+        await this.delay(retryDelayMs);
+        return this.performCharacteristicDiscovery(retryCount + 1, maxRetries, retryDelayMs);
       }
 
       return false;
@@ -447,6 +522,7 @@ export class TropXDevice {
    * @returns true if successful, false otherwise
    */
   async resetToIdle(): Promise<boolean> {
+    // ensureCharacteristics() has disposed check - no need to duplicate here
     const hasCharacteristics = await this.ensureCharacteristics();
     if (!hasCharacteristics) {
       console.warn(`⚠️ [${this.wrapper.deviceInfo.name}] Cannot reset to IDLE: characteristics not available`);
@@ -477,6 +553,8 @@ export class TropXDevice {
    * @returns Device state value or NONE if failed
    */
   async getSystemState(): Promise<number> {
+    // ensureCharacteristics() has disposed check - no need to duplicate here
+
     // DEFENSIVE: Check TropXCommands is available (guards against circular dependency issues)
     if (!TropXCommands) {
       console.error(`❌ [${this.wrapper.deviceInfo.name}] TropXCommands is undefined - module import issue`);
@@ -568,7 +646,7 @@ export class TropXDevice {
 
   // Start quaternion data streaming (with lazy characteristic discovery like Python)
   async startStreaming(): Promise<boolean> {
-    // Ensure characteristics are discovered (uses cached if already done)
+    // ensureCharacteristics() has disposed check - no need to duplicate here
     const hasCharacteristics = await this.ensureCharacteristics();
     if (!hasCharacteristics) {
       return false;
@@ -682,6 +760,8 @@ export class TropXDevice {
   // MUST be called before syncTime() for proper hardware synchronization
   // @param referenceTimestamp - Optional Unix timestamp (seconds) to use for all devices (for parallel sync)
   async initializeDeviceRTC(referenceTimestamp?: number): Promise<boolean> {
+    if (this.checkDisposed()) return false;
+
     if (!this.wrapper.commandCharacteristic) {
       throw new Error('Command characteristic not available for RTC initialization');
     }
@@ -750,6 +830,8 @@ export class TropXDevice {
   // @param applyOffset - If false, computes offset but doesn't send SET_CLOCK_OFFSET (for normalization)
   // @returns Object with offset (ms) and avgRoundTrip (ms) for BLE delay normalization
   async syncTime(applyOffset: boolean = true): Promise<{ offset: number; avgRoundTrip: number }> {
+    this.assertNotDisposed('syncTime');
+
     if (!this.wrapper.commandCharacteristic) {
       throw new Error('Command characteristic not available for time sync');
     }
@@ -927,6 +1009,8 @@ export class TropXDevice {
   // Clear clock offset (set to 0)
   // CRITICAL: Must be called BEFORE entering timesync mode (when device is in IDLE state)
   async clearClockOffset(): Promise<void> {
+    this.assertNotDisposed('clearClockOffset');
+
     if (!this.wrapper.commandCharacteristic) {
       throw new Error('Command characteristic not available');
     }
@@ -943,6 +1027,8 @@ export class TropXDevice {
   // Exit timesync mode
   // CRITICAL: Per Muse PDF, must be called BEFORE sending SET_CLOCK_OFFSET
   async exitTimeSyncMode(): Promise<void> {
+    this.assertNotDisposed('exitTimeSyncMode');
+
     if (!this.wrapper.commandCharacteristic) {
       throw new Error('Command characteristic not available');
     }
@@ -957,6 +1043,8 @@ export class TropXDevice {
   // Apply clock offset (set the computed offset)
   // CRITICAL: Per Muse PDF page 6, must be called AFTER exiting timesync mode
   async applyClockOffset(normalizedOffset: number): Promise<void> {
+    this.assertNotDisposed('applyClockOffset');
+
     if (!this.wrapper.commandCharacteristic) {
       throw new Error('Command characteristic not available');
     }
@@ -1025,6 +1113,8 @@ export class TropXDevice {
   // Apply clock offset to device hardware AND exit timesync mode
   // CRITICAL: Must be called while STILL IN TIMESYNC MODE (before EXIT_TIMESYNC)
   async applyClockOffsetAndExit(normalizedOffset: number): Promise<void> {
+    this.assertNotDisposed('applyClockOffsetAndExit');
+
     if (!this.wrapper.commandCharacteristic) {
       throw new Error('Command characteristic not available');
     }
@@ -1114,6 +1204,7 @@ export class TropXDevice {
 
   // Get battery level
   async getBatteryLevel(): Promise<number | null> {
+    // No disposed check needed - will fail naturally if characteristic is null
     if (!this.wrapper.commandCharacteristic) {
       console.warn(`🔋 [${this.wrapper.deviceInfo.name}] ❌ Cannot read battery: command characteristic not available`);
       return null;
@@ -1250,6 +1341,8 @@ export class TropXDevice {
 
   // Handle incoming data notifications
   private handleDataNotification(data: Buffer): void {
+    if (this.checkDisposed()) return; // Silently drop stale data
+
     // PERFORMANCE: Capture reception time immediately (fallback if no device timestamp)
     const receptionTimestamp = Date.now();
 
@@ -1469,6 +1562,8 @@ export class TropXDevice {
   // Smart command write - uses writeWithoutResponse if supported, otherwise write with response
   // Public for DeviceLocateService
   async writeCommand(buffer: Buffer): Promise<void> {
+    this.assertNotDisposed('writeCommand');
+
     if (!this.wrapper.commandCharacteristic) {
       throw new Error('Command characteristic not available');
     }
@@ -1520,5 +1615,10 @@ export class TropXDevice {
 
   get isStreaming(): boolean {
     return this.wrapper.isStreaming;
+  }
+
+  /** Check if this instance has been disposed (superseded by a new instance) */
+  get isDisposed(): boolean {
+    return this.disposed;
   }
 }
