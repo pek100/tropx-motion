@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Dashboard Metrics Clinical Guide - 12 Metrics</title>
+  <style>
+    @page { margin: 0.5in; margin-top: 0.3in; margin-bottom: 0.3in; }
+    @media print {
+      .no-print { display: none; }
+      body { padding: 15px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+    body { font-family: 'Segoe UI', sans-serif; max-width: 850px; margin: 0 auto; padding: 40px; line-height: 1.6; color: #333; }
+    h1 { color: #1a5f7a; border-bottom: 3px solid #1a5f7a; padding-bottom: 10px; font-size: 1.8em; }
+    h2 { color: #2d8a6e; margin-top: 30px; font-size: 1.3em; }
+    h3 { color: #1a5f7a; margin-top: 25px; border-left: 4px solid #1a5f7a; padding-left: 12px; font-size: 1.1em; }
+    table { border-collapse: collapse; width: 100%; margin: 15px 0; font-size: 0.9em; }
+    th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; }
+    th { background: #1a5f7a; color: white; }
+    tr:nth-child(even) { background: #f9f9f9; }
+    code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; font-size: 0.85em; color: #c7254e; }
+    strong { color: #1a5f7a; }
+    hr { border: none; border-top: 1px solid #ddd; margin: 25px 0; }
+    .print-btn { position: fixed; bottom: 20px; right: 20px; background: #1a5f7a; color: white; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-size: 0.95em; }
+    .print-btn:hover { background: #2d8a6e; }
+    ul, li { margin: 4px 0; }
+    .clinical { color: #555; font-style: italic; margin-top: 8px; }
+    .math { background: #f8f9fa; border-left: 3px solid #2d8a6e; padding: 10px 15px; margin: 10px 0; font-family: 'Consolas', monospace; }
+    .signal { background: #fff8e6; border-left: 3px solid #d4a017; padding: 8px 12px; margin: 8px 0; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+<button class="print-btn no-print" onclick="window.print()">Print to PDF</button>
+
+<h1>Biomechanical Metrics<br><small style="font-size:0.5em;color:#666">Dashboard Clinical Reference — 12 Metrics</small></h1>
+
+<h2>Quick Reference</h2>
+<table>
+<tr><th>#</th><th>Metric</th><th>Category</th><th>Display Name</th><th>Unit</th><th>Direction</th></tr>
+<tr><td>1</td><td>Performance Score</td><td>OPI</td><td>Performance Score</td><td>/100</td><td>Higher better</td></tr>
+<tr><td>2</td><td>ROM Asymmetry</td><td>Symmetry</td><td>ROM Difference</td><td>%</td><td>Lower better</td></tr>
+<tr><td>3</td><td>Real Asymmetry</td><td>Symmetry</td><td>Movement Imbalance</td><td>°</td><td>Lower better</td></tr>
+<tr><td>4</td><td>Velocity Asymmetry</td><td>Symmetry</td><td>Speed Difference</td><td>%</td><td>Lower better</td></tr>
+<tr><td>5</td><td>Cross-Correlation</td><td>Symmetry</td><td>Movement Similarity</td><td>0–1</td><td>Higher better</td></tr>
+<tr><td>6</td><td>Peak Angular Velocity</td><td>Power</td><td>Peak Speed</td><td>°/s</td><td>Higher better</td></tr>
+<tr><td>7</td><td>Explosiveness</td><td>Power</td><td>Explosiveness</td><td>°/s²</td><td>Higher better</td></tr>
+<tr><td>8</td><td>ROM CoV</td><td>Control</td><td>Consistency</td><td>%</td><td>Lower better</td></tr>
+<tr><td>9</td><td>SPARC</td><td>Control</td><td>SPARC (Smoothness)</td><td>—</td><td>Higher better</td></tr>
+<tr><td>10</td><td>LDLJ</td><td>Control</td><td>LDLJ (Smoothness)</td><td>—</td><td>Higher better</td></tr>
+<tr><td>11</td><td>Velocity Peaks</td><td>Control</td><td>Velocity Peaks</td><td>count</td><td>Lower better</td></tr>
+<tr><td>12</td><td>RMS Jerk</td><td>Control</td><td>Jerkiness</td><td>°/s³</td><td>Lower better</td></tr>
+</table>
+<p><strong>OPI Score currently uses 6 metrics</strong> (Symmetry + Power domains). Control metrics are displayed but pending threshold calibration.</p>
+
+<hr>
+
+<h2>Metric Definitions</h2>
+
+<h3>1. Performance Score (OPI)</h3>
+<p><strong>Unit:</strong> /100 &nbsp;|&nbsp; <strong>Direction:</strong> Higher is better</p>
+<p>Composite score combining metrics into a single 0–100 performance rating using reliability-weighted averaging.</p>
+<div class="math">
+OPI = Σ(domain_score × weight × ICC) / Σ(weight × ICC)<br>
+where ICC = Intraclass Correlation Coefficient (metric reliability)
+</div>
+<div class="signal">
+<strong>Processing:</strong> Each metric is normalized to 0-100 using good/poor thresholds, then weighted by reliability (ICC). Domain scores are combined using activity-profile weights.
+</div>
+<table><tr><th>Score</th><th>Grade</th></tr>
+<tr><td>90–100</td><td>A (Excellent)</td></tr>
+<tr><td>80–89</td><td>B (Good)</td></tr>
+<tr><td>70–79</td><td>C (Average)</td></tr>
+<tr><td>60–69</td><td>D (Below Average)</td></tr>
+<tr><td>&lt; 60</td><td>F (Poor)</td></tr>
+</table>
+
+<h3>2. ROM Difference (ROM Asymmetry)</h3>
+<p><strong>Unit:</strong> % &nbsp;|&nbsp; <strong>Direction:</strong> Lower is better</p>
+<p>Percentage difference in range of motion between left and right limbs, normalized by maximum value.</p>
+<div class="math">
+Asymmetry = |ROM_L − ROM_R| / max(ROM_L, ROM_R) × 100<br>
+where ROM = max(θ) − min(θ) for each limb
+</div>
+<div class="signal">
+<strong>Processing:</strong> Raw angle data filtered with 4th-order Butterworth (6 Hz cutoff). ROM computed as peak-to-trough range using robust peak detection (MAD-based outlier rejection).
+</div>
+<p><strong>Normal:</strong> &lt; 5% symmetric, 5–15% mild, &gt; 15% significant.</p>
+<p class="clinical">Clinical: Persistent asymmetry &gt; 10% during squatting/jumping is associated with increased injury risk.</p>
+
+<h3>3. Movement Imbalance (Real Asymmetry)</h3>
+<p><strong>Unit:</strong> ° &nbsp;|&nbsp; <strong>Direction:</strong> Lower is better</p>
+<p>True magnitude asymmetry after mathematically separating it from timing/phase differences.</p>
+<div class="math">
+rawDiff(t) = θ_L(t) − θ_R(t)<br>
+baseline(t) = rawDiff(t) ⊛ G(σ)  &nbsp;&nbsp;[Gaussian convolution]<br>
+realAsymmetry(t) = rawDiff(t) − baseline(t)<br>
+avgRealAsymmetry = mean(|realAsymmetry|)
+</div>
+<div class="signal">
+<strong>Processing:</strong> Gaussian kernel (σ = windowSize/4) extracts slow-varying baseline offset. Subtracting baseline isolates transient asymmetries from DC shift caused by phase differences.
+</div>
+<p><strong>Normal:</strong> &lt; 5° symmetric, &gt; 20° significant.</p>
+<p class="clinical">Clinical: Better predictor of outcomes than simple asymmetry—isolates genuine magnitude differences from timing offsets.</p>
+
+<h3>4. Speed Difference (Velocity Asymmetry)</h3>
+<p><strong>Unit:</strong> % &nbsp;|&nbsp; <strong>Direction:</strong> Lower is better</p>
+<p>Percentage difference in peak angular velocities between limbs.</p>
+<div class="math">
+ω(t) = dθ/dt  &nbsp;&nbsp;[angular velocity]<br>
+ω_peak = max(|ω(t)|) for each limb<br>
+Asymmetry = |ω_L − ω_R| / max(ω_L, ω_R) × 100
+</div>
+<div class="signal">
+<strong>Processing:</strong> Velocity computed via central difference: ω[i] = (θ[i+1] − θ[i-1]) / (2×dt). Peak found using robust detection with MAD threshold.
+</div>
+<p><strong>Normal:</strong> &lt; 8% normal, &gt; 20% investigate.</p>
+<p class="clinical">Clinical: Reveals dynamic deficits that ROM measures miss. Often precedes ROM asymmetry during fatigue.</p>
+
+<h3>5. Movement Similarity (Cross-Correlation)</h3>
+<p><strong>Unit:</strong> 0–1 &nbsp;|&nbsp; <strong>Direction:</strong> Higher is better</p>
+<p>Waveform similarity between limbs using normalized Pearson correlation with lag optimization.</p>
+<div class="math">
+r(lag) = Σ[(L[i] − μ_L)(R[i+lag] − μ_R)] / (n × σ_L × σ_R)<br>
+CrossCorrelation = max(r(lag)) for lag ∈ [−maxLag, +maxLag]
+</div>
+<div class="signal">
+<strong>Processing:</strong> Signals mean-centered, then cross-correlated across ±50 samples (or ±n/4). Returns peak correlation coefficient and optimal lag.
+</div>
+<p><strong>Normal:</strong> &gt; 0.95 excellent, 0.75–0.95 acceptable, &lt; 0.75 significant difference.</p>
+<p class="clinical">Clinical: Low correlation despite normal ROM indicates different movement strategies or compensatory patterns.</p>
+
+<h3>6. Peak Speed (Peak Angular Velocity)</h3>
+<p><strong>Unit:</strong> °/s &nbsp;|&nbsp; <strong>Direction:</strong> Higher is better</p>
+<p>Maximum rotational speed of the knee during movement, reflecting explosive capability.</p>
+<div class="math">
+ω(t) = dθ/dt = (θ[i+1] − θ[i-1]) / (2 × dt)  &nbsp;&nbsp;[central difference]<br>
+peakVelocity = max(|ω(t)|)
+</div>
+<div class="signal">
+<strong>Processing:</strong> Angle signal differentiated using central difference method. Absolute velocity taken, then robust peak detection applied to reject outliers.
+</div>
+<p><strong>Normal:</strong> Jumping &gt; 400°/s good, &lt; 200°/s poor. Walking: 200–300°/s.</p>
+<p class="clinical">Clinical: Reduced peak velocity on involved limb despite symmetric ROM indicates incomplete neuromuscular recovery.</p>
+
+<h3>7. Explosiveness (Concentric)</h3>
+<p><strong>Unit:</strong> °/s² &nbsp;|&nbsp; <strong>Direction:</strong> Higher is better</p>
+<p>Peak angular acceleration during the concentric phase (knee extension).</p>
+<div class="math">
+ω(t) = dθ/dt  &nbsp;&nbsp;[velocity]<br>
+α(t) = dω/dt = d²θ/dt²  &nbsp;&nbsp;[acceleration]<br>
+explosiveness = max(|α(t)|) during concentric phase<br>
+where concentric = θ[i] &lt; θ[i-1] (angle decreasing)
+</div>
+<div class="signal">
+<strong>Processing:</strong> Double differentiation via central difference. Concentric phase identified where angle is decreasing. Robust peak of absolute acceleration values.
+</div>
+<p><strong>Normal:</strong> &gt; 500°/s² rapid force development, &lt; 200°/s² slow.</p>
+<p class="clinical">Clinical: Explosiveness deficits may persist after strength normalizes, indicating incomplete neuromuscular integration.</p>
+
+<h3>8. Consistency (ROM CoV)</h3>
+<p><strong>Unit:</strong> % &nbsp;|&nbsp; <strong>Direction:</strong> Lower is better</p>
+<p>Coefficient of variation of ROM across movement cycles—measures movement consistency.</p>
+<div class="math">
+ROM_k = peak_k − trough_k  &nbsp;&nbsp;[ROM for cycle k]<br>
+μ_ROM = mean(ROM_1, ROM_2, ..., ROM_n)<br>
+σ_ROM = std(ROM_1, ROM_2, ..., ROM_n)<br>
+CoV = (σ_ROM / μ_ROM) × 100
+</div>
+<div class="signal">
+<strong>Processing:</strong> Peaks and troughs detected in angle signal. ROM computed for each cycle (peak to following trough). Cycles &lt; 5° filtered as noise. CoV computed across valid cycles.
+</div>
+<p><strong>Normal:</strong> &lt; 5% consistent, &gt; 15% excessive variability.</p>
+<p class="clinical">Clinical: Elevated CoV post-surgery indicates incomplete motor re-learning. Also elevated with fatigue and fear-avoidance.</p>
+
+<h3>9. SPARC (Smoothness)</h3>
+<p><strong>Unit:</strong> unitless &nbsp;|&nbsp; <strong>Direction:</strong> Higher (less negative) is better</p>
+<p>Spectral Arc Length—frequency-domain smoothness metric. Smooth movement has simple spectrum.</p>
+<div class="math">
+V̂(f) = FFT(ω(t))  &nbsp;&nbsp;[velocity spectrum]<br>
+V̂_norm(f) = |V̂(f)| / max(|V̂(f)|)  &nbsp;&nbsp;[normalized]<br>
+SPARC = −Σ√[(Δf)² + (ΔV̂_norm)²]  &nbsp;&nbsp;[negative arc length]
+</div>
+<div class="signal">
+<strong>Processing:</strong> Velocity signal transformed via FFT. Magnitude spectrum normalized by peak. Arc length computed up to cutoff frequency (10 Hz) or amplitude threshold (5%). Negated so higher = smoother.
+</div>
+<p><strong>Normal:</strong> &gt; −1.5 smooth, &lt; −3.0 jerky.</p>
+<p class="clinical">Clinical: Validated for stroke, Parkinson's, cerebellar assessment. Tracks motor learning and recovery.</p>
+
+<h3>10. LDLJ (Smoothness)</h3>
+<p><strong>Unit:</strong> unitless &nbsp;|&nbsp; <strong>Direction:</strong> Higher (less negative) is better</p>
+<p>Log Dimensionless Jerk—time-domain smoothness normalized by duration and velocity.</p>
+<div class="math">
+j(t) = d³θ/dt³  &nbsp;&nbsp;[jerk = 3rd derivative]<br>
+∫j² dt ≈ Σ(j[i]² × dt)  &nbsp;&nbsp;[integrated squared jerk]<br>
+DJ = (T³ / v_peak²) × ∫j² dt  &nbsp;&nbsp;[dimensionless jerk]<br>
+LDLJ = −ln(DJ)
+</div>
+<div class="signal">
+<strong>Processing:</strong> Triple differentiation via central difference: θ → ω → α → j. Jerk squared and integrated (trapezoidal). Normalized by duration³ / peakVelocity² for dimensionless comparison. Log-transformed.
+</div>
+<p><strong>Normal:</strong> &gt; −6 smooth, &lt; −10 control issues.</p>
+<p class="clinical">Clinical: Complements SPARC. If both degrade = global control issue. If only one = specific mechanism.</p>
+
+<h3>11. Velocity Peaks</h3>
+<p><strong>Unit:</strong> count &nbsp;|&nbsp; <strong>Direction:</strong> Lower is better</p>
+<p>Number of distinct velocity peaks—efficient movement has one smooth peak per phase.</p>
+<div class="math">
+threshold = 0.1 × max(|ω(t)|)  &nbsp;&nbsp;[10% of peak velocity]<br>
+peaks = count of local maxima/minima where |ω| &gt; threshold
+</div>
+<div class="signal">
+<strong>Processing:</strong> Local extrema (both maxima and minima) detected in velocity signal. Filtered by 10% amplitude threshold to exclude noise. Total count returned.
+</div>
+<p><strong>Normal:</strong> 1 peak ideal, &gt; 5 peaks indicates corrective sub-movements.</p>
+<p class="clinical">Clinical: Elevated in early rehabilitation, cerebellar dysfunction, and novel motor learning.</p>
+
+<h3>12. Jerkiness (RMS Jerk)</h3>
+<p><strong>Unit:</strong> °/s³ &nbsp;|&nbsp; <strong>Direction:</strong> Lower is better</p>
+<p>Root mean square of jerk—quantifies movement 'shakiness' or abruptness.</p>
+<div class="math">
+j(t) = d³θ/dt³ = dα/dt  &nbsp;&nbsp;[jerk = derivative of acceleration]<br>
+RMS_jerk = √(mean(j²)) = √(Σj[i]² / n)
+</div>
+<div class="signal">
+<strong>Processing:</strong> Triple central difference: θ → ω → α → j. Each differentiation amplifies noise, so pre-filtering critical. RMS computed over all jerk samples.
+</div>
+<p><strong>Normal:</strong> &lt; 500°/s³ smooth, &gt; 2000°/s³ poor control.</p>
+<p class="clinical">Clinical: Increases with fatigue, cognitive load, pain, and neurological conditions. Sensitive to within-session changes.</p>
+
+<hr>
+
+<h2>Signal Processing Pipeline</h2>
+<table>
+<tr><th>Step</th><th>Method</th><th>Parameters</th><th>Purpose</th></tr>
+<tr><td>1. Filtering</td><td>Butterworth low-pass</td><td>4th order, 6 Hz cutoff, zero-phase</td><td>Remove sensor noise while preserving movement features</td></tr>
+<tr><td>2. Differentiation</td><td>Central difference</td><td>ẋ[i] = (x[i+1] − x[i-1]) / 2dt</td><td>Compute velocity, acceleration, jerk from position</td></tr>
+<tr><td>3. Smoothing</td><td>Moving average</td><td>5-9 point window</td><td>Reduce noise amplification from differentiation</td></tr>
+<tr><td>4. Peak Detection</td><td>Robust (MAD-based)</td><td>k=3 × MAD threshold</td><td>Find true peaks, reject outliers</td></tr>
+<tr><td>5. Cycle Detection</td><td>Prominence-based</td><td>Min 10% of range prominence</td><td>Segment repeated movements</td></tr>
+<tr><td>6. Bilateral Alignment</td><td>Cross-correlation</td><td>±50 sample lag search</td><td>Find temporal offset between limbs</td></tr>
+<tr><td>7. Baseline Extraction</td><td>Gaussian convolution</td><td>σ = windowSize/4</td><td>Separate DC offset from transient asymmetry</td></tr>
+</table>
+
+<h3>Derivative Relationships</h3>
+<div class="math">
+Position: θ(t)  &nbsp;&nbsp;[degrees]<br>
+Velocity: ω(t) = dθ/dt  &nbsp;&nbsp;[°/s]<br>
+Acceleration: α(t) = dω/dt = d²θ/dt²  &nbsp;&nbsp;[°/s²]<br>
+Jerk: j(t) = dα/dt = d³θ/dt³  &nbsp;&nbsp;[°/s³]
+</div>
+<p><strong>Note:</strong> Each differentiation amplifies high-frequency noise by factor of ~2πf. Pre-filtering essential before computing higher derivatives.</p>
+
+<hr>
+
+<h2>Key References</h2>
+<ul>
+<li>Balasubramanian S, et al. (2015). On the analysis of movement smoothness. J NeuroEngineering Rehabil. 12:112.</li>
+<li>Balasubramanian S, et al. (2012). A robust and sensitive metric for quantifying movement smoothness. IEEE Trans Biomed Eng.</li>
+<li>Flanagan EP, Comyns TM. (2008). The use of contact time and RSI to monitor training. Strength Cond J.</li>
+<li>Forczek W, Staszkiewicz R. (2012). Evaluation of symmetry in lower limb joints. J Human Kinetics. 35:127-135.</li>
+<li>Sadeghi H, et al. (2000). Symmetry and limb dominance in able-bodied gait. Gait Posture. 12(1):34-45.</li>
+</ul>
+
+<hr>
+<p style="text-align:center;color:#888;font-size:0.85em"><em>TropX Motion Dashboard — 12 Metrics Clinical Reference</em></p>
+
+</body>
+</html>

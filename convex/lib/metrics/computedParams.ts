@@ -68,43 +68,50 @@ export function calculatePeakAngularVelocity(values: number[], timeStep: number)
   return findRobustPeak(absVelocity);
 }
 
-/** #6: explosiveness_loading - Peak velocity during eccentric/loading phase. */
+/** #6: explosiveness_loading - Peak angular acceleration during eccentric/loading phase (°/s²). */
 export function calculateExplosivenessLoading(values: number[], timeStep: number): number {
-  if (values.length < 3) return 0;
+  if (values.length < 5) return 0;
   const velocity = calculateDerivative(values, timeStep);
-  if (velocity.length === 0) return 0;
+  const acceleration = calculateDerivative(velocity, timeStep);
+  if (acceleration.length === 0) return 0;
 
-  const loadingVelocities: number[] = [];
+  const loadingAccelerations: number[] = [];
 
-  // velocity[i] corresponds to values[i+1] due to central difference
-  for (let i = 0; i < velocity.length; i++) {
-    const posIdx = i + 1;
-    // Angle increasing = loading phase (for knee flexion)
-    if (values[posIdx] > values[posIdx - 1]) {
-      loadingVelocities.push(Math.abs(velocity[i]));
+  // acceleration[i] corresponds roughly to values[i+2] due to two central differences
+  for (let i = 0; i < acceleration.length; i++) {
+    const posIdx = i + 2;
+    if (posIdx < values.length - 1) {
+      // Angle increasing = loading phase (for knee flexion)
+      if (values[posIdx] > values[posIdx - 1]) {
+        loadingAccelerations.push(Math.abs(acceleration[i]));
+      }
     }
   }
 
-  return loadingVelocities.length > 0 ? findRobustPeak(loadingVelocities) : 0;
+  return loadingAccelerations.length > 0 ? findRobustPeak(loadingAccelerations) : 0;
 }
 
-/** #7: explosiveness_concentric - Peak velocity during concentric phase. */
+/** #7: explosiveness_concentric - Peak angular acceleration during concentric phase (°/s²). */
 export function calculateExplosivenessConcentric(values: number[], timeStep: number): number {
-  if (values.length < 3) return 0;
+  if (values.length < 5) return 0;
   const velocity = calculateDerivative(values, timeStep);
-  if (velocity.length === 0) return 0;
+  const acceleration = calculateDerivative(velocity, timeStep);
+  if (acceleration.length === 0) return 0;
 
-  const concentricVelocities: number[] = [];
+  const concentricAccelerations: number[] = [];
 
-  for (let i = 0; i < velocity.length; i++) {
-    const posIdx = i + 1;
-    // Angle decreasing = concentric phase (for knee extension)
-    if (values[posIdx] < values[posIdx - 1]) {
-      concentricVelocities.push(Math.abs(velocity[i]));
+  // acceleration[i] corresponds roughly to values[i+2] due to two central differences
+  for (let i = 0; i < acceleration.length; i++) {
+    const posIdx = i + 2;
+    if (posIdx < values.length - 1) {
+      // Angle decreasing = concentric phase (for knee extension)
+      if (values[posIdx] < values[posIdx - 1]) {
+        concentricAccelerations.push(Math.abs(acceleration[i]));
+      }
     }
   }
 
-  return concentricVelocities.length > 0 ? findRobustPeak(concentricVelocities) : 0;
+  return concentricAccelerations.length > 0 ? findRobustPeak(concentricAccelerations) : 0;
 }
 
 /** #8: rms_jerk - Root mean square of jerk (smoothness indicator). */
@@ -117,27 +124,51 @@ export function calculateRMSJerk(values: number[], timeStep: number): number {
   return rms(jerk);
 }
 
-/** #9: rom_cov_percentage - Coefficient of variation for ROM (consistency). */
-export function calculateROMCoV(values: number[]): number {
-  if (values.length < 3) return 0;
+/** #9: rom_cov_percentage - Coefficient of variation for ROM across cycles (consistency). */
+export function calculateROMCoV(values: number[], timeStep: number = 0.01): number {
+  if (values.length < 10) return 0;
 
-  // Find cycle peaks
-  const peaks: number[] = [];
+  // Find cycle peaks and troughs to calculate ROM per cycle
+  const peaks: { index: number; value: number }[] = [];
+  const troughs: { index: number; value: number }[] = [];
+
   for (let i = 1; i < values.length - 1; i++) {
     if (values[i] > values[i - 1] && values[i] > values[i + 1]) {
-      peaks.push(values[i]);
+      peaks.push({ index: i, value: values[i] });
+    }
+    if (values[i] < values[i - 1] && values[i] < values[i + 1]) {
+      troughs.push({ index: i, value: values[i] });
     }
   }
 
-  if (peaks.length < 2) return 0;
+  if (peaks.length < 2 || troughs.length < 1) return 0;
 
-  const meanPeak = peaks.reduce((sum, p) => sum + p, 0) / peaks.length;
-  if (Math.abs(meanPeak) < 1e-10) return 0;
+  // Calculate ROM for each cycle (peak to next trough, or trough to next peak)
+  const romValues: number[] = [];
 
-  const variance = peaks.reduce((sum, p) => sum + (p - meanPeak) ** 2, 0) / peaks.length;
-  const stdDevPeak = Math.sqrt(variance);
+  for (let i = 0; i < peaks.length - 1; i++) {
+    const peakIdx = peaks[i].index;
+    const nextPeakIdx = peaks[i + 1].index;
 
-  return (stdDevPeak / Math.abs(meanPeak)) * 100;
+    // Find the trough between these two peaks
+    const troughBetween = troughs.find(t => t.index > peakIdx && t.index < nextPeakIdx);
+    if (troughBetween) {
+      const cycleROM = Math.abs(peaks[i].value - troughBetween.value);
+      if (cycleROM > 5) { // Minimum 5° to be considered a valid cycle
+        romValues.push(cycleROM);
+      }
+    }
+  }
+
+  if (romValues.length < 2) return 0;
+
+  const meanROM = romValues.reduce((sum, r) => sum + r, 0) / romValues.length;
+  if (Math.abs(meanROM) < 1e-10) return 0;
+
+  const variance = romValues.reduce((sum, r) => sum + (r - meanROM) ** 2, 0) / romValues.length;
+  const stdDevROM = Math.sqrt(variance);
+
+  return (stdDevROM / meanROM) * 100;
 }
 
 /** #10: rom_symmetry_index - Bilateral ROM symmetry ratio (used in bilateral). */
@@ -179,7 +210,7 @@ export function calculatePerLegMetrics(
     explosivenessLoading: calculateExplosivenessLoading(values, timeStep),
     explosivenessConcentric: calculateExplosivenessConcentric(values, timeStep),
     rmsJerk: calculateRMSJerk(values, timeStep),
-    romCoV: calculateROMCoV(values),
+    romCoV: calculateROMCoV(values, timeStep),
     peakResultantAcceleration: calculatePeakResultantAcceleration(values, timeStep),
   };
 }

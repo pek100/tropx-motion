@@ -85,7 +85,9 @@
       "WebFetch(domain:ai.google.dev)",
       "WebFetch(domain:discuss.ai.google.dev)",
       "WebFetch(domain:recharts.github.io)",
-      "WebFetch(domain:recharts.org)"
+      "WebFetch(domain:recharts.org)",
+      "Bash(sudo apt-get:*)",
+      "Bash(sudo apt-get install:*)"
     ],
     "deny": [],
     "ask": [],
