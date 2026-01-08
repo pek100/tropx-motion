@@ -26,13 +26,13 @@ export enum JointSide {
     RIGHT = 'right',
 }
 
-// Device ID to position/joint mapping
-// 0x11 = Left Thigh, 0x12 = Left Shin, 0x21 = Right Thigh, 0x22 = Right Shin
+// Device ID to position/joint mapping (matches ble-management/types.ts DeviceID enum)
+// Upper nibble: joint (1=left, 2=right), Lower nibble: position (1=shin, 2=thigh)
 export const DEVICE_MAPPING: Record<number, { joint: JointSide; position: DevicePosition }> = {
-    0x11: { joint: JointSide.LEFT, position: DevicePosition.THIGH },
-    0x12: { joint: JointSide.LEFT, position: DevicePosition.SHIN },
-    0x21: { joint: JointSide.RIGHT, position: DevicePosition.THIGH },
-    0x22: { joint: JointSide.RIGHT, position: DevicePosition.SHIN },
+    0x11: { joint: JointSide.LEFT, position: DevicePosition.SHIN },
+    0x12: { joint: JointSide.LEFT, position: DevicePosition.THIGH },
+    0x21: { joint: JointSide.RIGHT, position: DevicePosition.SHIN },
+    0x22: { joint: JointSide.RIGHT, position: DevicePosition.THIGH },
 };
 
 // ============================================================================

@@ -131,12 +131,12 @@ export class JointAligner {
             }
         }
 
-        // Cleanup old data from buffers
-        if (thighConsumed && this.prevThigh) {
-            this.discardSamplesBeforeTimestamp(this.thighBuffer, this.prevThigh.timestamp);
+        // Cleanup old data from buffers (immediate - use curr, not prev)
+        if (thighConsumed && this.currThigh) {
+            this.discardSamplesBeforeTimestamp(this.thighBuffer, this.currThigh.timestamp);
         }
-        if (shinConsumed && this.prevShin) {
-            this.discardSamplesBeforeTimestamp(this.shinBuffer, this.prevShin.timestamp);
+        if (shinConsumed && this.currShin) {
+            this.discardSamplesBeforeTimestamp(this.shinBuffer, this.currShin.timestamp);
         }
 
         // Return current state

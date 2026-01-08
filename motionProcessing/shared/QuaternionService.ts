@@ -1,5 +1,5 @@
 import { Quaternion } from './types';
-import {ANGLE} from './constants';
+import { QUATERNION } from './constants';
 
 /**
  * Centralized service for all quaternion mathematical operations.
@@ -41,7 +41,7 @@ export class QuaternionService {
         }
 
         const norm = QuaternionService.magnitude(q);
-        if (norm < ANGLE.EPSILON || !isFinite(norm)) {
+        if (norm < QUATERNION.EPSILON || !isFinite(norm)) {
             return QuaternionService.createIdentity();
         }
 
@@ -169,7 +169,7 @@ export class QuaternionService {
         }
 
         // Use linear interpolation for nearly identical quaternions
-        if (dot > 0.9995) {
+        if (dot > QUATERNION.SLERP_LINEAR_THRESHOLD) {
             return QuaternionService.normalize({
                 w: q1.w + t * (q2Final.w - q1.w),
                 x: q1.x + t * (q2Final.x - q1.x),

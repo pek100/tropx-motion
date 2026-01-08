@@ -323,7 +323,8 @@ export class MotionProcessingCoordinator {
         };
 
         this.uiProcessor.broadcastCompletePair(pair);
-        RecordingBuffer.pushSynchronizedPair(pair.timestamp, leftQuat, rightQuat);
+        // Note: Raw samples are now stored directly in DeviceProcessor.processData()
+        // Alignment happens on export/save via AlignmentService
     }
 
     setPerformanceOptions(opts: { bypassInterpolation?: boolean; asyncNotify?: boolean }): void {

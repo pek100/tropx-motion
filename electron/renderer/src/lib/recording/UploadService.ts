@@ -12,11 +12,9 @@
 import { ConvexClient } from 'convex/browser';
 import { api } from '../../../../../convex/_generated/api';
 import { Id } from '../../../../../convex/_generated/dataModel';
-import { QuaternionSample } from '../../../../../shared/QuaternionCodec';
-import {
-  resample,
-  ResampleResult,
-} from '../../../../../motionProcessing/recording/GapFiller';
+import { RawDeviceSample, QuaternionSample } from '../../../../../motionProcessing/recording/types';
+import { AlignmentService } from '../../../../../motionProcessing/recording/AlignmentService';
+import { UniformSample, SampleFlag } from '../../../../../shared/QuaternionCodec';
 import {
   chunkAndCompress,
   generateSessionId,
@@ -53,8 +51,9 @@ export interface UploadResult {
   sessionId?: string;
   totalChunks?: number;
   totalSamples?: number;
+  rawSampleCount?: number;
+  alignedSampleCount?: number;
   error?: string;
-  stats?: ResampleResult['stats'];
   compressionStats?: {
     rawSizeBytes: number;
     compressedSizeBytes: number;
@@ -81,12 +80,12 @@ export class UploadService {
 
   /**
    * Upload a recording to Convex with compression.
-   * @param rawSamples Raw quaternion samples from RecordingBuffer
+   * @param rawSamples Raw per-device samples from RecordingBuffer
    * @param options Upload options (metadata)
    * @param onProgress Optional progress callback
    */
   async upload(
-    rawSamples: QuaternionSample[],
+    rawSamples: RawDeviceSample[],
     options: UploadOptions = {},
     onProgress?: ProgressCallback
   ): Promise<UploadResult> {
@@ -94,7 +93,7 @@ export class UploadService {
     const sessionId = generateSessionId();
 
     try {
-      // Phase 1: Processing
+      // Phase 1: Processing - align and interpolate raw samples
       onProgress?.({
         phase: 'processing',
         currentChunk: 0,
@@ -109,16 +108,27 @@ export class UploadService {
         };
       }
 
-      // Resample to uniform rate
-      const resampleResult = resample(rawSamples, { targetHz });
-      const uniformSamples = resampleResult.samples;
+      // Process raw samples through AlignmentService
+      // This does: group by device → align sensors → compute relative quats → interpolate to grid
+      const alignedSamples = AlignmentService.process(rawSamples, targetHz);
 
-      if (uniformSamples.length === 0) {
+      if (alignedSamples.length === 0) {
         return {
           success: false,
-          error: 'Resampling produced no samples',
+          error: 'Alignment failed - ensure both thigh and shin sensors are connected per joint',
         };
       }
+
+      console.log(`[UploadService] Aligned ${rawSamples.length} raw → ${alignedSamples.length} samples at ${targetHz}Hz`);
+
+      // Convert to UniformSample format for Chunker
+      const uniformSamples: UniformSample[] = alignedSamples.map(s => ({
+        t: s.t,
+        lq: s.lq,
+        rq: s.rq,
+        leftFlag: s.lq ? SampleFlag.REAL : SampleFlag.MISSING,
+        rightFlag: s.rq ? SampleFlag.REAL : SampleFlag.MISSING,
+      }));
 
       // Phase 2: Compress and chunk
       onProgress?.({
@@ -226,7 +236,8 @@ export class UploadService {
         sessionId,
         totalChunks: compressed.session.totalChunks,
         totalSamples: compressed.session.totalSamples,
-        stats: resampleResult.stats,
+        rawSampleCount: rawSamples.length,
+        alignedSampleCount: alignedSamples.length,
         compressionStats: {
           rawSizeBytes: compressionStats.rawSizeBytes,
           compressedSizeBytes: compressionStats.compressedSizeBytes,

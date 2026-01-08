@@ -700,17 +700,17 @@ export class MainProcess {
       }
     });
 
-    // Get quaternion samples for Convex upload
+    // Get raw samples for Convex upload (alignment happens in UploadService)
     ipcMain.handle('recording:getSamples', () => {
       try {
         const { RecordingBuffer } = require('../../motionProcessing/recording');
-        const samples = RecordingBuffer.getAllSamples();
+        const rawSamples = RecordingBuffer.getRawSamples();
         const metadata = RecordingBuffer.getMetadata();
         return {
           success: true,
-          samples,
+          samples: rawSamples,
           metadata,
-          sampleCount: samples.length
+          sampleCount: rawSamples.length
         };
       } catch (err) {
         return { success: false, error: String(err), samples: [], metadata: null };

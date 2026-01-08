@@ -5,7 +5,18 @@
 
 import type { Quaternion } from "./types";
 
-const EPSILON = 1e-10;
+/**
+ * Quaternion mathematical constants.
+ * NOTE: These must stay in sync with motionProcessing/shared/constants.ts QUATERNION
+ */
+const QUATERNION_CONSTANTS = {
+  /** Magnitude threshold below which a quaternion is considered degenerate. */
+  EPSILON: 1e-6,
+  /** Dot product threshold for using linear interpolation in SLERP.
+   *  When cos(θ) > 0.9995, angle < 1.8°, LERP ≈ SLERP with better stability. */
+  SLERP_LINEAR_THRESHOLD: 0.9995,
+} as const;
+
 const DEG_PER_RAD = 180 / Math.PI;
 
 // Axis extraction map for rotation matrix → Euler angle
@@ -44,7 +55,7 @@ export function magnitude(q: Quaternion): number {
 /** Normalizes quaternion to unit length. */
 export function normalize(q: Quaternion): Quaternion {
   const norm = magnitude(q);
-  if (norm < EPSILON || !isFinite(norm)) {
+  if (norm < QUATERNION_CONSTANTS.EPSILON || !isFinite(norm)) {
     return createIdentity();
   }
   const invNorm = 1.0 / norm;

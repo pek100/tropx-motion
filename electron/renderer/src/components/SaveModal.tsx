@@ -42,6 +42,8 @@ import { cn, formatDuration, formatDateTime } from '@/lib/utils';
 import { isWeb } from '@/lib/platform';
 import { useRecordingUpload, UseRecordingUploadOptions } from '@/hooks/useRecordingUpload';
 import { QuaternionSample, quaternionToAngle } from '../../../../shared/QuaternionCodec';
+import { RawDeviceSample } from '../../../../motionProcessing/recording/types';
+import { AlignmentService } from '../../../../motionProcessing/recording/AlignmentService';
 import { detectActivityProfile } from '../../../../shared/classification';
 import { Id } from '../../../../convex/_generated/dataModel';
 import { TagsInput } from './TagsInput';
@@ -409,28 +411,33 @@ export function SaveModal({
 
       setIsLoadingInfo(true);
       try {
-        // Get samples for accurate duration calculation and preview chart
+        // Get raw samples for accurate duration calculation and preview chart
         const response = await window.electronAPI.recording.getSamples();
         if (response.success && response.samples.length > 0) {
-          const samples = response.samples as QuaternionSample[];
-          // Sort by timestamp
-          const sortedSamples = [...samples].sort((a, b) => a.t - b.t);
-          // Calculate actual duration from timestamps
-          const firstTs = sortedSamples[0].t;
-          const lastTs = sortedSamples[sortedSamples.length - 1].t;
-          const actualDuration = lastTs - firstTs;
+          const rawSamples = response.samples as RawDeviceSample[];
 
-          setRecordingInfo({
-            sampleCount: samples.length,
-            durationMs: actualDuration,
-            startTime: firstTs,
-            samples: sortedSamples,
-          });
+          // Process raw samples through AlignmentService for preview
+          // Use 100Hz for preview (default target)
+          const alignedSamples = AlignmentService.process(rawSamples, 100);
 
-          // Auto-detect activity profile from movement classification
-          const { profile } = detectActivityProfile(sortedSamples);
-          setActivityProfile(profile);
-          setIsProfileAutoDetected(true);
+          if (alignedSamples.length > 0) {
+            // Calculate actual duration from timestamps
+            const firstTs = alignedSamples[0].t;
+            const lastTs = alignedSamples[alignedSamples.length - 1].t;
+            const actualDuration = lastTs - firstTs;
+
+            setRecordingInfo({
+              sampleCount: rawSamples.length,  // Show raw sample count
+              durationMs: actualDuration,
+              startTime: firstTs,
+              samples: alignedSamples,
+            });
+
+            // Auto-detect activity profile from movement classification
+            const { profile } = detectActivityProfile(alignedSamples);
+            setActivityProfile(profile);
+            setIsProfileAutoDetected(true);
+          }
         } else {
           // Fallback to state if no samples
           const state = await window.electronAPI.recording.getState();
@@ -484,11 +491,8 @@ export function SaveModal({
         return;
       }
 
-      const samples: QuaternionSample[] = response.samples.map((s) => ({
-        t: s.t,
-        lq: s.lq,
-        rq: s.rq,
-      }));
+      // Raw samples are now passed directly - alignment happens in UploadService
+      const rawSamples: RawDeviceSample[] = response.samples;
 
       // Build tags array: title as first tag (if provided), followed by user tags
       const allTags: string[] = [];
@@ -510,7 +514,7 @@ export function SaveModal({
         activityProfile,
       };
 
-      const result = await upload(samples, options);
+      const result = await upload(rawSamples, options);
 
       if (result.success) {
         // Sync user tags for autocomplete history (don't include title)

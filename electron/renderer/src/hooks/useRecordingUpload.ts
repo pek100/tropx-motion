@@ -12,7 +12,7 @@ import { useConvex } from 'convex/react';
 import { ConvexClient } from 'convex/browser';
 import { useToast } from '@/hooks/use-toast';
 import { Id } from '../../../../convex/_generated/dataModel';
-import { QuaternionSample } from '../../../../shared/QuaternionCodec';
+import { RawDeviceSample } from '../../../../motionProcessing/recording/types';
 import {
   UploadService,
   UploadProgress,
@@ -48,7 +48,7 @@ export interface UseRecordingUploadReturn {
 
   // Actions
   upload: (
-    samples: QuaternionSample[],
+    samples: RawDeviceSample[],
     options?: UseRecordingUploadOptions
   ) => Promise<UploadResult>;
 }
@@ -123,7 +123,7 @@ export function useRecordingUpload(): UseRecordingUploadReturn {
 
   const upload = useCallback(
     async (
-      samples: QuaternionSample[],
+      samples: RawDeviceSample[],
       options: UseRecordingUploadOptions = {}
     ): Promise<UploadResult> => {
       if (!offlineHandlerRef.current) {

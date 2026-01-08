@@ -9,9 +9,15 @@ import { Sample, SYNC_CONFIG } from './types';
 export class SensorBuffer {
     private samples: Sample[] = [];
     private readonly deviceId: number;
+    private readonly maxSize: number;
 
-    constructor(deviceId: number) {
+    /**
+     * @param deviceId - Device ID for this buffer
+     * @param maxSize - Maximum buffer size (default: SYNC_CONFIG.MAX_BUFFER_SIZE, use Infinity for batch mode)
+     */
+    constructor(deviceId: number, maxSize: number = SYNC_CONFIG.MAX_BUFFER_SIZE) {
         this.deviceId = deviceId;
+        this.maxSize = maxSize;
     }
 
     /** Add a new sample to the buffer */
@@ -26,8 +32,8 @@ export class SensorBuffer {
             this.samples.splice(insertIndex, 0, sample);
         }
 
-        // Safety limit
-        if (this.samples.length > SYNC_CONFIG.MAX_BUFFER_SIZE) {
+        // Safety limit (skip if maxSize is Infinity for batch mode)
+        if (this.maxSize !== Infinity && this.samples.length > this.maxSize) {
             this.samples.shift();
         }
     }

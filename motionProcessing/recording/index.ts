@@ -1,9 +1,15 @@
+// Types
 export {
-    RecordingBuffer,
+    type RawDeviceSample,
+    type AlignedJointSample,
     type QuaternionSample,
     type RecordingMetadata,
     type RecordingState
-} from './RecordingBuffer';
+} from './types';
+
+// Core components
+export { RecordingBuffer } from './RecordingBuffer';
+export { AlignmentService } from './AlignmentService';
 
 export {
     InterpolationService,
@@ -16,22 +22,7 @@ export {
     type ExportResult
 } from './CSVExporter';
 
-// New quaternion storage exports
-export {
-    validateSamples,
-    calculateExpectedTimestamps,
-    generateTimeGrid,
-    GapType,
-    type Gap,
-    type ValidationResult
-} from './GapValidator';
-
-export {
-    resample,
-    type ResampleOptions,
-    type ResampleResult
-} from './GapFiller';
-
+// Chunking and compression
 export {
     chunkSamples,
     chunkAndCompress,

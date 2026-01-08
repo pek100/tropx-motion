@@ -67,6 +67,17 @@ const JOINTS = {
   RIGHT_KNEE: "right_knee",
 } as const;
 
+/**
+ * Quaternion mathematical constants for normalization and interpolation.
+ */
+export const QUATERNION_CONSTANTS = {
+  /** Magnitude threshold below which a quaternion is considered degenerate. */
+  EPSILON: 1e-6,
+  /** Dot product threshold for using linear interpolation in SLERP.
+   *  When cos(θ) > 0.9995, angle < 1.8°, LERP ≈ SLERP with better stability. */
+  SLERP_LINEAR_THRESHOLD: 0.9995,
+} as const;
+
 // ─────────────────────────────────────────────────────────────────
 // Quaternion Math
 // ─────────────────────────────────────────────────────────────────
@@ -80,12 +91,16 @@ function dot(q1: Quaternion, q2: Quaternion): number {
 
 function normalize(q: Quaternion): Quaternion {
   const len = Math.sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
-  if (len === 0) return IDENTITY_QUAT;
+  if (len < QUATERNION_CONSTANTS.EPSILON || !isFinite(len)) return IDENTITY_QUAT;
   return { w: q.w / len, x: q.x / len, y: q.y / len, z: q.z / len };
 }
 
 /** SLERP interpolation between two quaternions */
 export function slerp(q1: Quaternion, q2: Quaternion, t: number): Quaternion {
+  // Early returns for edge cases
+  if (t <= 0) return { ...q1 };
+  if (t >= 1) return { ...q2 };
+
   let q2Adj = { ...q2 };
   let cosHalfTheta = dot(q1, q2);
 
@@ -96,7 +111,7 @@ export function slerp(q1: Quaternion, q2: Quaternion, t: number): Quaternion {
   }
 
   // If quaternions are very close, use linear interpolation
-  if (cosHalfTheta > 0.9995) {
+  if (cosHalfTheta > QUATERNION_CONSTANTS.SLERP_LINEAR_THRESHOLD) {
     return normalize({
       w: q1.w + t * (q2Adj.w - q1.w),
       x: q1.x + t * (q2Adj.x - q1.x),

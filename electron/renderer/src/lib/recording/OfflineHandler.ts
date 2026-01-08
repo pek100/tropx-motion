@@ -9,7 +9,7 @@
  */
 
 import { ConvexClient } from 'convex/browser';
-import { QuaternionSample } from '../../../../../shared/QuaternionCodec';
+import { RawDeviceSample } from '../../../../../motionProcessing/recording/types';
 import { UploadService, UploadOptions, UploadResult } from './UploadService';
 
 // ─────────────────────────────────────────────────────────────────
@@ -18,7 +18,7 @@ import { UploadService, UploadOptions, UploadResult } from './UploadService';
 
 export interface QueuedUpload {
   id: string;
-  samples: QuaternionSample[];
+  samples: RawDeviceSample[];
   options: UploadOptions;
   createdAt: number;
   retryCount: number;
@@ -88,7 +88,7 @@ export class OfflineHandler {
    * Upload a recording, queueing if offline.
    */
   async upload(
-    samples: QuaternionSample[],
+    samples: RawDeviceSample[],
     options: UploadOptions = {}
   ): Promise<UploadResult> {
     if (!this.isConnected) {
@@ -131,7 +131,7 @@ export class OfflineHandler {
    * Add upload to queue.
    */
   private addToQueue(
-    samples: QuaternionSample[],
+    samples: RawDeviceSample[],
     options: UploadOptions
   ): void {
     const queuedUpload: QueuedUpload = {

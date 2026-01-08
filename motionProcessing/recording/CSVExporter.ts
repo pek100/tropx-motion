@@ -1,8 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { RecordingBuffer, RecordingMetadata } from './RecordingBuffer';
+import { RecordingBuffer } from './RecordingBuffer';
+import { RecordingMetadata } from './types';
 import { InterpolationService, InterpolatedAngleSample } from './InterpolationService';
+import { AlignmentService } from './AlignmentService';
 
 /** Export options. */
 export interface ExportOptions {
@@ -19,6 +21,8 @@ export interface ExportResult {
     fileName?: string;
     error?: string;
     sampleCount?: number;
+    csv?: string;
+    durationSeconds?: number;
 }
 
 /**
@@ -31,36 +35,45 @@ export class CSVExporter {
      */
     static export(options: ExportOptions = {}): ExportResult {
         const {
-            interpolated = false,
+            interpolated = true,  // Default to interpolated (uniform grid)
             targetHz,
             includeMetadata = true,
             outputPath
         } = options;
 
-        const samples = RecordingBuffer.getAllSamples();
+        const rawSamples = RecordingBuffer.getRawSamples();
         const metadata = RecordingBuffer.getMetadata();
         const state = RecordingBuffer.getState();
 
-        console.log(`📤 [CSVExporter] Export requested:`, {
-            sampleCount: samples.length,
+        console.log(`[CSVExporter] Export requested:`, {
+            rawSampleCount: rawSamples.length,
             isRecording: state.isRecording,
             durationMs: state.durationMs,
             interpolated,
             outputPath
         });
 
-        if (samples.length === 0) {
-            console.error(`❌ [CSVExporter] No samples to export! Buffer state:`, state);
+        if (rawSamples.length === 0) {
+            console.error(`[CSVExporter] No samples to export! Buffer state:`, state);
             return { success: false, error: 'No recording data to export' };
         }
 
         // Get target Hz from metadata or options
         const hz = targetHz || metadata?.targetHz || 100;
 
-        // Convert to angle samples
-        const angleSamples = interpolated
-            ? InterpolationService.slerpToUniformRate(samples, hz)
-            : InterpolationService.toAngleSamples(samples);
+        // Process raw samples through AlignmentService
+        // This does: group by device → align sensors → compute relative quats → interpolate to grid
+        const alignedSamples = AlignmentService.process(rawSamples, hz);
+
+        if (alignedSamples.length === 0) {
+            console.error(`[CSVExporter] AlignmentService produced no samples! Check that both thigh and shin sensors were connected.`);
+            return { success: false, error: 'Alignment failed - ensure both thigh and shin sensors are connected per joint' };
+        }
+
+        console.log(`[CSVExporter] Aligned ${rawSamples.length} raw → ${alignedSamples.length} samples at ${hz}Hz`);
+
+        // Convert quaternions to angles for CSV
+        const angleSamples = InterpolationService.toAngleSamples(alignedSamples);
 
         // Generate CSV content
         const csvContent = CSVExporter.generateCSVContent(angleSamples, metadata, interpolated, hz, includeMetadata);
@@ -80,6 +93,13 @@ export class CSVExporter {
             fs.mkdirSync(dir, { recursive: true });
         }
 
+        // Calculate duration
+        const durationSeconds = metadata
+            ? (metadata.endTime - metadata.startTime) / 1000
+            : angleSamples.length > 0
+                ? (angleSamples[angleSamples.length - 1].t - angleSamples[0].t) / 1000
+                : 0;
+
         // Write file
         try {
             fs.writeFileSync(filePath, csvContent, 'utf-8');
@@ -87,7 +107,9 @@ export class CSVExporter {
                 success: true,
                 filePath,
                 fileName,
-                sampleCount: angleSamples.length
+                sampleCount: angleSamples.length,
+                csv: csvContent,
+                durationSeconds
             };
         } catch (err) {
             return {

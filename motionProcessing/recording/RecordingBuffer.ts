@@ -1,43 +1,30 @@
+/**
+ * RecordingBuffer - Stores raw per-device sensor data during recording.
+ *
+ * Raw samples are stored with original device timestamps.
+ * Alignment and interpolation happens on export/save via AlignmentService.
+ *
+ * This simplified buffer just stores raw samples - no real-time assembly needed.
+ */
+
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { Quaternion } from '../shared/types';
-
-/** Recording sample with quaternion data for both knees. */
-export interface QuaternionSample {
-    t: number;              // timestamp (ms)
-    lq: Quaternion | null;  // left knee relative quaternion
-    rq: Quaternion | null;  // right knee relative quaternion
-}
-
-/** Recording metadata. */
-export interface RecordingMetadata {
-    startTime: number;
-    endTime: number;
-    sampleCount: number;
-    targetHz: number;
-}
-
-/** Recording state for IPC queries. */
-export interface RecordingState {
-    isRecording: boolean;
-    sampleCount: number;
-    durationMs: number;
-    startTime: number | null;
-}
+import { RawDeviceSample, RecordingMetadata, RecordingState } from './types';
 
 // Constants
-const MAX_BUFFER_SIZE = 60000;          // 10 min at 100Hz
+const MAX_BUFFER_SIZE = 240000;         // 10 min at 100Hz * 4 devices
 const FLUSH_INTERVAL_MS = 10000;        // Flush every 10 seconds
-const FLUSH_SAMPLE_THRESHOLD = 1000;    // Or every 1000 samples
+const FLUSH_SAMPLE_THRESHOLD = 4000;    // Or every 4000 samples (1000 per device)
 const TEMP_FILE_NAME = 'tropx_recording_backup.json';
 
 /**
- * Backend recording buffer for quaternion data with crash recovery.
- * Stores relative quaternions for SLERP interpolation on export.
+ * Backend recording buffer for raw quaternion data with crash recovery.
+ * Stores raw per-device samples - alignment happens on export.
  */
 class RecordingBufferClass {
-    private buffer: QuaternionSample[] = [];
+    private rawBuffer: RawDeviceSample[] = [];
     private isRecording = false;
     private startTime: number | null = null;
     private lastFlushTime = 0;
@@ -45,13 +32,9 @@ class RecordingBufferClass {
     private targetHz = 100;
     private tempFilePath: string;
 
-    // Track latest quaternion per joint for sample assembly
-    private pendingLeft: { t: number; q: Quaternion } | null = null;
-    private pendingRight: { t: number; q: Quaternion } | null = null;
-
-    // Track which joints are active (have sent data)
-    private leftJointSeen = false;
-    private rightJointSeen = false;
+    // Debug counters
+    private static pushCount = 0;
+    private static lastPushTs: number | null = null;
 
     constructor() {
         this.tempFilePath = path.join(os.tmpdir(), TEMP_FILE_NAME);
@@ -65,13 +48,10 @@ class RecordingBufferClass {
         this.startTime = Date.now();
         this.isRecording = true;
         this.lastFlushTime = Date.now();
-        // Reset joint tracking for new session
-        this.leftJointSeen = false;
-        this.rightJointSeen = false;
-        // Reset debug counters for fresh logging
+        // Reset debug counters
         RecordingBufferClass.pushCount = 0;
         RecordingBufferClass.lastPushTs = null;
-        console.log(`🎬 [RecordingBuffer] Started recording at ${targetHz}Hz`);
+        console.log(`[RecordingBuffer] Started recording at ${targetHz}Hz`);
     }
 
     /** Stop the current recording session. */
@@ -79,100 +59,66 @@ class RecordingBufferClass {
         if (!this.isRecording) return;
         this.isRecording = false;
         this.flushToDisk();
-        console.log(`🛑 [RecordingBuffer] Stopped recording, ${this.buffer.length} samples`);
+        console.log(`[RecordingBuffer] Stopped recording, ${this.rawBuffer.length} raw samples`);
     }
-
-    private static pushCount = 0;
-    private static lastPushTs: number | null = null;
-
-    /** Push a joint angle sample with its relative quaternion. */
-    pushJointSample(jointName: string, timestamp: number, relativeQuat: Quaternion): void {
-        RecordingBufferClass.pushCount++;
-
-        // Calculate delta from last push to verify timestamp spreading
-        const delta = RecordingBufferClass.lastPushTs !== null
-            ? timestamp - RecordingBufferClass.lastPushTs
-            : 0;
-        RecordingBufferClass.lastPushTs = timestamp;
-
-        // Log first few calls with timestamp delta to verify spreading
-        if (RecordingBufferClass.pushCount <= 20) {
-            console.log(`📝 [RecordingBuffer] pushJointSample #${RecordingBufferClass.pushCount}: joint=${jointName}, ts=${timestamp}, delta=${delta.toFixed(1)}ms, isRecording=${this.isRecording}`);
-        }
-
-        if (!this.isRecording) {
-            return;
-        }
-
-        const isLeft = jointName.toLowerCase().includes('left');
-
-        if (isLeft) {
-            this.pendingLeft = { t: timestamp, q: relativeQuat };
-            this.leftJointSeen = true;
-        } else {
-            this.pendingRight = { t: timestamp, q: relativeQuat };
-            this.rightJointSeen = true;
-        }
-
-        // Log first few samples for debugging
-        if (this.buffer.length < 5) {
-            console.log(`📝 [RecordingBuffer] Pending state: L=${!!this.pendingLeft} R=${!!this.pendingRight}, buffer=${this.buffer.length}`);
-        }
-
-        // Assemble sample when we have both joints or stale single-joint data
-        this.tryAssembleSample();
-    }
-
-    private static lastRecordedTs: number = 0;
 
     /**
-     * Push a pre-synchronized pair from BatchSynchronizer.
-     * This is the preferred method - both joints already have unified timestamp.
+     * Push a raw sample from a device.
+     * Called by DeviceProcessor for each incoming BLE sample.
      */
-    pushSynchronizedPair(timestamp: number, leftQuat: Quaternion, rightQuat: Quaternion): void {
-        if (!this.isRecording) {
-            return;
-        }
+    pushRawSample(deviceId: number, timestamp: number, quaternion: Quaternion): void {
+        if (!this.isRecording) return;
 
         RecordingBufferClass.pushCount++;
 
-        // Track timestamp deltas to detect bunching
-        const tsDelta = timestamp - RecordingBufferClass.lastRecordedTs;
-        RecordingBufferClass.lastRecordedTs = timestamp;
+        // Debug logging for first few samples
+        if (RecordingBufferClass.pushCount <= 20) {
+            const delta = RecordingBufferClass.lastPushTs !== null
+                ? timestamp - RecordingBufferClass.lastPushTs
+                : 0;
+            console.log(`[RecordingBuffer] pushRawSample #${RecordingBufferClass.pushCount}: device=0x${deviceId.toString(16)}, ts=${timestamp}, delta=${delta.toFixed(1)}ms`);
+        }
+        RecordingBufferClass.lastPushTs = timestamp;
 
-        // Log first 50 calls with timestamp delta
-        if (RecordingBufferClass.pushCount <= 50) {
-            console.log(`📝 [RecordingBuffer] #${RecordingBufferClass.pushCount}: ts=${timestamp}, delta=${tsDelta.toFixed(1)}ms`);
+        // Store raw sample
+        this.rawBuffer.push({ deviceId, timestamp, quaternion });
+        this.samplesSinceFlush++;
+
+        // Log progress periodically
+        if (this.rawBuffer.length <= 5 || this.rawBuffer.length % 400 === 0) {
+            console.log(`[RecordingBuffer] Raw sample count: ${this.rawBuffer.length}`);
         }
 
-        // Directly add synchronized sample - no assembly needed
-        const sample: QuaternionSample = {
-            t: timestamp,
-            lq: leftQuat,
-            rq: rightQuat
-        };
-        this.addSample(sample);
+        // Enforce max buffer size (FIFO)
+        if (this.rawBuffer.length > MAX_BUFFER_SIZE) {
+            this.rawBuffer.shift();
+        }
 
-        // Mark both joints as seen
-        this.leftJointSeen = true;
-        this.rightJointSeen = true;
+        // Periodic flush for crash recovery
+        this.checkFlush();
     }
 
-    /** Get all recorded samples, sorted by timestamp. */
-    getAllSamples(): QuaternionSample[] {
-        // Sort by timestamp to fix BLE batching out-of-order arrival
-        return [...this.buffer].sort((a, b) => a.t - b.t);
+    /**
+     * Get all raw samples, sorted by timestamp.
+     * Called by CSVExporter and UploadService before processing with AlignmentService.
+     */
+    getRawSamples(): RawDeviceSample[] {
+        // Sort by timestamp to handle BLE out-of-order arrival
+        return [...this.rawBuffer].sort((a, b) => a.timestamp - b.timestamp);
     }
 
     /** Get recording metadata. */
     getMetadata(): RecordingMetadata | null {
-        if (this.buffer.length === 0 || !this.startTime) return null;
+        if (this.rawBuffer.length === 0 || !this.startTime) return null;
 
-        const lastSample = this.buffer[this.buffer.length - 1];
+        // Find the latest timestamp
+        const timestamps = this.rawBuffer.map(s => s.timestamp);
+        const endTime = Math.max(...timestamps);
+
         return {
             startTime: this.startTime,
-            endTime: lastSample?.t || Date.now(),
-            sampleCount: this.buffer.length,
+            endTime,
+            sampleCount: this.rawBuffer.length,
             targetHz: this.targetHz
         };
     }
@@ -181,7 +127,7 @@ class RecordingBufferClass {
     getState(): RecordingState {
         return {
             isRecording: this.isRecording,
-            sampleCount: this.buffer.length,
+            sampleCount: this.rawBuffer.length,
             durationMs: this.startTime ? Date.now() - this.startTime : 0,
             startTime: this.startTime
         };
@@ -189,99 +135,16 @@ class RecordingBufferClass {
 
     /** Check if buffer is empty. */
     isEmpty(): boolean {
-        return this.buffer.length === 0;
+        return this.rawBuffer.length === 0;
     }
 
     /** Clear all data. */
     clear(): void {
-        this.buffer = [];
-        this.pendingLeft = null;
-        this.pendingRight = null;
-        this.leftJointSeen = false;
-        this.rightJointSeen = false;
+        this.rawBuffer = [];
         this.startTime = null;
         this.isRecording = false;
         this.samplesSinceFlush = 0;
         this.deleteTempFile();
-    }
-
-    /** Try to assemble a sample from pending joint data. */
-    private tryAssembleSample(): void {
-        // Case 1: Both joints have data with close timestamps - create combined sample
-        if (this.pendingLeft && this.pendingRight) {
-            const timeDiff = Math.abs(this.pendingLeft.t - this.pendingRight.t);
-            if (timeDiff <= 50) {
-                // Both joints within 50ms tolerance - combine them
-                const sample: QuaternionSample = {
-                    t: Math.max(this.pendingLeft.t, this.pendingRight.t),
-                    lq: this.pendingLeft.q,
-                    rq: this.pendingRight.q
-                };
-                this.addSample(sample);
-                this.pendingLeft = null;
-                this.pendingRight = null;
-                return;
-            }
-
-            // Timestamps too far apart - record older one as single-joint sample
-            if (this.pendingLeft.t < this.pendingRight.t) {
-                this.addSample({ t: this.pendingLeft.t, lq: this.pendingLeft.q, rq: null });
-                this.pendingLeft = null;
-            } else {
-                this.addSample({ t: this.pendingRight.t, lq: null, rq: this.pendingRight.q });
-                this.pendingRight = null;
-            }
-            return;
-        }
-
-        // Case 2: Single-joint mode - only one joint is active, record immediately
-        // This handles the case where user only has one knee's sensors connected
-        if (this.pendingLeft && !this.rightJointSeen) {
-            // Only left knee is active - record immediately
-            this.addSample({ t: this.pendingLeft.t, lq: this.pendingLeft.q, rq: null });
-            this.pendingLeft = null;
-            return;
-        }
-
-        if (this.pendingRight && !this.leftJointSeen) {
-            // Only right knee is active - record immediately
-            this.addSample({ t: this.pendingRight.t, lq: null, rq: this.pendingRight.q });
-            this.pendingRight = null;
-            return;
-        }
-
-        // Case 3: Both joints have been seen but one stopped - check staleness
-        const now = Date.now();
-        const staleThreshold = 100;
-
-        if (this.pendingLeft && (now - this.pendingLeft.t) > staleThreshold) {
-            this.addSample({ t: this.pendingLeft.t, lq: this.pendingLeft.q, rq: null });
-            this.pendingLeft = null;
-        }
-
-        if (this.pendingRight && (now - this.pendingRight.t) > staleThreshold) {
-            this.addSample({ t: this.pendingRight.t, lq: null, rq: this.pendingRight.q });
-            this.pendingRight = null;
-        }
-    }
-
-    /** Add a sample to the buffer. */
-    private addSample(sample: QuaternionSample): void {
-        this.buffer.push(sample);
-        this.samplesSinceFlush++;
-
-        // Log progress
-        if (this.buffer.length <= 5 || this.buffer.length % 100 === 0) {
-            console.log(`[RecordingBuffer] Sample added: count=${this.buffer.length}, hasLeft=${!!sample.lq}, hasRight=${!!sample.rq}`);
-        }
-
-        // Enforce max buffer size
-        if (this.buffer.length > MAX_BUFFER_SIZE) {
-            this.buffer.shift();
-        }
-
-        // Periodic flush for crash recovery
-        this.checkFlush();
     }
 
     /** Check if we should flush to disk. */
@@ -298,13 +161,14 @@ class RecordingBufferClass {
 
     /** Flush buffer to temp file for crash recovery. */
     private flushToDisk(): void {
-        if (this.buffer.length === 0) return;
+        if (this.rawBuffer.length === 0) return;
 
         try {
             const data = {
+                version: 2,  // New raw format
                 startTime: this.startTime,
                 targetHz: this.targetHz,
-                samples: this.buffer
+                rawSamples: this.rawBuffer
             };
             fs.writeFileSync(this.tempFilePath, JSON.stringify(data), 'utf-8');
             this.lastFlushTime = Date.now();
@@ -322,12 +186,14 @@ class RecordingBufferClass {
             const content = fs.readFileSync(this.tempFilePath, 'utf-8');
             const data = JSON.parse(content);
 
-            if (data.samples && Array.isArray(data.samples) && data.samples.length > 0) {
-                this.buffer = data.samples;
+            // Handle new raw format (version 2)
+            if (data.version === 2 && data.rawSamples && Array.isArray(data.rawSamples) && data.rawSamples.length > 0) {
+                this.rawBuffer = data.rawSamples;
                 this.startTime = data.startTime || null;
                 this.targetHz = data.targetHz || 100;
-                console.log(`🔄 [RecordingBuffer] Recovered ${this.buffer.length} samples from disk`);
+                console.log(`[RecordingBuffer] Recovered ${this.rawBuffer.length} raw samples from disk (v2)`);
             }
+            // Ignore old format (version 1 / no version) - can't convert aligned to raw
         } catch (err) {
             console.error('[RecordingBuffer] Recovery failed:', err);
         }
@@ -348,5 +214,8 @@ class RecordingBufferClass {
 // Singleton instance
 export const RecordingBuffer = new RecordingBufferClass();
 
+// Re-export types for convenience
+export type { RawDeviceSample, RecordingMetadata, RecordingState } from './types';
+
 // Module load verification
-console.log('🔧 [RecordingBuffer] Module loaded, singleton created');
+console.log('[RecordingBuffer] Module loaded (v2 - raw storage)');

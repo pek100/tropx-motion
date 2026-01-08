@@ -3,6 +3,7 @@ import { DEVICE, SYSTEM, BATTERY, CONNECTION_STATE } from '../shared/constants';
 import { QuaternionService } from '../shared/QuaternionService';
 import { UnifiedBLEStateStore, DeviceID, isValidDeviceID, getJointName } from '../../ble-management';
 import { BatchSynchronizer } from '../synchronization';
+import { RecordingBuffer } from '../recording/RecordingBuffer';
 
 interface DeviceStatus {
     total: number;
@@ -166,15 +167,22 @@ export class DeviceProcessor {
 
         this.updateLatestDeviceData(deviceSample);
 
-        // Route to BatchSynchronizer (new path) or legacy flight controller
+        // Route to BatchSynchronizer (for live UI) and RecordingBuffer (for raw storage)
         if (this.useBatchSync && resolvedDeviceId) {
-            // NEW PATH: Route to BatchSynchronizer for temporal alignment
+            // Route to BatchSynchronizer for live UI temporal alignment
             BatchSynchronizer.getInstance().pushSample(
                 resolvedDeviceId,
                 deviceSample.timestamp,
                 deviceSample.quaternion
             );
             DeviceProcessor.debugEmitCount.set('batch_sync', (DeviceProcessor.debugEmitCount.get('batch_sync') || 0) + 1);
+
+            // Store raw sample in RecordingBuffer (for export/save)
+            RecordingBuffer.pushRawSample(
+                resolvedDeviceId,
+                deviceSample.timestamp,
+                deviceSample.quaternion
+            );
         } else if (this.jointUpdateCallback) {
             // LEGACY PATH: Flight controller approach (being phased out)
             this.setLatestSample(deviceIdStr, {

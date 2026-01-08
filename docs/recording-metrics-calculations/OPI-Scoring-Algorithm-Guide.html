@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>OPI Scoring Algorithm Guide v1.2.2</title>
+  <style>
+    @page { margin: 0.5in; margin-top: 0.3in; margin-bottom: 0.3in; }
+    @media print {
+      .no-print { display: none; }
+      body { padding: 15px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+    body { font-family: 'Segoe UI', sans-serif; max-width: 900px; margin: 0 auto; padding: 40px; line-height: 1.6; color: #333; }
+    h1 { color: #1a5f7a; border-bottom: 3px solid #1a5f7a; padding-bottom: 10px; font-size: 1.8em; }
+    h2 { color: #2d8a6e; margin-top: 30px; font-size: 1.3em; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
+    h3 { color: #1a5f7a; margin-top: 25px; border-left: 4px solid #1a5f7a; padding-left: 12px; font-size: 1.1em; }
+    h4 { color: #555; margin-top: 20px; font-size: 1em; }
+    table { border-collapse: collapse; width: 100%; margin: 15px 0; font-size: 0.9em; }
+    th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; }
+    th { background: #1a5f7a; color: white; }
+    tr:nth-child(even) { background: #f9f9f9; }
+    code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; font-size: 0.85em; color: #c7254e; }
+    strong { color: #1a5f7a; }
+    hr { border: none; border-top: 1px solid #ddd; margin: 25px 0; }
+    .print-btn { position: fixed; bottom: 20px; right: 20px; background: #1a5f7a; color: white; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-size: 0.95em; }
+    .print-btn:hover { background: #2d8a6e; }
+    ul, li { margin: 4px 0; }
+    .math { background: #f8f9fa; border-left: 3px solid #2d8a6e; padding: 10px 15px; margin: 10px 0; font-family: 'Consolas', monospace; font-size: 0.9em; }
+    .citation { color: #666; font-size: 0.85em; font-style: italic; }
+    .domain-symmetry { border-left: 4px solid #3498db; }
+    .domain-power { border-left: 4px solid #e74c3c; }
+  </style>
+</head>
+<body>
+<button class="print-btn no-print" onclick="window.print()">Print to PDF</button>
+
+<h1>Overall Performance Index (OPI)<br><small style="font-size:0.5em;color:#666">Scoring Algorithm v1.2.2</small></h1>
+
+<h2>Active Metrics Summary</h2>
+
+<p>The OPI currently uses <strong>6 metrics</strong> across 2 domains:</p>
+
+<table>
+<tr><th>Domain</th><th>Weight</th><th>Metrics</th></tr>
+<tr><td><strong>Symmetry</strong></td><td>50%</td><td>ROM Asymmetry, Velocity Asymmetry, Cross-Correlation, Real Asymmetry</td></tr>
+<tr><td><strong>Power</strong></td><td>50%</td><td>Peak Angular Velocity, Explosiveness</td></tr>
+</table>
+
+<hr>
+
+<h2>Algorithm Overview</h2>
+
+<p>The OPI combines biomechanical metrics into a single 0-100 score using reliability-weighted averaging.</p>
+
+<div class="math">
+OPI = Σ(DomainScore × DomainWeight × Confidence) / Σ(DomainWeight × Confidence)<br><br>
+where:<br>
+&nbsp;&nbsp;DomainScore = Σ(MetricScore × ICC × Weight) / Σ(ICC × Weight)<br>
+&nbsp;&nbsp;Confidence = average ICC across domain metrics<br>
+&nbsp;&nbsp;ICC = Intraclass Correlation Coefficient (reliability)
+</div>
+
+<h3>Grade Scale</h3>
+<table>
+<tr><th>Score</th><th>Grade</th><th>Interpretation</th></tr>
+<tr><td>90–100</td><td>A</td><td>Excellent performance</td></tr>
+<tr><td>80–89</td><td>B</td><td>Good performance</td></tr>
+<tr><td>70–79</td><td>C</td><td>Average performance</td></tr>
+<tr><td>60–69</td><td>D</td><td>Below average</td></tr>
+<tr><td>&lt; 60</td><td>F</td><td>Poor performance</td></tr>
+</table>
+<p class="citation">Grade scale adapted from FMS framework (Cook et al. 2014)</p>
+
+<hr>
+
+<h2>Performance Domains</h2>
+
+<h3 class="domain-symmetry">1. Symmetry Domain (50%)</h3>
+<p>Measures bilateral balance and coordination between limbs.</p>
+
+<table>
+<tr><th>Metric</th><th>Good</th><th>Poor</th><th>Direction</th><th>ICC</th><th>Weight</th></tr>
+<tr><td>ROM Asymmetry</td><td>&lt; 5%</td><td>&gt; 15%</td><td>Lower better</td><td>0.82</td><td>1.0</td></tr>
+<tr><td>Velocity Asymmetry</td><td>&lt; 8%</td><td>&gt; 20%</td><td>Lower better</td><td>0.80</td><td>1.0</td></tr>
+<tr><td>Cross-Correlation</td><td>&gt; 0.95</td><td>&lt; 0.75</td><td>Higher better</td><td>0.88</td><td>1.2</td></tr>
+<tr><td>Real Asymmetry</td><td>&lt; 5°</td><td>&gt; 20°</td><td>Lower better</td><td>0.82</td><td>1.3</td></tr>
+</table>
+<p class="citation">Thresholds: Sadeghi et al. Gait Posture 2000; Forczek & Staszkiewicz J Human Kinetics 2012</p>
+
+<h3 class="domain-power">2. Power Domain (50%)</h3>
+<p>Measures explosive capability and force production.</p>
+
+<table>
+<tr><th>Metric</th><th>Good</th><th>Poor</th><th>Direction</th><th>ICC</th><th>Weight</th></tr>
+<tr><td>Peak Angular Velocity (°/s)</td><td>&gt; 400</td><td>&lt; 200</td><td>Higher better</td><td>0.87</td><td>1.0</td></tr>
+<tr><td>Explosiveness (°/s²)</td><td>&gt; 500</td><td>&lt; 200</td><td>Higher better</td><td>0.83</td><td>1.0</td></tr>
+</table>
+<p class="citation">Thresholds: Biomechanics literature</p>
+
+<hr>
+
+<h2>Domain Weights by Activity Profile</h2>
+
+<table>
+<tr><th>Profile</th><th>Symmetry</th><th>Power</th></tr>
+<tr><td><strong>Power</strong> (jumping, sprinting)</td><td>27%</td><td>73%</td></tr>
+<tr><td><strong>Endurance</strong> (distance running)</td><td>75%</td><td>25%</td></tr>
+<tr><td><strong>Rehabilitation</strong> (recovery)</td><td>78%</td><td>22%</td></tr>
+<tr><td><strong>General</strong> (default)</td><td>50%</td><td>50%</td></tr>
+</table>
+
+<hr>
+
+<h2>Metric Normalization</h2>
+
+<p>Each raw metric is normalized to 0-100 using linear interpolation between thresholds.</p>
+
+<h4>Higher is Better (e.g., Peak Velocity)</h4>
+<div class="math">
+if value ≥ goodThreshold: score = 100<br>
+if value ≤ poorThreshold: score = 0<br>
+else: score = (value − poorThreshold) / (goodThreshold − poorThreshold) × 100
+</div>
+
+<h4>Lower is Better (e.g., Asymmetry)</h4>
+<div class="math">
+if value ≤ goodThreshold: score = 100<br>
+if value ≥ poorThreshold: score = 0<br>
+else: score = (poorThreshold − value) / (poorThreshold − goodThreshold) × 100
+</div>
+
+<hr>
+
+<h2>Reliability Weighting</h2>
+
+<p>Metrics are weighted by their reliability (ICC) to give more influence to stable, reproducible measures.</p>
+
+<div class="math">
+effectiveWeight = baseWeight × ICC<br><br>
+Example: Cross-Correlation (ICC=0.88, weight=1.2) → effectiveWeight = 1.056<br>
+Example: Real Asymmetry (ICC=0.82, weight=1.3) → effectiveWeight = 1.066
+</div>
+
+<p class="citation">Methodology: Daryabeygi-Khotbehsara et al. Appl Bionics Biomech. 2019</p>
+
+<hr>
+
+<h2>Uncertainty Quantification</h2>
+
+<h3>Standard Error of Measurement (SEM)</h3>
+<div class="math">
+SEM_metric = (1 − ICC) × score × 0.1<br>
+SEM_domain = √(Σ SEM_metric²)<br>
+SEM_overall = √(Σ (SEM_domain × weight)²) / totalWeight
+</div>
+<p class="citation">Weir JP. J Strength Cond Res. 2005;19(1):231-240</p>
+
+<h3>Minimal Detectable Change (MDC95)</h3>
+<div class="math">
+MDC95 = SEM × 1.96 × √2 = SEM × 2.77
+</div>
+<p>A change larger than MDC95 indicates real improvement (95% confidence).</p>
+<p class="citation">Haley SM, Fragala-Pinkham MA. Phys Ther. 2006;86(5):735-743</p>
+
+<h3>Confidence Interval</h3>
+<div class="math">
+CI_95 = [OPI − 1.96×SEM, OPI + 1.96×SEM]
+</div>
+
+<hr>
+
+<h2>Clinical Flags</h2>
+
+<p>Automatic warning triggered when asymmetry exceeds clinical threshold:</p>
+
+<table>
+<tr><th>Condition</th><th>Threshold</th><th>Citation</th></tr>
+<tr><td><strong>High Asymmetry</strong></td><td>&gt; 15%</td><td>Sadeghi et al. 2000</td></tr>
+</table>
+
+<hr>
+
+<h2>Metric Reliability Summary (ICC)</h2>
+
+<table>
+<tr><th>Metric</th><th>ICC</th><th>Reliability</th><th>Source</th></tr>
+<tr><td>Cross-Correlation</td><td>0.88</td><td>Good</td><td>Signal processing</td></tr>
+<tr><td>Peak Angular Velocity</td><td>0.87</td><td>Good</td><td>IMU validation</td></tr>
+<tr><td>Explosiveness</td><td>0.83</td><td>Good</td><td>Estimated</td></tr>
+<tr><td>ROM Asymmetry</td><td>0.82</td><td>Good</td><td>Patterson et al. 2010</td></tr>
+<tr><td>Real Asymmetry</td><td>0.82</td><td>Good</td><td>Estimated</td></tr>
+<tr><td>Velocity Asymmetry</td><td>0.80</td><td>Moderate</td><td>Derived from ROM</td></tr>
+</table>
+
+<hr>
+
+<h2>Example Calculation</h2>
+
+<div class="math">
+<strong>Input Metrics:</strong><br>
+ROM Asymmetry = 6.2% → score = (15-6.2)/(15-5)×100 = 88<br>
+Velocity Asymmetry = 10% → score = (20-10)/(20-8)×100 = 83<br>
+Cross-Correlation = 0.92 → score = (0.92-0.75)/(0.95-0.75)×100 = 85<br>
+Real Asymmetry = 8° → score = (20-8)/(20-5)×100 = 80<br>
+Peak Angular Velocity = 380°/s → score = (380-200)/(400-200)×100 = 90<br>
+Explosiveness = 450°/s² → score = (450-200)/(500-200)×100 = 83<br><br>
+
+<strong>Domain Scores:</strong><br>
+Symmetry weights: 0.82×1.0 + 0.80×1.0 + 0.88×1.2 + 0.82×1.3 = 3.744<br>
+Symmetry = (88×0.82 + 83×0.80 + 85×1.056 + 80×1.066) / 3.744 = 84.1<br><br>
+
+Power weights: 0.87×1.0 + 0.83×1.0 = 1.70<br>
+Power = (90×0.87 + 83×0.83) / 1.70 = 86.5<br><br>
+
+<strong>OPI (General profile, 50/50 weights):</strong><br>
+Confidence_sym ≈ 0.83, Confidence_pow ≈ 0.85<br>
+OPI = (84.1×0.5×0.83 + 86.5×0.5×0.85) / (0.5×0.83 + 0.5×0.85) = 85.4<br>
+Grade = B
+</div>
+
+<hr>
+
+<h2>References</h2>
+
+<h4>Normative Values</h4>
+<ul>
+<li>Sadeghi H, et al. Symmetry in able-bodied gait. <em>Gait Posture.</em> 2000;12(1):34-45.</li>
+<li>Forczek W, Staszkiewicz R. Lower limb symmetry. <em>J Human Kinetics.</em> 2012;35:47-57.</li>
+</ul>
+
+<h4>Reliability</h4>
+<ul>
+<li>Patterson KK, et al. Gait asymmetry reliability. <em>Arch Phys Med Rehabil.</em> 2010.</li>
+</ul>
+
+<h4>Methodology</h4>
+<ul>
+<li>Daryabeygi-Khotbehsara R, et al. Combined gait asymmetry metric. <em>Appl Bionics Biomech.</em> 2019.</li>
+<li>Weir JP. ICC and test-retest reliability. <em>J Strength Cond Res.</em> 2005;19(1):231-240.</li>
+<li>Haley SM, Fragala-Pinkham MA. Interpreting change scores. <em>Phys Ther.</em> 2006;86(5):735-743.</li>
+<li>Cook G, et al. Functional Movement Screening. <em>Int J Sports Phys Ther.</em> 2014;9(4):549-563.</li>
+</ul>
+
+<hr>
+<p style="text-align:center;color:#888;font-size:0.85em"><em>TropX Motion — OPI Scoring Algorithm v1.2.2</em></p>
+
+</body>
+</html>
