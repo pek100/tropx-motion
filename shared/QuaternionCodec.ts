@@ -167,27 +167,27 @@ export function quaternionToAngle(q: Quaternion, axis: EulerAxis = 'y'): number 
 
   let angle: number;
 
-  // Use same extraction formula as backend AngleCalculationService
+  // Standard Euler extraction (ZYX/roll-pitch-yaw convention):
+  // X (roll):  atan2(m7, m8) = atan2(yz+wx, 1-(xx+yy))
+  // Y (pitch): atan2(m2, m0) = atan2(xz+wy, 1-(yy+zz))
+  // Z (yaw):   atan2(m3, m0) = atan2(xy+wz, 1-(yy+zz))
   switch (axis) {
     case 'x': {
-      // atan2(matrix[5], matrix[4])
-      const m5 = yz - wx;
-      const m4 = 1 - (xx + zz);
-      angle = Math.atan2(m5, m4);
+      const m7 = yz + wx;
+      const m8 = 1 - (xx + yy);
+      angle = Math.atan2(m7, m8);
       break;
     }
     case 'y': {
-      // atan2(matrix[2], matrix[0])
       const m2 = xz + wy;
       const m0 = 1 - (yy + zz);
       angle = Math.atan2(m2, m0);
       break;
     }
     case 'z': {
-      // atan2(matrix[1], matrix[3])
-      const m1 = xy - wz;
       const m3 = xy + wz;
-      angle = Math.atan2(m1, m3);
+      const m0 = 1 - (yy + zz);
+      angle = Math.atan2(m3, m0);
       break;
     }
   }

@@ -203,10 +203,14 @@ export class QuaternionService {
         const matrix = new Float32Array(9);
         QuaternionService.quaternionToMatrix(buffer, matrix);
 
+        // Standard Euler extraction (ZYX/roll-pitch-yaw convention):
+        // X (roll):  atan2(m7, m8) = atan2(yz+wx, 1-(xx+yy))
+        // Y (pitch): atan2(m2, m0) = atan2(xz+wy, 1-(yy+zz))
+        // Z (yaw):   atan2(m3, m0) = atan2(xy+wz, 1-(yy+zz))
         const axisExtractionMap = {
-            x: [5, 4],
+            x: [7, 8],
             y: [2, 0],
-            z: [1, 3],
+            z: [3, 0],
         };
 
         const [a, b] = axisExtractionMap[axis];
