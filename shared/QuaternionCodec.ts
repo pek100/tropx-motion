@@ -143,10 +143,10 @@ export function slerp(q1: Quaternion, q2: Quaternion, t: number): Quaternion {
  * matrix[3] = 2(xy + wz)       matrix[4] = 1 - 2(x² + z²)  matrix[5] = 2(yz - wx)
  * matrix[6] = 2(xz - wy)       matrix[7] = 2(yz + wx)      matrix[8] = 1 - 2(x² + y²)
  *
- * Axis extraction (matching backend AngleCalculationService):
- * - X: atan2(matrix[5], matrix[4]) = atan2(2(yz - wx), 1 - 2(x² + z²))
- * - Y: atan2(matrix[2], matrix[0]) = atan2(2(xz + wy), 1 - 2(y² + z²))
- * - Z: atan2(matrix[1], matrix[3]) = atan2(2(xy - wz), 2(xy + wz))
+ * Standard Euler extraction (ZYX/roll-pitch-yaw convention):
+ * - X (roll):  atan2(matrix[7], matrix[8]) = atan2(2(yz + wx), 1 - 2(x² + y²))
+ * - Y (pitch): atan2(matrix[2], matrix[0]) = atan2(2(xz + wy), 1 - 2(y² + z²))
+ * - Z (yaw):   atan2(matrix[3], matrix[0]) = atan2(2(xy + wz), 1 - 2(y² + z²))
  *
  * @param q - Quaternion to convert
  * @param axis - Target axis ('x', 'y', or 'z'), defaults to 'y'
