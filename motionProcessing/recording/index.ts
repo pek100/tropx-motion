@@ -12,6 +12,13 @@ export { RecordingBuffer } from './RecordingBuffer';
 export { AlignmentService } from './AlignmentService';
 
 export {
+    GridSnapService,
+    type BracketingSamples,
+    type GridPoint,
+    type GridSnapResult
+} from './GridSnapService';
+
+export {
     InterpolationService,
     type InterpolatedAngleSample
 } from './InterpolationService';

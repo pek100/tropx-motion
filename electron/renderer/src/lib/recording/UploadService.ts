@@ -13,7 +13,8 @@ import { ConvexClient } from 'convex/browser';
 import { api } from '../../../../../convex/_generated/api';
 import { Id } from '../../../../../convex/_generated/dataModel';
 import { RawDeviceSample, QuaternionSample } from '../../../../../motionProcessing/recording/types';
-import { AlignmentService } from '../../../../../motionProcessing/recording/AlignmentService';
+import { GridSnapService } from '../../../../../motionProcessing/recording/GridSnapService';
+import { InterpolationService } from '../../../../../motionProcessing/recording/InterpolationService';
 import { UniformSample, SampleFlag } from '../../../../../shared/QuaternionCodec';
 import {
   chunkAndCompress,
@@ -108,18 +109,26 @@ export class UploadService {
         };
       }
 
-      // Process raw samples through AlignmentService
-      // This does: group by device → align sensors → compute relative quats → interpolate to grid
-      const alignedSamples = AlignmentService.process(rawSamples, targetHz);
+      // Process raw samples: snap to grid → interpolate → relative quaternions
+      const gridData = GridSnapService.snap(rawSamples, targetHz);
+
+      if (gridData.gridPoints.length === 0) {
+        return {
+          success: false,
+          error: 'Grid alignment failed - ensure sensors are connected',
+        };
+      }
+
+      const alignedSamples = InterpolationService.interpolate(gridData);
 
       if (alignedSamples.length === 0) {
         return {
           success: false,
-          error: 'Alignment failed - ensure both thigh and shin sensors are connected per joint',
+          error: 'Interpolation failed - ensure both thigh and shin sensors are connected per joint',
         };
       }
 
-      console.log(`[UploadService] Aligned ${rawSamples.length} raw → ${alignedSamples.length} samples at ${targetHz}Hz`);
+      console.log(`[UploadService] Processed ${rawSamples.length} raw → ${alignedSamples.length} samples at ${targetHz}Hz`);
 
       // Convert to UniformSample format for Chunker
       const uniformSamples: UniformSample[] = alignedSamples.map(s => ({

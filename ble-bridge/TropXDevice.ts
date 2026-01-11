@@ -1381,11 +1381,26 @@ export class TropXDevice {
         // Simply add REFERENCE_EPOCH_MS to convert to Unix timestamp.
         syncedTimestamp = REFERENCE_EPOCH_MS + deviceTimestampMs;
 
+        // Apply software clock offset from time sync
+        // Hardware SET_CLOCK_OFFSET behavior is inconsistent across firmware versions,
+        // so we also apply a software offset computed during TimeSyncSession.
+        // This ensures all devices are aligned to the same timeline.
+        const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(this.wrapper.deviceInfo.id);
+        if (storeDeviceId) {
+          const device = UnifiedBLEStateStore.getDevice(storeDeviceId);
+          if (device && device.clockOffset !== 0) {
+            syncedTimestamp += device.clockOffset;
+          }
+        }
+
         // Log first packet for debugging
         if (this.timestampOffset === null) {
           this.timestampOffset = REFERENCE_EPOCH_MS; // Mark as initialized
+          const device = storeDeviceId ? UnifiedBLEStateStore.getDevice(storeDeviceId) : null;
+          const softwareOffset = device?.clockOffset ?? 0;
           console.log(`⏱️ [${this.wrapper.deviceInfo.name}] First packet (time-synced device):`);
           console.log(`   Raw sensor timestamp: ${deviceTimestampMs}ms (since REFERENCE_EPOCH)`);
+          console.log(`   Software offset: ${softwareOffset}ms`);
           console.log(`   Wall clock: ${syncedTimestamp}ms (${new Date(syncedTimestamp).toISOString()})`);
         }
 

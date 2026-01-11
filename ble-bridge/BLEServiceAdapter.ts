@@ -776,17 +776,12 @@ export class BLEServiceAdapter implements BLEService {
     try {
       console.log(`🎬 BLE: Starting recording session ${sessionId}`);
 
-      // Clear clock offsets for all devices - will be recalculated from first streaming packet
-      const connectedDevices = this.bleService.getConnectedDevices();
-      for (const device of connectedDevices) {
-        const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(device.id);
-        if (storeDeviceId) {
-          UnifiedBLEStateStore.setSyncState(storeDeviceId, SyncState.NOT_SYNCED, 0);
-          console.log(`🔄 [${device.name}] Cleared clock offset - will recalculate from first packet`);
-        }
-      }
+      // NOTE: Clock offsets from time sync are preserved - they're applied in
+      // TropXDevice.handleDataNotification() to align device timestamps.
+      // Previously this cleared offsets, but that defeated the sync.
 
       // Set global streaming state
+      const connectedDevices = this.bleService.getConnectedDevices();
       UnifiedBLEStateStore.setGlobalState(GlobalState.STREAMING);
       PollingManager.block('streaming');
 

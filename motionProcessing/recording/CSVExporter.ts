@@ -4,7 +4,7 @@ import * as os from 'os';
 import { RecordingBuffer } from './RecordingBuffer';
 import { RecordingMetadata } from './types';
 import { InterpolationService, InterpolatedAngleSample } from './InterpolationService';
-import { AlignmentService } from './AlignmentService';
+import { GridSnapService } from './GridSnapService';
 
 /** Export options. */
 export interface ExportOptions {
@@ -61,16 +61,22 @@ export class CSVExporter {
         // Get target Hz from metadata or options
         const hz = targetHz || metadata?.targetHz || 100;
 
-        // Process raw samples through AlignmentService
-        // This does: group by device → align sensors → compute relative quats → interpolate to grid
-        const alignedSamples = AlignmentService.process(rawSamples, hz);
+        // Process raw samples: snap to grid → interpolate → relative quaternions
+        const gridData = GridSnapService.snap(rawSamples, hz);
 
-        if (alignedSamples.length === 0) {
-            console.error(`[CSVExporter] AlignmentService produced no samples! Check that both thigh and shin sensors were connected.`);
-            return { success: false, error: 'Alignment failed - ensure both thigh and shin sensors are connected per joint' };
+        if (gridData.gridPoints.length === 0) {
+            console.error(`[CSVExporter] GridSnapService produced no grid points! Check that sensors were connected.`);
+            return { success: false, error: 'Grid alignment failed - ensure sensors are connected' };
         }
 
-        console.log(`[CSVExporter] Aligned ${rawSamples.length} raw → ${alignedSamples.length} samples at ${hz}Hz`);
+        const alignedSamples = InterpolationService.interpolate(gridData);
+
+        if (alignedSamples.length === 0) {
+            console.error(`[CSVExporter] InterpolationService produced no samples!`);
+            return { success: false, error: 'Interpolation failed - ensure both thigh and shin sensors are connected per joint' };
+        }
+
+        console.log(`[CSVExporter] Processed ${rawSamples.length} raw → ${alignedSamples.length} samples at ${hz}Hz`);
 
         // Convert quaternions to angles for CSV
         const angleSamples = InterpolationService.toAngleSamples(alignedSamples);
