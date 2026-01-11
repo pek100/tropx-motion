@@ -19,6 +19,10 @@ export class JointAligner {
     private prevShin: Sample | null = null;
     private currShin: Sample | null = null;
 
+    // 50% overlap: pending matches queue and last emitted for reuse
+    private pendingMatches: JointSamples[] = [];
+    private lastEmitted: JointSamples | null = null;
+
     constructor(jointSide: JointSide) {
         this.jointSide = jointSide;
     }
@@ -60,90 +64,69 @@ export class JointAligner {
         return newest > 0 ? newest : null;
     }
 
+    /** Calculate emit boundary for 50% overlap strategy */
+    private getEmitBoundary(): number {
+        return Math.floor(this.pendingMatches.length / 2);
+    }
+
+    /**
+     * Match all available pairs from sensor buffers into pending queue.
+     * Consumes from buffers until one is empty or no valid matches remain.
+     */
+    private matchAllAvailable(): void {
+        if (!this.thighBuffer || !this.shinBuffer) return;
+
+        while (!this.thighBuffer.isEmpty() && !this.shinBuffer.isEmpty()) {
+            const thighSample = this.thighBuffer.getSampleAtIndex(0);
+            if (!thighSample) break;
+
+            const closestShinIndex = this.shinBuffer.findClosestIndex(thighSample.timestamp);
+            const shinSample = this.shinBuffer.getSampleAtIndex(closestShinIndex);
+            if (!shinSample) break;
+
+            // Shift sensor tracking: curr -> prev, new -> curr
+            this.prevThigh = this.currThigh;
+            this.currThigh = { ...thighSample };
+            this.prevShin = this.currShin;
+            this.currShin = { ...shinSample };
+
+            // Add matched pair to pending queue
+            this.pendingMatches.push({
+                thigh: this.currThigh,
+                shin: this.currShin
+            });
+
+            // Consume from buffers
+            this.thighBuffer.discardUpTo(1);
+            this.shinBuffer.removeAtIndex(closestShinIndex);
+        }
+    }
+
     /**
      * Consume next aligned sample from shear alignment.
-     * Updates per-SENSOR prev/curr tracking for interpolation.
+     * Uses 50% overlap strategy: only emits samples with full temporal context.
      */
     consumeOneMatch(): JointSamples | null {
+        // No buffers configured - return last known state
         if (!this.thighBuffer || !this.shinBuffer) {
-            // Return current state
-            if (this.currThigh || this.currShin) {
-                return { thigh: this.currThigh ?? undefined, shin: this.currShin ?? undefined };
-            }
-            return null;
+            return this.lastEmitted;
         }
 
-        const thighEmpty = this.thighBuffer.isEmpty();
-        const shinEmpty = this.shinBuffer.isEmpty();
+        // Match all available pairs into pending queue
+        this.matchAllAvailable();
 
-        // No new data - return current (reuse)
-        if (thighEmpty && shinEmpty) {
-            if (this.currThigh || this.currShin) {
-                return { thigh: this.currThigh ?? undefined, shin: this.currShin ?? undefined };
-            }
-            return null;
+        // Calculate emit boundary (first 50% is safe to emit)
+        const boundary = this.getEmitBoundary();
+
+        // Emit from front if we have samples past the 50% mark
+        if (boundary > 0 && this.pendingMatches.length > 0) {
+            const emitted = this.pendingMatches.shift()!;
+            this.lastEmitted = emitted;
+            return emitted;
         }
 
-        let thighConsumed = false;
-        let shinConsumed = false;
-
-        // Both have data - match closest pair (intra-joint shear)
-        if (!thighEmpty && !shinEmpty) {
-            const thighSample = this.thighBuffer.getSampleAtIndex(0);
-            if (thighSample) {
-                const closestShinIndex = this.shinBuffer.findClosestIndex(thighSample.timestamp);
-                const shinSample = this.shinBuffer.getSampleAtIndex(closestShinIndex);
-
-                if (shinSample) {
-                    // Shift thigh: curr -> prev, new -> curr
-                    this.prevThigh = this.currThigh;
-                    this.currThigh = { ...thighSample };
-                    thighConsumed = true;
-
-                    // Shift shin: curr -> prev, new -> curr
-                    this.prevShin = this.currShin;
-                    this.currShin = { ...shinSample };
-                    shinConsumed = true;
-
-                    this.thighBuffer.discardUpTo(1);
-                    this.shinBuffer.removeAtIndex(closestShinIndex);
-                }
-            }
-        }
-        // Only thigh has data
-        else if (!thighEmpty) {
-            const thighSample = this.thighBuffer.getSampleAtIndex(0);
-            if (thighSample) {
-                this.prevThigh = this.currThigh;
-                this.currThigh = { ...thighSample };
-                thighConsumed = true;
-                this.thighBuffer.discardUpTo(1);
-            }
-        }
-        // Only shin has data
-        else if (!shinEmpty) {
-            const shinSample = this.shinBuffer.getSampleAtIndex(0);
-            if (shinSample) {
-                this.prevShin = this.currShin;
-                this.currShin = { ...shinSample };
-                shinConsumed = true;
-                this.shinBuffer.discardUpTo(1);
-            }
-        }
-
-        // Cleanup old data from buffers (immediate - use curr, not prev)
-        if (thighConsumed && this.currThigh) {
-            this.discardSamplesBeforeTimestamp(this.thighBuffer, this.currThigh.timestamp);
-        }
-        if (shinConsumed && this.currShin) {
-            this.discardSamplesBeforeTimestamp(this.shinBuffer, this.currShin.timestamp);
-        }
-
-        // Return current state
-        if (this.currThigh || this.currShin) {
-            return { thigh: this.currThigh ?? undefined, shin: this.currShin ?? undefined };
-        }
-        return null;
+        // Nothing emittable yet - return last known state for interpolation continuity
+        return this.lastEmitted;
     }
 
     /**
@@ -248,6 +231,8 @@ export class JointAligner {
         this.currThigh = null;
         this.prevShin = null;
         this.currShin = null;
+        this.pendingMatches = [];
+        this.lastEmitted = null;
     }
 
     /** Get debug info */
