@@ -15,6 +15,7 @@ import { Id } from '../../../../../convex/_generated/dataModel';
 import { RawDeviceSample, QuaternionSample } from '../../../../../motionProcessing/recording/types';
 import { GridSnapService } from '../../../../../motionProcessing/recording/GridSnapService';
 import { InterpolationService } from '../../../../../motionProcessing/recording/InterpolationService';
+import { AlignmentService } from '../../../../../motionProcessing/recording/AlignmentService';
 import { UniformSample, SampleFlag } from '../../../../../shared/QuaternionCodec';
 import {
   chunkAndCompress,

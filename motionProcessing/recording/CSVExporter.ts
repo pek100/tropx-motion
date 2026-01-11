@@ -2,9 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { RecordingBuffer } from './RecordingBuffer';
-import { RecordingMetadata } from './types';
-import { InterpolationService, InterpolatedAngleSample } from './InterpolationService';
+import { RecordingMetadata, QuaternionSample } from './types';
 import { GridSnapService } from './GridSnapService';
+import { InterpolationService, InterpolatedAngleSample } from './InterpolationService';
+import { AlignmentService } from './AlignmentService';
 
 /** Export options. */
 export interface ExportOptions {
