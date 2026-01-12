@@ -153,10 +153,6 @@ export class MotionProcessingCoordinator {
         RecordingBuffer.clear();
     }
 
-    getUIData(): { left: any; right: any } {
-        return this.uiProcessor.getChartFormat();
-    }
-
     getBatteryLevels(): Map<string, number> {
         return this.deviceProcessor.getBatteryLevels();
     }
@@ -178,10 +174,6 @@ export class MotionProcessingCoordinator {
 
     updateConnectionState(deviceId: string, state: string): void {
         this.deviceProcessor.updateConnectionState(deviceId, state);
-    }
-
-    subscribeToUI(callback: (data: any) => void): () => void {
-        return this.uiProcessor.subscribe(callback);
     }
 
     isHealthy(): boolean {

@@ -1,6 +1,6 @@
 {
   "name": "tropx-motion",
-  "version": "1.5.4",
+  "version": "1.5.45",
   "description": "Motion Capture Application with Real-time WebSocket Streaming",
   "main": "dist/main/electron/main/main.js",
   "scripts": {

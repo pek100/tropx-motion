@@ -93,10 +93,8 @@ export class PerformanceValidator {
     // Mock services for testing
     const mockServices = {
       motionCoordinator: {
-        getUIData: () => ({ left: {}, right: {} }),
         getConnectionStates: () => new Map(),
         getBatteryLevels: () => new Map(),
-        subscribeToUI: () => () => {},
       },
       systemMonitor: undefined,
     };
