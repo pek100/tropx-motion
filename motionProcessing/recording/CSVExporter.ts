@@ -4,12 +4,11 @@ import * as os from 'os';
 import { RecordingBuffer } from './RecordingBuffer';
 import { RecordingMetadata, QuaternionSample } from './types';
 import { GridSnapService } from './GridSnapService';
-import { InterpolationService, InterpolatedAngleSample } from './InterpolationService';
-import { AlignmentService } from './AlignmentService';
+import { InterpolationService } from './InterpolationService';
+import { QuaternionService } from '../shared/QuaternionService';
 
 /** Export options. */
 export interface ExportOptions {
-    interpolated?: boolean;
     targetHz?: number;
     includeMetadata?: boolean;
     outputPath?: string;
@@ -26,17 +25,42 @@ export interface ExportResult {
     durationSeconds?: number;
 }
 
+/** Full sample with quaternions and all Euler angles. */
+interface FullExportSample {
+    t: number;
+    relative_s: number;
+    // Left knee quaternion
+    lq_w: number;
+    lq_x: number;
+    lq_y: number;
+    lq_z: number;
+    // Right knee quaternion
+    rq_w: number;
+    rq_x: number;
+    rq_y: number;
+    rq_z: number;
+    // Left knee Euler angles (degrees)
+    left_x: number;
+    left_y: number;
+    left_z: number;
+    // Right knee Euler angles (degrees)
+    right_x: number;
+    right_y: number;
+    right_z: number;
+}
+
 /**
  * Generates CSV files from recorded quaternion data.
+ * Exports both quaternions and Euler angles in a unified format.
  */
 export class CSVExporter {
 
     /**
      * Export recording to CSV file.
+     * Outputs quaternions (for import) and Euler angles (x, y, z) for analysis.
      */
     static export(options: ExportOptions = {}): ExportResult {
         const {
-            interpolated = true,  // Default to interpolated (uniform grid)
             targetHz,
             includeMetadata = true,
             outputPath
@@ -50,7 +74,6 @@ export class CSVExporter {
             rawSampleCount: rawSamples.length,
             isRecording: state.isRecording,
             durationMs: state.durationMs,
-            interpolated,
             outputPath
         });
 
@@ -79,14 +102,14 @@ export class CSVExporter {
 
         console.log(`[CSVExporter] Processed ${rawSamples.length} raw → ${alignedSamples.length} samples at ${hz}Hz`);
 
-        // Convert quaternions to angles for CSV
-        const angleSamples = InterpolationService.toAngleSamples(alignedSamples);
+        // Convert to full export format with quaternions and all Euler angles
+        const fullSamples = CSVExporter.toFullExportSamples(alignedSamples);
 
         // Generate CSV content
-        const csvContent = CSVExporter.generateCSVContent(angleSamples, metadata, interpolated, hz, includeMetadata);
+        const csvContent = CSVExporter.generateCSVContent(fullSamples, metadata, hz, includeMetadata);
 
         // Generate file path
-        const fileName = CSVExporter.generateFilename(interpolated);
+        const fileName = CSVExporter.generateFilename();
         const resolvedOutputPath = outputPath
             ? CSVExporter.expandHomePath(outputPath)
             : CSVExporter.getDefaultExportPath();
@@ -103,8 +126,8 @@ export class CSVExporter {
         // Calculate duration
         const durationSeconds = metadata
             ? (metadata.endTime - metadata.startTime) / 1000
-            : angleSamples.length > 0
-                ? (angleSamples[angleSamples.length - 1].t - angleSamples[0].t) / 1000
+            : fullSamples.length > 0
+                ? (fullSamples[fullSamples.length - 1].t - fullSamples[0].t) / 1000
                 : 0;
 
         // Write file
@@ -114,7 +137,7 @@ export class CSVExporter {
                 success: true,
                 filePath,
                 fileName,
-                sampleCount: angleSamples.length,
+                sampleCount: fullSamples.length,
                 csv: csvContent,
                 durationSeconds
             };
@@ -127,12 +150,48 @@ export class CSVExporter {
     }
 
     /**
+     * Convert quaternion samples to full export format with all angles.
+     */
+    static toFullExportSamples(samples: QuaternionSample[]): FullExportSample[] {
+        if (samples.length === 0) return [];
+
+        const startTime = samples[0].t;
+
+        return samples.map(s => {
+            const lq = s.lq || { w: 1, x: 0, y: 0, z: 0 };
+            const rq = s.rq || { w: 1, x: 0, y: 0, z: 0 };
+
+            return {
+                t: s.t,
+                relative_s: Math.round((s.t - startTime) / 10) / 100,
+                // Left knee quaternion
+                lq_w: round6(lq.w),
+                lq_x: round6(lq.x),
+                lq_y: round6(lq.y),
+                lq_z: round6(lq.z),
+                // Right knee quaternion
+                rq_w: round6(rq.w),
+                rq_x: round6(rq.x),
+                rq_y: round6(rq.y),
+                rq_z: round6(rq.z),
+                // Left knee Euler angles
+                left_x: round1(QuaternionService.toEulerAngle(lq, 'x')),
+                left_y: round1(QuaternionService.toEulerAngle(lq, 'y')),
+                left_z: round1(QuaternionService.toEulerAngle(lq, 'z')),
+                // Right knee Euler angles
+                right_x: round1(QuaternionService.toEulerAngle(rq, 'x')),
+                right_y: round1(QuaternionService.toEulerAngle(rq, 'y')),
+                right_z: round1(QuaternionService.toEulerAngle(rq, 'z')),
+            };
+        });
+    }
+
+    /**
      * Generate CSV content string.
      */
     static generateCSVContent(
-        samples: InterpolatedAngleSample[],
+        samples: FullExportSample[],
         metadata: RecordingMetadata | null,
-        interpolated: boolean,
         targetHz: number,
         includeMetadata: boolean
     ): string {
@@ -145,19 +204,25 @@ export class CSVExporter {
             lines.push(`# Date: ${new Date(metadata.startTime).toISOString()}`);
             lines.push(`# Duration: ${duration}s`);
             lines.push(`# Samples: ${samples.length}`);
-            if (interpolated) {
-                lines.push(`# Interpolated: ${targetHz}Hz (${(1000 / targetHz).toFixed(1)}ms intervals)`);
-                lines.push('# Method: SLERP quaternion interpolation');
-            }
+            lines.push(`# SampleRate: ${targetHz}Hz`);
+            lines.push('# Format: quaternions (w,x,y,z) + Euler angles (x,y,z in degrees)');
+            lines.push('# Method: SLERP quaternion interpolation');
             lines.push('#');
         }
 
-        // CSV header
-        lines.push('timestamp,relative_s,left_knee,right_knee');
+        // CSV header - quaternions first (for import), then Euler angles (for analysis)
+        lines.push('timestamp,relative_s,lq_w,lq_x,lq_y,lq_z,rq_w,rq_x,rq_y,rq_z,left_x,left_y,left_z,right_x,right_y,right_z');
 
         // Data rows
-        for (const sample of samples) {
-            lines.push(`${sample.t},${sample.relative_s.toFixed(3)},${sample.left},${sample.right}`);
+        for (const s of samples) {
+            lines.push([
+                s.t,
+                s.relative_s.toFixed(3),
+                s.lq_w, s.lq_x, s.lq_y, s.lq_z,
+                s.rq_w, s.rq_x, s.rq_y, s.rq_z,
+                s.left_x, s.left_y, s.left_z,
+                s.right_x, s.right_y, s.right_z
+            ].join(','));
         }
 
         return lines.join('\n');
@@ -166,7 +231,7 @@ export class CSVExporter {
     /**
      * Generate filename with timestamp.
      */
-    static generateFilename(interpolated: boolean = false): string {
+    static generateFilename(): string {
         const now = new Date();
         const parts = [
             now.getFullYear(),
@@ -176,8 +241,7 @@ export class CSVExporter {
             String(now.getMinutes()).padStart(2, '0'),
             String(now.getSeconds()).padStart(2, '0')
         ];
-        const suffix = interpolated ? '_interpolated' : '';
-        return `recording_${parts.slice(0, 3).join('-')}_${parts.slice(3).join('-')}${suffix}.csv`;
+        return `recording_${parts.slice(0, 3).join('-')}_${parts.slice(3).join('-')}.csv`;
     }
 
     /**
@@ -204,17 +268,24 @@ export class CSVExporter {
         }
         // Handle ~username style (less common but possible)
         if (filePath.startsWith('~') && filePath.length > 1) {
-            // If it's ~something/ or ~something\, expand ~ to home dir
             const sepIndex = Math.min(
                 filePath.indexOf('/') === -1 ? Infinity : filePath.indexOf('/'),
                 filePath.indexOf('\\') === -1 ? Infinity : filePath.indexOf('\\')
             );
             if (sepIndex !== Infinity) {
-                // Has a separator - might be ~/path or ~user/path
-                // For simplicity, treat ~anything/ as ~/anything (home-relative)
                 return path.join(os.homedir(), filePath.slice(1));
             }
         }
         return filePath;
     }
+}
+
+/** Round to 6 decimal places (for quaternions). */
+function round6(n: number): number {
+    return Math.round(n * 1000000) / 1000000;
+}
+
+/** Round to 1 decimal place (for angles). */
+function round1(n: number): number {
+    return Math.round(n * 10) / 10;
 }

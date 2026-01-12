@@ -1465,7 +1465,9 @@ function AppContent() {
                   <ActionBar
                     onActionClick={handleActionClick}
                     onExportCSV={handleExportCSV}
+                    onImportCSV={handleImportCSVFromModal}
                     isExporting={isExporting}
+                    isImporting={isImporting}
                     isEditing={currentRecording !== null}
                     selectedPatientName={selectedPatient?.name}
                     selectedPatientImage={selectedPatient?.image}

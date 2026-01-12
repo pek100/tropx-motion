@@ -156,6 +156,9 @@ interface ImportedDataPoint {
   relative: number; // relative seconds
   l: number;        // left knee angle
   r: number;        // right knee angle
+  // Optional quaternions (present if CSV was exported with quaternion format)
+  lq?: Quaternion;
+  rq?: Quaternion;
 }
 
 interface KneeAreaChartProps {
@@ -288,6 +291,7 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   const clampValue = (value: number) => Math.max(ANGLE_CONSTRAINTS.MIN, Math.min(ANGLE_CONSTRAINTS.MAX, value))
 
   // Convert imported data to chart format when provided
+  // Uses quaternions when available for axis selection (same as cloud import)
   // Limit to prevent performance issues with large datasets
   const MAX_IMPORTED_POINTS = 5000;
   const importedChartData = useMemo(() => {
@@ -299,17 +303,40 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
         const step = Math.ceil(importedData.length / MAX_IMPORTED_POINTS);
         dataToProcess = importedData.filter((_, idx) => idx % step === 0);
       }
-      return dataToProcess.map((point, idx) => ({
-        time: point.t || idx * 10, // Use timestamp or generate from index
-        leftAngle: roundToOneDecimal(clampValue(point.l ?? 0)),
-        rightAngle: roundToOneDecimal(clampValue(point.r ?? 0)),
-        _updateId: idx,
-      }));
+
+      // Check if quaternions are available
+      const hasQuaternions = dataToProcess.some(p => p.lq || p.rq);
+
+      return dataToProcess.map((point, idx) => {
+        let leftAngle: number;
+        let rightAngle: number;
+
+        if (hasQuaternions && selectedAxis !== 'y') {
+          // Use quaternions to compute angles for X/Z axis
+          leftAngle = point.lq
+            ? quaternionToAngle(point.lq, selectedAxis as EulerAxis)
+            : point.l ?? 0;
+          rightAngle = point.rq
+            ? quaternionToAngle(point.rq, selectedAxis as EulerAxis)
+            : point.r ?? 0;
+        } else {
+          // Use pre-computed Y-axis angles (from l/r columns)
+          leftAngle = point.l ?? 0;
+          rightAngle = point.r ?? 0;
+        }
+
+        return {
+          time: point.t || idx * 10, // Use timestamp or generate from index
+          leftAngle: roundToOneDecimal(clampValue(leftAngle)),
+          rightAngle: roundToOneDecimal(clampValue(rightAngle)),
+          _updateId: idx,
+        };
+      });
     } catch (err) {
       console.error('Failed to process imported data:', err);
       return null;
     }
-  }, [importedData]);
+  }, [importedData, selectedAxis]);
 
   // Use imported data if available, otherwise use streaming data
   const displayData = importedChartData || chartData;

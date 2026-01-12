@@ -7,5 +7,6 @@ export {
   resetExportPath,
   parseCSV,
   type ImportedSample,
-  type ImportedRecording
+  type ImportedRecording,
+  type ImportedQuaternion
 } from './CSVExporter';

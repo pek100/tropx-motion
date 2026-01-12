@@ -33,7 +33,9 @@ const TITLE_INPUT_STYLES = {
 interface ActionBarProps {
   onActionClick: (actionId: ActionId) => void
   onExportCSV: () => void
+  onImportCSV: () => void
   isExporting?: boolean
+  isImporting?: boolean
   /** When true, shows "Edit & Save" instead of "Save" */
   isEditing?: boolean
   /** Selected patient name to display */
@@ -53,7 +55,9 @@ interface ActionBarProps {
 export function ActionBar({
   onActionClick,
   onExportCSV,
+  onImportCSV,
   isExporting,
+  isImporting,
   isEditing,
   selectedPatientName,
   selectedPatientImage,
@@ -78,7 +82,7 @@ export function ActionBar({
   )
   return (
     <div className="action-bar pointer-events-auto" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-      {/* Left group: Save, Export (dropdown), Load - labels hidden below 1700px */}
+      {/* Left group: Save, Export/Import dropdown, Load - labels hidden below 1700px */}
       <IslandButtonGroup>
         <IslandButton
           icon={<Save className="size-4" />}
@@ -89,7 +93,9 @@ export function ActionBar({
         />
         <ExportDropdownButton
           onExportCSV={onExportCSV}
+          onImportCSV={onImportCSV}
           isExporting={isExporting}
+          isImporting={isImporting}
           hideLabel
         />
         <IslandButton

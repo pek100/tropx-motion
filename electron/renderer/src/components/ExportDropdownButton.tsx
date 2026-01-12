@@ -1,37 +1,34 @@
 import { useState, useRef, useEffect } from 'react';
-import { Download, ChevronDown, FileText, Cloud, Database, Wand2 } from 'lucide-react';
+import { Download, ChevronDown, Upload } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ExportDropdownButtonProps {
-  onExportCSV: (interpolated?: boolean) => void;
+  onExportCSV: () => void;
+  onImportCSV: () => void;
   disabled?: boolean;
   isExporting?: boolean;
+  isImporting?: boolean;
   /** Hide label at smallest breakpoint */
   hideLabel?: boolean;
 }
 
-type ExportOption = 'csv' | 'csv-interpolated' | 'json' | 'cloud';
+type MenuOption = 'export' | 'import';
 
 interface MenuItem {
-  id: ExportOption;
+  id: MenuOption;
   label: string;
   icon: React.ReactNode;
-  disabled?: boolean;
-  badge?: string;
-  description?: string;
 }
 
 const MENU_ITEMS: MenuItem[] = [
-  { id: 'csv', label: 'Export CSV', icon: <FileText className="size-4" />, description: 'Raw data' },
-  { id: 'csv-interpolated', label: 'Export Interpolated', icon: <Wand2 className="size-4" />, description: 'Uniform 100Hz' },
-  { id: 'json', label: 'Export JSON', icon: <Database className="size-4" />, disabled: true, badge: 'Soon' },
-  { id: 'cloud', label: 'Cloud Sync', icon: <Cloud className="size-4" />, disabled: true, badge: 'Soon' },
+  { id: 'export', label: 'Export CSV', icon: <Download className="size-4" /> },
+  { id: 'import', label: 'Import CSV', icon: <Upload className="size-4" /> },
 ];
 
-export function ExportDropdownButton({ onExportCSV, disabled, isExporting, hideLabel }: ExportDropdownButtonProps) {
+export function ExportDropdownButton({ onExportCSV, onImportCSV, disabled, isExporting, isImporting, hideLabel }: ExportDropdownButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [defaultAction] = useState<ExportOption>('csv');
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const isBusy = isExporting || isImporting;
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -45,21 +42,16 @@ export function ExportDropdownButton({ onExportCSV, disabled, isExporting, hideL
   }, []);
 
   const handleMainClick = () => {
-    if (disabled || isExporting) return;
-    if (defaultAction === 'csv') {
-      onExportCSV(false);
-    } else if (defaultAction === 'csv-interpolated') {
-      onExportCSV(true);
-    }
+    if (disabled || isBusy) return;
+    onExportCSV();
   };
 
   const handleMenuItemClick = (item: MenuItem) => {
-    if (item.disabled) return;
     setIsOpen(false);
-    if (item.id === 'csv') {
-      onExportCSV(false);
-    } else if (item.id === 'csv-interpolated') {
-      onExportCSV(true);
+    if (item.id === 'export') {
+      onExportCSV();
+    } else if (item.id === 'import') {
+      onImportCSV();
     }
   };
 
@@ -68,14 +60,14 @@ export function ExportDropdownButton({ onExportCSV, disabled, isExporting, hideL
       {/* Combined button matching IslandButton style */}
       <button
         onClick={handleMainClick}
-        disabled={disabled || isExporting}
+        disabled={disabled || isBusy}
         className={cn(
           'inline-flex items-center gap-2.5 pl-6 pr-2 py-4 text-sm font-medium cursor-pointer whitespace-nowrap border-transparent',
           'text-[var(--tropx-shadow)]',
           'disabled:opacity-50 disabled:cursor-not-allowed'
         )}
       >
-        {isExporting ? (
+        {isBusy ? (
           <svg className="animate-spin size-4" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
@@ -89,7 +81,7 @@ export function ExportDropdownButton({ onExportCSV, disabled, isExporting, hideL
         <div
           onClick={(e) => {
             e.stopPropagation();
-            if (!disabled && !isExporting) setIsOpen(!isOpen);
+            if (!disabled && !isBusy) setIsOpen(!isOpen);
           }}
           className="ml-1 pl-2 border-l border-[var(--tropx-shadow)]/20 cursor-pointer"
         >
@@ -100,7 +92,7 @@ export function ExportDropdownButton({ onExportCSV, disabled, isExporting, hideL
       {/* Dropdown menu - opens upward */}
       {isOpen && (
         <div
-          className="absolute right-0 bottom-full mb-2 w-56 bg-[var(--tropx-card)] rounded-xl shadow-lg border border-[var(--tropx-border)] py-1 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
+          className="absolute right-0 bottom-full mb-2 w-48 bg-[var(--tropx-card)] rounded-xl shadow-lg border border-[var(--tropx-border)] py-1 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
           onClick={(e) => e.stopPropagation()}
         >
           {MENU_ITEMS.map((item) => (
@@ -112,28 +104,13 @@ export function ExportDropdownButton({ onExportCSV, disabled, isExporting, hideL
                 e.stopPropagation();
                 handleMenuItemClick(item);
               }}
-              disabled={item.disabled}
               className={cn(
                 'w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors',
-                item.disabled ? 'text-[var(--tropx-text-sub)] cursor-not-allowed' : 'text-[var(--tropx-text-main)] hover:bg-[var(--tropx-muted)] cursor-pointer',
-                item.id === defaultAction && !item.disabled && 'bg-[var(--tropx-muted)]'
+                'text-[var(--tropx-text-main)] hover:bg-[var(--tropx-muted)] cursor-pointer'
               )}
             >
               {item.icon}
-              <div className="flex-1">
-                <div>{item.label}</div>
-                {item.description && (
-                  <div className="text-xs text-[var(--tropx-text-sub)]">{item.description}</div>
-                )}
-              </div>
-              {item.badge && (
-                <span className="text-xs px-1.5 py-0.5 bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] rounded">
-                  {item.badge}
-                </span>
-              )}
-              {item.id === defaultAction && !item.disabled && (
-                <span className="text-xs text-[var(--tropx-vibrant)]">Default</span>
-              )}
+              <span>{item.label}</span>
             </button>
           ))}
         </div>
