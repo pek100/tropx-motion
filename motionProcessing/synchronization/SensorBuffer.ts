@@ -135,9 +135,24 @@ export class SensorBuffer {
         return this.samples.length;
     }
 
+    /** Alias for getSize() */
+    size(): number {
+        return this.samples.length;
+    }
+
     /** Check if buffer is empty */
     isEmpty(): boolean {
         return this.samples.length === 0;
+    }
+
+    /**
+     * Trim samples older than given timestamp.
+     * Keeps samples at or after trimBefore.
+     */
+    trimBefore(trimBefore: number): void {
+        while (this.samples.length > 0 && this.samples[0].timestamp < trimBefore) {
+            this.samples.shift();
+        }
     }
 
     /** Get oldest timestamp in buffer */
@@ -158,6 +173,15 @@ export class SensorBuffer {
     /** Clear all samples */
     clear(): void {
         this.samples = [];
+    }
+
+    /**
+     * Ensure samples are sorted by timestamp.
+     * Should be a no-op if addSample is working correctly,
+     * but provides safety for BLE out-of-order edge cases.
+     */
+    ensureSorted(): void {
+        this.samples.sort((a, b) => a.timestamp - b.timestamp);
     }
 
     /** Find insertion index for timestamp-ordered insert */

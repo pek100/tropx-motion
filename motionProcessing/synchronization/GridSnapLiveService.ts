@@ -1,20 +1,23 @@
 /**
- * GridSnapLiveService: Live synchronization using time-grid interpolation.
+ * GridSnapLiveService: Live synchronization using the SAME flow as recording.
  *
- * Same approach as BatchSynchronizer but without shear alignment:
- * - Tick-based processing at target Hz
- * - Small queue per sensor, consume one sample per tick
- * - Per-sensor prev/curr tracking for interpolation
- * - Direct SLERP to grid position
+ * Uses the exact same components as recording playback:
+ * - SensorBuffer for per-sensor sample storage with binary search
+ * - GridSnapService.snapSinglePoint() to find brackets
+ * - InterpolationService.interpolateSinglePoint() for SLERP interpolation
+ *
+ * Only difference from recording: processes a sliding window of ~10 samples
+ * instead of the entire recording batch.
  */
 
 import { Quaternion } from '../shared/types';
-import { QuaternionService } from '../shared/QuaternionService';
+import { SensorBuffer } from './SensorBuffer';
+import { GridSnapService, SensorBufferRefs } from '../recording/GridSnapService';
+import { InterpolationService } from '../recording/InterpolationService';
 import {
     AlignedSampleSet,
     AlignedSampleCallback,
     JointSide,
-    Sample,
     SyncDebugStats,
 } from './types';
 
@@ -24,20 +27,11 @@ const LEFT_THIGH = 0x12;
 const RIGHT_SHIN = 0x21;
 const RIGHT_THIGH = 0x22;
 
-/**
- * Per-sensor state: queue for incoming samples + prev/curr for interpolation
- */
-interface SensorState {
-    queue: Sample[];      // Incoming samples waiting to be consumed
-    prev: Sample | null;  // Previous sample (for interpolation)
-    curr: Sample | null;  // Current sample (for interpolation)
-}
-
 export class GridSnapLiveService {
     private static instance: GridSnapLiveService | null = null;
 
-    // Per-sensor state (queue + prev/curr)
-    private sensorStates: Map<number, SensorState> = new Map();
+    // Per-sensor buffers (same as recording uses)
+    private buffers: SensorBufferRefs;
 
     // Subscribers
     private subscribers: Set<AlignedSampleCallback> = new Set();
@@ -51,17 +45,25 @@ export class GridSnapLiveService {
     private gridPosition: number = 0;
     private gridInitialized: boolean = false;
 
+    // Minimum buffer depth before grid starts (samples per sensor)
+    // Lower = less latency, higher = more jitter absorption
+    private static readonly MIN_BUFFER_DEPTH = 3;
+
     // Stats
     private pushCount: number = 0;
     private emitCount: number = 0;
     private tickCount: number = 0;
 
     private constructor() {
-        // Initialize sensor states with empty queues
-        const deviceIds = [LEFT_THIGH, LEFT_SHIN, RIGHT_THIGH, RIGHT_SHIN];
-        for (const deviceId of deviceIds) {
-            this.sensorStates.set(deviceId, { queue: [], prev: null, curr: null });
-        }
+        // Initialize sensor buffers (same as recording uses)
+        // Use smaller maxSize for live streaming vs recording
+        const maxSize = 100; // ~1 second of data at 100Hz
+        this.buffers = {
+            leftThigh: new SensorBuffer(LEFT_THIGH, maxSize),
+            leftShin: new SensorBuffer(LEFT_SHIN, maxSize),
+            rightThigh: new SensorBuffer(RIGHT_THIGH, maxSize),
+            rightShin: new SensorBuffer(RIGHT_SHIN, maxSize),
+        };
     }
 
     /** Get singleton instance */
@@ -112,10 +114,11 @@ export class GridSnapLiveService {
         this.gridPosition = 0;
         this.gridInitialized = false;
 
-        // Clear sensor states
-        for (const deviceId of this.sensorStates.keys()) {
-            this.sensorStates.set(deviceId, { queue: [], prev: null, curr: null });
-        }
+        // Clear buffers
+        this.buffers.leftThigh.clear();
+        this.buffers.leftShin.clear();
+        this.buffers.rightThigh.clear();
+        this.buffers.rightShin.clear();
 
         // Reset stats
         this.pushCount = 0;
@@ -131,168 +134,198 @@ export class GridSnapLiveService {
     }
 
     /**
-     * Timer tick: Consume from queues, advance grid, emit interpolated sample.
+     * Timer tick: Uses SAME flow as recording.
+     * Processes ALL available grid positions to minimize latency.
      */
     private tick(): void {
         this.tickCount++;
 
-        // Step 1: Consume one sample from each queue (like JointAligner.consumeOneMatch)
-        this.consumeFromQueues();
+        // Wait for minimum buffer depth before starting
+        if (!this.gridInitialized && !this.hasMinimumBufferDepth()) {
+            return;
+        }
 
-        // Step 2: Get data boundary (MIN of curr timestamps from complete joints)
-        const dataBoundary = this.getDataBoundary();
-        if (dataBoundary === null) return; // No data yet
+        // Get data boundary from newest samples (MIN across all active sensors)
+        let dataBoundary = this.getDataBoundary();
+        if (dataBoundary === null) return;
 
-        // Initialize grid position from first data
+        // Initialize grid on first data
+        // Start close to newest data (with small margin) for low latency
         if (!this.gridInitialized) {
-            this.gridPosition = dataBoundary;
+            // Start 2 samples behind the data boundary for interpolation margin
+            const startPosition = dataBoundary - (this.tickIntervalMs * 2);
+            this.gridPosition = Math.floor(startPosition / this.tickIntervalMs) * this.tickIntervalMs;
             this.gridInitialized = true;
-            return; // Wait for next tick
+            console.log(`[GridSnapLive] Grid initialized at ${this.gridPosition}ms (boundary: ${dataBoundary}ms)`);
+            return;
         }
 
-        // Calculate next grid position
-        const nextGridPosition = this.gridPosition + this.tickIntervalMs;
+        // Process ALL available grid positions (drain to minimize latency)
+        const maxIterations = 20; // Safety limit
+        let iterations = 0;
 
-        // Only advance if we have data beyond the target
-        if (nextGridPosition > dataBoundary) {
-            return; // Wait for more data
-        }
+        while (iterations < maxIterations) {
+            iterations++;
 
-        this.gridPosition = nextGridPosition;
+            // Refresh data boundary (might have new samples)
+            dataBoundary = this.getDataBoundary();
+            if (dataBoundary === null) break;
 
-        // Step 3: Interpolate and emit
-        this.interpolateAndEmit();
-    }
+            // Check if we can advance (need one sample ahead for interpolation)
+            const nextGridPosition = this.gridPosition + this.tickIntervalMs;
+            if (nextGridPosition >= dataBoundary) {
+                break; // Caught up with data - wait for more samples
+            }
 
-    /**
-     * Consume one sample from each sensor's queue.
-     * Shifts: curr → prev, queue.shift() → curr
-     */
-    private consumeFromQueues(): void {
-        for (const state of this.sensorStates.values()) {
-            if (state.queue.length > 0) {
-                state.prev = state.curr;
-                state.curr = state.queue.shift()!;
+            this.gridPosition = nextGridPosition;
+
+            // Use SAME flow as recording:
+            // 1. GridSnapService.snapSinglePoint() to find brackets
+            const gridPoint = GridSnapService.snapSinglePoint(this.buffers, this.gridPosition);
+
+            if (!gridPoint) {
+                // No valid brackets - skip this position
+                continue;
+            }
+
+            // 2. InterpolationService.interpolateSinglePoint() for SLERP
+            const interpolated = InterpolationService.interpolateSinglePoint(gridPoint);
+
+            // 3. Convert to AlignedSampleSet format
+            const alignedSamples: AlignedSampleSet = {
+                timestamp: this.gridPosition,
+            };
+
+            if (interpolated.leftThigh && interpolated.leftShin) {
+                alignedSamples.leftKnee = {
+                    thigh: { timestamp: this.gridPosition, quaternion: interpolated.leftThigh },
+                    shin: { timestamp: this.gridPosition, quaternion: interpolated.leftShin },
+                };
+            }
+
+            if (interpolated.rightThigh && interpolated.rightShin) {
+                alignedSamples.rightKnee = {
+                    thigh: { timestamp: this.gridPosition, quaternion: interpolated.rightThigh },
+                    shin: { timestamp: this.gridPosition, quaternion: interpolated.rightShin },
+                };
+            }
+
+            // Emit if we have any joint data
+            if (alignedSamples.leftKnee || alignedSamples.rightKnee) {
+                this.emitCount++;
+                this.notifySubscribers(alignedSamples);
             }
         }
+
+        // Trim old samples periodically (every 10 ticks to reduce overhead)
+        if (this.tickCount % 10 === 0) {
+            this.trimOldSamples();
+        }
     }
 
     /**
-     * Get data boundary for grid advancement.
-     * Uses MIN of curr timestamps from complete joints.
+     * Check if all active sensors have minimum buffer depth.
+     */
+    private hasMinimumBufferDepth(): boolean {
+        const leftThighSize = this.buffers.leftThigh.size();
+        const leftShinSize = this.buffers.leftShin.size();
+        const rightThighSize = this.buffers.rightThigh.size();
+        const rightShinSize = this.buffers.rightShin.size();
+
+        const leftActive = leftThighSize > 0 || leftShinSize > 0;
+        const rightActive = rightThighSize > 0 || rightShinSize > 0;
+
+        if (!leftActive && !rightActive) return false;
+
+        if (leftActive) {
+            if (leftThighSize < GridSnapLiveService.MIN_BUFFER_DEPTH ||
+                leftShinSize < GridSnapLiveService.MIN_BUFFER_DEPTH) {
+                return false;
+            }
+        }
+
+        if (rightActive) {
+            if (rightThighSize < GridSnapLiveService.MIN_BUFFER_DEPTH ||
+                rightShinSize < GridSnapLiveService.MIN_BUFFER_DEPTH) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Get data boundary (MIN of newest timestamps across active sensors).
      */
     private getDataBoundary(): number | null {
-        const leftThighTs = this.sensorStates.get(LEFT_THIGH)?.curr?.timestamp ?? null;
-        const leftShinTs = this.sensorStates.get(LEFT_SHIN)?.curr?.timestamp ?? null;
-        const rightThighTs = this.sensorStates.get(RIGHT_THIGH)?.curr?.timestamp ?? null;
-        const rightShinTs = this.sensorStates.get(RIGHT_SHIN)?.curr?.timestamp ?? null;
+        const boundaries: number[] = [];
 
-        // Check which joints have complete data
-        const leftComplete = leftThighTs !== null && leftShinTs !== null;
-        const rightComplete = rightThighTs !== null && rightShinTs !== null;
+        const ltNewest = this.buffers.leftThigh.getNewestTimestamp();
+        const lsNewest = this.buffers.leftShin.getNewestTimestamp();
+        const rtNewest = this.buffers.rightThigh.getNewestTimestamp();
+        const rsNewest = this.buffers.rightShin.getNewestTimestamp();
 
-        // Get per-joint boundary
-        const leftBoundary = leftComplete ? Math.min(leftThighTs!, leftShinTs!) : null;
-        const rightBoundary = rightComplete ? Math.min(rightThighTs!, rightShinTs!) : null;
+        if (ltNewest !== null) boundaries.push(ltNewest);
+        if (lsNewest !== null) boundaries.push(lsNewest);
+        if (rtNewest !== null) boundaries.push(rtNewest);
+        if (rsNewest !== null) boundaries.push(rsNewest);
 
-        // Single joint mode
-        if (leftBoundary && !rightBoundary) return leftBoundary;
-        if (rightBoundary && !leftBoundary) return rightBoundary;
-
-        // Both joints - use MIN
-        if (leftBoundary && rightBoundary) {
-            return Math.min(leftBoundary, rightBoundary);
-        }
-
-        return null;
+        if (boundaries.length === 0) return null;
+        return Math.min(...boundaries);
     }
 
     /**
-     * Interpolate all sensors to grid position and emit.
+     * Get oldest boundary (MAX of oldest timestamps - safe start point).
      */
-    private interpolateAndEmit(): void {
-        const alignedSamples: AlignedSampleSet = {
-            timestamp: this.gridPosition,
-        };
+    private getOldestBoundary(): number | null {
+        const oldest: number[] = [];
 
-        // Interpolate left knee
-        const leftThighInterp = this.interpolateSensor(LEFT_THIGH, this.gridPosition);
-        const leftShinInterp = this.interpolateSensor(LEFT_SHIN, this.gridPosition);
-        if (leftThighInterp && leftShinInterp) {
-            alignedSamples.leftKnee = {
-                thigh: leftThighInterp,
-                shin: leftShinInterp,
-            };
-        }
+        const ltOldest = this.buffers.leftThigh.getOldestTimestamp();
+        const lsOldest = this.buffers.leftShin.getOldestTimestamp();
+        const rtOldest = this.buffers.rightThigh.getOldestTimestamp();
+        const rsOldest = this.buffers.rightShin.getOldestTimestamp();
 
-        // Interpolate right knee
-        const rightThighInterp = this.interpolateSensor(RIGHT_THIGH, this.gridPosition);
-        const rightShinInterp = this.interpolateSensor(RIGHT_SHIN, this.gridPosition);
-        if (rightThighInterp && rightShinInterp) {
-            alignedSamples.rightKnee = {
-                thigh: rightThighInterp,
-                shin: rightShinInterp,
-            };
-        }
+        if (ltOldest !== null) oldest.push(ltOldest);
+        if (lsOldest !== null) oldest.push(lsOldest);
+        if (rtOldest !== null) oldest.push(rtOldest);
+        if (rsOldest !== null) oldest.push(rsOldest);
 
-        // Emit if we have any joint data
-        if (alignedSamples.leftKnee || alignedSamples.rightKnee) {
-            this.emitCount++;
-            this.notifySubscribers(alignedSamples);
-        }
+        if (oldest.length === 0) return null;
+        return Math.max(...oldest);
     }
 
     /**
-     * Interpolate a single sensor to grid timestamp.
-     * SLERPs between prev and curr.
+     * Trim samples older than grid position to bound memory.
      */
-    private interpolateSensor(deviceId: number, gridTimestamp: number): Sample | null {
-        const state = this.sensorStates.get(deviceId);
-        if (!state?.curr) return null;
-
-        // Have both prev and curr - can interpolate
-        if (state.prev) {
-            const prevTs = state.prev.timestamp;
-            const currTs = state.curr.timestamp;
-            const dt = currTs - prevTs;
-
-            if (gridTimestamp <= prevTs) {
-                return { timestamp: gridTimestamp, quaternion: state.prev.quaternion };
-            } else if (gridTimestamp >= currTs) {
-                return { timestamp: gridTimestamp, quaternion: state.curr.quaternion };
-            } else if (dt > 0) {
-                const t = (gridTimestamp - prevTs) / dt;
-                return {
-                    timestamp: gridTimestamp,
-                    quaternion: QuaternionService.slerp(
-                        state.prev.quaternion,
-                        state.curr.quaternion,
-                        t
-                    )
-                };
-            } else {
-                return { timestamp: gridTimestamp, quaternion: state.curr.quaternion };
-            }
-        }
-
-        // Only have curr - use it directly
-        return { timestamp: gridTimestamp, quaternion: state.curr.quaternion };
+    private trimOldSamples(): void {
+        const trimBefore = this.gridPosition - this.tickIntervalMs * 5; // Keep 5 samples margin
+        this.buffers.leftThigh.trimBefore(trimBefore);
+        this.buffers.leftShin.trimBefore(trimBefore);
+        this.buffers.rightThigh.trimBefore(trimBefore);
+        this.buffers.rightShin.trimBefore(trimBefore);
     }
 
     /**
      * Push a new sample from a sensor.
-     * Adds to queue - consumed one per tick.
      */
     pushSample(deviceId: number, timestamp: number, quaternion: Quaternion): void {
-        const state = this.sensorStates.get(deviceId);
-        if (!state) {
-            console.warn(`[GridSnapLive] Unknown device ID: 0x${deviceId.toString(16)}`);
-            return;
+        switch (deviceId) {
+            case LEFT_THIGH:
+                this.buffers.leftThigh.addSample(timestamp, quaternion);
+                break;
+            case LEFT_SHIN:
+                this.buffers.leftShin.addSample(timestamp, quaternion);
+                break;
+            case RIGHT_THIGH:
+                this.buffers.rightThigh.addSample(timestamp, quaternion);
+                break;
+            case RIGHT_SHIN:
+                this.buffers.rightShin.addSample(timestamp, quaternion);
+                break;
+            default:
+                console.warn(`[GridSnapLive] Unknown device ID: 0x${deviceId.toString(16)}`);
+                return;
         }
-
-        // Add to queue (consumed one per tick)
-        state.queue.push({ timestamp, quaternion });
-
         this.pushCount++;
     }
 
@@ -334,57 +367,40 @@ export class GridSnapLiveService {
 
     /** Check if only one joint has data */
     isSingleJointMode(): boolean {
-        const leftHasData = this.hasJointData(LEFT_THIGH, LEFT_SHIN);
-        const rightHasData = this.hasJointData(RIGHT_THIGH, RIGHT_SHIN);
+        const leftHasData = this.buffers.leftThigh.size() > 0 && this.buffers.leftShin.size() > 0;
+        const rightHasData = this.buffers.rightThigh.size() > 0 && this.buffers.rightShin.size() > 0;
         return (leftHasData && !rightHasData) || (!leftHasData && rightHasData);
     }
 
     /** Get active joint in single joint mode */
     getActiveJoint(): JointSide | null {
-        const leftHasData = this.hasJointData(LEFT_THIGH, LEFT_SHIN);
-        const rightHasData = this.hasJointData(RIGHT_THIGH, RIGHT_SHIN);
+        const leftHasData = this.buffers.leftThigh.size() > 0 && this.buffers.leftShin.size() > 0;
+        const rightHasData = this.buffers.rightThigh.size() > 0 && this.buffers.rightShin.size() > 0;
 
         if (leftHasData && !rightHasData) return JointSide.LEFT;
         if (!leftHasData && rightHasData) return JointSide.RIGHT;
         return null;
     }
 
-    /** Check if a joint has data */
-    private hasJointData(thighId: number, shinId: number): boolean {
-        const thighState = this.sensorStates.get(thighId);
-        const shinState = this.sensorStates.get(shinId);
-        return !!thighState?.curr && !!shinState?.curr;
-    }
-
     /** Cleanup all state */
     cleanup(): void {
         this.stop();
-        for (const deviceId of this.sensorStates.keys()) {
-            this.sensorStates.set(deviceId, { queue: [], prev: null, curr: null });
-        }
         this.subscribers.clear();
-        this.pushCount = 0;
-        this.emitCount = 0;
-        this.tickCount = 0;
-        this.gridPosition = 0;
-        this.gridInitialized = false;
     }
 
     /** Get debug statistics */
     getDebugStats(): SyncDebugStats {
-        const bufferStats = Array.from(this.sensorStates.entries()).map(([deviceId, state]) => ({
-            deviceId,
-            size: state.queue.length + (state.prev ? 1 : 0) + (state.curr ? 1 : 0),
-            oldestTimestamp: state.prev?.timestamp ?? state.curr?.timestamp ?? null,
-            newestTimestamp: state.queue.length > 0
-                ? state.queue[state.queue.length - 1].timestamp
-                : state.curr?.timestamp ?? null,
-        }));
+        const bufferStats = [
+            { deviceId: LEFT_THIGH, size: this.buffers.leftThigh.size(), oldestTimestamp: this.buffers.leftThigh.getOldestTimestamp(), newestTimestamp: this.buffers.leftThigh.getNewestTimestamp() },
+            { deviceId: LEFT_SHIN, size: this.buffers.leftShin.size(), oldestTimestamp: this.buffers.leftShin.getOldestTimestamp(), newestTimestamp: this.buffers.leftShin.getNewestTimestamp() },
+            { deviceId: RIGHT_THIGH, size: this.buffers.rightThigh.size(), oldestTimestamp: this.buffers.rightThigh.getOldestTimestamp(), newestTimestamp: this.buffers.rightThigh.getNewestTimestamp() },
+            { deviceId: RIGHT_SHIN, size: this.buffers.rightShin.size(), oldestTimestamp: this.buffers.rightShin.getOldestTimestamp(), newestTimestamp: this.buffers.rightShin.getNewestTimestamp() },
+        ];
 
         return {
             buffers: bufferStats,
-            leftKneeAligned: this.hasJointData(LEFT_THIGH, LEFT_SHIN),
-            rightKneeAligned: this.hasJointData(RIGHT_THIGH, RIGHT_SHIN),
+            leftKneeAligned: this.buffers.leftThigh.size() > 0 && this.buffers.leftShin.size() > 0,
+            rightKneeAligned: this.buffers.rightThigh.size() > 0 && this.buffers.rightShin.size() > 0,
             globalAligned: true,
             scanWindowPosition: this.gridPosition,
             outputCount: this.emitCount,
@@ -413,18 +429,8 @@ export class GridSnapLiveService {
 
     /** Get detailed debug info */
     getFullDebugInfo(): object {
-        const sensorInfo: Record<string, { queueLen: number; prevTs: number; currTs: number }> = {};
-        for (const [deviceId, state] of this.sensorStates.entries()) {
-            sensorInfo[`0x${deviceId.toString(16)}`] = {
-                queueLen: state.queue.length,
-                prevTs: state.prev?.timestamp ?? 0,
-                currTs: state.curr?.timestamp ?? 0,
-            };
-        }
-
         return {
             stats: this.getDebugStats(),
-            sensors: sensorInfo,
             pushCount: this.pushCount,
             emitCount: this.emitCount,
             tickCount: this.tickCount,

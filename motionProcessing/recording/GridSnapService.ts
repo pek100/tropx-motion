@@ -88,7 +88,9 @@ export class GridSnapService {
 
         for (let i = 0; i < sampleCount; i++) {
             const t = startTime + i * intervalMs;
-            if (t > endTime) break;
+            // Use >= to ensure we have a sample AFTER the grid time for interpolation
+            // Without this, grid at exactly endTime would have prev but no curr
+            if (t >= endTime) break;
 
             gridPoints.push({
                 t,
@@ -143,6 +145,11 @@ export class GridSnapService {
      */
     private static findBracketsFromBuffer(buffer: SensorBuffer, t: number): BracketingSamples {
         if (buffer.isEmpty()) {
+            return { prev: null, curr: null };
+        }
+
+        const bufferSize = buffer.size();
+        if (bufferSize < 2) {
             return { prev: null, curr: null };
         }
 
@@ -237,6 +244,10 @@ export class GridSnapService {
         };
     }
 
+    /**
+     * Get safe start time where ALL sensors have data.
+     * Uses MAX of oldest timestamps so all sensors have valid brackets.
+     */
     private static getEarliestTimestamp(buffers: SensorBuffers): number | null {
         const timestamps = [
             buffers.leftThigh.getOldestTimestamp(),
@@ -245,9 +256,14 @@ export class GridSnapService {
             buffers.rightShin.getOldestTimestamp(),
         ].filter((t): t is number => t !== null);
 
-        return timestamps.length > 0 ? Math.min(...timestamps) : null;
+        // MAX of oldest = all sensors have data from this point
+        return timestamps.length > 0 ? Math.max(...timestamps) : null;
     }
 
+    /**
+     * Get safe end time where ALL sensors still have data.
+     * Uses MIN of newest timestamps so all sensors have valid brackets.
+     */
     private static getLatestTimestamp(buffers: SensorBuffers): number | null {
         const timestamps = [
             buffers.leftThigh.getNewestTimestamp(),
@@ -256,6 +272,7 @@ export class GridSnapService {
             buffers.rightShin.getNewestTimestamp(),
         ].filter((t): t is number => t !== null);
 
-        return timestamps.length > 0 ? Math.max(...timestamps) : null;
+        // MIN of newest = all sensors have data until this point
+        return timestamps.length > 0 ? Math.min(...timestamps) : null;
     }
 }
