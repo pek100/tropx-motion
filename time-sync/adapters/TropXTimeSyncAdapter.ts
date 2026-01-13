@@ -160,7 +160,7 @@ export class TropXTimeSyncAdapter implements TimeSyncDevice {
     }
   }
 
-  async setDateTime(unixTimestampSeconds: number): Promise<void> {
+  async setDateTime(unixTimestampSeconds: number): Promise<{ writeCompleteTime: number }> {
     // Command format: [CMD=0x0b, LENGTH=0x04, TIMESTAMP (4 bytes little-endian)]
     // Per spec (AN_221e lines 132-175): 32-bit unsigned integer Unix epoch in seconds
     const cmd = Buffer.allocUnsafe(6);
@@ -174,11 +174,12 @@ export class TropXTimeSyncAdapter implements TimeSyncDevice {
       bytes: Array.from(cmd).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')
     });
 
-    const { response } = await this.device.sendRawCommand(cmd);
+    const { response, writeCompleteTime } = await this.device.sendRawCommand(cmd);
 
     console.log(`🕒 [${this.deviceName}] SET_DATETIME response:`, {
       bytes: Array.from(response).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', '),
-      length: response.length
+      length: response.length,
+      writeCompleteTime: writeCompleteTime.toFixed(2)
     });
 
     // Validate response: [TYPE=0x00, LENGTH=0x02, ERROR_CODE=0x0b, ...]
@@ -193,36 +194,12 @@ export class TropXTimeSyncAdapter implements TimeSyncDevice {
     }
 
     console.log(`✅ [${this.deviceName}] SET_DATETIME succeeded`);
+    return { writeCompleteTime };
   }
 
   async setClockOffset(offsetMs: ClockOffsetMs): Promise<void> {
-    // Command format: [CMD=0x31, LENGTH=0x08, OFFSET (8 bytes little-endian)]
-    // Per spec (Figure 7): Send ABSOLUTE VALUE as UInt64 - firmware subtracts from timestamps
-    const cmd = Buffer.allocUnsafe(10);
-    cmd[0] = TimeSyncCommand.SET_CLOCK_OFFSET;
-    cmd[1] = 0x08;
-
-    // Per spec: Use Math.Abs() and UInt64 (unsigned)
-    // Device firmware uses MILLISECONDS for all timestamps
-    const offsetValue = BigInt(Math.round(Math.abs(offsetMs)));
-    console.log(`⏱️ [${this.deviceName}] Sending offset as UNSIGNED: ${offsetValue}ms (original: ${offsetMs.toFixed(2)}ms)`);
-
-    cmd.writeBigUInt64LE(offsetValue, 2);  // Use UNSIGNED per spec
-
-    console.log(`⏱️ [${this.deviceName}] SET_CLOCK_OFFSET: ${offsetValue}ms (unsigned, per spec)`);
-
-    const { response } = await this.device.sendRawCommand(cmd);
-
-    // Validate response
-    if (response.length < 4) {
-      throw new Error('Invalid SET_CLOCK_OFFSET response: too short');
-    }
-
-    const errorCode = response[3];
-    if (errorCode !== 0x00) {
-      throw new Error(`SET_CLOCK_OFFSET failed with error code: 0x${errorCode.toString(16)}`);
-    }
-
-    console.log(`✅ [${this.deviceName}] SET_CLOCK_OFFSET succeeded`);
+    // Hardware SET_CLOCK_OFFSET is disabled - doesn't work reliably across firmware versions
+    // Software sync is applied in TropXDevice.handleDataNotification() instead
+    console.log(`⏱️ [${this.deviceName}] SET_CLOCK_OFFSET skipped (using software sync): ${offsetMs.toFixed(2)}ms`);
   }
 }

@@ -66,7 +66,7 @@ export interface TimeSyncDevice {
   deviceName: string;
   getSystemStatus(): Promise<DeviceSystemState>;
   setSystemStatus(state: DeviceSystemState): Promise<void>;
-  setDateTime(unixTimestampSeconds: number): Promise<void>;
+  setDateTime(unixTimestampSeconds: number): Promise<void | { writeCompleteTime: number }>;
   enterTimeSyncMode(): Promise<void>;
   getDeviceTimestamp(): Promise<TimestampReadResult>;
   exitTimeSyncMode(): Promise<void>;

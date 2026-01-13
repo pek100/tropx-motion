@@ -1380,28 +1380,28 @@ export class TropXDevice {
 
         // Per Muse v3 Protocol (section 5.5.6):
         // "The sub-second timestamp reports the number of milliseconds since 26 January 2020 00:53:20"
-        // After TIME SYNC, the device clock is corrected via SET_CLOCK_OFFSET.
         // Simply add REFERENCE_EPOCH_MS to convert to Unix timestamp.
         syncedTimestamp = REFERENCE_EPOCH_MS + deviceTimestampMs;
 
-        // SOFTWARE OFFSET DISABLED - hardware SET_CLOCK_OFFSET should handle synchronization
-        // The software offset was causing issues with recording alignment.
-        // Hardware sync via SET_CLOCK_OFFSET is more reliable.
-        //
-        // const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(this.wrapper.deviceInfo.id);
-        // if (storeDeviceId) {
-        //   const device = UnifiedBLEStateStore.getDevice(storeDeviceId);
-        //   if (device && device.clockOffset !== 0) {
-        //     syncedTimestamp += device.clockOffset;
-        //   }
-        // }
+        // Apply software offset correction based on SET_DATETIME timing delay
+        // Devices set later have lower timestamps, so we ADD the delay to align them
+        // Offsets are small positive values (0, 100, 200, 300ms) not huge negative values
+        const storeDeviceId = UnifiedBLEStateStore.getDeviceIdByAddress(this.wrapper.deviceInfo.id);
+        if (storeDeviceId) {
+          const device = UnifiedBLEStateStore.getDevice(storeDeviceId);
+          if (device && typeof device.clockOffset === 'number' && device.clockOffset !== 0) {
+            syncedTimestamp += device.clockOffset;
+          }
+        }
 
         // Log first packet for debugging
         if (this.timestampOffset === null) {
           this.timestampOffset = REFERENCE_EPOCH_MS; // Mark as initialized
-          console.log(`⏱️ [${this.wrapper.deviceInfo.name}] First packet (hardware-synced device):`);
+          const appliedOffset = storeDeviceId ? UnifiedBLEStateStore.getDevice(storeDeviceId)?.clockOffset : undefined;
+          console.log(`⏱️ [${this.wrapper.deviceInfo.name}] First packet:`);
           console.log(`   Raw sensor timestamp: ${deviceTimestampMs}ms (since REFERENCE_EPOCH)`);
-          console.log(`   Wall clock: ${syncedTimestamp}ms (${new Date(syncedTimestamp).toISOString()})`);
+          console.log(`   Clock offset applied: ${appliedOffset !== undefined ? '+' + appliedOffset.toFixed(0) + 'ms' : 'NONE'}`);
+          console.log(`   Final timestamp: ${syncedTimestamp}ms (${new Date(syncedTimestamp).toISOString()})`);
         }
 
         // Log to debug file for analysis (first 200 samples per session)
