@@ -1,11 +1,17 @@
 import { DeviceProcessor } from './deviceProcessing/DeviceProcessor';
 import { UIProcessor } from './uiProcessing/UIProcessor';
-import { BatchSynchronizer, type AlignedSampleSet } from './synchronization';
+import { BatchSynchronizer, GridSnapLiveService, type AlignedSampleSet } from './synchronization';
 import { MotionConfig, IMUData, SessionContext, Quaternion } from './shared/types';
 import { createMotionConfig, PerformanceProfile, JointName } from './shared/config';
 import { DeviceID, UnifiedBLEStateStore, GlobalState, type GlobalStateChange } from '../ble-management';
 import { RecordingBuffer, CSVExporter, type RecordingState, type ExportResult, type ExportOptions } from './recording';
 import { AngleCalculationService } from './jointProcessing/AngleCalculationService';
+
+/** Configuration options for motion processing */
+export interface MotionProcessingOptions {
+    /** Use GridSnapLiveService instead of BatchSynchronizer for live flow (default: false) */
+    useGridSnapLive?: boolean;
+}
 
 /** Synchronized joint pair for downstream consumers */
 export interface SynchronizedJointPair {
@@ -30,7 +36,11 @@ interface RecordingStatus {
  * Manages data flow between device processing, joint calculations, and UI updates.
  *
  * Data flow:
- * DeviceProcessor → BatchSynchronizer → AngleCalculator → UIProcessor/RecordingBuffer
+ * DeviceProcessor → Synchronizer → AngleCalculator → UIProcessor/RecordingBuffer
+ *
+ * Synchronizer options:
+ * - BatchSynchronizer (default): 3-stage hierarchical alignment
+ * - GridSnapLiveService (alternative): Recording-style GridSnap alignment
  */
 export class MotionProcessingCoordinator {
     private static instance: MotionProcessingCoordinator | null = null;
@@ -41,13 +51,19 @@ export class MotionProcessingCoordinator {
     private isInitialized = false;
     private performanceInterval: NodeJS.Timeout | null = null;
 
-    /** Angle calculators for direct calculation from BatchSynchronizer output */
+    /** Angle calculators for direct calculation from synchronizer output */
     private leftKneeAngleCalc!: AngleCalculationService;
     private rightKneeAngleCalc!: AngleCalculationService;
 
     private webSocketBroadcast: ((message: any, clientIds: string[]) => Promise<void>) | null = null;
 
-    private constructor(private config: MotionConfig) {
+    /** Processing options */
+    private options: MotionProcessingOptions;
+
+    private constructor(private config: MotionConfig, options: MotionProcessingOptions = {}) {
+        this.options = {
+            useGridSnapLive: options.useGridSnapLive ?? false,
+        };
         try {
             this.initializeServices();
             this.startPerformanceMonitoring();
@@ -60,13 +76,19 @@ export class MotionProcessingCoordinator {
         }
     }
 
-    static getInstance(config?: MotionConfig): MotionProcessingCoordinator {
+    static getInstance(config?: MotionConfig, options?: MotionProcessingOptions): MotionProcessingCoordinator {
         if (!MotionProcessingCoordinator.instance) {
             MotionProcessingCoordinator.instance = new MotionProcessingCoordinator(
-                config || createMotionConfig(PerformanceProfile.HZ_100_SAMPLING)
+                config || createMotionConfig(PerformanceProfile.HZ_100_SAMPLING),
+                options
             );
         }
         return MotionProcessingCoordinator.instance;
+    }
+
+    /** Get current processing options */
+    getOptions(): MotionProcessingOptions {
+        return { ...this.options };
     }
 
     setWebSocketBroadcast(broadcastFn: (message: any, clientIds: string[]) => Promise<void>): void {
@@ -190,8 +212,9 @@ export class MotionProcessingCoordinator {
             this.performanceInterval = null;
         }
 
-        // Stop BatchSynchronizer timer and cleanup
+        // Stop synchronizer timer and cleanup (both to be safe)
         BatchSynchronizer.reset();
+        GridSnapLiveService.reset();
 
         this.deviceProcessor.cleanup();
         this.uiProcessor.cleanup();
@@ -238,34 +261,41 @@ export class MotionProcessingCoordinator {
     }
 
     /**
-     * Set up subscription to BatchSynchronizer for aligned data flow.
+     * Set up subscription to synchronizer for aligned data flow.
+     * Uses BatchSynchronizer (default) or GridSnapLiveService based on options.
      * Processes aligned samples through angle calculation and routes to UI/Recording.
      */
     private setupBatchSyncSubscription(): void {
-        const batchSync = BatchSynchronizer.getInstance();
+        const useGridSnap = this.options.useGridSnapLive;
+        const syncName = useGridSnap ? 'GridSnapLive' : 'BatchSync';
+
+        // Get the appropriate synchronizer
+        const synchronizer = useGridSnap
+            ? GridSnapLiveService.getInstance()
+            : BatchSynchronizer.getInstance();
 
         // Subscribe to aligned sample output
-        batchSync.subscribe((alignedSamples: AlignedSampleSet) => {
+        synchronizer.subscribe((alignedSamples: AlignedSampleSet) => {
             this.processAlignedSamples(alignedSamples);
         });
 
-        // Listen to global state changes to start/stop BatchSynchronizer
+        // Listen to global state changes to start/stop synchronizer
         UnifiedBLEStateStore.on('globalStateChanged', (change: GlobalStateChange) => {
             if (change.newState === GlobalState.STREAMING) {
-                // Start BatchSynchronizer when streaming begins
-                if (!batchSync.isActive()) {
-                    batchSync.start(this.config.targetHz);
-                    console.log(`▶️ [BatchSync] Started on STREAMING state`);
+                // Start synchronizer when streaming begins
+                if (!synchronizer.isActive()) {
+                    synchronizer.start(this.config.targetHz);
+                    console.log(`▶️ [${syncName}] Started on STREAMING state`);
                 }
             } else if (change.previousState === GlobalState.STREAMING) {
-                // Stop BatchSynchronizer when streaming ends
-                batchSync.stop();
-                console.log(`⏹️ [BatchSync] Stopped on ${change.newState} state`);
+                // Stop synchronizer when streaming ends
+                synchronizer.stop();
+                console.log(`⏹️ [${syncName}] Stopped on ${change.newState} state`);
             }
         });
 
         // Don't auto-start - wait for STREAMING state
-        console.log(`✅ BatchSynchronizer configured (waiting for STREAMING state)`);
+        console.log(`✅ ${syncName} configured (waiting for STREAMING state)`);
     }
 
     /**
@@ -316,7 +346,7 @@ export class MotionProcessingCoordinator {
 
         this.uiProcessor.broadcastCompletePair(pair);
         // Note: Raw samples are now stored directly in DeviceProcessor.processData()
-        // Alignment happens on export/save via AlignmentService
+        // Alignment happens on export/save via GridSnapService + InterpolationService
     }
 
     setPerformanceOptions(opts: { bypassInterpolation?: boolean; asyncNotify?: boolean }): void {
@@ -327,15 +357,23 @@ export class MotionProcessingCoordinator {
 
     /** Get debug stats for pipeline analysis */
     static getDebugStats(): object {
+        const instance = MotionProcessingCoordinator.instance;
+        const useGridSnap = instance?.options?.useGridSnapLive ?? false;
+
         return {
             deviceProcessor: DeviceProcessor.getDebugStats(),
-            batchSync: BatchSynchronizer.getInstance().getFullDebugInfo(),
+            synchronizer: useGridSnap
+                ? GridSnapLiveService.getInstance().getFullDebugInfo()
+                : BatchSynchronizer.getInstance().getFullDebugInfo(),
+            synchronizerType: useGridSnap ? 'GridSnapLive' : 'BatchSync',
             uiProcessor: UIProcessor.getDebugStats()
         };
     }
 }
 
 // Factory - always create coordinator
+// Using GridSnapLiveService for unified live/recording alignment (set useGridSnapLive: false to revert to BatchSynchronizer)
 export const motionProcessingCoordinator = MotionProcessingCoordinator.getInstance(
-    createMotionConfig(PerformanceProfile.HZ_100_SAMPLING, false)
+    createMotionConfig(PerformanceProfile.HZ_100_SAMPLING, false),
+    { useGridSnapLive: true }
 );

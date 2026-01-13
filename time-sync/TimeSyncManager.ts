@@ -79,7 +79,7 @@ export class TimeSyncManager {
     const timestampsBefore = await Promise.all(
       devices.map(async device => {
         await device.enterTimeSyncMode();
-        const ts = await device.getDeviceTimestamp();
+        const { timestamp: ts } = await device.getDeviceTimestamp();
         await device.exitTimeSyncMode();
         console.log(`  [${device.deviceName}] BEFORE: ${ts}ms = ${new Date(ts).toISOString()}`);
         TimeSyncDebugLogger.logTimestampBefore(device.deviceName, device.deviceId, ts);
@@ -97,7 +97,7 @@ export class TimeSyncManager {
     const timestampsAfter = await Promise.all(
       devices.map(async device => {
         await device.enterTimeSyncMode();
-        const ts = await device.getDeviceTimestamp();
+        const { timestamp: ts } = await device.getDeviceTimestamp();
         await device.exitTimeSyncMode();
         const expectedTs = commonTimestampSeconds * 1000;
         const diff = ts - expectedTs;
@@ -107,70 +107,82 @@ export class TimeSyncManager {
       })
     );
 
-    console.log(`⏱️ Starting parallel sync for ${devices.length} devices...`);
+    console.log(`⏱️ Starting sync for ${devices.length} devices...`);
 
-    // Step 3: Read device timestamps SIMULTANEOUSLY to get accurate relative offsets
-    // Reading sequentially causes timing errors - we need to read as close together as possible
-    console.log(`📖 Reading device timestamps simultaneously for relative offset calculation...`);
+    // Step 3: Read device timestamps in parallel
+    // NOTE: On Windows/macOS, BLE operations may be serialized at the OS level.
+    // We use relative offset comparison (device-to-device) rather than absolute offsets
+    // to avoid RTT measurement errors from BLE queue delays.
+    console.log(`📖 Reading device timestamps in parallel...`);
 
     // Enter timesync mode on all devices first
     await Promise.all(devices.map(device => device.enterTimeSyncMode()));
 
-    // Read timestamps as simultaneously as possible
-    const readStart = Date.now();
+    // Capture reference time BEFORE starting reads
+    // All counters will be adjusted back to this point for fair comparison
+    const referenceTime = Date.now();
+
+    // Read timestamps in parallel
     const deviceTimestamps = await Promise.all(
       devices.map(async device => {
-        const ts = await device.getDeviceTimestamp();
-        const readTime = Date.now() - readStart;
-        console.log(`  [${device.deviceName}] Timestamp: ${ts}ms (read after ${readTime}ms)`);
-        return { deviceId: device.deviceId, deviceName: device.deviceName, timestamp: ts, readDelayMs: readTime };
+        const { timestamp, rtt, receiveTime } = await device.getDeviceTimestamp();
+
+        // Estimate when device actually sampled its counter
+        const sampleTime = receiveTime - rtt / 2;
+
+        // Adjust counter back to reference time
+        // Counter ticks at ~1ms/ms, so we subtract elapsed time since reference
+        const elapsedSinceReference = sampleTime - referenceTime;
+        const counterAtReference = timestamp - elapsedSinceReference;
+
+        console.log(`  [${device.deviceName}] counter=${timestamp}ms, RTT=${rtt}ms, elapsed=${elapsedSinceReference.toFixed(0)}ms, adjusted=${counterAtReference.toFixed(0)}ms`);
+
+        return {
+          deviceId: device.deviceId,
+          deviceName: device.deviceName,
+          timestamp,
+          rtt,
+          receiveTime,
+          counterAtReference
+        };
       })
     );
 
     // Exit timesync mode on all devices
     await Promise.all(devices.map(device => device.exitTimeSyncMode()));
 
-    // Step 4: Use WALL CLOCK as reference (consistent across recordings)
-    // Calculate expected device timestamp based on wall clock elapsed time since SET_DATETIME
-    const wallClockNow = readStart; // Wall clock time when reads started
-    const elapsedSinceSetDatetime = wallClockNow - (commonTimestampSeconds * 1000);
-    const expectedDeviceTimestamp = (commonTimestampSeconds * 1000) + elapsedSinceSetDatetime;
+    // Step 4: Calculate offsets using time-adjusted counters
+    // All counters are now adjusted to the same reference moment, so we can compare directly
+    console.log(`📖 Calculating offsets (counters adjusted to reference time)...`);
 
-    console.log(`⏱️ Wall clock reference: ${wallClockNow}ms`);
-    console.log(`⏱️ Elapsed since SET_DATETIME: ${elapsedSinceSetDatetime}ms`);
-    console.log(`⏱️ Expected device timestamp: ${expectedDeviceTimestamp}ms`);
+    // Find the minimum adjusted counter - this device is the "reference" (most behind)
+    const minCounter = Math.min(...deviceTimestamps.map(d => d.counterAtReference));
+    const referenceDevice = deviceTimestamps.find(d => d.counterAtReference === minCounter)!;
+    console.log(`⏱️ Reference device: ${referenceDevice.deviceName} (adjusted counter: ${minCounter.toFixed(0)}ms)`);
+    TimeSyncDebugLogger.logReferenceDevice(referenceDevice.deviceName, minCounter);
 
-    // Adjust timestamps for read delay and calculate offset from expected
+    // Calculate how far ahead each device's counter is from the reference
     const adjustedTimestamps = deviceTimestamps.map(d => {
-      // Device timestamp was sampled at readStart + RTT/2 (one-way latency)
-      const adjustedTimestamp = d.timestamp - (d.readDelayMs / 2);
-      // How far is this device from expected? Positive = ahead, negative = behind
-      const offsetFromExpected = adjustedTimestamp - expectedDeviceTimestamp;
+      // Positive = device counter is ahead, needs correction
+      const offsetFromReference = d.counterAtReference - minCounter;
+      console.log(`  [${d.deviceName}] adjusted=${d.counterAtReference.toFixed(0)}ms, ahead of reference by ${offsetFromReference.toFixed(2)}ms`);
       return {
         ...d,
-        adjustedTimestamp,
-        offsetFromExpected
+        offsetFromReference
       };
     });
 
-    console.log(`📖 Device offsets from wall clock reference:`);
+    console.log(`📖 Device offsets summary (relative to ${referenceDevice.deviceName}):`);
     adjustedTimestamps.forEach(d => {
-      console.log(`  [${d.deviceName}] Adjusted: ${d.adjustedTimestamp}ms, Offset from expected: ${d.offsetFromExpected.toFixed(2)}ms`);
+      console.log(`  [${d.deviceName}] RTT=${d.rtt}ms, Offset from reference: ${d.offsetFromReference.toFixed(2)}ms`);
     });
 
-    // Find the minimum offset (most behind device) - we can only subtract, not add
-    // All devices will be brought down to this level
-    const minOffset = Math.min(...adjustedTimestamps.map(d => d.offsetFromExpected));
-    console.log(`⏱️ Target offset (minimum): ${minOffset.toFixed(2)}ms - all devices will align to this`);
-    TimeSyncDebugLogger.logReferenceDevice('WALL_CLOCK', expectedDeviceTimestamp + minOffset);
-
-    // Apply clock offset corrections to each device
+    // Apply clock offset corrections to each device (except the reference)
     if (adjustedTimestamps.length > 1) {
       for (let i = 0; i < adjustedTimestamps.length; i++) {
         const deviceInfo = adjustedTimestamps[i];
-        // How much is this device ahead of the target (minimum)?
-        const correctionNeeded = deviceInfo.offsetFromExpected - minOffset;
-        console.log(`⏱️ [${deviceInfo.deviceName}] Offset: ${deviceInfo.offsetFromExpected.toFixed(2)}ms, Correction needed: ${correctionNeeded.toFixed(2)}ms`);
+        const correctionNeeded = deviceInfo.offsetFromReference;
+        console.log(`⏱️ [${deviceInfo.deviceName}] Correction needed: ${correctionNeeded.toFixed(2)}ms`);
 
         if (correctionNeeded > 1) { // Only apply if correction > 1ms
           // Per spec (Figure 7): Send ABSOLUTE value - firmware subtracts it from timestamps
@@ -183,7 +195,7 @@ export class TimeSyncManager {
           await device.setClockOffset(correctionMs);
           await device.exitTimeSyncMode();
         } else {
-          console.log(`⏱️ [${deviceInfo.deviceName}] No correction needed (at target or offset < 1ms)`);
+          console.log(`⏱️ [${deviceInfo.deviceName}] No correction needed (reference device or offset < 1ms)`);
           TimeSyncDebugLogger.logClockOffset(deviceInfo.deviceName, correctionNeeded, 0, correctionNeeded < 1);
         }
       }

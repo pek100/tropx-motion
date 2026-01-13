@@ -3,7 +3,7 @@
  *
  * Tests the full pipeline:
  * 1. RecordingBuffer stores raw samples
- * 2. CSVExporter processes through AlignmentService
+ * 2. CSVExporter processes through GridSnapService + InterpolationService
  * 3. Output matches expected format
  *
  * Run with: npx tsx motionProcessing/recording/IntegrationTest.ts
@@ -11,7 +11,6 @@
 
 import { RecordingBuffer } from './RecordingBuffer';
 import { CSVExporter } from './CSVExporter';
-import { AlignmentService } from './AlignmentService';
 import { RawDeviceSample } from './types';
 import { Quaternion } from '../shared/types';
 
@@ -78,7 +77,7 @@ function testRecordingBufferToCSV(): boolean {
         return false;
     }
 
-    // Export to CSV (calls AlignmentService internally)
+    // Export to CSV (uses GridSnapService + InterpolationService)
     const exportResult = CSVExporter.export({ targetHz: 100 });
 
     if (!exportResult.success) {
@@ -141,53 +140,6 @@ function testRecordingBufferToCSV(): boolean {
 
     console.log('  PASS');
     RecordingBuffer.clear();
-    return true;
-}
-
-function testAlignmentServiceDirect(): boolean {
-    console.log('Test: AlignmentService direct processing...');
-
-    // Create raw samples directly
-    const rawSamples: RawDeviceSample[] = [];
-
-    for (let t = 0; t < 500; t += 10) {
-        const angle = 30 * Math.sin(2 * Math.PI * t / 250);
-
-        rawSamples.push({ deviceId: LEFT_THIGH, timestamp: t, quaternion: createIdentityQuat() });
-        rawSamples.push({ deviceId: LEFT_SHIN, timestamp: t + 1, quaternion: createRotationQuat(angle) });
-        rawSamples.push({ deviceId: RIGHT_THIGH, timestamp: t + 2, quaternion: createIdentityQuat() });
-        rawSamples.push({ deviceId: RIGHT_SHIN, timestamp: t + 3, quaternion: createRotationQuat(angle * 0.7) });
-    }
-
-    console.log(`  Input raw samples: ${rawSamples.length}`);
-
-    // Process through AlignmentService
-    const aligned = AlignmentService.process(rawSamples, 100);
-
-    console.log(`  Output aligned samples: ${aligned.length}`);
-
-    if (aligned.length < 45) { // Should be ~50 samples for 500ms at 100Hz
-        console.error(`FAIL: Expected ~50 aligned samples, got ${aligned.length}`);
-        return false;
-    }
-
-    // Check all samples have both joints
-    const withBoth = aligned.filter(s => s.lq !== null && s.rq !== null);
-    if (withBoth.length < aligned.length * 0.9) {
-        console.error(`FAIL: Most samples should have both joints`);
-        return false;
-    }
-
-    // Check timestamps are uniform
-    for (let i = 1; i < aligned.length; i++) {
-        const delta = aligned[i].t - aligned[i - 1].t;
-        if (Math.abs(delta - 10) > 0.1) {
-            console.error(`FAIL: Non-uniform timestamp at index ${i}: delta=${delta}`);
-            return false;
-        }
-    }
-
-    console.log('  PASS');
     return true;
 }
 
@@ -306,7 +258,6 @@ function runTests(): void {
 
     const tests = [
         testEmptyRecording,
-        testAlignmentServiceDirect,
         testRecordingBufferToCSV,
         testSingleJointRecording,
         testOutOfOrderSamples,

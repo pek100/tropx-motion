@@ -7,6 +7,7 @@
 
 import { IBleService } from './BleServiceFactory';
 import { MotionData, TropXDeviceInfo } from './index';
+import { TropXDevice } from './TropXDevice';
 import { QuaternionBinaryProtocol } from './QuaternionBinaryProtocol';
 import { TimeSyncManager } from '../time-sync';
 import { TropXTimeSyncAdapter } from '../time-sync/adapters/TropXTimeSyncAdapter';

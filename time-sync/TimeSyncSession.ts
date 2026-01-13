@@ -60,8 +60,8 @@ export class TimeSyncSession {
     // Collect samples
     for (let i = 0; i < this.sampleCount; i++) {
       const T1 = Date.now();
-      const deviceCounter = await this.device.getDeviceTimestamp();
-      const T4 = Date.now();
+      const { timestamp: deviceCounter, rtt, receiveTime } = await this.device.getDeviceTimestamp();
+      const T4 = receiveTime;  // Use receive time from adapter for consistency
 
       this.estimator.addSample(T1, deviceCounter, T4);
 
@@ -84,12 +84,10 @@ export class TimeSyncSession {
     // Exit timesync mode
     await this.device.exitTimeSyncMode();
 
-    // NOTE: We do NOT call SET_CLOCK_OFFSET here!
-    // Firmware behavior for SET_CLOCK_OFFSET is inconsistent across device hardware revisions.
-    // Some devices apply it, others ignore it completely.
-    // Instead, we store the offset and apply it in SOFTWARE during streaming.
-    // This ensures consistent behavior across all firmware versions.
-    console.log(`✅ [${this.device.deviceName}] Time sync complete - software offset: ${medianOffset.toFixed(2)}ms (will be applied in streaming handler)`);
+    // NOTE: SET_CLOCK_OFFSET is applied by TimeSyncManager.syncDevices() during multi-device sync.
+    // This session is run AFTER that to collect RTT statistics for reporting.
+    // The offset returned here is informational only - hardware sync is already applied.
+    console.log(`✅ [${this.device.deviceName}] Time sync stats: median offset=${medianOffset.toFixed(2)}ms (RTT: ${avgRTT.toFixed(2)}ms)`);
 
     const samples = this.estimator.getSamples();
     const RTTs = samples.map(s => s.RTT);

@@ -5,7 +5,7 @@
  * Handles command formatting and response parsing per Muse v3 protocol.
  */
 
-import { TimeSyncDevice, DeviceTimestampMs, ClockOffsetMs, DeviceSystemState } from '../types';
+import { TimeSyncDevice, DeviceTimestampMs, ClockOffsetMs, DeviceSystemState, TimestampReadResult } from '../types';
 import { TimeSyncCommand } from '../constants';
 import { TropXDevice } from '../../ble-bridge/TropXDevice';
 
@@ -23,7 +23,7 @@ export class TropXTimeSyncAdapter implements TimeSyncDevice {
   async getSystemStatus(): Promise<DeviceSystemState> {
     // Command format: [CMD=0x82, LENGTH=0x00]
     const cmd = Buffer.from([0x82, 0x00]);
-    const response = await this.device.sendRawCommand(cmd);
+    const { response } = await this.device.sendRawCommand(cmd);
 
     console.log(`📊 [${this.deviceName}] GET_SYSTEM_STATUS response:`, {
       bytes: Array.from(response).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', '),
@@ -49,7 +49,7 @@ export class TropXTimeSyncAdapter implements TimeSyncDevice {
   async setSystemStatus(state: DeviceSystemState): Promise<void> {
     // Command format: [CMD=0x02, LENGTH=0x01, STATE]
     const cmd = Buffer.from([0x02, 0x01, state]);
-    const response = await this.device.sendRawCommand(cmd);
+    const { response } = await this.device.sendRawCommand(cmd);
 
     // Response format: [TYPE=0x00, LENGTH=0x02, ERROR_CODE=0x02, ...]
     if (response.length < 3) {
@@ -69,7 +69,7 @@ export class TropXTimeSyncAdapter implements TimeSyncDevice {
 
   async enterTimeSyncMode(): Promise<void> {
     const cmd = Buffer.from([TimeSyncCommand.ENTER_TIMESYNC, 0x00]);
-    const response = await this.device.sendRawCommand(cmd);
+    const { response } = await this.device.sendRawCommand(cmd);
 
     // Validate response: [TYPE=0x00, LENGTH=0x02, ERROR_CODE=0x32, ...]
     if (response.length < 3 || response[2] !== TimeSyncCommand.ENTER_TIMESYNC) {
@@ -82,14 +82,27 @@ export class TropXTimeSyncAdapter implements TimeSyncDevice {
     }
   }
 
-  async getDeviceTimestamp(): Promise<DeviceTimestampMs> {
+  async getDeviceTimestamp(): Promise<TimestampReadResult> {
     const cmd = Buffer.from([TimeSyncCommand.GET_TIMESTAMP, 0x00]);
-    const response = await this.device.sendRawCommand(cmd);
+
+    // Get exact timestamps from BLE layer
+    // writeCompleteTime is when device received command and sampled its timestamp
+    const { response, sendTime, writeCompleteTime, receiveTime } = await this.device.sendRawCommand(cmd);
+
+    // Write latency = time for BLE write to complete
+    const writeLatency = writeCompleteTime - sendTime;
+    // Device sampled at approximately: sendTime + writeLatency/2 (midpoint of write)
+    // But writeCompleteTime is an upper bound, so we use it directly as the sample time estimate
+    const sampleTime = writeCompleteTime;
+    // RTT for logging (includes 50ms delay, less meaningful now)
+    const rtt = receiveTime - sendTime;
 
     console.log(`📊 [${this.deviceName}] GET_TIMESTAMP response:`, {
       bytes: Array.from(response).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', '),
       length: response.length,
-      timestampBytes: Array.from(response.slice(4, 10)).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')
+      timestampBytes: Array.from(response.slice(4, 10)).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', '),
+      writeLatency: `${writeLatency}ms`,
+      sampleTime: `${sampleTime}ms`
     });
 
     // Response format: [TYPE=0x00, LENGTH=0x0a, ERROR_CODE=0xb2, ERROR_STATUS=0x00, TIMESTAMP (6 bytes), ...]
@@ -123,15 +136,18 @@ export class TropXTimeSyncAdapter implements TimeSyncDevice {
     const timestampMs = byte0 + (byte1 << 8) + (byte2 << 16) +
                         (byte3 * 0x1000000) + (byte4 * 0x100000000) + (byte5 * 0x10000000000);
 
-    console.log(`📊 [${this.deviceName}] Raw 48-bit timestamp: ${timestampMs}ms`);
+    console.log(`📊 [${this.deviceName}] Raw 48-bit timestamp: ${timestampMs}ms, writeLatency: ${writeLatency}ms`);
     console.log(`📊 [${this.deviceName}] = ${new Date(timestampMs).toISOString()}`);
 
-    return timestampMs;
+    // Return writeCompleteTime as receiveTime, and writeLatency as rtt
+    // TimeSyncManager will calculate: sampleTime = receiveTime - rtt/2 = writeCompleteTime - writeLatency/2
+    // This gives the midpoint of the write operation, our best estimate of when device sampled
+    return { timestamp: timestampMs, rtt: writeLatency, receiveTime: writeCompleteTime };
   }
 
   async exitTimeSyncMode(): Promise<void> {
     const cmd = Buffer.from([TimeSyncCommand.EXIT_TIMESYNC, 0x00]);
-    const response = await this.device.sendRawCommand(cmd);
+    const { response } = await this.device.sendRawCommand(cmd);
 
     // Validate response
     if (response.length < 3 || response[2] !== TimeSyncCommand.EXIT_TIMESYNC) {
@@ -158,7 +174,7 @@ export class TropXTimeSyncAdapter implements TimeSyncDevice {
       bytes: Array.from(cmd).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')
     });
 
-    const response = await this.device.sendRawCommand(cmd);
+    const { response } = await this.device.sendRawCommand(cmd);
 
     console.log(`🕒 [${this.deviceName}] SET_DATETIME response:`, {
       bytes: Array.from(response).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', '),
@@ -195,7 +211,7 @@ export class TropXTimeSyncAdapter implements TimeSyncDevice {
 
     console.log(`⏱️ [${this.deviceName}] SET_CLOCK_OFFSET: ${offsetValue}ms (unsigned, per spec)`);
 
-    const response = await this.device.sendRawCommand(cmd);
+    const { response } = await this.device.sendRawCommand(cmd);
 
     // Validate response
     if (response.length < 4) {

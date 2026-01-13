@@ -37,6 +37,14 @@ export interface GridSnapResult {
     endTime: number;
 }
 
+/** Buffer references for live streaming (persistent buffers) */
+export interface SensorBufferRefs {
+    leftThigh: SensorBuffer;
+    leftShin: SensorBuffer;
+    rightThigh: SensorBuffer;
+    rightShin: SensorBuffer;
+}
+
 interface SensorBuffers {
     leftThigh: SensorBuffer;
     leftShin: SensorBuffer;
@@ -92,6 +100,83 @@ export class GridSnapService {
         }
 
         return { gridPoints, startTime, endTime };
+    }
+
+    /**
+     * Snap a single grid point from persistent buffers (for live streaming).
+     * Uses binary search to find bracketing samples around targetTime.
+     * Returns null if no sensor has sufficient data for interpolation.
+     */
+    static snapSinglePoint(buffers: SensorBufferRefs, targetTime: number): GridPoint | null {
+        const leftThigh = this.findBracketsFromBuffer(buffers.leftThigh, targetTime);
+        const leftShin = this.findBracketsFromBuffer(buffers.leftShin, targetTime);
+        const rightThigh = this.findBracketsFromBuffer(buffers.rightThigh, targetTime);
+        const rightShin = this.findBracketsFromBuffer(buffers.rightShin, targetTime);
+
+        // Check if we have at least one complete joint (both thigh + shin with valid brackets)
+        const leftComplete = this.hasBrackets(leftThigh) && this.hasBrackets(leftShin);
+        const rightComplete = this.hasBrackets(rightThigh) && this.hasBrackets(rightShin);
+
+        if (!leftComplete && !rightComplete) {
+            return null;
+        }
+
+        return {
+            t: targetTime,
+            leftThigh,
+            leftShin,
+            rightThigh,
+            rightShin,
+        };
+    }
+
+    /**
+     * Check if brackets have both prev and curr for valid interpolation.
+     */
+    private static hasBrackets(brackets: BracketingSamples): boolean {
+        return brackets.prev !== null && brackets.curr !== null;
+    }
+
+    /**
+     * Find bracketing samples from a persistent buffer using binary search.
+     * Returns prev (sample before or at t) and curr (sample after t).
+     */
+    private static findBracketsFromBuffer(buffer: SensorBuffer, t: number): BracketingSamples {
+        if (buffer.isEmpty()) {
+            return { prev: null, curr: null };
+        }
+
+        // Use binary search to find closest sample
+        const closestIdx = buffer.findClosestIndex(t);
+        if (closestIdx < 0) {
+            return { prev: null, curr: null };
+        }
+
+        const closestTs = buffer.getTimestampAtIndex(closestIdx);
+        if (closestTs === null) {
+            return { prev: null, curr: null };
+        }
+
+        let prevIdx: number;
+        let currIdx: number;
+
+        if (closestTs <= t) {
+            // Closest is at or before target - it's prev, next is curr
+            prevIdx = closestIdx;
+            currIdx = closestIdx + 1;
+        } else {
+            // Closest is after target - prev is one before
+            prevIdx = closestIdx - 1;
+            currIdx = closestIdx;
+        }
+
+        const prevSample = buffer.getSampleAtIndex(prevIdx);
+        const currSample = buffer.getSampleAtIndex(currIdx);
+
+        return {
+            prev: prevSample ? { timestamp: prevSample.timestamp, quaternion: prevSample.quaternion } : null,
+            curr: currSample ? { timestamp: currSample.timestamp, quaternion: currSample.quaternion } : null,
+        };
     }
 
     private static loadIntoBuffers(raw: RawDeviceSample[]): SensorBuffers {

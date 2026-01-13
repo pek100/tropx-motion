@@ -77,6 +77,16 @@ class NodeBleCharacteristic extends EventEmitter implements ICharacteristic {
     return await this.nodeBleChar.readValue();
   }
 
+  /**
+   * Read with exact receive timestamp captured immediately after BLE read completes.
+   * More accurate than capturing timestamp after additional async operations.
+   */
+  async readWithTimestamp(): Promise<{ data: Buffer; receiveTime: number }> {
+    const data = await this.nodeBleChar.readValue();
+    const receiveTime = Date.now();  // Captured immediately after BLE read
+    return { data, receiveTime };
+  }
+
   async write(data: Buffer, withResponse: boolean): Promise<void> {
     console.log(`📝 [NodeBleChar] write: uuid=${this.uuid}, withResponse=${withResponse}`);
     try {
@@ -126,6 +136,10 @@ class NodeBleCharacteristic extends EventEmitter implements ICharacteristic {
   // Noble-compatible async methods (for TropXDevice compatibility)
   async readAsync(): Promise<Buffer> {
     return await this.read();
+  }
+
+  async readAsyncWithTimestamp(): Promise<{ data: Buffer; receiveTime: number }> {
+    return await this.readWithTimestamp();
   }
 
   async writeAsync(data: Buffer, withoutResponse: boolean): Promise<void> {

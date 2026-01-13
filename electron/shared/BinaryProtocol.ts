@@ -222,7 +222,9 @@ export class UnifiedBinaryProtocol {
     };
     right.rom = Math.abs(right.max - right.min);
 
-    return { left, right, timestamp: Date.now() };
+    // Note: timestamp is returned in the outer result object from deserialize()
+    // via the header - don't add a redundant/incorrect timestamp here
+    return { left, right };
   }
 
   // Heartbeat serialization (8 bytes)

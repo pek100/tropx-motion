@@ -2,7 +2,7 @@
  * RecordingBuffer - Stores raw per-device sensor data during recording.
  *
  * Raw samples are stored with original device timestamps.
- * Alignment and interpolation happens on export/save via AlignmentService.
+ * Alignment and interpolation happens on export/save via GridSnapService + InterpolationService.
  *
  * This simplified buffer just stores raw samples - no real-time assembly needed.
  */
@@ -27,6 +27,7 @@ class RecordingBufferClass {
     private rawBuffer: RawDeviceSample[] = [];
     private isRecording = false;
     private startTime: number | null = null;
+    private latestTimestamp: number | null = null;  // Track latest for O(1) duration calc
     private lastFlushTime = 0;
     private samplesSinceFlush = 0;
     private targetHz = 100;
@@ -45,7 +46,9 @@ class RecordingBufferClass {
     start(targetHz: number = 100): void {
         this.clear();
         this.targetHz = targetHz;
-        this.startTime = Date.now();
+        // Don't set startTime here - use first sensor timestamp instead
+        // This ensures startTime is in the same time base as sample timestamps
+        this.startTime = null;
         this.isRecording = true;
         this.lastFlushTime = Date.now();
         // Reset debug counters
@@ -70,6 +73,17 @@ class RecordingBufferClass {
         if (!this.isRecording) return;
 
         RecordingBufferClass.pushCount++;
+
+        // Set startTime from first sensor timestamp (same time base as samples)
+        if (this.startTime === null) {
+            this.startTime = timestamp;
+            console.log(`[RecordingBuffer] Recording start time set from first sample: ${timestamp}`);
+        }
+
+        // Track latest timestamp for O(1) duration calculation
+        if (this.latestTimestamp === null || timestamp > this.latestTimestamp) {
+            this.latestTimestamp = timestamp;
+        }
 
         // Debug logging for first few samples
         if (RecordingBufferClass.pushCount <= 20) {
@@ -100,7 +114,7 @@ class RecordingBufferClass {
 
     /**
      * Get all raw samples, sorted by timestamp.
-     * Called by CSVExporter and UploadService before processing with AlignmentService.
+     * Called by CSVExporter and UploadService before processing with GridSnapService.
      */
     getRawSamples(): RawDeviceSample[] {
         // Sort by timestamp to handle BLE out-of-order arrival
@@ -125,10 +139,14 @@ class RecordingBufferClass {
 
     /** Get current recording state for IPC. */
     getState(): RecordingState {
+        // Calculate duration using tracked sensor timestamps (O(1) instead of O(n))
+        const durationMs = (this.startTime && this.latestTimestamp)
+            ? this.latestTimestamp - this.startTime
+            : 0;
         return {
             isRecording: this.isRecording,
             sampleCount: this.rawBuffer.length,
-            durationMs: this.startTime ? Date.now() - this.startTime : 0,
+            durationMs,
             startTime: this.startTime
         };
     }
@@ -142,6 +160,7 @@ class RecordingBufferClass {
     clear(): void {
         this.rawBuffer = [];
         this.startTime = null;
+        this.latestTimestamp = null;
         this.isRecording = false;
         this.samplesSinceFlush = 0;
         this.deleteTempFile();

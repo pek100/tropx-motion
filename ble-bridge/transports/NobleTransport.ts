@@ -88,6 +88,20 @@ class NobleCharacteristic extends EventEmitter implements ICharacteristic {
     });
   }
 
+  /**
+   * Read with exact receive timestamp captured in the BLE callback.
+   * More accurate than capturing timestamp after Promise resolves.
+   */
+  async readWithTimestamp(): Promise<{ data: Buffer; receiveTime: number }> {
+    return new Promise((resolve, reject) => {
+      this.nobleChar.read((error: Error | null, data: Buffer) => {
+        const receiveTime = Date.now();  // Captured immediately in callback
+        if (error) reject(error);
+        else resolve({ data, receiveTime });
+      });
+    });
+  }
+
   async write(data: Buffer, withResponse: boolean): Promise<void> {
     return new Promise((resolve, reject) => {
       this.nobleChar.write(data, !withResponse, (error?: Error) => {
@@ -121,6 +135,10 @@ class NobleCharacteristic extends EventEmitter implements ICharacteristic {
 
   async readAsync(): Promise<Buffer> {
     return this.read();
+  }
+
+  async readAsyncWithTimestamp(): Promise<{ data: Buffer; receiveTime: number }> {
+    return this.readWithTimestamp();
   }
 
   async writeAsync(data: Buffer, withoutResponse: boolean): Promise<void> {

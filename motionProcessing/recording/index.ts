@@ -9,7 +9,6 @@ export {
 
 // Core components
 export { RecordingBuffer } from './RecordingBuffer';
-export { AlignmentService } from './AlignmentService';
 
 export {
     GridSnapService,

@@ -1313,21 +1313,24 @@ export class TropXDevice {
     return response;
   }
 
-  // Time Sync API: Send raw command buffer and read response
-  async sendRawCommand(commandBuffer: Buffer): Promise<Buffer> {
+  // Time Sync API: Send raw command buffer and read response with exact timestamps
+  // Returns writeCompleteTime which is the best estimate of when device sampled its timestamp
+  async sendRawCommand(commandBuffer: Buffer): Promise<{ response: Buffer; sendTime: number; writeCompleteTime: number; receiveTime: number }> {
     if (!this.wrapper.commandCharacteristic) {
       throw new Error('Command characteristic not available');
     }
 
+    const sendTime = Date.now();
     await this.wrapper.commandCharacteristic.writeAsync(commandBuffer, false);
-    await this.delay(50);
+    const writeCompleteTime = Date.now();  // Device has received command and sampled by now
 
-    const response = await this.wrapper.commandCharacteristic.readAsync();
+    // Use readAsyncWithTimestamp to capture exact receive time in BLE callback
+    const { data: response, receiveTime } = await (this.wrapper.commandCharacteristic as any).readAsyncWithTimestamp();
     if (!response) {
       throw new Error('No response received from device');
     }
 
-    return response;
+    return { response, sendTime, writeCompleteTime, receiveTime };
   }
 
   // Time Sync API: Write command buffer without waiting for response

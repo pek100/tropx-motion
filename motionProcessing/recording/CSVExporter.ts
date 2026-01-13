@@ -163,7 +163,8 @@ export class CSVExporter {
 
             return {
                 t: s.t,
-                relative_s: Math.round((s.t - startTime) / 10) / 100,
+                // Convert ms to seconds with full precision (not quantized to 10ms)
+                relative_s: (s.t - startTime) / 1000,
                 // Left knee quaternion
                 lq_w: round6(lq.w),
                 lq_x: round6(lq.x),

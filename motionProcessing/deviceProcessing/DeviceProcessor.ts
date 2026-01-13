@@ -2,7 +2,7 @@ import { IMUData, DeviceData, MotionConfig, Quaternion } from '../shared/types';
 import { DEVICE, SYSTEM, BATTERY, CONNECTION_STATE } from '../shared/constants';
 import { QuaternionService } from '../shared/QuaternionService';
 import { UnifiedBLEStateStore, DeviceID, isValidDeviceID, getJointName } from '../../ble-management';
-import { BatchSynchronizer } from '../synchronization';
+import { BatchSynchronizer, GridSnapLiveService } from '../synchronization';
 import { RecordingBuffer } from '../recording/RecordingBuffer';
 
 interface DeviceStatus {
@@ -167,10 +167,16 @@ export class DeviceProcessor {
 
         this.updateLatestDeviceData(deviceSample);
 
-        // Route to BatchSynchronizer (for live UI) and RecordingBuffer (for raw storage)
+        // Route to synchronizers (for live UI) and RecordingBuffer (for raw storage)
         if (this.useBatchSync && resolvedDeviceId) {
-            // Route to BatchSynchronizer for live UI temporal alignment
+            // Route to both synchronizers - only the active one will process
+            // (Both have limited buffer sizes, so memory overhead is minimal)
             BatchSynchronizer.getInstance().pushSample(
+                resolvedDeviceId,
+                deviceSample.timestamp,
+                deviceSample.quaternion
+            );
+            GridSnapLiveService.getInstance().pushSample(
                 resolvedDeviceId,
                 deviceSample.timestamp,
                 deviceSample.quaternion
@@ -307,6 +313,7 @@ export class DeviceProcessor {
     cleanup(): void {
         this.clearAllMaps();
         BatchSynchronizer.reset();
+        GridSnapLiveService.reset();
         console.log('🧹 DeviceProcessor cleanup completed');
     }
 
@@ -370,7 +377,9 @@ export class DeviceProcessor {
 
     private countRecentlyActiveDevices(): number {
         const recentThreshold = (SYSTEM.MILLISECONDS_PER_SECOND / this.config.targetHz) * DEVICE.RECENT_ACTIVITY_MULTIPLIER;
-        const now = performance.now();
+        // Use Date.now() since deviceData.timestamp is a Unix timestamp (ms since epoch)
+        // NOT performance.now() which is ms since page/process start
+        const now = Date.now();
         let recentlyActive = 0;
 
         for (const deviceData of this.latestDeviceData.values()) {

@@ -43,7 +43,8 @@ import { isWeb } from '@/lib/platform';
 import { useRecordingUpload, UseRecordingUploadOptions } from '@/hooks/useRecordingUpload';
 import { QuaternionSample, quaternionToAngle } from '../../../../shared/QuaternionCodec';
 import { RawDeviceSample } from '../../../../motionProcessing/recording/types';
-import { AlignmentService } from '../../../../motionProcessing/recording/AlignmentService';
+import { GridSnapService } from '../../../../motionProcessing/recording/GridSnapService';
+import { InterpolationService } from '../../../../motionProcessing/recording/InterpolationService';
 import { detectActivityProfile } from '../../../../shared/classification';
 import { Id } from '../../../../convex/_generated/dataModel';
 import { TagsInput } from './TagsInput';
@@ -416,9 +417,10 @@ export function SaveModal({
         if (response.success && response.samples.length > 0) {
           const rawSamples = response.samples as RawDeviceSample[];
 
-          // Process raw samples through AlignmentService for preview
+          // Process raw samples through GridSnapService + InterpolationService for preview
           // Use 100Hz for preview (default target)
-          const alignedSamples = AlignmentService.process(rawSamples, 100);
+          const gridData = GridSnapService.snap(rawSamples, 100);
+          const alignedSamples = InterpolationService.interpolate(gridData);
 
           if (alignedSamples.length > 0) {
             // Calculate actual duration from timestamps

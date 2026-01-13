@@ -9,7 +9,7 @@
 import { Quaternion } from '../shared/types';
 import { QuaternionService } from '../shared/QuaternionService';
 import { QuaternionSample } from './types';
-import { GridSnapResult, BracketingSamples } from './GridSnapService';
+import { GridSnapResult, BracketingSamples, GridPoint } from './GridSnapService';
 
 /** Interpolated sample with angles converted from quaternions. */
 export interface InterpolatedAngleSample {
@@ -17,6 +17,17 @@ export interface InterpolatedAngleSample {
     relative_s: number;
     left: number;
     right: number;
+}
+
+/** Result from interpolating a single grid point (for live streaming). */
+export interface SinglePointResult {
+    t: number;
+    leftThigh: Quaternion | null;
+    leftShin: Quaternion | null;
+    rightThigh: Quaternion | null;
+    rightShin: Quaternion | null;
+    leftRelative: Quaternion | null;
+    rightRelative: Quaternion | null;
 }
 
 export class InterpolationService {
@@ -55,6 +66,32 @@ export class InterpolationService {
     }
 
     /**
+     * Interpolate a single grid point (for live streaming).
+     * Returns SLERPed absolute quaternions for each sensor plus relative quaternions.
+     */
+    static interpolateSinglePoint(point: GridPoint): SinglePointResult {
+        // SLERP each sensor to exact grid time
+        const leftThighQ = this.slerpToTime(point.leftThigh, point.t);
+        const leftShinQ = this.slerpToTime(point.leftShin, point.t);
+        const rightThighQ = this.slerpToTime(point.rightThigh, point.t);
+        const rightShinQ = this.slerpToTime(point.rightShin, point.t);
+
+        // Compute relative quaternions (thigh⁻¹ × shin)
+        const leftRelative = this.computeRelativeQuat(leftThighQ, leftShinQ);
+        const rightRelative = this.computeRelativeQuat(rightThighQ, rightShinQ);
+
+        return {
+            t: point.t,
+            leftThigh: leftThighQ,
+            leftShin: leftShinQ,
+            rightThigh: rightThighQ,
+            rightShin: rightShinQ,
+            leftRelative,
+            rightRelative,
+        };
+    }
+
+    /**
      * Converts aligned quaternion samples to angle samples.
      * Used by CSVExporter for CSV output.
      */
@@ -65,7 +102,8 @@ export class InterpolationService {
 
         return samples.map(s => ({
             t: s.t,
-            relative_s: Math.round((s.t - startTime) / 10) / 100,
+            // Convert ms to seconds with full precision (not quantized to 10ms)
+            relative_s: (s.t - startTime) / 1000,
             left: s.lq ? Math.round(QuaternionService.toEulerAngle(s.lq, 'y') * 10) / 10 : 0,
             right: s.rq ? Math.round(QuaternionService.toEulerAngle(s.rq, 'y') * 10) / 10 : 0
         }));
@@ -90,8 +128,11 @@ export class InterpolationService {
         // At or after curr - use curr
         if (t >= curr.timestamp) return curr.quaternion;
 
-        // Between - SLERP
-        const alpha = (t - prev.timestamp) / (curr.timestamp - prev.timestamp);
+        // Between - SLERP (with guard against zero dt for consistency with live path)
+        const dt = curr.timestamp - prev.timestamp;
+        if (dt <= 0) return curr.quaternion;
+
+        const alpha = (t - prev.timestamp) / dt;
         return QuaternionService.slerp(prev.quaternion, curr.quaternion, alpha);
     }
 

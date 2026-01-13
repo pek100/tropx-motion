@@ -11,6 +11,13 @@ export type MasterTimestampMs = number;
 // Clock offset in milliseconds (add to device counter to sync with master)
 export type ClockOffsetMs = number;
 
+// Result from reading device timestamp, includes RTT for accurate sync
+export interface TimestampReadResult {
+  timestamp: DeviceTimestampMs;
+  rtt: number;           // Round-trip time in ms
+  receiveTime: number;   // Wall clock time when response was received
+}
+
 // Single time sync sample from three-way handshake
 export interface TimeSyncSample {
   T1: MasterTimestampMs;
@@ -61,7 +68,7 @@ export interface TimeSyncDevice {
   setSystemStatus(state: DeviceSystemState): Promise<void>;
   setDateTime(unixTimestampSeconds: number): Promise<void>;
   enterTimeSyncMode(): Promise<void>;
-  getDeviceTimestamp(): Promise<DeviceTimestampMs>;
+  getDeviceTimestamp(): Promise<TimestampReadResult>;
   exitTimeSyncMode(): Promise<void>;
   setClockOffset(offsetMs: ClockOffsetMs): Promise<void>;
 }
