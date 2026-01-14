@@ -1044,19 +1044,48 @@ export function LoadModal({
     };
   }, [searchInput]);
 
-  // Query sessions list
-  const searchResult = useQuery(
+  // Query all sessions (empty args for cache key match with SyncProvider)
+  // Filter client-side for search and subject
+  const allSessionsResult = useQuery(
     api.recordingSessions.searchSessions,
-    open
-      ? {
-          search: debouncedSearch || undefined,
-          subjectId: selectedSubjectId ?? undefined,
-          includeMe: true,
-          cursor: cursor ?? undefined,
-          limit: 20,
-        }
-      : 'skip'
+    open ? {} : 'skip'
   );
+
+  // Client-side filtering
+  const searchResult = useMemo(() => {
+    if (!allSessionsResult) return undefined;
+
+    const allSessions = (allSessionsResult.sessions ?? []) as SessionSummary[];
+    const searchLower = debouncedSearch.toLowerCase().trim();
+
+    const filtered = allSessions.filter((session) => {
+      // Subject filter
+      if (selectedSubjectId && session.subjectId !== selectedSubjectId) {
+        return false;
+      }
+
+      // Search filter (search in notes, tags, subject name)
+      if (searchLower) {
+        const searchableText = [
+          session.notes ?? '',
+          session.subjectName ?? '',
+          session.subjectAlias ?? '',
+          ...session.tags,
+        ].join(' ').toLowerCase();
+
+        if (!searchableText.includes(searchLower)) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    return {
+      sessions: filtered,
+      nextCursor: null, // No pagination needed with client-side filtering
+    };
+  }, [allSessionsResult, debouncedSearch, selectedSubjectId]);
 
   // Query SVG preview paths for selected session
   const previewResult = useQuery(

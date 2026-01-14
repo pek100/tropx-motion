@@ -24,18 +24,15 @@ const DEFAULT_TAGS = [
 
 // Get user's tags sorted by most recently used
 export const getUserTags = query({
-  args: {
-    limit: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
+  args: {},
+  handler: async (ctx) => {
     const userId = await requireAuth(ctx);
-    const limit = args.limit ?? MAX_RECENT_TAGS;
 
     const tags = await ctx.db
       .query("userTags")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .order("desc")
-      .take(limit);
+      .collect();
 
     return tags.map((t) => ({
       tag: t.tag,
@@ -142,12 +139,9 @@ export const getDefaultTags = query({
 // Get user tags merged with defaults (for TagsInput)
 // Returns only defaults if user is not authenticated
 export const getTagsWithDefaults = query({
-  args: {
-    limit: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
+  args: {},
+  handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
-    const limit = args.limit ?? MAX_RECENT_TAGS;
 
     // Get default tags (always available)
     const defaultTags = await ctx.db
@@ -173,7 +167,7 @@ export const getTagsWithDefaults = query({
       .query("userTags")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .order("desc")
-      .take(limit);
+      .collect();
 
     // Build set of user's tag names
     const userTagNames = new Set(userTags.map((t) => t.tag));

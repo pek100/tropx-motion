@@ -22,33 +22,42 @@ export const getPatientMetricsHistory = query({
     const user = await getCurrentUser(ctx);
     if (!user) return null;
 
-    const limit = args.limit ?? 50;
+    // If no limit specified, return all sessions (for cache key match)
+    const useLimit = args.limit !== undefined;
+    const limit = useLimit ? args.limit! : Infinity;
 
     // Get all sessions for this subject
-    const sessions = await ctx.db
+    const sessionsQuery = ctx.db
       .query("recordingSessions")
       .withIndex("by_subject", (q) => q.eq("subjectId", args.subjectId))
       .filter((q) => q.neq(q.field("isArchived"), true))
-      .order("desc")
-      .take(limit);
+      .order("desc");
+
+    const sessions = useLimit
+      ? await sessionsQuery.take(limit)
+      : await sessionsQuery.collect();
 
     // Also get sessions where user recorded themselves (subjectId might be undefined)
-    const selfSessions = args.subjectId === user._id
-      ? await ctx.db
-          .query("recordingSessions")
-          .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
-          .filter((q) =>
-            q.and(
-              q.neq(q.field("isArchived"), true),
-              q.or(
-                q.eq(q.field("subjectId"), user._id),
-                q.eq(q.field("subjectId"), undefined)
-              )
+    let selfSessions: typeof sessions = [];
+    if (args.subjectId === user._id) {
+      const selfQuery = ctx.db
+        .query("recordingSessions")
+        .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+        .filter((q) =>
+          q.and(
+            q.neq(q.field("isArchived"), true),
+            q.or(
+              q.eq(q.field("subjectId"), user._id),
+              q.eq(q.field("subjectId"), undefined)
             )
           )
-          .order("desc")
-          .take(limit)
-      : [];
+        )
+        .order("desc");
+
+      selfSessions = useLimit
+        ? await selfQuery.take(limit)
+        : await selfQuery.collect();
+    }
 
     // Combine and deduplicate by sessionId
     const sessionMap = new Map<string, typeof sessions[0]>();

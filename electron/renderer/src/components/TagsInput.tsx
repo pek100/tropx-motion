@@ -29,8 +29,8 @@ export function TagsInput({
   const editInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch user's tags + defaults
-  const tagsData = useQuery(api.tags.getTagsWithDefaults, { limit: 20 });
+  // Fetch user's tags + defaults (no limit for cache key consistency)
+  const tagsData = useQuery(api.tags.getTagsWithDefaults, {});
 
   // Merge all tags for suggestions/recent
   const allTags = useMemo(() => {

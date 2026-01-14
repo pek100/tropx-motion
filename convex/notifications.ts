@@ -11,29 +11,16 @@ import { NOTIFICATION_TYPES } from "./schema";
 
 // List notifications for current user
 export const listForUser = query({
-  args: {
-    limit: v.optional(v.number()),
-    unreadOnly: v.optional(v.boolean()),
-  },
-  handler: async (ctx, args) => {
+  args: {},
+  handler: async (ctx) => {
     const user = await getCurrentUser(ctx);
     if (!user) return [];
 
-    const limit = Math.min(args.limit ?? 50, 100);
-
-    const notifications = args.unreadOnly
-      ? await ctx.db
-          .query("notifications")
-          .withIndex("by_user_unread", (q) =>
-            q.eq("userId", user._id).eq("read", false)
-          )
-          .order("desc")
-          .take(limit)
-      : await ctx.db
-          .query("notifications")
-          .withIndex("by_user", (q) => q.eq("userId", user._id))
-          .order("desc")
-          .take(limit);
+    const notifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .order("desc")
+      .collect();
 
     // Map _creationTime to createdAt for frontend compatibility
     return notifications.map((n) => ({

@@ -125,6 +125,12 @@ export function CacheProvider({ children }: CacheProviderProps) {
   const queueRef = useRef<MutationQueue | null>(null);
   const initializingRef = useRef(false);
   const wasOnlineRef = useRef(isOnline);
+  const isOnlineRef = useRef(isOnline);
+
+  // Keep online ref in sync
+  useEffect(() => {
+    isOnlineRef.current = isOnline;
+  }, [isOnline]);
 
   // Mutations
   const getOrCreateKEK = useMutation(api.cache.getOrCreateKEK);
@@ -254,6 +260,9 @@ export function CacheProvider({ children }: CacheProviderProps) {
         const queue = new MutationQueue(userId);
         await queue.open();
         queueRef.current = queue;
+
+        // Inject accurate online checker from ConnectivityProvider
+        queue.setOnlineChecker(() => isOnlineRef.current);
         debug.cache.log("Mutation queue opened");
 
         // Set up mutation executor with timeout

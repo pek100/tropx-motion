@@ -155,19 +155,17 @@ export const getSession = query({
 
 // List sessions owned by me
 export const listMySessions = query({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, args) => {
+  args: {},
+  handler: async (ctx) => {
     const user = await getCurrentUser(ctx);
     if (!user) return [];
-
-    const limit = args.limit ?? 50;
 
     const sessions = await ctx.db
       .query("recordingSessions")
       .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
       .filter((q) => q.neq(q.field("isArchived"), true))
       .order("desc")
-      .take(limit);
+      .collect();
 
     return Promise.all(
       sessions.map(async (session) => {
@@ -202,12 +200,10 @@ export const listMySessions = query({
 
 // List sessions where I'm the subject
 export const listSessionsOfMe = query({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, args) => {
+  args: {},
+  handler: async (ctx) => {
     const user = await getCurrentUser(ctx);
     if (!user) return [];
-
-    const limit = args.limit ?? 50;
 
     const sessions = await ctx.db
       .query("recordingSessions")
@@ -219,7 +215,7 @@ export const listSessionsOfMe = query({
         )
       )
       .order("desc")
-      .take(limit);
+      .collect();
 
     return Promise.all(
       sessions.map(async (session) => {
@@ -258,7 +254,10 @@ export const searchSessions = query({
     const user = await getCurrentUser(ctx);
     if (!user) return { sessions: [], nextCursor: null };
 
-    const limit = Math.min(args.limit ?? 20, 50);
+    // If no limit specified, return all sessions (for cache key match with SyncProvider)
+    // Otherwise use pagination with max 50
+    const useLimit = args.limit !== undefined;
+    const limit = useLimit ? Math.min(args.limit!, 50) : Infinity;
     const searchTerm = args.search?.toLowerCase().trim();
     const cursor = args.cursor;
 
@@ -272,11 +271,14 @@ export const searchSessions = query({
       ownedQuery = ownedQuery.filter((q) => q.lt(q.field("_creationTime"), cursor));
     }
 
-    const ownedSessions = await ownedQuery.order("desc").take(limit + 10);
+    // Use collect() when no limit, take() when paginating
+    const ownedSessions = useLimit
+      ? await ownedQuery.order("desc").take(limit + 10)
+      : await ownedQuery.order("desc").collect();
 
     // If includeMe, also get sessions where I'm the subject
     let subjectSessions: typeof ownedSessions = [];
-    if (args.includeMe) {
+    if (args.includeMe !== false) {
       let subjectQuery = ctx.db
         .query("recordingSessions")
         .withIndex("by_subject", (q) => q.eq("subjectId", user._id))
@@ -293,7 +295,9 @@ export const searchSessions = query({
         );
       }
 
-      subjectSessions = await subjectQuery.order("desc").take(limit + 10);
+      subjectSessions = useLimit
+        ? await subjectQuery.order("desc").take(limit + 10)
+        : await subjectQuery.order("desc").collect();
     }
 
     // Combine and sort by _creationTime
@@ -329,8 +333,8 @@ export const searchSessions = query({
       });
     }
 
-    // Limit results
-    const limited = allSessions.slice(0, limit);
+    // Limit results (only when using pagination)
+    const limited = useLimit ? allSessions.slice(0, limit) : allSessions;
 
     // Build session summaries
     const sessions = await Promise.all(
@@ -382,9 +386,10 @@ export const searchSessions = query({
       })
     );
 
-    // Determine next cursor
-    const nextCursor =
-      limited.length === limit ? limited[limited.length - 1]._creationTime : null;
+    // Determine next cursor (only for paginated queries)
+    const nextCursor = useLimit && limited.length === limit
+      ? limited[limited.length - 1]._creationTime
+      : null;
 
     return { sessions, nextCursor };
   },

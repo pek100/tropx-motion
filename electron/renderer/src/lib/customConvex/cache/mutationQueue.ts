@@ -21,11 +21,6 @@ const DB_VERSION = 1;
 // Set to true for verbose logging (development only)
 const DEBUG = false;
 
-/** Check if browser is online (basic check, ConnectivityProvider does deeper checks) */
-function isOnline(): boolean {
-  return typeof navigator !== "undefined" ? navigator.onLine : true;
-}
-
 // ─────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────
@@ -131,8 +126,24 @@ export class MutationQueue {
   private cache: Map<string, QueuedMutation> = new Map();
   private cacheLoaded = false;
 
+  // Online checker - injected from ConnectivityProvider for accurate online status
+  private onlineChecker: (() => boolean) | null = null;
+
   constructor(userId: string) {
     this.userId = userId;
+  }
+
+  /** Set custom online checker (from ConnectivityProvider) for accurate online status */
+  setOnlineChecker(checker: () => boolean): void {
+    this.onlineChecker = checker;
+  }
+
+  /** Check if online - prefers injected checker, falls back to navigator.onLine */
+  private isOnline(): boolean {
+    if (this.onlineChecker) {
+      return this.onlineChecker();
+    }
+    return typeof navigator !== "undefined" ? navigator.onLine : true;
   }
 
   // ─── Initialization ──────────────────────────────────────────────
@@ -300,7 +311,7 @@ export class MutationQueue {
   private processScheduled = false;
   private scheduleProcess(): void {
     if (this.processScheduled) return; // Already scheduled
-    if (!isOnline()) {
+    if (!this.isOnline()) {
       if (DEBUG) console.log("[MutationQueue] Offline - skipping process schedule");
       return; // Don't process when offline, CacheProvider will trigger on reconnect
     }
@@ -396,7 +407,7 @@ export class MutationQueue {
       if (DEBUG) console.warn("[MutationQueue] No executor set");
       return { success: 0, failed: 0 };
     }
-    if (!isOnline()) {
+    if (!this.isOnline()) {
       if (DEBUG) console.log("[MutationQueue] Offline - skipping process");
       return { success: 0, failed: 0 };
     }

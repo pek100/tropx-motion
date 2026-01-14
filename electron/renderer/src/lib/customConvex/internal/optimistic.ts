@@ -84,8 +84,9 @@ export function applyOptimisticUpdate(
     return;
   }
 
-  // Get module from mutation path (e.g., "users:setContactStar" → "users")
-  const module = mutationPath.split(":")[0];
+  // Get module from mutation path
+  // Handles both formats: "users:setContactStar" (cache key) or "users.setContactStar" (getFunctionName)
+  const module = mutationPath.split(/[:.]/)[0];
 
   // Get all cache keys and filter by module
   const allKeys = sync.getQueryKeys();

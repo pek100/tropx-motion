@@ -546,8 +546,8 @@ export function NotificationBell({
   // Fetch pending invitations
   const invitations = useQuery(api.invites.getMyPendingInvitations, {}) as Invitation[] | undefined;
 
-  // Fetch generic notifications
-  const rawNotifications = useQuery(api.notifications.listForUser, { limit: 20 }) as GenericNotification[] | undefined;
+  // Fetch generic notifications (no limit - SyncProvider caches with {} args)
+  const rawNotifications = useQuery(api.notifications.listForUser, {}) as GenericNotification[] | undefined;
 
   // Apply optimistic updates to notifications
   const notifications = rawNotifications

@@ -89,11 +89,13 @@ export function useQuery<Query extends FunctionReference<"query">>(
     : false;
 
   // Get cached data - sync.getQuery is stable via useCallback in SyncProvider
+  // SyncProvider keeps this fresh via timestamp-based sync (only fetches if changed)
   const cachedData = cacheKey ? sync?.getQuery(cacheKey) : undefined;
   const hasCachedData = cachedData !== undefined;
 
-  // Skip Convex if: explicitly skipped, have cached data, or offline
-  const shouldSkip = isSkipped || hasCachedData || !isOnline;
+  // Always subscribe to Convex when online for real-time updates
+  // Cache provides instant initial render, Convex provides fresh data
+  const shouldSkip = isSkipped || !isOnline;
 
   const convexResult = useConvexQuery(
     query,
@@ -101,7 +103,7 @@ export function useQuery<Query extends FunctionReference<"query">>(
   );
 
   // Save to cache when fresh data arrives
-  // BUT skip if there are pending mutations for this module (preserve optimistic updates)
+  // Skip if there are pending mutations for this module (preserve optimistic updates)
   const prevConvexResultRef = useRef<unknown>(undefined);
   useEffect(() => {
     if (!sync || !cacheKey || convexResult === undefined) return;
@@ -113,18 +115,24 @@ export function useQuery<Query extends FunctionReference<"query">>(
     sync.setQuery(cacheKey, convexResult);
   }, [sync, cacheKey, convexResult, hasPendingForModule]);
 
-  // Return: skip → cached → convex → undefined (offline)
+  // Return priority:
+  // 1. Skip → undefined
+  // 2. Convex has data → use it (real-time, authoritative)
+  // 3. Cache available → use it (instant render while Convex loads, or offline)
+  // 4. Otherwise → undefined (loading)
   if (isSkipped) {
     return undefined;
   }
 
+  // Prefer Convex result when available (handles updates, deletions)
+  if (convexResult !== undefined) {
+    return convexResult;
+  }
+
+  // Fall back to cache (instant initial render, offline support)
   if (hasCachedData) {
     return cachedData as Query["_returnType"];
   }
 
-  if (!isOnline) {
-    return undefined;
-  }
-
-  return convexResult;
+  return undefined;
 }

@@ -219,22 +219,13 @@ export function SyncProvider({ children }: SyncProviderProps) {
           }
         }
 
-        // Remove deleted sessions from cache
-        for (const key of cachedVersions.current.keys()) {
-          if (key.startsWith("recordingSessions:getSession:") && !serverSessionKeys.has(key)) {
-            setQueries((prev) => {
-              const next = new Map(prev);
-              next.delete(key);
-              return next;
-            });
-            cachedVersions.current.delete(key);
-            if (cache?.store) {
-              await cache.store.delete(`sync:query:${key}`);
-            }
-          }
-        }
+        // Collect keys to delete first (avoid modifying while iterating)
+        const sessionKeysToDelete = [...cachedVersions.current.keys()].filter(
+          (key) => key.startsWith("recordingSessions:getSession:") && !serverSessionKeys.has(key)
+        );
 
         // Fetch changed sessions
+        const freshSessionMap = new Map<string, unknown>();
         if (sessionsToFetch.length > 0) {
           const freshSessions = await convex.query(
             api.fetchById.getSessionsBySessionIds,
@@ -244,41 +235,77 @@ export function SyncProvider({ children }: SyncProviderProps) {
             for (const session of freshSessions) {
               if (session) {
                 const sessionId = (session as any).sessionId;
-                const cacheKey = makeCacheKey("recordingSessions:getSession", { sessionId });
-                const ts = timestamps.sessions.find((t) => t.sessionId === sessionId);
-                if (ts) {
-                  setQueryInternal(cacheKey, session, ts.modifiedAt);
-                }
+                freshSessionMap.set(sessionId, session);
               }
             }
           }
         }
 
-        // Cache list queries
+        // Build list from fresh data (priority) + cached data (fallback)
+        // This avoids reading from stale React state
         const allSessions: unknown[] = [];
         for (const ts of timestamps.sessions) {
           const cacheKey = makeCacheKey("recordingSessions:getSession", { sessionId: ts.sessionId });
-          const session = queries.get(cacheKey);
+          const session = freshSessionMap.get(ts.sessionId) ?? queries.get(cacheKey);
           if (session) {
             allSessions.push(session);
           }
         }
-        setQueryInternal(
-          makeCacheKey("recordingSessions:searchSessions", {}),
-          { sessions: allSessions, nextCursor: null },
-          Date.now()
-        );
-        setQueryInternal(
-          makeCacheKey("recordingSessions:listMySessions", {}),
-          allSessions,
-          Date.now()
-        );
+
+        // Single atomic state update for sessions
+        setQueries((prev) => {
+          const next = new Map(prev);
+
+          // Update individual sessions with fresh data
+          for (const [sessionId, session] of freshSessionMap) {
+            const cacheKey = makeCacheKey("recordingSessions:getSession", { sessionId });
+            next.set(cacheKey, session);
+            const ts = timestamps.sessions.find((t) => t.sessionId === sessionId);
+            if (ts) {
+              cachedVersions.current.set(cacheKey, ts.modifiedAt);
+            }
+          }
+
+          // Delete removed sessions
+          for (const key of sessionKeysToDelete) {
+            next.delete(key);
+            cachedVersions.current.delete(key);
+          }
+
+          // Update list caches
+          // Note: searchSessions is NOT cached here - it returns enriched SessionSummary format
+          // which requires owner/subject lookups. Let Convex subscription handle it.
+          next.set(makeCacheKey("recordingSessions:listMySessions", {}), allSessions);
+
+          return next;
+        });
+
+        // Persist to IndexedDB (fire-and-forget)
+        if (cache?.store) {
+          for (const [sessionId, session] of freshSessionMap) {
+            const cacheKey = makeCacheKey("recordingSessions:getSession", { sessionId });
+            const ts = timestamps.sessions.find((t) => t.sessionId === sessionId);
+            if (ts) {
+              cache.store.put(`sync:query:${cacheKey}`, session, ts.modifiedAt).catch(() => {});
+            }
+          }
+          for (const key of sessionKeysToDelete) {
+            cache.store.delete(`sync:query:${key}`).catch(() => {});
+          }
+          // Note: searchSessions is NOT persisted - uses Convex subscription for enriched format
+          cache.store.put(
+            `sync:query:${makeCacheKey("recordingSessions:listMySessions", {})}`,
+            allSessions,
+            Date.now()
+          ).catch(() => {});
+        }
 
         // ─── Sync dashboard data for cached subjects ───
+        // Use fresh data + cached data pattern (same as lists) to avoid stale closure
         const subjectIds = new Set<string>();
         for (const ts of timestamps.sessions) {
           const cacheKey = makeCacheKey("recordingSessions:getSession", { sessionId: ts.sessionId });
-          const session = queries.get(cacheKey) as { subjectId?: string } | undefined;
+          const session = (freshSessionMap.get(ts.sessionId) ?? queries.get(cacheKey)) as { subjectId?: string } | undefined;
           if (session?.subjectId) {
             subjectIds.add(session.subjectId);
           }
@@ -317,12 +344,12 @@ export function SyncProvider({ children }: SyncProviderProps) {
           debug.sync.warn("Failed to sync patients list:", err);
         }
 
-        // Sync asymmetry events for each session
-        for (const ts of timestamps.sessions) {
+        // Sync asymmetry events only for sessions that changed (not all sessions)
+        for (const sessionId of sessionsToFetch) {
           try {
-            const asymmetryCacheKey = makeCacheKey("recordingMetrics:getSessionAsymmetryEvents", { sessionId: ts.sessionId });
+            const asymmetryCacheKey = makeCacheKey("recordingMetrics:getSessionAsymmetryEvents", { sessionId });
             const asymmetryEvents = await convex.query(api.recordingMetrics.getSessionAsymmetryEvents, {
-              sessionId: ts.sessionId,
+              sessionId,
             });
             setQueryInternal(asymmetryCacheKey, asymmetryEvents, Date.now());
           } catch {
@@ -343,20 +370,13 @@ export function SyncProvider({ children }: SyncProviderProps) {
           }
         }
 
-        for (const key of cachedVersions.current.keys()) {
-          if (key.startsWith("notifications:get:") && !serverNotificationKeys.has(key)) {
-            setQueries((prev) => {
-              const next = new Map(prev);
-              next.delete(key);
-              return next;
-            });
-            cachedVersions.current.delete(key);
-            if (cache?.store) {
-              await cache.store.delete(`sync:query:${key}`);
-            }
-          }
-        }
+        // Collect keys to delete first
+        const notificationKeysToDelete = [...cachedVersions.current.keys()].filter(
+          (key) => key.startsWith("notifications:get:") && !serverNotificationKeys.has(key)
+        );
 
+        // Fetch changed notifications
+        const freshNotificationMap = new Map<string, unknown>();
         if (notificationsToFetch.length > 0) {
           const freshNotifications = await convex.query(
             api.fetchById.getNotificationsByIds,
@@ -366,35 +386,73 @@ export function SyncProvider({ children }: SyncProviderProps) {
             for (const notification of freshNotifications) {
               if (notification) {
                 const id = (notification as any)._id;
-                const cacheKey = makeCacheKey("notifications:get", { id });
-                const ts = timestamps.notifications.find((t) => t._id === id);
-                if (ts) {
-                  setQueryInternal(cacheKey, notification, ts.modifiedAt);
-                }
+                freshNotificationMap.set(id, notification);
               }
             }
           }
         }
 
+        // Build list from fresh data + cached data
         const allNotifications: unknown[] = [];
         for (const ts of timestamps.notifications) {
           const cacheKey = makeCacheKey("notifications:get", { id: ts._id });
-          const notification = queries.get(cacheKey);
+          const notification = freshNotificationMap.get(ts._id) ?? queries.get(cacheKey);
           if (notification) {
             allNotifications.push(notification);
           }
         }
-        setQueryInternal(
-          makeCacheKey("notifications:listForUser", {}),
-          allNotifications,
-          Date.now()
-        );
         const unreadCount = allNotifications.filter((n: any) => !n?.read).length;
-        setQueryInternal(
-          makeCacheKey("notifications:getUnreadCount", {}),
-          unreadCount,
-          Date.now()
-        );
+
+        // Single atomic state update for notifications
+        setQueries((prev) => {
+          const next = new Map(prev);
+
+          // Update individual notifications
+          for (const [id, notification] of freshNotificationMap) {
+            const cacheKey = makeCacheKey("notifications:get", { id });
+            next.set(cacheKey, notification);
+            const ts = timestamps.notifications.find((t) => t._id === id);
+            if (ts) {
+              cachedVersions.current.set(cacheKey, ts.modifiedAt);
+            }
+          }
+
+          // Delete removed notifications
+          for (const key of notificationKeysToDelete) {
+            next.delete(key);
+            cachedVersions.current.delete(key);
+          }
+
+          // Update list caches
+          next.set(makeCacheKey("notifications:listForUser", {}), allNotifications);
+          next.set(makeCacheKey("notifications:getUnreadCount", {}), unreadCount);
+
+          return next;
+        });
+
+        // Persist to IndexedDB
+        if (cache?.store) {
+          for (const [id, notification] of freshNotificationMap) {
+            const cacheKey = makeCacheKey("notifications:get", { id });
+            const ts = timestamps.notifications.find((t) => t._id === id);
+            if (ts) {
+              cache.store.put(`sync:query:${cacheKey}`, notification, ts.modifiedAt).catch(() => {});
+            }
+          }
+          for (const key of notificationKeysToDelete) {
+            cache.store.delete(`sync:query:${key}`).catch(() => {});
+          }
+          cache.store.put(
+            `sync:query:${makeCacheKey("notifications:listForUser", {})}`,
+            allNotifications,
+            Date.now()
+          ).catch(() => {});
+          cache.store.put(
+            `sync:query:${makeCacheKey("notifications:getUnreadCount", {})}`,
+            unreadCount,
+            Date.now()
+          ).catch(() => {});
+        }
 
         // ─── Sync invites ───
         const invitesToFetch: Id<"invites">[] = [];
@@ -409,20 +467,13 @@ export function SyncProvider({ children }: SyncProviderProps) {
           }
         }
 
-        for (const key of cachedVersions.current.keys()) {
-          if (key.startsWith("invites:get:") && !serverInviteKeys.has(key)) {
-            setQueries((prev) => {
-              const next = new Map(prev);
-              next.delete(key);
-              return next;
-            });
-            cachedVersions.current.delete(key);
-            if (cache?.store) {
-              await cache.store.delete(`sync:query:${key}`);
-            }
-          }
-        }
+        // Collect keys to delete first
+        const inviteKeysToDelete = [...cachedVersions.current.keys()].filter(
+          (key) => key.startsWith("invites:get:") && !serverInviteKeys.has(key)
+        );
 
+        // Fetch changed invites
+        const freshInviteMap = new Map<string, unknown>();
         if (invitesToFetch.length > 0) {
           const freshInvites = await convex.query(
             api.fetchById.getInvitesByIds,
@@ -432,43 +483,76 @@ export function SyncProvider({ children }: SyncProviderProps) {
             for (const invite of freshInvites) {
               if (invite) {
                 const id = (invite as any)._id;
-                const cacheKey = makeCacheKey("invites:get", { id });
-                const ts = timestamps.invites.find((t) => t._id === id);
-                if (ts) {
-                  setQueryInternal(cacheKey, invite, ts.modifiedAt);
-                }
+                freshInviteMap.set(id, invite);
               }
             }
           }
         }
 
+        // Build list from fresh data + cached data
         const allInvites: unknown[] = [];
         for (const ts of timestamps.invites) {
           const cacheKey = makeCacheKey("invites:get", { id: ts._id });
-          const invite = queries.get(cacheKey);
+          const invite = freshInviteMap.get(ts._id) ?? queries.get(cacheKey);
           if (invite) {
             allInvites.push(invite);
           }
         }
-        setQueryInternal(
-          makeCacheKey("invites:getMyInvites", {}),
-          allInvites,
-          Date.now()
-        );
         const pendingInvites = allInvites.filter((i: any) => i?.status === "pending");
-        setQueryInternal(
-          makeCacheKey("invites:getMyPendingInvitations", {}),
-          pendingInvites,
-          Date.now()
-        );
 
-        // ─── Sync user tags ───
-        const allTags = timestamps.userTags.map((t) => ({ _id: t._id, tag: t.tag }));
-        setQueryInternal(
-          makeCacheKey("tags:getUserTags", {}),
-          allTags,
-          Date.now()
-        );
+        // Single atomic state update for invites
+        setQueries((prev) => {
+          const next = new Map(prev);
+
+          // Update individual invites
+          for (const [id, invite] of freshInviteMap) {
+            const cacheKey = makeCacheKey("invites:get", { id });
+            next.set(cacheKey, invite);
+            const ts = timestamps.invites.find((t) => t._id === id);
+            if (ts) {
+              cachedVersions.current.set(cacheKey, ts.modifiedAt);
+            }
+          }
+
+          // Delete removed invites
+          for (const key of inviteKeysToDelete) {
+            next.delete(key);
+            cachedVersions.current.delete(key);
+          }
+
+          // Update list caches
+          next.set(makeCacheKey("invites:getMyInvites", {}), allInvites);
+          next.set(makeCacheKey("invites:getMyPendingInvitations", {}), pendingInvites);
+
+          return next;
+        });
+
+        // Persist to IndexedDB
+        if (cache?.store) {
+          for (const [id, invite] of freshInviteMap) {
+            const cacheKey = makeCacheKey("invites:get", { id });
+            const ts = timestamps.invites.find((t) => t._id === id);
+            if (ts) {
+              cache.store.put(`sync:query:${cacheKey}`, invite, ts.modifiedAt).catch(() => {});
+            }
+          }
+          for (const key of inviteKeysToDelete) {
+            cache.store.delete(`sync:query:${key}`).catch(() => {});
+          }
+          cache.store.put(
+            `sync:query:${makeCacheKey("invites:getMyInvites", {})}`,
+            allInvites,
+            Date.now()
+          ).catch(() => {});
+          cache.store.put(
+            `sync:query:${makeCacheKey("invites:getMyPendingInvitations", {})}`,
+            pendingInvites,
+            Date.now()
+          ).catch(() => {});
+        }
+
+        // Note: tags.getTagsWithDefaults is synced via normal Convex subscription
+        // (not proactively synced here - requires category/usageCount from DB)
 
         await persistQueryList();
 
