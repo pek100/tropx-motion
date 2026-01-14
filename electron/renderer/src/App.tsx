@@ -89,7 +89,9 @@ function AppContent() {
     }
 
     // Check if we have tokens in localStorage but Convex says not authenticated
+    // Include _electron suffix (used when storageNamespace="electron" in ConvexAuthProvider)
     const hasJWT = localStorage.getItem('__convexAuthJWT') ||
+                   localStorage.getItem('__convexAuthJWT_electron') ||
                    localStorage.getItem('__convexAuthJWT_httpstoughanteater529convexcloud')
 
     if (hasJWT && !isAuthenticated) {

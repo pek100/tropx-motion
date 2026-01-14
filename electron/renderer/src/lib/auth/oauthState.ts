@@ -7,7 +7,7 @@
 
 const OAUTH_IN_PROGRESS_KEY = 'tropx_oauth_in_progress';
 const OAUTH_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
-const JWT_FRESH_THRESHOLD_MS = 30 * 1000; // 30 seconds
+const JWT_FRESH_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes - enough time for OAuth flow to complete
 
 /**
  * Mark OAuth flow as in progress (call before redirecting to OAuth provider)
