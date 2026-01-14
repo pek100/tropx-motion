@@ -89,7 +89,8 @@
       "Bash(sudo apt-get:*)",
       "Bash(sudo apt-get install:*)",
       "WebFetch(domain:en.wikipedia.org)",
-      "WebFetch(domain:automaticaddison.com)"
+      "WebFetch(domain:automaticaddison.com)",
+      "WebFetch(domain:www.convex.dev)"
     ],
     "deny": [],
     "ask": [],

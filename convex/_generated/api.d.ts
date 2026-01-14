@@ -56,6 +56,7 @@ import type * as horus_visualization_types from "../horus/visualization/types.js
 import type * as http from "../http.js";
 import type * as invites from "../invites.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_cascade from "../lib/cascade.js";
 import type * as lib_functions from "../lib/functions.js";
 import type * as lib_metrics_bilateral from "../lib/metrics/bilateral.js";
 import type * as lib_metrics_classification from "../lib/metrics/classification.js";
@@ -68,6 +69,7 @@ import type * as lib_metrics_opi from "../lib/metrics/opi.js";
 import type * as lib_metrics_quaternionUtils from "../lib/metrics/quaternionUtils.js";
 import type * as lib_metrics_smoothness from "../lib/metrics/smoothness.js";
 import type * as lib_metrics_types from "../lib/metrics/types.js";
+import type * as lib_relationships from "../lib/relationships.js";
 import type * as lwwConflicts from "../lwwConflicts.js";
 import type * as migrations from "../migrations.js";
 import type * as notifications from "../notifications.js";
@@ -134,6 +136,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   invites: typeof invites;
   "lib/auth": typeof lib_auth;
+  "lib/cascade": typeof lib_cascade;
   "lib/functions": typeof lib_functions;
   "lib/metrics/bilateral": typeof lib_metrics_bilateral;
   "lib/metrics/classification": typeof lib_metrics_classification;
@@ -146,6 +149,7 @@ declare const fullApi: ApiFromModules<{
   "lib/metrics/quaternionUtils": typeof lib_metrics_quaternionUtils;
   "lib/metrics/smoothness": typeof lib_metrics_smoothness;
   "lib/metrics/types": typeof lib_metrics_types;
+  "lib/relationships": typeof lib_relationships;
   lwwConflicts: typeof lwwConflicts;
   migrations: typeof migrations;
   notifications: typeof notifications;

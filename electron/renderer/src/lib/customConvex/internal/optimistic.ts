@@ -15,6 +15,9 @@ import { debug } from "./debug";
 /** Common ID field names for extracting record identifiers */
 const ID_FIELD_NAMES = ["_id", "id", "userId", "sessionId", "notificationId", "inviteId"];
 
+/** Mutation patterns that should filter (remove) records instead of updating */
+const FILTER_MUTATION_PATTERNS = [/archive/i, /delete/i, /remove/i];
+
 // ─────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────
@@ -36,6 +39,12 @@ function applyFieldsToRecord(
   updateFields: Record<string, unknown>
 ): Record<string, unknown> {
   return { ...record, ...updateFields };
+}
+
+/** Check if mutation should filter (remove) records instead of update */
+function shouldFilterRecords(mutationPath: string): boolean {
+  const mutationName = mutationPath.split(/[:.]/)[1] ?? mutationPath;
+  return FILTER_MUTATION_PATTERNS.some((pattern) => pattern.test(mutationName));
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -78,7 +87,61 @@ export function applyOptimisticUpdate(
     }
   }
 
-  // No update fields - nothing to do
+  // Check if this is a filter mutation (archive/delete/remove)
+  const isFilterMutation = shouldFilterRecords(mutationPath);
+
+  // Handle filter mutations: remove matching records from cached arrays
+  if (isFilterMutation) {
+    const allKeys = sync.getQueryKeys();
+    const batchUpdates: Array<{ key: string; data: unknown }> = [];
+
+    debug.optimistic.log(`Filter mutation: ${mutationPath}, idFields:`, idFields);
+
+    for (const cacheKey of allKeys) {
+      const cachedData = sync.getQuery(cacheKey);
+      if (!cachedData) continue;
+
+      // Handle direct arrays
+      if (Array.isArray(cachedData)) {
+        const filteredArray = cachedData.filter((item) => {
+          if (typeof item !== "object" || item === null) return true;
+          return !recordMatchesIds(item as Record<string, unknown>, idFields);
+        });
+
+        if (filteredArray.length !== cachedData.length) {
+          debug.optimistic.log(`Filtering ${cachedData.length - filteredArray.length} records from: ${cacheKey}`);
+          batchUpdates.push({ key: cacheKey, data: filteredArray });
+        }
+      }
+      // Handle objects with nested sessions array (dashboard format)
+      else if (typeof cachedData === "object" && cachedData !== null) {
+        const obj = cachedData as Record<string, unknown>;
+        if (Array.isArray(obj.sessions)) {
+          const originalLength = obj.sessions.length;
+          const filteredSessions = (obj.sessions as unknown[]).filter((item) => {
+            if (typeof item !== "object" || item === null) return true;
+            return !recordMatchesIds(item as Record<string, unknown>, idFields);
+          });
+
+          if (filteredSessions.length !== originalLength) {
+            debug.optimistic.log(`Filtering ${originalLength - filteredSessions.length} sessions from: ${cacheKey}`);
+            batchUpdates.push({
+              key: cacheKey,
+              data: { ...obj, sessions: filteredSessions, totalSessions: filteredSessions.length },
+            });
+          }
+        }
+      }
+    }
+
+    if (batchUpdates.length > 0) {
+      sync.setQueryBatch(batchUpdates);
+      debug.optimistic.log(`Batch filtered ${batchUpdates.length} cache entries`);
+    }
+    return;
+  }
+
+  // No update fields - nothing to do (for non-filter mutations)
   if (Object.keys(updateFields).length === 0) {
     debug.optimistic.log("No update fields found");
     return;

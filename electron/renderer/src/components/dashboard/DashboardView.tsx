@@ -15,6 +15,7 @@ import {
 } from "../../../../../shared/compression/decompressSession";
 import { cn } from "@/lib/utils";
 import { User, Loader2, TrendingUp, BarChart3 } from "lucide-react";
+import { useArchiveSession } from "@/hooks/useArchiveSession";
 
 import { PatientInfoCard } from "./PatientInfoCard";
 import { PatientNotes, type PatientNote } from "./PatientNotes";
@@ -23,6 +24,7 @@ import { ChartPane, type ChartTab } from "./ChartPane";
 import { HorusPane, type AnalysisMode, useHorusAnalysisToast } from "./horus";
 import { CompactMetricsPane } from "./CompactMetricsPane";
 import { PatientSearchModal } from "../PatientSearchModal";
+import { SessionEditModal } from "./SessionEditModal";
 import { METRIC_DEFINITIONS, type MovementType } from "./MetricsTable";
 import type { SessionData } from "./SessionCard";
 import type { MetricRow, MetricDomain } from "./columns";
@@ -304,6 +306,22 @@ export function DashboardView({ className }: DashboardViewProps) {
   // Recompute state
   const [isRecomputing, setIsRecomputing] = useState(false);
 
+  // Edit modal state
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+
+  // Delete session state
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Archive session hook (includes toast + optimistic update)
+  const { archive: archiveSession } = useArchiveSession({
+    onArchived: (sessionId) => {
+      if (selectedSessionId === sessionId) {
+        setSelectedSessionId(null);
+      }
+    },
+  });
+
   // Session type
   type Session = NonNullable<typeof metricsHistory>["sessions"][number];
 
@@ -548,6 +566,21 @@ export function DashboardView({ className }: DashboardViewProps) {
     }
   }, [selectedSessionId, recomputeMetrics, showHorusToast]);
 
+  // Handle edit session
+  const handleEditSession = useCallback((sessionId: string) => {
+    setEditingSessionId(sessionId);
+    setIsEditModalOpen(true);
+  }, []);
+
+  // Handle delete session (fire-and-forget: optimistic update is instant)
+  const handleDeleteSession = useCallback((sessionId: string) => {
+    setIsDeleting(true);
+    archiveSession(sessionId);
+    // Note: Selection clearing and toast handled in useArchiveSession hook
+    // Reset deleting state after brief delay for UI feedback
+    setTimeout(() => setIsDeleting(false), 100);
+  }, [archiveSession]);
+
   // Loading user state
   if (isUserLoading) {
     return (
@@ -673,6 +706,9 @@ export function DashboardView({ className }: DashboardViewProps) {
                   className="h-full"
                   onRecomputeMetrics={handleRecomputeMetrics}
                   isRecomputing={isRecomputing}
+                  onEditSession={handleEditSession}
+                  onDeleteSession={handleDeleteSession}
+                  isDeleting={isDeleting}
                 />
               </div>
             </div>
@@ -733,6 +769,21 @@ export function DashboardView({ className }: DashboardViewProps) {
         onSelectPatient={handlePatientSelect}
         selectedPatientId={selectedPatientId}
       />
+
+      {/* Session Edit Modal */}
+      {editingSessionId && (
+        <SessionEditModal
+          open={isEditModalOpen}
+          onOpenChange={(open) => {
+            setIsEditModalOpen(open);
+            if (!open) setEditingSessionId(null);
+          }}
+          sessionId={editingSessionId}
+          onSaved={() => {
+            // Session data will be refetched automatically via Convex reactivity
+          }}
+        />
+      )}
 
       {/* Horus Analysis Toast */}
       {HorusToast}

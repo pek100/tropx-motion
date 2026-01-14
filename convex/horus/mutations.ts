@@ -6,6 +6,7 @@
 
 import { mutation, internalMutation } from "../_generated/server";
 import { v } from "convex/values";
+import { cascadeDeleteHorusSession } from "../lib/cascade";
 
 // ─────────────────────────────────────────────────────────────────
 // Analysis Mutations
@@ -13,29 +14,20 @@ import { v } from "convex/values";
 
 /**
  * Delete analysis for a session.
+ * Cascade deletes: horusAnalyses, horusPipelineStatus, horusChatHistory,
+ * horusAnalysisEmbeddings, and removes sessionId from horusProgress.
  */
 export const deleteAnalysis = mutation({
   args: { sessionId: v.string() },
   handler: async (ctx, { sessionId }) => {
-    // Delete from horusAnalyses
+    // Check if analysis exists before cascade delete
     const analysis = await ctx.db
       .query("horusAnalyses")
       .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
       .first();
 
-    if (analysis) {
-      await ctx.db.delete(analysis._id);
-    }
-
-    // Delete from horusPipelineStatus
-    const status = await ctx.db
-      .query("horusPipelineStatus")
-      .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
-      .first();
-
-    if (status) {
-      await ctx.db.delete(status._id);
-    }
+    // Cascade delete all Horus data for this session
+    await cascadeDeleteHorusSession(ctx, sessionId);
 
     return { deleted: !!analysis };
   },

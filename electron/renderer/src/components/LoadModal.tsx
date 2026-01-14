@@ -13,6 +13,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useQuery, useMutation } from '@/lib/customConvex';
 import { api } from '../../../../convex/_generated/api';
+import { useArchiveSession } from '@/hooks/useArchiveSession';
 import { Id } from '../../../../convex/_generated/dataModel';
 import { SvgPreviewChart, type PreviewPaths } from './SvgPreviewChart';
 import {
@@ -103,21 +104,20 @@ function RecordingCard({
   session: SessionSummary;
   isSelected: boolean;
   onClick: () => void;
-  onDelete?: () => Promise<void>;
+  onDelete?: () => void;
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const title = session.tags[0] || 'Untitled Recording';
 
-  const handleDelete = async () => {
+  // Handle delete (fire-and-forget: optimistic update is instant)
+  const handleDelete = () => {
     if (!onDelete) return;
     setIsDeleting(true);
-    try {
-      await onDelete();
-    } finally {
-      setIsDeleting(false);
-      setShowDeleteConfirm(false);
-    }
+    onDelete();
+    setShowDeleteConfirm(false);
+    // Reset deleting state after brief delay for UI feedback
+    setTimeout(() => setIsDeleting(false), 100);
   };
 
   // Show delete confirmation overlay
@@ -1019,7 +1019,13 @@ export function LoadModal({
   }, [searchInput, selectedSubjectId, selectedSubjectName, selectedSubjectImage, selectedSessionId]);
 
   // Mutations
-  const archiveSession = useMutation(api.recordingSessions.archiveSession);
+  const { archive: archiveSession } = useArchiveSession({
+    onArchived: (sessionId) => {
+      if (selectedSessionId === sessionId) {
+        setSelectedSessionId(null);
+      }
+    },
+  });
   const recomputeMetrics = useMutation(api.recordingMetrics.recomputeMetrics);
   const deleteMetricsMutation = useMutation(api.recordingMetrics.deleteMetrics);
 
@@ -1228,18 +1234,14 @@ export function LoadModal({
     }
   }, [selectedSessionId, onLoadSession, onOpenChange]);
 
-  // Handle delete session
-  const handleDelete = useCallback(async () => {
+  // Handle delete session (fire-and-forget: optimistic update is instant)
+  const handleDelete = useCallback(() => {
     if (!selectedSessionId) return;
     setIsDeleting(true);
-    try {
-      await archiveSession({ sessionId: selectedSessionId });
-      setSelectedSessionId(null);
-    } catch (err) {
-      console.error('Failed to delete session:', err);
-    } finally {
-      setIsDeleting(false);
-    }
+    archiveSession(selectedSessionId);
+    // Note: Selection clearing handled in useArchiveSession's onArchived callback
+    // Reset deleting state after brief delay for UI feedback
+    setTimeout(() => setIsDeleting(false), 100);
   }, [selectedSessionId, archiveSession]);
 
   // Handle recompute metrics
@@ -1421,11 +1423,9 @@ export function LoadModal({
                         session={session}
                         isSelected={session.sessionId === selectedSessionId}
                         onClick={() => setSelectedSessionId(session.sessionId)}
-                        onDelete={session.isOwner ? async () => {
-                          await archiveSession({ sessionId: session.sessionId });
-                          if (selectedSessionId === session.sessionId) {
-                            setSelectedSessionId(null);
-                          }
+                        onDelete={session.isOwner ? () => {
+                          archiveSession(session.sessionId);
+                          // Note: Selection clearing handled in useArchiveSession's onArchived callback
                         } : undefined}
                       />
                     ))}

@@ -2,17 +2,21 @@
  * ChartPane - Tabbed container for Progress and Session charts.
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { TrendingUp, Activity, Link, Unlink } from "lucide-react";
+import { TrendingUp, Activity, Link, Unlink, RotateCcw } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 import { ProgressChart } from "./ProgressChart";
 import { SessionChart } from "./SessionChart";
 import type { SessionData } from "./SessionCard";
@@ -21,8 +25,6 @@ import type { PackedChunkData } from "../../../../../shared/QuaternionCodec";
 // ─────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────
-
-type TimeFilter = "7" | "30" | "90" | "all";
 
 // Asymmetry event type from backend
 export interface AsymmetryEvent {
@@ -90,12 +92,7 @@ interface ChartPaneProps {
 // Constants
 // ─────────────────────────────────────────────────────────────────
 
-const TIME_FILTER_OPTIONS: { value: TimeFilter; label: string }[] = [
-  { value: "7", label: "Last 7 Sessions" },
-  { value: "30", label: "Last 30 Days" },
-  { value: "90", label: "Last 3 Months" },
-  { value: "all", label: "All Time" },
-];
+const DEFAULT_VISIBLE_SESSIONS = 10; // Default number of sessions to show
 
 // ─────────────────────────────────────────────────────────────────
 // Component
@@ -134,10 +131,200 @@ export function ChartPane({
     }
   }, [onTabChange, isLinked]);
 
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>("7");
+  // Timeline state: indices into sessions array [startIdx, endIdx]
+  const [isDraggingCenter, setIsDraggingCenter] = useState(false);
+  const dragStartRef = useRef<{ x: number; range: [number, number] } | null>(null);
 
-  // Filter sessions based on time filter
-  const filteredSessions = filterSessions(sessions, timeFilter);
+  // Total number of sessions (like sessionDuration in waveform)
+  const totalSessions = sessions.length;
+
+  // Compute default range for given session count
+  const getDefaultRange = (count: number): [number, number] => {
+    if (count === 0) return [0, 0];
+    const startIdx = Math.max(0, count - DEFAULT_VISIBLE_SESSIONS);
+    return [startIdx, count - 1];
+  };
+
+  const [timelineRange, setTimelineRange] = useState<[number, number]>(() => getDefaultRange(sessions.length));
+
+  // Always show last 10 sessions when session count changes
+  useEffect(() => {
+    if (totalSessions > 0) {
+      setTimelineRange(getDefaultRange(totalSessions));
+    }
+  }, [totalSessions]);
+
+  // Track previous selected session to only auto-scroll on actual user selection
+  const prevSelectedSessionIdRef = useRef<string | null>(null);
+
+  // Auto-scroll timeline when selected session changes (from carousel click, not initial load)
+  useEffect(() => {
+    if (!selectedSessionId || totalSessions === 0) return;
+
+    // Only auto-scroll if this is a user-initiated selection change (not initial mount)
+    const isInitialMount = prevSelectedSessionIdRef.current === null;
+    const isSameSession = prevSelectedSessionIdRef.current === selectedSessionId;
+    prevSelectedSessionIdRef.current = selectedSessionId;
+
+    // Skip auto-scroll on initial mount or if same session
+    if (isInitialMount || isSameSession) return;
+
+    const selectedIdx = sessions.findIndex(s => s.sessionId === selectedSessionId);
+    if (selectedIdx === -1) return;
+
+    const [startIdx, endIdx] = timelineRange;
+
+    // If selected session is outside visible range, scroll to include it
+    if (selectedIdx < startIdx || selectedIdx > endIdx) {
+      const windowSize = endIdx - startIdx;
+      // Center the selected session in the window
+      const newStart = Math.max(0, Math.min(
+        totalSessions - windowSize - 1,
+        selectedIdx - Math.floor(windowSize / 2)
+      ));
+      const newEnd = Math.min(totalSessions - 1, newStart + windowSize);
+      setTimelineRange([newStart, newEnd]);
+    }
+  }, [selectedSessionId, sessions, totalSessions]);
+
+  // Filter sessions based on timeline range
+  const filteredSessions = useMemo(() => {
+    if (totalSessions === 0) return [];
+    const [startIdx, endIdx] = timelineRange;
+    return sessions.slice(startIdx, endIdx + 1);
+  }, [sessions, timelineRange, totalSessions]);
+
+  // Handle range slider change
+  const handleRangeChange = useCallback((newRange: [number, number]) => {
+    setTimelineRange(newRange);
+  }, []);
+
+  // Handle center drag of range slider
+  const handleCenterDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    dragStartRef.current = { x: clientX, range: [...timelineRange] as [number, number] };
+    setIsDraggingCenter(true);
+  }, [timelineRange]);
+
+  const handleCenterDragMove = useCallback((e: MouseEvent | TouchEvent) => {
+    if (!dragStartRef.current || !isDraggingCenter) return;
+
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const sliderElement = (e.target as HTMLElement)?.closest('.range-slider-container');
+    const sliderWidth = sliderElement?.clientWidth || 1;
+    const deltaX = clientX - dragStartRef.current.x;
+    const deltaIdx = Math.round((deltaX / sliderWidth) * totalSessions);
+
+    const windowSize = dragStartRef.current.range[1] - dragStartRef.current.range[0];
+    let newStart = dragStartRef.current.range[0] + deltaIdx;
+    let newEnd = dragStartRef.current.range[1] + deltaIdx;
+
+    // Clamp to valid range
+    if (newStart < 0) {
+      newStart = 0;
+      newEnd = windowSize;
+    }
+    if (newEnd > totalSessions - 1) {
+      newEnd = totalSessions - 1;
+      newStart = totalSessions - 1 - windowSize;
+    }
+
+    setTimelineRange([newStart, newEnd]);
+  }, [isDraggingCenter, totalSessions]);
+
+  const handleCenterDragEnd = useCallback(() => {
+    setIsDraggingCenter(false);
+    dragStartRef.current = null;
+  }, []);
+
+  // Add global mouse/touch listeners for center drag
+  useEffect(() => {
+    if (isDraggingCenter) {
+      window.addEventListener('mousemove', handleCenterDragMove);
+      window.addEventListener('mouseup', handleCenterDragEnd);
+      window.addEventListener('touchmove', handleCenterDragMove);
+      window.addEventListener('touchend', handleCenterDragEnd);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleCenterDragMove);
+      window.removeEventListener('mouseup', handleCenterDragEnd);
+      window.removeEventListener('touchmove', handleCenterDragMove);
+      window.removeEventListener('touchend', handleCenterDragEnd);
+    };
+  }, [isDraggingCenter, handleCenterDragMove, handleCenterDragEnd]);
+
+  // Reset timeline to default
+  const resetTimeline = useCallback(() => {
+    const startIdx = Math.max(0, totalSessions - DEFAULT_VISIBLE_SESSIONS);
+    setTimelineRange([startIdx, totalSessions - 1]);
+  }, [totalSessions]);
+
+  // Date picker state
+  const [startDatePickerOpen, setStartDatePickerOpen] = useState(false);
+  const [endDatePickerOpen, setEndDatePickerOpen] = useState(false);
+
+  // Get date bounds from sessions for calendar constraints
+  const sessionDateBounds = useMemo(() => {
+    if (sessions.length === 0) return { from: undefined, to: undefined };
+    return {
+      from: new Date(sessions[0].recordedAt),
+      to: new Date(sessions[sessions.length - 1].recordedAt),
+    };
+  }, [sessions]);
+
+  // Handle start date selection - find nearest session to selected date
+  const handleStartDateSelect = useCallback((date: Date | undefined) => {
+    if (!date || sessions.length === 0) return;
+
+    const targetTs = date.getTime();
+
+    // Find the session closest to this date
+    let closestIdx = 0;
+    let closestDiff = Math.abs(sessions[0].recordedAt - targetTs);
+
+    for (let i = 1; i < sessions.length; i++) {
+      const diff = Math.abs(sessions[i].recordedAt - targetTs);
+      if (diff < closestDiff) {
+        closestDiff = diff;
+        closestIdx = i;
+      }
+    }
+
+    setTimelineRange(prev => {
+      const newStart = closestIdx;
+      const newEnd = prev[1];
+      // Auto-swap if inverted
+      return newStart <= newEnd ? [newStart, newEnd] : [newEnd, newStart];
+    });
+    setStartDatePickerOpen(false);
+  }, [sessions]);
+
+  // Handle end date selection - find nearest session to selected date
+  const handleEndDateSelect = useCallback((date: Date | undefined) => {
+    if (!date || sessions.length === 0) return;
+
+    const targetTs = date.getTime();
+
+    // Find the session closest to this date
+    let closestIdx = 0;
+    let closestDiff = Math.abs(sessions[0].recordedAt - targetTs);
+
+    for (let i = 1; i < sessions.length; i++) {
+      const diff = Math.abs(sessions[i].recordedAt - targetTs);
+      if (diff < closestDiff) {
+        closestDiff = diff;
+        closestIdx = i;
+      }
+    }
+
+    setTimelineRange(prev => {
+      const newStart = prev[0];
+      const newEnd = closestIdx;
+      // Auto-swap if inverted
+      return newStart <= newEnd ? [newStart, newEnd] : [newEnd, newStart];
+    });
+    setEndDatePickerOpen(false);
+  }, [sessions]);
 
   // Get selected session title for Session tab
   const selectedSession = sessions.find((s) => s.sessionId === selectedSessionId);
@@ -178,23 +365,67 @@ export function ChartPane({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            {/* Time filter (only for Progress tab) */}
-            {activeTab === "progress" && (
-              <Select
-                value={timeFilter}
-                onValueChange={(v) => setTimeFilter(v as TimeFilter)}
-              >
-                <SelectTrigger className="w-[130px] sm:w-[160px] h-8 sm:h-9 text-xs sm:text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {TIME_FILTER_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {/* Date range pickers (only for Progress tab) */}
+            {activeTab === "progress" && sessions.length > 0 && (
+              <div className="flex items-center gap-1">
+                {/* Start date picker */}
+                <Popover open={startDatePickerOpen} onOpenChange={setStartDatePickerOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      className={cn(
+                        "px-2 py-1 rounded-md text-xs sm:text-sm font-medium",
+                        "bg-[var(--tropx-muted)] border border-[var(--tropx-border)]",
+                        "hover:border-[var(--tropx-vibrant)] hover:text-[var(--tropx-vibrant)]",
+                        "transition-colors cursor-pointer text-[var(--tropx-text-main)]"
+                      )}
+                    >
+                      {filteredSessions[0]
+                        ? new Date(filteredSessions[0].recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' })
+                        : '—'}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0 bg-[var(--tropx-card)] border-[var(--tropx-border)]" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={sessions[timelineRange[0]] ? new Date(sessions[timelineRange[0]].recordedAt) : undefined}
+                      onSelect={handleStartDateSelect}
+                      defaultMonth={sessions[timelineRange[0]] ? new Date(sessions[timelineRange[0]].recordedAt) : undefined}
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                <span className="text-[var(--tropx-text-sub)] text-xs">–</span>
+
+                {/* End date picker */}
+                <Popover open={endDatePickerOpen} onOpenChange={setEndDatePickerOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      className={cn(
+                        "px-2 py-1 rounded-md text-xs sm:text-sm font-medium",
+                        "bg-[var(--tropx-muted)] border border-[var(--tropx-border)]",
+                        "hover:border-[var(--tropx-vibrant)] hover:text-[var(--tropx-vibrant)]",
+                        "transition-colors cursor-pointer text-[var(--tropx-text-main)]"
+                      )}
+                    >
+                      {filteredSessions[filteredSessions.length - 1]
+                        ? new Date(filteredSessions[filteredSessions.length - 1].recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' })
+                        : '—'}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0 bg-[var(--tropx-card)] border-[var(--tropx-border)]" align="end">
+                    <Calendar
+                      mode="single"
+                      selected={sessions[timelineRange[1]] ? new Date(sessions[timelineRange[1]].recordedAt) : undefined}
+                      onSelect={handleEndDateSelect}
+                      defaultMonth={sessions[timelineRange[1]] ? new Date(sessions[timelineRange[1]].recordedAt) : undefined}
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                <span className="text-[10px] text-[var(--tropx-text-sub)] ml-1">
+                  ({filteredSessions.length}/{sessions.length})
+                </span>
+              </div>
             )}
 
             {/* Tabs */}
@@ -244,15 +475,130 @@ export function ChartPane({
 
         {/* Chart Content */}
         <div className="flex-1 min-h-0">
-          <TabsContent value="progress" className="h-full m-0 data-[state=inactive]:hidden p-4">
-            <ProgressChart
-              sessions={filteredSessions}
-              selectedSessionId={selectedSessionId}
-              onSelectSession={onSelectSession}
-              onViewSession={handleViewSession}
-              selectedMetrics={selectedMetrics}
-              className="h-full"
-            />
+          <TabsContent value="progress" className="h-full m-0 data-[state=inactive]:hidden p-4 flex flex-col">
+            <div className="flex-1 min-h-0">
+              <ProgressChart
+                sessions={filteredSessions}
+                selectedSessionId={selectedSessionId}
+                onSelectSession={onSelectSession}
+                onViewSession={handleViewSession}
+                selectedMetrics={selectedMetrics}
+                className="h-full"
+              />
+            </div>
+
+            {/* Timeline with dual-range slider (like SessionChart) */}
+            {totalSessions > 0 && (
+              <div className="flex items-center gap-2 pt-3 border-t border-[var(--tropx-border)] mt-3">
+                <span className="text-[10px] font-mono text-[var(--tropx-text-sub)] w-20 text-right">
+                  {filteredSessions[0] ? new Date(filteredSessions[0].recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : ''}
+                </span>
+
+                {/* Dual-range slider */}
+                <div className="flex-1 relative h-6 flex items-center range-slider-container">
+                  {/* Track background */}
+                  <div className="absolute inset-x-0 h-1.5 bg-[var(--tropx-muted)] rounded-full" />
+
+                  {/* Selected range highlight with center drag zone */}
+                  <div
+                    className={cn(
+                      "absolute h-1.5 rounded-full z-20 cursor-grab active:cursor-grabbing",
+                      isDraggingCenter ? "cursor-grabbing" : ""
+                    )}
+                    style={{
+                      left: `${(timelineRange[0] / (totalSessions - 1)) * 100}%`,
+                      right: `${100 - (timelineRange[1] / (totalSessions - 1)) * 100}%`,
+                      background: `repeating-linear-gradient(
+                        90deg,
+                        color-mix(in srgb, var(--tropx-vibrant) 70%, white) 0px,
+                        color-mix(in srgb, var(--tropx-vibrant) 70%, white) 2px,
+                        color-mix(in srgb, var(--tropx-vibrant) 40%, white) 2px,
+                        color-mix(in srgb, var(--tropx-vibrant) 40%, white) 4px
+                      )`,
+                    }}
+                    onMouseDown={handleCenterDragStart}
+                    onTouchStart={handleCenterDragStart}
+                  />
+
+                  {/* Left thumb */}
+                  <input
+                    type="range"
+                    min={0}
+                    max={totalSessions - 1}
+                    value={timelineRange[0]}
+                    onChange={(e) => {
+                      const newStart = Math.min(parseInt(e.target.value), timelineRange[1]);
+                      handleRangeChange([Math.max(0, newStart), timelineRange[1]]);
+                    }}
+                    className={cn(
+                      "absolute w-full h-6 appearance-none bg-transparent pointer-events-none z-30",
+                      "[&::-webkit-slider-thumb]:appearance-none",
+                      "[&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4",
+                      "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[var(--tropx-vibrant)]",
+                      "[&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer",
+                      "[&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white",
+                      "[&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:hover:scale-125",
+                      "[&::-webkit-slider-thumb]:pointer-events-auto",
+                      "[&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4",
+                      "[&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[var(--tropx-vibrant)]",
+                      "[&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white",
+                      "[&::-moz-range-thumb]:cursor-pointer",
+                      "[&::-moz-range-thumb]:pointer-events-auto"
+                    )}
+                  />
+
+                  {/* Right thumb */}
+                  <input
+                    type="range"
+                    min={0}
+                    max={totalSessions - 1}
+                    value={timelineRange[1]}
+                    onChange={(e) => {
+                      const newEnd = Math.max(parseInt(e.target.value), timelineRange[0]);
+                      handleRangeChange([timelineRange[0], Math.min(totalSessions - 1, newEnd)]);
+                    }}
+                    className={cn(
+                      "absolute w-full h-6 appearance-none bg-transparent pointer-events-none z-30",
+                      "[&::-webkit-slider-thumb]:appearance-none",
+                      "[&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4",
+                      "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[var(--tropx-vibrant)]",
+                      "[&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer",
+                      "[&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white",
+                      "[&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:hover:scale-125",
+                      "[&::-webkit-slider-thumb]:pointer-events-auto",
+                      "[&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4",
+                      "[&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[var(--tropx-vibrant)]",
+                      "[&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white",
+                      "[&::-moz-range-thumb]:cursor-pointer",
+                      "[&::-moz-range-thumb]:pointer-events-auto"
+                    )}
+                  />
+                </div>
+
+                <span className="text-[10px] font-mono text-[var(--tropx-text-sub)] w-20">
+                  {filteredSessions[filteredSessions.length - 1] ? new Date(filteredSessions[filteredSessions.length - 1].recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : ''}
+                </span>
+
+                {/* Reset button */}
+                <Tooltip delayDuration={0}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={resetTimeline}
+                      className={cn(
+                        "p-1 rounded-md transition-colors",
+                        "hover:bg-[var(--tropx-muted)]",
+                        "text-[var(--tropx-text-sub)]"
+                      )}
+                    >
+                      <RotateCcw className="size-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">
+                    Reset to recent sessions
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="session" className="h-full m-0 data-[state=inactive]:hidden p-4">
@@ -269,37 +615,6 @@ export function ChartPane({
       </Tabs>
     </div>
   );
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────
-
-/** Filter sessions by time range */
-function filterSessions(sessions: SessionData[], filter: TimeFilter): SessionData[] {
-  // Defensive: ensure sessions is an array
-  if (!Array.isArray(sessions)) return [];
-
-  if (filter === "all") return sessions;
-
-  const now = Date.now();
-  let cutoff: number;
-
-  switch (filter) {
-    case "7":
-      // Last 7 sessions (not time-based)
-      return sessions.slice(-7);
-    case "30":
-      cutoff = now - 30 * 24 * 60 * 60 * 1000;
-      break;
-    case "90":
-      cutoff = now - 90 * 24 * 60 * 60 * 1000;
-      break;
-    default:
-      return sessions;
-  }
-
-  return sessions.filter((s) => s && typeof s.recordedAt === 'number' && s.recordedAt >= cutoff);
 }
 
 export default ChartPane;

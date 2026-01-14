@@ -1,4 +1,5 @@
 import { internalMutation } from "./lib/functions";
+import { cascadeDeleteSession, cascadeDeleteUser } from "./lib/cascade";
 
 // Constants
 const ARCHIVE_RETENTION_DAYS = 30;
@@ -28,39 +29,10 @@ export const cleanupArchivedData = internalMutation({
           .collect();
 
         for (const session of userSessions) {
-          // Delete associated recording chunks
-          const chunks = await ctx.db
-            .query("recordingChunks")
-            .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
-            .collect();
-
-          for (const chunk of chunks) {
-            await ctx.db.delete(chunk._id);
-            deletedChunks++;
-          }
-
-          // Delete recording metrics
-          const metrics = await ctx.db
-            .query("recordingMetrics")
-            .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
-            .first();
-
-          if (metrics) {
-            await ctx.db.delete(metrics._id);
-          }
-
+          // Cascade delete all session-related data (chunks, metrics, Horus data)
+          await cascadeDeleteSession(ctx, session.sessionId);
           await ctx.db.delete(session._id);
           deletedSessions++;
-        }
-
-        // Delete all invites from this user
-        const userInvites = await ctx.db
-          .query("invites")
-          .withIndex("by_from_user", (q) => q.eq("fromUserId", user._id))
-          .collect();
-
-        for (const invite of userInvites) {
-          await ctx.db.delete(invite._id);
         }
 
         // Remove from other users' contacts
@@ -78,6 +50,9 @@ export const cleanupArchivedData = internalMutation({
           }
         }
 
+        // Cascade delete user-related data (devices, notifications, tags, Horus data)
+        await cascadeDeleteUser(ctx, user._id);
+
         // Delete user
         await ctx.db.delete(user._id);
         deletedUsers++;
@@ -92,27 +67,8 @@ export const cleanupArchivedData = internalMutation({
 
     for (const session of archivedSessions) {
       if (session.archivedAt && session.archivedAt < cutoffTime) {
-        // Delete associated recording chunks
-        const chunks = await ctx.db
-          .query("recordingChunks")
-          .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
-          .collect();
-
-        for (const chunk of chunks) {
-          await ctx.db.delete(chunk._id);
-          deletedChunks++;
-        }
-
-        // Delete recording metrics
-        const metrics = await ctx.db
-          .query("recordingMetrics")
-          .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
-          .first();
-
-        if (metrics) {
-          await ctx.db.delete(metrics._id);
-        }
-
+        // Cascade delete all session-related data (chunks, metrics, Horus data)
+        await cascadeDeleteSession(ctx, session.sessionId);
         await ctx.db.delete(session._id);
         deletedSessions++;
       }

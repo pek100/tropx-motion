@@ -28,6 +28,12 @@ interface SessionsCarouselProps {
   onRecomputeMetrics?: () => void;
   /** Whether recomputation is in progress */
   isRecomputing?: boolean;
+  /** Callback when edit button is clicked on a session */
+  onEditSession?: (sessionId: string) => void;
+  /** Callback when delete button is clicked on a session */
+  onDeleteSession?: (sessionId: string) => void;
+  /** Whether delete is in progress */
+  isDeleting?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -42,6 +48,9 @@ export function SessionsCarousel({
   className,
   onRecomputeMetrics,
   isRecomputing,
+  onEditSession,
+  onDeleteSession,
+  isDeleting,
 }: SessionsCarouselProps) {
   // Sessions ordered chronologically (oldest first, newest last)
   const orderedSessions = sessions;
@@ -215,6 +224,9 @@ export function SessionsCarousel({
                 }}
                 onRecomputeMetrics={session.sessionId === selectedSessionId ? onRecomputeMetrics : undefined}
                 isRecomputing={session.sessionId === selectedSessionId ? isRecomputing : false}
+                onEdit={session.sessionId === selectedSessionId && onEditSession ? () => onEditSession(session.sessionId) : undefined}
+                onDelete={session.sessionId === selectedSessionId && onDeleteSession ? () => onDeleteSession(session.sessionId) : undefined}
+                isDeleting={session.sessionId === selectedSessionId ? isDeleting : false}
               />
             </CarouselItem>
           ))}

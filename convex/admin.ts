@@ -3,6 +3,7 @@ import { query } from "./_generated/server";
 import { mutation } from "./lib/functions";
 import { requireRole } from "./lib/auth";
 import { ROLES } from "./schema";
+import { cascadeDeleteSession, cascadeDeleteUser } from "./lib/cascade";
 
 // Require admin role for all functions in this module
 const requireAdmin = (ctx: any) => requireRole(ctx, [ROLES.ADMIN]);
@@ -236,38 +237,13 @@ export const permanentlyDeleteUser = mutation({
       .collect();
 
     for (const session of userSessions) {
-      // Delete associated recording chunks
-      const chunks = await ctx.db
-        .query("recordingChunks")
-        .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
-        .collect();
-
-      for (const chunk of chunks) {
-        await ctx.db.delete(chunk._id);
-      }
-
-      // Delete recording metrics
-      const metrics = await ctx.db
-        .query("recordingMetrics")
-        .withIndex("by_session", (q) => q.eq("sessionId", session.sessionId))
-        .first();
-
-      if (metrics) {
-        await ctx.db.delete(metrics._id);
-      }
-
+      // Cascade delete all session-related data (chunks, metrics, Horus data)
+      await cascadeDeleteSession(ctx, session.sessionId);
       await ctx.db.delete(session._id);
     }
 
-    // Delete all invites from this user
-    const userInvites = await ctx.db
-      .query("invites")
-      .withIndex("by_from_user", (q) => q.eq("fromUserId", args.userId))
-      .collect();
-
-    for (const invite of userInvites) {
-      await ctx.db.delete(invite._id);
-    }
+    // Cascade delete user-related data (devices, notifications, tags, invites, Horus data)
+    await cascadeDeleteUser(ctx, args.userId);
 
     // Note: We intentionally don't remove the deleted user from other users' contacts.
     // Instead, getContacts will return them with isInactive: true, allowing the UI

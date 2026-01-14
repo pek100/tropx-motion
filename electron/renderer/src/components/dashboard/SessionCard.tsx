@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { formatDate, formatTime } from "@/lib/utils";
-import { Dumbbell, Footprints, Activity, Shuffle, HelpCircle, RefreshCw, Loader2 } from "lucide-react";
+import { Dumbbell, Footprints, Activity, Shuffle, HelpCircle, RefreshCw, Loader2, Pencil, Trash2 } from "lucide-react";
 import type { MovementType } from "./MetricsTable";
 
 // ─────────────────────────────────────────────────────────────────
@@ -43,6 +43,12 @@ interface SessionCardProps {
   onRecomputeMetrics?: () => void;
   /** Whether recomputation is in progress */
   isRecomputing?: boolean;
+  /** Callback when edit button is clicked */
+  onEdit?: () => void;
+  /** Callback when delete button is clicked */
+  onDelete?: () => void;
+  /** Whether delete is in progress */
+  isDeleting?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -97,8 +103,12 @@ export function SessionCard({
   className,
   onRecomputeMetrics,
   isRecomputing,
+  onEdit,
+  onDelete,
+  isDeleting,
 }: SessionCardProps) {
   const [showRegenConfirm, setShowRegenConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const config = MOVEMENT_CONFIG[session.movementType] || MOVEMENT_CONFIG.unknown;
   const Icon = config.icon;
@@ -124,6 +134,31 @@ export function SessionCard({
     setShowRegenConfirm(false);
   };
 
+  // Handle edit button click
+  const handleEditClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onEdit?.();
+  };
+
+  // Handle delete button click
+  const handleDeleteClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowDeleteConfirm(true);
+  };
+
+  // Handle confirm delete
+  const handleConfirmDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete?.();
+    setShowDeleteConfirm(false);
+  };
+
+  // Handle cancel delete
+  const handleCancelDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowDeleteConfirm(false);
+  };
+
   return (
     <button
       onClick={onClick}
@@ -147,6 +182,45 @@ export function SessionCard({
         )}
       />
 
+      {/* Edit/Delete buttons - only visible when active */}
+      {isActive && (onEdit || onDelete) && !showDeleteConfirm && !showRegenConfirm && (
+        <div className="absolute top-1 right-1 sm:top-2 sm:right-2 flex items-center gap-0.5 z-10">
+          {onEdit && (
+            <div
+              onClick={handleEditClick}
+              className={cn(
+                "size-5 sm:size-6 flex items-center justify-center rounded-full",
+                "bg-[var(--tropx-card)]/90 backdrop-blur-sm border border-[var(--tropx-border)]",
+                "text-[var(--tropx-shadow)] hover:text-[var(--tropx-vibrant)] hover:border-[var(--tropx-vibrant)]",
+                "transition-colors cursor-pointer"
+              )}
+              title="Edit session"
+            >
+              <Pencil className="size-2.5 sm:size-3" />
+            </div>
+          )}
+          {onDelete && (
+            <div
+              onClick={handleDeleteClick}
+              className={cn(
+                "size-5 sm:size-6 flex items-center justify-center rounded-full",
+                "bg-[var(--tropx-card)]/90 backdrop-blur-sm border border-[var(--tropx-border)]",
+                "text-[var(--tropx-shadow)] hover:text-red-500 hover:border-red-300 dark:hover:border-red-700",
+                "transition-colors cursor-pointer",
+                isDeleting && "pointer-events-none opacity-50"
+              )}
+              title="Delete session"
+            >
+              {isDeleting ? (
+                <Loader2 className="size-2.5 sm:size-3 animate-spin" />
+              ) : (
+                <Trash2 className="size-2.5 sm:size-3" />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Content */}
       <div className="relative flex flex-col h-full justify-between gap-1 sm:gap-0">
         {/* Header - compact on mobile */}
@@ -160,7 +234,11 @@ export function SessionCard({
               {getDateLabel(session.recordedAt)}
             </span>
           )}
-          <span className="text-[8px] sm:text-[10px] text-[var(--tropx-text-sub)] hidden sm:inline">
+          {/* Time - positioned differently when active with buttons */}
+          <span className={cn(
+            "text-[8px] sm:text-[10px] text-[var(--tropx-text-sub)] hidden sm:inline",
+            isActive && (onEdit || onDelete) && "absolute right-0 top-5"
+          )}>
             {formatTime(session.recordedAt)}
           </span>
         </div>
@@ -218,38 +296,71 @@ export function SessionCard({
           </div>
         </div>
 
-        {/* Recompute confirmation overlay */}
-        {showRegenConfirm && (
-          <div
-            className="absolute inset-0 flex flex-col items-center justify-center p-2 sm:p-3 rounded-lg sm:rounded-xl bg-[var(--tropx-card)] z-10"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-[10px] sm:text-xs text-[var(--tropx-text-main)] text-center mb-2 sm:mb-3">
-              Recompute metrics?
-            </p>
-            <div className="flex gap-1.5 sm:gap-2 w-full">
-              <button
-                onClick={handleCancelRecompute}
-                className="flex-1 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-[var(--tropx-text-main)] bg-[var(--tropx-muted)] border border-[var(--tropx-border)] rounded-md sm:rounded-lg hover:bg-[var(--tropx-hover)] transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmRecompute}
-                disabled={isRecomputing}
-                className="flex-1 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-white bg-[var(--tropx-vibrant)] rounded-md sm:rounded-lg hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-1 transition-colors"
-              >
-                {isRecomputing ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-3" />
-                )}
-                <span className="hidden sm:inline">Confirm</span>
-              </button>
-            </div>
-          </div>
-        )}
       </div>
+
+      {/* Recompute confirmation overlay - full card */}
+      {showRegenConfirm && (
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center p-3 sm:p-4 rounded-lg sm:rounded-xl bg-[var(--tropx-card)] z-20"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-[10px] sm:text-xs text-[var(--tropx-text-main)] text-center mb-2 sm:mb-3">
+            Recompute metrics?
+          </p>
+          <div className="flex gap-1.5 sm:gap-2 w-full max-w-[200px]">
+            <button
+              onClick={handleCancelRecompute}
+              className="flex-1 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-[var(--tropx-text-main)] bg-[var(--tropx-muted)] border border-[var(--tropx-border)] rounded-md sm:rounded-lg hover:bg-[var(--tropx-hover)] transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmRecompute}
+              disabled={isRecomputing}
+              className="flex-1 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-white bg-[var(--tropx-vibrant)] rounded-md sm:rounded-lg hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-1 transition-colors"
+            >
+              {isRecomputing ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3" />
+              )}
+              <span className="hidden sm:inline">Confirm</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation overlay - full card */}
+      {showDeleteConfirm && (
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center p-3 sm:p-4 rounded-lg sm:rounded-xl bg-red-50 dark:bg-red-950 z-20"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-[10px] sm:text-xs text-red-700 dark:text-red-400 text-center mb-2 sm:mb-3">
+            Delete this session?
+          </p>
+          <div className="flex gap-1.5 sm:gap-2 w-full max-w-[200px]">
+            <button
+              onClick={handleCancelDelete}
+              className="flex-1 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-[var(--tropx-text-main)] bg-white dark:bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-md sm:rounded-lg hover:bg-[var(--tropx-hover)] transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+              className="flex-1 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium text-white bg-red-500 rounded-md sm:rounded-lg hover:bg-red-600 disabled:opacity-50 flex items-center justify-center gap-1 transition-colors"
+            >
+              {isDeleting ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Trash2 className="size-3" />
+              )}
+              <span className="hidden sm:inline">Delete</span>
+            </button>
+          </div>
+        </div>
+      )}
     </button>
   );
 }
