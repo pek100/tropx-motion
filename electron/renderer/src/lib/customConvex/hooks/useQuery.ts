@@ -20,9 +20,11 @@ import { debug } from "../internal/debug";
 // Helpers
 // ─────────────────────────────────────────────────────────────────
 
-/** Get query name from function reference */
+/** Get query name from function reference, normalized to use colons */
 function getQueryName(queryRef: FunctionReference<"query">): string {
-  return getFunctionName(queryRef);
+  // getFunctionName returns e.g. "users.getMe", but SyncProvider uses "users:getMe"
+  // Normalize to use colons for consistency with SyncProvider cache keys
+  return getFunctionName(queryRef).replace(/\./g, ":");
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -56,10 +58,13 @@ export function useQuery<Query extends FunctionReference<"query">>(
   const queryArgs = isSkipped ? EMPTY_ARGS : (args[0] ?? EMPTY_ARGS) as Record<string, unknown>;
 
   // Stable args string for memo dependency (avoid object reference issues)
+  // Filter out _cacheKey as it's a development-only cache buster that shouldn't affect cache keys
   const argsString = useMemo(() => {
     if (isSkipped) return null;
     try {
-      return JSON.stringify(queryArgs);
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { _cacheKey, ...cacheArgs } = queryArgs;
+      return JSON.stringify(cacheArgs);
     } catch {
       return null;
     }

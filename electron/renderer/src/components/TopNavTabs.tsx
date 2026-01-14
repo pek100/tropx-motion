@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { CircleUserRound, LayoutDashboard, Disc3, LogOut, Loader2, Settings2 } from 'lucide-react'
+import { CircleUserRound, LayoutDashboard, Disc3, LogOut, Loader2, Settings2, WifiOff } from 'lucide-react'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { useIsOnline } from '@/lib/customConvex'
 import { AuthModal } from './auth'
 import { NotificationBell } from './NotificationBell'
 import { SettingsModal } from './settings'
@@ -52,6 +53,8 @@ export function TopNavTabs({
     isConvexEnabled,
   } = useCurrentUser()
 
+  const isOnline = useIsOnline()
+
   // Build nav items dynamically based on auth state
   const getProfileLabel = () => {
     if (!isConvexEnabled) return 'Profile'
@@ -70,11 +73,17 @@ export function TopNavTabs({
     }
     if (isAuthenticated && user?.image) {
       return (
-        <img
-          src={user.image}
-          alt={user.name || 'User'}
-          className="size-6 rounded-full border-2 border-[var(--tropx-vibrant)]/30 object-cover"
-        />
+        <div className="relative">
+          <img
+            src={user.image}
+            alt={user.name || 'User'}
+            className="size-6 rounded-full border-2 border-[var(--tropx-vibrant)]/30 object-cover"
+          />
+          {/* Offline indicator dot */}
+          {!isOnline && (
+            <span className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-red-500 border-2 border-[var(--tropx-card)]" />
+          )}
+        </div>
       )
     }
     return <CircleUserRound className="size-5" />
@@ -139,20 +148,36 @@ export function TopNavTabs({
               sideOffset={12}
               className="w-72 p-0 bg-[var(--tropx-card)] border-[var(--tropx-border)] rounded-2xl shadow-lg overflow-hidden"
             >
+              {/* Offline Banner */}
+              {!isOnline && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-red-500/10 border-b border-red-500/20">
+                  <WifiOff className="size-3.5 text-red-500" />
+                  <span className="text-xs font-medium text-red-600 dark:text-red-400">
+                    Offline
+                  </span>
+                </div>
+              )}
+
               {/* Profile Header */}
               <div className="px-4 py-4 border-b border-[var(--tropx-border)]">
                 <div className="flex items-center gap-3">
-                  {user.image ? (
-                    <img
-                      src={user.image}
-                      alt={user.name || 'User'}
-                      className="size-12 rounded-full object-cover border-2 border-[var(--tropx-vibrant)]/20"
-                    />
-                  ) : (
-                    <div className="size-12 rounded-full bg-[var(--tropx-hover)] flex items-center justify-center">
-                      <CircleUserRound className="size-6 text-[var(--tropx-vibrant)]" />
-                    </div>
-                  )}
+                  <div className="relative">
+                    {user.image ? (
+                      <img
+                        src={user.image}
+                        alt={user.name || 'User'}
+                        className="size-12 rounded-full object-cover border-2 border-[var(--tropx-vibrant)]/20"
+                      />
+                    ) : (
+                      <div className="size-12 rounded-full bg-[var(--tropx-hover)] flex items-center justify-center">
+                        <CircleUserRound className="size-6 text-[var(--tropx-vibrant)]" />
+                      </div>
+                    )}
+                    {/* Offline dot on avatar in dropdown */}
+                    {!isOnline && (
+                      <span className="absolute -top-0.5 -right-0.5 size-3 rounded-full bg-red-500 border-2 border-[var(--tropx-card)]" />
+                    )}
+                  </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-[var(--tropx-text-main)] truncate">
                       {user.name || 'User'}

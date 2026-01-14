@@ -14,7 +14,8 @@ import { requireAuth, getCurrentUser } from "./lib/auth";
 // Constants
 // ─────────────────────────────────────────────────────────────────
 
-const KEK_ROTATION_DAYS = 90;
+const KEK_ROTATION_DAYS = 90; // Security: Force new KEK after 90 days
+const LEASE_DURATION_DAYS = 30; // Access: Offline cache valid for 30 days from last connection
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // ─────────────────────────────────────────────────────────────────
@@ -24,7 +25,9 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 /**
  * Get or create KEK for current user.
  * Called on sign-in to initialize client-side encryption.
- * Returns the wrapped KEK and version for the client to use.
+ * Returns the wrapped KEK, version, and lease validity for the client.
+ *
+ * Also updates kekLastAccessedAt to refresh the 30-day sliding lease.
  */
 export const getOrCreateKEK = mutation({
   args: {
@@ -41,13 +44,22 @@ export const getOrCreateKEK = mutation({
       throw new Error("User not found");
     }
 
-    // If user already has KEK, return it
+    const now = Date.now();
+
+    // If user already has KEK, refresh lease and return it
     if (user.kekWrapped) {
+      // Refresh the sliding lease
+      await ctx.db.patch(userId, { kekLastAccessedAt: now });
+
+      const validUntil = now + LEASE_DURATION_DAYS * MS_PER_DAY;
       return {
         kekWrapped: user.kekWrapped,
         kekVersion: user.kekVersion ?? 1,
         kekRotatedAt: user.kekRotatedAt ?? user._creationTime,
         needsRotation: shouldRotateKEK(user.kekRotatedAt ?? user._creationTime),
+        // Lease info
+        validUntil,
+        daysRemaining: LEASE_DURATION_DAYS,
       };
     }
 
@@ -58,28 +70,34 @@ export const getOrCreateKEK = mutation({
         kekVersion: 0,
         kekRotatedAt: null,
         needsRotation: false,
+        validUntil: null,
+        daysRemaining: 0,
       };
     }
 
-    // Store the new KEK
-    const now = Date.now();
+    // Store the new KEK with initial lease
     await ctx.db.patch(userId, {
       kekWrapped: args.newKekIfMissing,
       kekVersion: 1,
       kekRotatedAt: now,
+      kekLastAccessedAt: now,
     });
 
+    const validUntil = now + LEASE_DURATION_DAYS * MS_PER_DAY;
     return {
       kekWrapped: args.newKekIfMissing,
       kekVersion: 1,
       kekRotatedAt: now,
       needsRotation: false,
+      validUntil,
+      daysRemaining: LEASE_DURATION_DAYS,
     };
   },
 });
 
 /**
  * Rotate KEK - generates new version, client must re-wrap DEK.
+ * Also refreshes the sliding lease.
  */
 export const rotateKEK = mutation({
   args: {
@@ -101,18 +119,50 @@ export const rotateKEK = mutation({
       kekWrapped: args.newKekWrapped,
       kekVersion: newVersion,
       kekRotatedAt: now,
+      kekLastAccessedAt: now, // Also refresh lease
     });
 
+    const validUntil = now + LEASE_DURATION_DAYS * MS_PER_DAY;
     return {
       kekVersion: newVersion,
       kekRotatedAt: now,
+      validUntil,
+      daysRemaining: LEASE_DURATION_DAYS,
     };
   },
 });
 
 /**
- * Lightweight query to check KEK version without fetching the key.
- * Used by client to detect if rotation happened on another device.
+ * Refresh the cache lease without fetching KEK.
+ * Called periodically when online to extend the 30-day sliding window.
+ * Returns updated lease validity.
+ */
+export const refreshLease = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireAuth(ctx);
+    const user = await ctx.db.get(userId);
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(userId, { kekLastAccessedAt: now });
+
+    const validUntil = now + LEASE_DURATION_DAYS * MS_PER_DAY;
+    return {
+      validUntil,
+      daysRemaining: LEASE_DURATION_DAYS,
+    };
+  },
+});
+
+/**
+ * Lightweight query to check KEK version and lease status.
+ * Used by client to detect:
+ * - If rotation happened on another device
+ * - Current lease validity for offline access
  */
 export const getKEKVersion = query({
   args: {},
@@ -120,10 +170,19 @@ export const getKEKVersion = query({
     const user = await getCurrentUser(ctx);
     if (!user) return null;
 
+    const lastAccessed = user.kekLastAccessedAt ?? user._creationTime;
+    const validUntil = lastAccessed + LEASE_DURATION_DAYS * MS_PER_DAY;
+    const now = Date.now();
+    const daysRemaining = Math.max(0, Math.ceil((validUntil - now) / MS_PER_DAY));
+
     return {
       kekVersion: user.kekVersion ?? 0,
       kekRotatedAt: user.kekRotatedAt ?? null,
       needsRotation: shouldRotateKEK(user.kekRotatedAt ?? user._creationTime),
+      // Lease info
+      validUntil,
+      daysRemaining,
+      isLeaseValid: now < validUntil,
     };
   },
 });

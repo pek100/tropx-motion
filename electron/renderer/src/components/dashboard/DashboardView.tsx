@@ -181,11 +181,10 @@ export function DashboardView({ className }: DashboardViewProps) {
   // Sync context for imperative caching
   const sync = useSyncOptional();
 
-  // Queries - add timestamp to bust cache during development
-  const [cacheKey] = useState(() => Date.now());
+  // Queries
   const metricsHistory = useQuery(
     api.dashboard.getPatientMetricsHistory,
-    selectedPatientId ? { subjectId: selectedPatientId, _cacheKey: cacheKey } : "skip"
+    selectedPatientId ? { subjectId: selectedPatientId, _cacheKey: 0 } : "skip"
   );
   const isMetricsLoading = metricsHistory === undefined;
 

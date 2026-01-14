@@ -13,6 +13,23 @@ export type { CacheContextValue } from "./CacheProvider";
 export { CacheStore, deleteUserCache, listCacheDatabases } from "./store";
 export type { CacheEntry, CacheStats, StoreDEKResult } from "./store";
 
+// Lease
+export {
+  storeLease,
+  getLease,
+  clearLease,
+  isLeaseValid,
+  getLeaseDaysRemaining,
+} from "./store";
+export type { LeaseInfo } from "./store";
+
+// Last User ID (for offline bootstrap)
+export {
+  storeLastUserId,
+  getLastUserId,
+  clearLastUserId,
+} from "./store";
+
 // Mutation Queue
 export { MutationQueue, clearMutationQueue } from "./mutationQueue";
 export type { QueuedMutation, MutationQueueStats } from "./mutationQueue";

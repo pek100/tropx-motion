@@ -1102,7 +1102,7 @@ function AppContent() {
 
           {/* Header - hidden on compact layouts, draggable for window movement (Electron only) */}
           {showHeader && (
-            <header className="p-3 sm:p-5 pb-0 relative" style={isElectron() ? { WebkitAppRegion: 'drag' } as any : undefined}>
+            <header className="p-3 sm:p-5 pb-0 relative opacity-60 hover:opacity-100 transition-opacity" style={isElectron() ? { WebkitAppRegion: 'drag' } as any : undefined}>
               {/* Exclude top-right area from drag for window controls and theme toggle */}
               {isElectron() && <div className="absolute top-0 right-0 w-48 h-20" style={{ WebkitAppRegion: 'no-drag' } as any} />}
               <div className="flex items-start gap-3 mb-2">
@@ -1118,17 +1118,19 @@ function AppContent() {
             </header>
           )}
 
-          {/* Top Navigation Tabs - non-compact only */}
+          {/* Top Navigation Tabs - non-compact only, no-drag for interactivity */}
           {!isCompact && (
-            <TopNavTabs
-              activeTab={activeNavTab}
-              onTabChange={setActiveNavTab}
-              onViewRecording={(sessionId) => {
-                setActiveNavTab('record')
-                setInitialLoadSessionId(sessionId)
-                setActiveActionModal('load')
-              }}
-            />
+            <div style={isElectron() ? { WebkitAppRegion: 'no-drag' } as any : undefined}>
+              <TopNavTabs
+                activeTab={activeNavTab}
+                onTabChange={setActiveNavTab}
+                onViewRecording={(sessionId) => {
+                  setActiveNavTab('record')
+                  setInitialLoadSessionId(sessionId)
+                  setActiveActionModal('load')
+                }}
+              />
+            </div>
           )}
 
           <div className={isCompact ? "flex-1 flex relative" : `flex-1 flex items-center justify-center relative ${activeNavTab === 'record' ? 'px-4 sm:px-8' : ''}`}>

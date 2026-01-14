@@ -565,6 +565,7 @@ export default defineSchema({
     kekWrapped: v.optional(v.string()), // Base64-encoded encrypted KEK
     kekVersion: v.optional(v.number()), // Rotation counter (increments on rotate)
     kekRotatedAt: v.optional(v.number()), // Timestamp of last rotation
+    kekLastAccessedAt: v.optional(v.number()), // Last online access (for 30-day sliding lease)
 
     // Soft delete
     ...softDeleteFields,

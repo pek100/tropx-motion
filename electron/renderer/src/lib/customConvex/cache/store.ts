@@ -20,6 +20,8 @@ import { isElectron } from "../../platform";
 const DB_PREFIX = "tropx_cache_";
 const DEK_KEY_PREFIX = "tropx_cache_dek";
 const KEK_SESSION_PREFIX = "tropx_cache_kek_session";
+const LEASE_PREFIX = "tropx_cache_lease";
+const LAST_USER_PREFIX = "tropx_cache_last_user";
 const CACHE_STORE = "cache";
 const META_STORE = "meta";
 const DB_VERSION = 1;
@@ -552,50 +554,163 @@ async function deleteDatabase(name: string): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Session KEK Cache (for offline support within session)
+// KEK Cache (localStorage for offline support across app restarts)
 // ─────────────────────────────────────────────────────────────────
+// Note: KEK is stored in localStorage (same as JWT) to enable offline
+// access across app restarts. Security analysis:
+// - If attacker has XSS, they can read cache directly anyway
+// - KEK only protects local data, not server data
+// - For Electron apps, sessionStorage provides no real security benefit
 
 export interface SessionKEK {
   kekWrapped: string;
   kekVersion: number;
 }
 
-/** Get sessionStorage key for KEK. */
-function getKEKSessionKey(userId: string): string {
+/** Get localStorage key for KEK. */
+function getKEKStorageKey(userId: string): string {
   const platform = isElectron() ? "electron" : "web";
   return `${KEK_SESSION_PREFIX}_${platform}_${userId}`;
 }
 
-/** Store KEK in sessionStorage (survives page refresh, not app close). */
+/** Store KEK in localStorage (survives app restart for offline access). */
 export function storeSessionKEK(userId: string, kek: SessionKEK): void {
   try {
-    const key = getKEKSessionKey(userId);
-    sessionStorage.setItem(key, JSON.stringify(kek));
-    console.log(`[storeSessionKEK] KEK cached for session, version: ${kek.kekVersion}`);
+    const key = getKEKStorageKey(userId);
+    localStorage.setItem(key, JSON.stringify(kek));
+    console.log(`[storeSessionKEK] KEK stored, version: ${kek.kekVersion}`);
   } catch (error) {
-    console.error("[storeSessionKEK] Failed to cache KEK:", error);
+    console.error("[storeSessionKEK] Failed to store KEK:", error);
   }
 }
 
-/** Get KEK from sessionStorage. */
+/** Get KEK from localStorage. */
 export function getSessionKEK(userId: string): SessionKEK | null {
   try {
-    const key = getKEKSessionKey(userId);
-    const stored = sessionStorage.getItem(key);
+    const key = getKEKStorageKey(userId);
+    const stored = localStorage.getItem(key);
     if (!stored) return null;
     return JSON.parse(stored) as SessionKEK;
   } catch (error) {
-    console.error("[getSessionKEK] Failed to get cached KEK:", error);
+    console.error("[getSessionKEK] Failed to get KEK:", error);
     return null;
   }
 }
 
-/** Clear session KEK (on logout). */
+/** Clear KEK (on logout). */
 export function clearSessionKEK(userId: string): void {
   try {
-    const key = getKEKSessionKey(userId);
-    sessionStorage.removeItem(key);
+    const key = getKEKStorageKey(userId);
+    localStorage.removeItem(key);
   } catch (error) {
     console.error("[clearSessionKEK] Failed to clear KEK:", error);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Lease Validity Storage (localStorage for persistence across sessions)
+// ─────────────────────────────────────────────────────────────────
+
+export interface LeaseInfo {
+  validUntil: number;
+  daysRemaining: number;
+  updatedAt: number;
+}
+
+/** Get localStorage key for lease info. */
+function getLeaseStorageKey(userId: string): string {
+  const platform = isElectron() ? "electron" : "web";
+  return `${LEASE_PREFIX}_${platform}_${userId}`;
+}
+
+/** Store lease validity info (survives app close). */
+export function storeLease(userId: string, lease: LeaseInfo): void {
+  try {
+    const key = getLeaseStorageKey(userId);
+    localStorage.setItem(key, JSON.stringify(lease));
+    console.log(`[storeLease] Lease stored: validUntil=${new Date(lease.validUntil).toISOString()}, daysRemaining=${lease.daysRemaining}`);
+  } catch (error) {
+    console.error("[storeLease] Failed to store lease:", error);
+  }
+}
+
+/** Get stored lease validity info. */
+export function getLease(userId: string): LeaseInfo | null {
+  try {
+    const key = getLeaseStorageKey(userId);
+    const stored = localStorage.getItem(key);
+    if (!stored) return null;
+    return JSON.parse(stored) as LeaseInfo;
+  } catch (error) {
+    console.error("[getLease] Failed to get lease:", error);
+    return null;
+  }
+}
+
+/** Clear lease info. */
+export function clearLease(userId: string): void {
+  try {
+    const key = getLeaseStorageKey(userId);
+    localStorage.removeItem(key);
+  } catch (error) {
+    console.error("[clearLease] Failed to clear lease:", error);
+  }
+}
+
+/** Check if the stored lease is still valid. */
+export function isLeaseValid(userId: string): boolean {
+  const lease = getLease(userId);
+  if (!lease) return false;
+  return Date.now() < lease.validUntil;
+}
+
+/** Get days remaining on the lease (0 if expired or not found). */
+export function getLeaseDaysRemaining(userId: string): number {
+  const lease = getLease(userId);
+  if (!lease) return 0;
+  const msRemaining = lease.validUntil - Date.now();
+  if (msRemaining <= 0) return 0;
+  return Math.ceil(msRemaining / (24 * 60 * 60 * 1000));
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Last User ID Storage (for offline bootstrap)
+// ─────────────────────────────────────────────────────────────────
+
+/** Get localStorage key for last user ID. */
+function getLastUserStorageKey(): string {
+  const platform = isElectron() ? "electron" : "web";
+  return `${LAST_USER_PREFIX}_${platform}`;
+}
+
+/** Store the last known user ID (for offline bootstrap). */
+export function storeLastUserId(userId: string): void {
+  try {
+    const key = getLastUserStorageKey();
+    localStorage.setItem(key, userId);
+    console.log(`[storeLastUserId] User ID stored: ${userId.slice(-8)}...`);
+  } catch (error) {
+    console.error("[storeLastUserId] Failed to store user ID:", error);
+  }
+}
+
+/** Get the last known user ID (for offline bootstrap). */
+export function getLastUserId(): string | null {
+  try {
+    const key = getLastUserStorageKey();
+    return localStorage.getItem(key);
+  } catch (error) {
+    console.error("[getLastUserId] Failed to get user ID:", error);
+    return null;
+  }
+}
+
+/** Clear the last user ID (on logout). */
+export function clearLastUserId(): void {
+  try {
+    const key = getLastUserStorageKey();
+    localStorage.removeItem(key);
+  } catch (error) {
+    console.error("[clearLastUserId] Failed to clear user ID:", error);
   }
 }

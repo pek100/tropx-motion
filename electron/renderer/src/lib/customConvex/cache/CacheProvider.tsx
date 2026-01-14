@@ -19,9 +19,8 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
-import { useMutation, useQuery, useConvex } from "convex/react";
+import { useMutation, useQuery, useConvex, useConvexAuth } from "convex/react";
 import { api } from "../../../../../../convex/_generated/api";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { useToast } from "@/hooks/use-toast";
 import { useIsOnline } from "../internal/connectivity";
 import { debug } from "../internal/debug";
@@ -42,6 +41,14 @@ import {
   storeSessionKEK,
   getSessionKEK,
   clearSessionKEK,
+  storeLease,
+  getLease,
+  clearLease,
+  isLeaseValid as checkLeaseValid,
+  getLeaseDaysRemaining,
+  storeLastUserId,
+  getLastUserId,
+  clearLastUserId,
 } from "./store";
 import { MutationQueue, clearMutationQueue } from "./mutationQueue";
 import { drainFallbackMutations, clearFallbackMutations } from "./fallbackQueue";
@@ -53,6 +60,7 @@ import { drainFallbackMutations, clearFallbackMutations } from "./fallbackQueue"
 export interface CacheContextValue {
   // State
   isReady: boolean;
+  isOnline: boolean;
   pendingMutations: number;
   /** Modules (e.g., "users") with pending/processing mutations */
   pendingModules: Set<string>;
@@ -69,6 +77,11 @@ export interface CacheContextValue {
   // KEK info
   kekVersion: number;
   needsRotation: boolean;
+
+  // Lease info (30-day sliding window for offline access)
+  leaseValidUntil: number | null;
+  leaseDaysRemaining: number;
+  isLeaseExpired: boolean;
 }
 
 const CacheContext = createContext<CacheContextValue | null>(null);
@@ -82,10 +95,18 @@ interface CacheProviderProps {
 }
 
 export function CacheProvider({ children }: CacheProviderProps) {
-  const { user, isAuthenticated } = useCurrentUser();
+  // Use Convex auth directly - this works offline as it reads from localStorage JWT
+  // DO NOT use useCurrentUser() here as it depends on SyncProvider which is our child
+  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const { toast } = useToast();
   const convex = useConvex();
   const isOnline = useIsOnline();
+
+  // Query user only when online and authenticated (used to store user ID)
+  const onlineUser = useQuery(
+    api.users.getMe,
+    isOnline && isAuthenticated ? {} : "skip"
+  );
 
   // State
   const [isReady, setIsReady] = useState(false);
@@ -93,6 +114,11 @@ export function CacheProvider({ children }: CacheProviderProps) {
   const [pendingModules, setPendingModules] = useState<Set<string>>(new Set());
   const [kekVersion, setKekVersion] = useState(0);
   const [needsRotation, setNeedsRotation] = useState(false);
+
+  // Lease state
+  const [leaseValidUntil, setLeaseValidUntil] = useState<number | null>(null);
+  const [leaseDaysRemaining, setLeaseDaysRemaining] = useState(0);
+  const [isLeaseExpired, setIsLeaseExpired] = useState(false);
 
   // Refs
   const storeRef = useRef<CacheStore | null>(null);
@@ -103,6 +129,7 @@ export function CacheProvider({ children }: CacheProviderProps) {
   // Mutations
   const getOrCreateKEK = useMutation(api.cache.getOrCreateKEK);
   const rotateKEKMutation = useMutation(api.cache.rotateKEK);
+  const refreshLeaseMutation = useMutation(api.cache.refreshLease);
 
   // ─── Sync mutations when coming back online ────────────────────
 
@@ -136,19 +163,78 @@ export function CacheProvider({ children }: CacheProviderProps) {
     }
   }, [toast]);
 
-  // Sync when transitioning from offline → online
+  // Sync and refresh lease when transitioning from offline → online
   useEffect(() => {
-    if (isOnline && !wasOnlineRef.current && queueRef.current) {
-      debug.cache.log("Back online - syncing mutations");
-      syncMutations();
+    if (isOnline && !wasOnlineRef.current) {
+      debug.cache.log("Back online - syncing mutations and refreshing lease");
+
+      // Sync pending mutations
+      if (queueRef.current) {
+        syncMutations();
+      }
+
+      // Refresh the sliding lease (use stored user ID)
+      const storedUserId = getLastUserId();
+      if (storedUserId) {
+        refreshLeaseMutation({})
+          .then((result) => {
+            setLeaseValidUntil(result.validUntil);
+            setLeaseDaysRemaining(result.daysRemaining);
+            setIsLeaseExpired(false);
+            storeLease(storedUserId, {
+              validUntil: result.validUntil,
+              daysRemaining: result.daysRemaining,
+              updatedAt: Date.now(),
+            });
+            debug.cache.log(`Lease refreshed: ${result.daysRemaining} days remaining`);
+          })
+          .catch((error) => {
+            debug.cache.error("Failed to refresh lease:", error);
+          });
+      }
     }
     wasOnlineRef.current = isOnline;
-  }, [isOnline, syncMutations]);
+  }, [isOnline, syncMutations, refreshLeaseMutation]);
+
+  // Helper to safely get user ID from the union type
+  const onlineUserId = onlineUser && '_id' in onlineUser ? String(onlineUser._id) : null;
+
+  // Store user ID when we get it from online query
+  useEffect(() => {
+    if (onlineUserId) {
+      storeLastUserId(onlineUserId);
+      debug.cache.log("Stored user ID for offline bootstrap");
+    }
+  }, [onlineUserId]);
 
   // ─── Initialization ──────────────────────────────────────────────
 
   useEffect(() => {
-    if (!isAuthenticated || !user?._id || initializingRef.current) return;
+    // FAST: Always try stored user ID first (available immediately)
+    const storedUserId = getLastUserId();
+
+    // Determine effective user ID - prioritize stored ID for instant init
+    let effectiveUserId: string | null = storedUserId;
+
+    // If no stored ID, we need to wait for online user data
+    if (!effectiveUserId) {
+      if (onlineUserId) {
+        effectiveUserId = onlineUserId;
+      } else if (!isOnline) {
+        // Offline with no stored ID - can't initialize
+        return;
+      } else if (isAuthLoading) {
+        // Online, no stored ID, auth loading - wait
+        return;
+      } else if (!isAuthenticated) {
+        // Online, not authenticated - nothing to do
+        return;
+      }
+      // Online, authenticated, but user query not resolved yet - wait
+      if (!effectiveUserId) return;
+    }
+
+    if (initializingRef.current) return;
 
     const initCache = async () => {
       initializingRef.current = true;
@@ -160,7 +246,7 @@ export function CacheProvider({ children }: CacheProviderProps) {
           return;
         }
 
-        const userId = String(user._id);
+        const userId = effectiveUserId!;
         debug.cache.log("User ID:", userId);
 
         // Initialize mutation queue
@@ -221,12 +307,14 @@ export function CacheProvider({ children }: CacheProviderProps) {
           });
         }
 
-        // Initialize encryption
-        await initializeEncryption(userId);
+        // Initialize encryption (returns false if lease expired)
+        const encryptionReady = await initializeEncryption(userId);
 
-        setIsReady(true);
+        // Only set ready if cache store is available
+        // When lease expired, mutation queue works but cache doesn't
+        setIsReady(encryptionReady !== false);
       } catch (error) {
-        debug.cache.error("Initialization failed:", error);
+        console.error("[CacheProvider] ❌ Initialization failed:", error);
       } finally {
         initializingRef.current = false;
       }
@@ -241,30 +329,93 @@ export function CacheProvider({ children }: CacheProviderProps) {
       queueRef.current = null;
       setIsReady(false);
     };
-  }, [isAuthenticated, user?._id, convex]);
+  }, [isAuthenticated, isAuthLoading, onlineUserId, convex, isOnline]);
 
+  /**
+   * Initialize encryption - CACHE-FIRST approach
+   *
+   * 1. If we have local KEK + DEK → open cache immediately
+   * 2. If online → refresh from server in background (don't block)
+   * 3. If no local credentials → must fetch from server (first-time setup)
+   */
   const initializeEncryption = async (userId: string) => {
-    debug.cache.log("─── initializeEncryption START ───");
-    debug.cache.log("User ID:", userId);
+    console.log("[CacheProvider] ─── initializeEncryption START ───");
 
     const existingWrappedDEK = await getWrappedDEK(userId);
-    debug.cache.log("Local DEK:", existingWrappedDEK ? `version=${existingWrappedDEK.version}` : "NOT FOUND");
-
     const sessionKEK = getSessionKEK(userId);
-    debug.cache.log("Session KEK:", sessionKEK ? `yes (v${sessionKEK.kekVersion})` : "no");
 
-    let kekWrapped: string;
-    let kekVersionNum: number;
-    let needsRotationFlag = false;
+    console.log("[CacheProvider] Local credentials:", {
+      hasDEK: !!existingWrappedDEK,
+      dekVersion: existingWrappedDEK?.version,
+      hasKEK: !!sessionKEK,
+      kekVersion: sessionKEK?.kekVersion,
+    });
+
+    // ─── FAST PATH: Use cached credentials immediately ───
+    if (existingWrappedDEK && sessionKEK) {
+      console.log("[CacheProvider] Fast path: using cached credentials");
+
+      // Check lease validity
+      const localLease = getLease(userId);
+      if (localLease) {
+        const leaseValid = checkLeaseValid(userId);
+        if (!leaseValid) {
+          console.log("[CacheProvider] Lease expired - cache access denied");
+          setIsLeaseExpired(true);
+          setLeaseValidUntil(localLease.validUntil);
+          setLeaseDaysRemaining(0);
+          return false;
+        }
+        const daysRemaining = getLeaseDaysRemaining(userId);
+        setLeaseValidUntil(localLease.validUntil);
+        setLeaseDaysRemaining(daysRemaining);
+        setIsLeaseExpired(false);
+      } else {
+        // No lease yet - allow access (legacy or first use)
+        setIsLeaseExpired(false);
+        setLeaseDaysRemaining(30);
+      }
+
+      // Open cache immediately with cached credentials
+      try {
+        const kek = await importKEK(sessionKEK.kekWrapped);
+        const dek = await unwrapDEK(existingWrappedDEK, kek);
+
+        const store = new CacheStore(userId);
+        await store.open(dek);
+        storeRef.current = store;
+
+        setKekVersion(sessionKEK.kekVersion);
+        console.log("[CacheProvider] ✓ Cache ready (fast path)");
+
+        // Background: refresh from server if online (don't await)
+        if (isOnline) {
+          refreshFromServer(userId, sessionKEK.kekVersion).catch((e) => {
+            debug.cache.log("Background refresh failed (non-critical):", e);
+          });
+        }
+
+        return true;
+      } catch (error) {
+        console.error("[CacheProvider] Fast path failed, falling back to server:", error);
+        // Fall through to server path
+      }
+    }
+
+    // ─── SLOW PATH: First-time setup or cache corrupted - need server ───
+    console.log("[CacheProvider] Slow path: fetching from server");
+
+    if (!isOnline) {
+      console.error("[CacheProvider] Cannot initialize - offline with no cached credentials");
+      return false;
+    }
 
     try {
       let kekResult: Awaited<ReturnType<typeof getOrCreateKEK>>;
 
       if (existingWrappedDEK) {
-        debug.cache.log("→ Path A: existing local DEK, fetching server KEK...");
         kekResult = await getOrCreateKEK({});
       } else {
-        debug.cache.log("→ Path B: no local DEK, generating new KEK...");
         const newKEK = await generateKEK();
         const newKEKBase64 = await exportKey(newKEK);
         kekResult = await getOrCreateKEK({ newKekIfMissing: newKEKBase64 });
@@ -274,81 +425,108 @@ export function CacheProvider({ children }: CacheProviderProps) {
         throw new Error("Failed to get or create KEK");
       }
 
-      kekWrapped = kekResult.kekWrapped;
-      kekVersionNum = kekResult.kekVersion;
-      needsRotationFlag = kekResult.needsRotation;
+      // Store credentials locally for next time
+      storeSessionKEK(userId, {
+        kekWrapped: kekResult.kekWrapped,
+        kekVersion: kekResult.kekVersion
+      });
 
-      storeSessionKEK(userId, { kekWrapped, kekVersion: kekVersionNum });
-      debug.cache.log(`Server KEK: version=${kekVersionNum}, needsRotation=${needsRotationFlag}`);
-
-      if (existingWrappedDEK && existingWrappedDEK.version !== kekVersionNum) {
-        debug.cache.warn("⚠️ VERSION MISMATCH - cache will be cleared!");
+      // Store lease
+      if (kekResult.validUntil) {
+        storeLease(userId, {
+          validUntil: kekResult.validUntil,
+          daysRemaining: kekResult.daysRemaining,
+          updatedAt: Date.now(),
+        });
+        setLeaseValidUntil(kekResult.validUntil);
+        setLeaseDaysRemaining(kekResult.daysRemaining);
+        setIsLeaseExpired(false);
       }
-    } catch (error) {
-      debug.cache.log("Server KEK fetch failed, trying session cache:", error);
 
-      if (sessionKEK && existingWrappedDEK) {
-        debug.cache.log(`Using session-cached KEK (v${sessionKEK.kekVersion})`);
-        kekWrapped = sessionKEK.kekWrapped;
-        kekVersionNum = sessionKEK.kekVersion;
-      } else {
-        debug.cache.warn("No session KEK available, cache unavailable offline");
-        throw error;
-      }
-    }
+      setKekVersion(kekResult.kekVersion);
+      setNeedsRotation(kekResult.needsRotation);
 
-    setKekVersion(kekVersionNum);
-    setNeedsRotation(needsRotationFlag);
+      // Initialize DEK
+      const kek = await importKEK(kekResult.kekWrapped);
+      let dek: CryptoKey;
 
-    const kek = await importKEK(kekWrapped);
-    let dek: CryptoKey;
-
-    if (existingWrappedDEK) {
-      if (existingWrappedDEK.version !== kekVersionNum) {
-        debug.cache.warn("⚠️ KEK VERSION MISMATCH!");
-        debug.cache.warn(`  Local DEK wrapped with KEK v${existingWrappedDEK.version}`);
-        debug.cache.warn(`  Server KEK is v${kekVersionNum}`);
-        debug.cache.warn("  → Clearing cache and regenerating DEK...");
-        await deleteUserCache(userId);
-        dek = await generateDEK();
-        const wrappedDEK = await wrapDEK(dek, kek, kekVersionNum);
-        const storeResult = await storeWrappedDEK(userId, wrappedDEK);
-        if (!storeResult.success) {
-          throw new Error(`Failed to store DEK: ${storeResult.error}`);
-        }
-        debug.cache.log(`New DEK stored with version ${kekVersionNum}`);
-      } else {
-        debug.cache.log("✓ KEK version matches, unwrapping existing DEK...");
+      if (existingWrappedDEK && existingWrappedDEK.version === kekResult.kekVersion) {
         dek = await unwrapDEK(existingWrappedDEK, kek);
-        debug.cache.log("✓ DEK unwrapped successfully");
+      } else {
+        // Generate new DEK (first time or version mismatch)
+        if (existingWrappedDEK) {
+          await deleteUserCache(userId);
+        }
+        dek = await generateDEK();
+        const wrappedDEK = await wrapDEK(dek, kek, kekResult.kekVersion);
+        await storeWrappedDEK(userId, wrappedDEK);
       }
-    } else {
-      debug.cache.log("First time setup - generating new DEK...");
-      dek = await generateDEK();
-      const wrappedDEK = await wrapDEK(dek, kek, kekVersionNum);
-      const storeResult = await storeWrappedDEK(userId, wrappedDEK);
-      if (!storeResult.success) {
-        throw new Error(`Failed to store DEK: ${storeResult.error}`);
-      }
-      debug.cache.log(`New DEK stored with version ${kekVersionNum}`);
-    }
 
-    debug.cache.log("Opening cache store");
-    const store = new CacheStore(userId);
-    await store.open(dek);
-    storeRef.current = store;
-    debug.cache.log("─── initializeEncryption COMPLETE ───");
+      const store = new CacheStore(userId);
+      await store.open(dek);
+      storeRef.current = store;
+
+      console.log("[CacheProvider] ✓ Cache ready (slow path)");
+      return true;
+    } catch (error) {
+      console.error("[CacheProvider] Server initialization failed:", error);
+      return false;
+    }
+  };
+
+  /**
+   * Background refresh from server - updates KEK/lease without blocking
+   */
+  const refreshFromServer = async (userId: string, currentKekVersion: number) => {
+    try {
+      const kekResult = await getOrCreateKEK({});
+
+      if (!kekResult.kekWrapped) return;
+
+      // Update session KEK
+      storeSessionKEK(userId, {
+        kekWrapped: kekResult.kekWrapped,
+        kekVersion: kekResult.kekVersion
+      });
+
+      // Update lease
+      if (kekResult.validUntil) {
+        storeLease(userId, {
+          validUntil: kekResult.validUntil,
+          daysRemaining: kekResult.daysRemaining,
+          updatedAt: Date.now(),
+        });
+        setLeaseValidUntil(kekResult.validUntil);
+        setLeaseDaysRemaining(kekResult.daysRemaining);
+      }
+
+      setNeedsRotation(kekResult.needsRotation);
+
+      // If KEK version changed, we need to re-wrap DEK (rare)
+      if (kekResult.kekVersion !== currentKekVersion) {
+        debug.cache.warn(`KEK version changed: ${currentKekVersion} → ${kekResult.kekVersion}`);
+        // User will need to refresh for new KEK to take effect
+        // Don't disrupt current session
+      }
+
+      debug.cache.log("Background refresh complete");
+    } catch (error) {
+      // Non-critical - we already have working cache
+      throw error;
+    }
   };
 
   // ─── Actions ─────────────────────────────────────────────────────
 
   const clearCache = useCallback(async () => {
-    if (!user?._id) return;
-    const userId = String(user._id);
+    const userId = onlineUserId ?? getLastUserId();
+    if (!userId) return;
 
     // Clear cache store
     await storeRef.current?.clear();
     clearSessionKEK(userId);
+    clearLease(userId);
+    clearLastUserId();
 
     // Clear mutation queue (IndexedDB)
     queueRef.current?.close();
@@ -357,15 +535,22 @@ export function CacheProvider({ children }: CacheProviderProps) {
     // Clear fallback mutations (localStorage)
     clearFallbackMutations();
 
+    // Reset lease state
+    setLeaseValidUntil(null);
+    setLeaseDaysRemaining(0);
+    setIsLeaseExpired(true);
+
     debug.cache.log("All local cache data cleared");
     toast({
       title: "Cache cleared",
       description: "All local cache and pending mutations have been cleared.",
     });
-  }, [user?._id, toast]);
+  }, [onlineUserId, toast]);
 
   const rotateKey = useCallback(async () => {
-    if (!user?._id) return;
+    // Key rotation requires being online with user data
+    if (!onlineUserId) return;
+    const userId = onlineUserId;
 
     try {
       const newKEK = await generateKEK();
@@ -375,13 +560,13 @@ export function CacheProvider({ children }: CacheProviderProps) {
 
       const store = storeRef.current;
       if (store && store.isOpen()) {
-        const existingWrappedDEK = await getWrappedDEK(user._id);
+        const existingWrappedDEK = await getWrappedDEK(userId);
         if (existingWrappedDEK) {
           store.close();
 
           const dek = await generateDEK();
           const wrappedDEK = await wrapDEK(dek, newKEK, result.kekVersion);
-          await storeWrappedDEK(user._id, wrappedDEK);
+          await storeWrappedDEK(userId, wrappedDEK);
 
           await store.open(dek);
           await store.clear();
@@ -390,6 +575,18 @@ export function CacheProvider({ children }: CacheProviderProps) {
 
       setKekVersion(result.kekVersion);
       setNeedsRotation(false);
+
+      // Update lease info from rotation result
+      if (result.validUntil) {
+        storeLease(userId, {
+          validUntil: result.validUntil,
+          daysRemaining: result.daysRemaining,
+          updatedAt: Date.now(),
+        });
+        setLeaseValidUntil(result.validUntil);
+        setLeaseDaysRemaining(result.daysRemaining);
+        setIsLeaseExpired(false);
+      }
 
       toast({
         title: "Encryption key rotated",
@@ -403,13 +600,14 @@ export function CacheProvider({ children }: CacheProviderProps) {
         variant: "destructive",
       });
     }
-  }, [user?._id, rotateKEKMutation, toast]);
+  }, [onlineUserId, rotateKEKMutation, toast]);
 
   // ─── Context Value ───────────────────────────────────────────────
 
   const value = useMemo<CacheContextValue>(
     () => ({
       isReady,
+      isOnline,
       pendingMutations,
       pendingModules,
       store: storeRef.current,
@@ -419,9 +617,14 @@ export function CacheProvider({ children }: CacheProviderProps) {
       syncMutations,
       kekVersion,
       needsRotation,
+      // Lease info
+      leaseValidUntil,
+      leaseDaysRemaining,
+      isLeaseExpired,
     }),
     [
       isReady,
+      isOnline,
       pendingMutations,
       pendingModules,
       clearCache,
@@ -429,6 +632,9 @@ export function CacheProvider({ children }: CacheProviderProps) {
       syncMutations,
       kekVersion,
       needsRotation,
+      leaseValidUntil,
+      leaseDaysRemaining,
+      isLeaseExpired,
     ]
   );
 
