@@ -314,7 +314,7 @@ export function CacheProvider({ children }: CacheProviderProps) {
         // When lease expired, mutation queue works but cache doesn't
         setIsReady(encryptionReady !== false);
       } catch (error) {
-        console.error("[CacheProvider] ❌ Initialization failed:", error);
+        debug.cache.error("Initialization failed:", error);
       } finally {
         initializingRef.current = false;
       }
@@ -339,28 +339,26 @@ export function CacheProvider({ children }: CacheProviderProps) {
    * 3. If no local credentials → must fetch from server (first-time setup)
    */
   const initializeEncryption = async (userId: string) => {
-    console.log("[CacheProvider] ─── initializeEncryption START ───");
+    debug.cache.log("initializeEncryption START");
 
     const existingWrappedDEK = await getWrappedDEK(userId);
     const sessionKEK = getSessionKEK(userId);
 
-    console.log("[CacheProvider] Local credentials:", {
+    debug.cache.log("Local credentials:", {
       hasDEK: !!existingWrappedDEK,
-      dekVersion: existingWrappedDEK?.version,
       hasKEK: !!sessionKEK,
-      kekVersion: sessionKEK?.kekVersion,
     });
 
     // ─── FAST PATH: Use cached credentials immediately ───
     if (existingWrappedDEK && sessionKEK) {
-      console.log("[CacheProvider] Fast path: using cached credentials");
+      debug.cache.log("Fast path: using cached credentials");
 
       // Check lease validity
       const localLease = getLease(userId);
       if (localLease) {
         const leaseValid = checkLeaseValid(userId);
         if (!leaseValid) {
-          console.log("[CacheProvider] Lease expired - cache access denied");
+          debug.cache.warn("Lease expired - cache access denied");
           setIsLeaseExpired(true);
           setLeaseValidUntil(localLease.validUntil);
           setLeaseDaysRemaining(0);
@@ -386,7 +384,7 @@ export function CacheProvider({ children }: CacheProviderProps) {
         storeRef.current = store;
 
         setKekVersion(sessionKEK.kekVersion);
-        console.log("[CacheProvider] ✓ Cache ready (fast path)");
+        debug.cache.log("Cache ready (fast path)");
 
         // Background: refresh from server if online (don't await)
         if (isOnline) {
@@ -397,16 +395,16 @@ export function CacheProvider({ children }: CacheProviderProps) {
 
         return true;
       } catch (error) {
-        console.error("[CacheProvider] Fast path failed, falling back to server:", error);
+        debug.cache.error("Fast path failed, falling back to server:", error);
         // Fall through to server path
       }
     }
 
     // ─── SLOW PATH: First-time setup or cache corrupted - need server ───
-    console.log("[CacheProvider] Slow path: fetching from server");
+    debug.cache.log("Slow path: fetching from server");
 
     if (!isOnline) {
-      console.error("[CacheProvider] Cannot initialize - offline with no cached credentials");
+      debug.cache.error("Cannot initialize - offline with no cached credentials");
       return false;
     }
 
@@ -466,10 +464,10 @@ export function CacheProvider({ children }: CacheProviderProps) {
       await store.open(dek);
       storeRef.current = store;
 
-      console.log("[CacheProvider] ✓ Cache ready (slow path)");
+      debug.cache.log("Cache ready (slow path)");
       return true;
     } catch (error) {
-      console.error("[CacheProvider] Server initialization failed:", error);
+      debug.cache.error("Server initialization failed:", error);
       return false;
     }
   };

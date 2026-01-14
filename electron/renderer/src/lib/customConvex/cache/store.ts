@@ -12,6 +12,7 @@ import {
   type WrappedKey,
 } from "./encryption";
 import { isElectron } from "../../platform";
+import { debug } from "../internal/debug";
 
 // ─────────────────────────────────────────────────────────────────
 // Constants
@@ -102,24 +103,20 @@ export class CacheStore {
       const storedVersion = await this.getMetaValue(SCHEMA_VERSION_KEY);
       const currentVersion = storedVersion ? Number(storedVersion) : 0;
 
-      console.log(
-        `[CacheStore] Schema check: stored=${storedVersion} (parsed=${currentVersion}), required=${CACHE_SCHEMA_VERSION}`
-      );
+      debug.cache.log(`Schema check: stored=${currentVersion}, required=${CACHE_SCHEMA_VERSION}`);
 
       if (currentVersion < CACHE_SCHEMA_VERSION) {
-        console.log(
-          `[CacheStore] Schema version mismatch (${currentVersion} < ${CACHE_SCHEMA_VERSION}), clearing old cache`
-        );
+        debug.cache.log(`Schema version mismatch, clearing old cache`);
         // Clear all cached data (old format is incompatible)
         await this.clear();
         // Store new version
         await this.setMetaValue(SCHEMA_VERSION_KEY, CACHE_SCHEMA_VERSION);
-        console.log(`[CacheStore] Schema version set to ${CACHE_SCHEMA_VERSION}`);
+        debug.cache.log(`Schema version set to ${CACHE_SCHEMA_VERSION}`);
       } else {
-        console.log(`[CacheStore] Schema version OK, cache preserved`);
+        debug.cache.log(`Schema version OK, cache preserved`);
       }
     } catch (error) {
-      console.error("[CacheStore] Schema migration failed:", error);
+      debug.cache.error("Schema migration failed:", error);
       // On error, try to clear and set version anyway
       try {
         await this.clear();
@@ -374,7 +371,7 @@ export class CacheStore {
     }
 
     if (evicted > 0) {
-      console.log(`[CacheStore] Evicted ${evicted} LRU entries`);
+      debug.cache.log(`Evicted ${evicted} LRU entries`);
     }
 
     return evicted;
@@ -476,13 +473,12 @@ export async function storeWrappedDEK(
 ): Promise<StoreDEKResult> {
   try {
     const key = getDEKStorageKey(userId);
-    console.log(`[storeWrappedDEK] Storing DEK with key: ${key}, version: ${wrappedDEK.version}`);
+    debug.cache.log(`Storing DEK with version: ${wrappedDEK.version}`);
     localStorage.setItem(key, JSON.stringify(wrappedDEK));
-    console.log(`[storeWrappedDEK] DEK stored successfully`);
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("[storeWrappedDEK] Failed to store DEK:", message);
+    debug.cache.error("Failed to store DEK:", message);
 
     // Handle QuotaExceededError specifically
     if (error instanceof DOMException && error.name === "QuotaExceededError") {
@@ -500,13 +496,11 @@ export async function getWrappedDEK(
   try {
     const key = getDEKStorageKey(userId);
     const stored = localStorage.getItem(key);
-    console.log(`[getWrappedDEK] Looking for key: ${key}, found: ${stored ? 'yes' : 'no'}`);
     if (!stored) return null;
     const parsed = JSON.parse(stored) as WrappedKey;
-    console.log(`[getWrappedDEK] DEK found with version: ${parsed.version}`);
     return parsed;
   } catch (error) {
-    console.error("[getWrappedDEK] Failed to get DEK:", error);
+    debug.cache.error("Failed to get DEK:", error);
     return null;
   }
 }
@@ -578,9 +572,8 @@ export function storeSessionKEK(userId: string, kek: SessionKEK): void {
   try {
     const key = getKEKStorageKey(userId);
     localStorage.setItem(key, JSON.stringify(kek));
-    console.log(`[storeSessionKEK] KEK stored, version: ${kek.kekVersion}`);
   } catch (error) {
-    console.error("[storeSessionKEK] Failed to store KEK:", error);
+    debug.cache.error("Failed to store KEK:", error);
   }
 }
 
@@ -592,7 +585,7 @@ export function getSessionKEK(userId: string): SessionKEK | null {
     if (!stored) return null;
     return JSON.parse(stored) as SessionKEK;
   } catch (error) {
-    console.error("[getSessionKEK] Failed to get KEK:", error);
+    debug.cache.error("Failed to get KEK:", error);
     return null;
   }
 }
@@ -628,9 +621,8 @@ export function storeLease(userId: string, lease: LeaseInfo): void {
   try {
     const key = getLeaseStorageKey(userId);
     localStorage.setItem(key, JSON.stringify(lease));
-    console.log(`[storeLease] Lease stored: validUntil=${new Date(lease.validUntil).toISOString()}, daysRemaining=${lease.daysRemaining}`);
   } catch (error) {
-    console.error("[storeLease] Failed to store lease:", error);
+    debug.cache.error("Failed to store lease:", error);
   }
 }
 
@@ -642,7 +634,7 @@ export function getLease(userId: string): LeaseInfo | null {
     if (!stored) return null;
     return JSON.parse(stored) as LeaseInfo;
   } catch (error) {
-    console.error("[getLease] Failed to get lease:", error);
+    debug.cache.error("Failed to get lease:", error);
     return null;
   }
 }
@@ -688,9 +680,8 @@ export function storeLastUserId(userId: string): void {
   try {
     const key = getLastUserStorageKey();
     localStorage.setItem(key, userId);
-    console.log(`[storeLastUserId] User ID stored: ${userId.slice(-8)}...`);
   } catch (error) {
-    console.error("[storeLastUserId] Failed to store user ID:", error);
+    debug.cache.error("Failed to store user ID:", error);
   }
 }
 
@@ -700,7 +691,7 @@ export function getLastUserId(): string | null {
     const key = getLastUserStorageKey();
     return localStorage.getItem(key);
   } catch (error) {
-    console.error("[getLastUserId] Failed to get user ID:", error);
+    debug.cache.error("Failed to get user ID:", error);
     return null;
   }
 }
@@ -711,6 +702,6 @@ export function clearLastUserId(): void {
     const key = getLastUserStorageKey();
     localStorage.removeItem(key);
   } catch (error) {
-    console.error("[clearLastUserId] Failed to clear user ID:", error);
+    debug.cache.error("Failed to clear user ID:", error);
   }
 }
