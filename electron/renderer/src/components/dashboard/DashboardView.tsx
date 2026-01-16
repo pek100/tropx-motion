@@ -112,13 +112,13 @@ export function DashboardView({ className }: DashboardViewProps) {
   // Patient notes from Convex
   const {
     notes: convexNotes,
+    authors: noteAuthors,
     createNote,
     updateNote,
     deleteNote,
     isLoading: isNotesLoading,
-    isReadOnly: isNotesReadOnly,
+    currentUserId: notesCurrentUserId,
   } = useNotes({
-    category: "patient",
     contextId: selectedPatientId || "",
   });
 
@@ -127,8 +127,10 @@ export function DashboardView({ className }: DashboardViewProps) {
     () =>
       convexNotes.map((note) => ({
         id: note._id,
+        userId: note.userId,
         content: note.content,
         createdAt: note.createdAt,
+        visibleTo: note.visibleTo as string[] | undefined,
       })),
     [convexNotes]
   );
@@ -533,16 +535,16 @@ export function DashboardView({ className }: DashboardViewProps) {
 
   // Handle adding a new note
   const handleAddNote = useCallback(
-    async (content: string, imageIds?: string[]) => {
-      await createNote(content, imageIds as Id<"_storage">[] | undefined);
+    async (content: string, imageIds?: string[], visibleTo?: string[]) => {
+      await createNote(content, imageIds as Id<"_storage">[] | undefined, visibleTo as Id<"users">[] | undefined);
     },
     [createNote]
   );
 
   // Handle editing a note
   const handleEditNote = useCallback(
-    async (noteId: string, content: string, imageIds?: string[]) => {
-      await updateNote(noteId as Id<"notes">, content, imageIds as Id<"_storage">[] | undefined);
+    async (noteId: string, content: string, imageIds?: string[], visibleTo?: string[]) => {
+      await updateNote(noteId as Id<"notes">, content, imageIds as Id<"_storage">[] | undefined, visibleTo as Id<"users">[] | undefined);
     },
     [updateNote]
   );
@@ -687,12 +689,6 @@ export function DashboardView({ className }: DashboardViewProps) {
                 sessionCount={metricsHistory?.totalSessions ?? 0}
                 isMe={selectedPatient?.isMe}
                 onClick={isPatient ? undefined : () => setIsPatientModalOpen(true)}
-                onAddNote={isNotesReadOnly ? undefined : () => {
-                  const content = prompt("Add a note:");
-                  if (content?.trim()) {
-                    handleAddNote(content.trim());
-                  }
-                }}
                 borderless
               />
             </div>
@@ -711,10 +707,14 @@ export function DashboardView({ className }: DashboardViewProps) {
                 />
                 <PatientNotes
                   notes={patientNotes}
-                  onAddNote={isNotesReadOnly ? undefined : handleAddNote}
-                  onEditNote={isNotesReadOnly ? undefined : handleEditNote}
-                  onDeleteNote={isNotesReadOnly ? undefined : handleDeleteNote}
+                  authors={noteAuthors}
+                  onAddNote={handleAddNote}
+                  onEditNote={handleEditNote}
+                  onDeleteNote={handleDeleteNote}
                   isLoading={isNotesLoading}
+                  currentUserId={notesCurrentUserId}
+                  subjectId={selectedPatientId || undefined}
+                  subjectName={selectedPatient?.name}
                   className="flex-1 min-h-0 overflow-hidden"
                 />
               </div>

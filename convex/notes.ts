@@ -2,16 +2,7 @@ import { v } from "convex/values";
 import { query, internalMutation } from "./_generated/server";
 import { mutation } from "./lib/functions";
 import { getCurrentUser } from "./lib/auth";
-import { NOTE_CATEGORIES } from "./schema";
 import type { Id } from "./_generated/dataModel";
-
-// ─────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────
-
-const noteCategoryValidator = v.union(
-  v.literal(NOTE_CATEGORIES.PATIENT)
-);
 
 // ─────────────────────────────────────────────────────────────────
 // Image Storage
@@ -56,10 +47,10 @@ export const getImageUrls = query({
 /** Create a new note. */
 export const createNote = mutation({
   args: {
-    category: noteCategoryValidator,
-    contextId: v.string(),
+    contextId: v.id("users"), // Subject (who the note is about)
     content: v.string(),
     imageIds: v.optional(v.array(v.id("_storage"))),
+    visibleTo: v.optional(v.array(v.id("users"))), // Who can see this note (besides author)
     modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -68,19 +59,19 @@ export const createNote = mutation({
       throw new Error("Authentication required");
     }
 
-    // Validate contextId based on category
-    if (args.category === NOTE_CATEGORIES.PATIENT) {
-      // For patient notes, contextId should be a valid user (subject) ID
-      // We allow any string for flexibility, but could add validation here
+    // Validate contextId refers to an existing user
+    const subject = await ctx.db.get(args.contextId);
+    if (!subject) {
+      throw new Error("Subject user not found");
     }
 
     const now = Date.now();
     const noteId = await ctx.db.insert("notes", {
       userId: user._id,
-      category: args.category,
       contextId: args.contextId,
       content: args.content,
       imageIds: args.imageIds,
+      visibleTo: args.visibleTo,
       createdAt: now,
       modifiedAt: args.modifiedAt ?? now,
     });
@@ -120,6 +111,7 @@ export const updateNote = mutation({
     noteId: v.id("notes"),
     content: v.string(),
     imageIds: v.optional(v.array(v.id("_storage"))),
+    visibleTo: v.optional(v.array(v.id("users"))), // Who can see this note (besides author)
     modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -192,6 +184,7 @@ export const updateNote = mutation({
     await ctx.db.patch(args.noteId, {
       content: args.content,
       imageIds: args.imageIds,
+      visibleTo: args.visibleTo,
       modifiedAt: args.modifiedAt ?? now,
     });
 
@@ -258,56 +251,49 @@ export const deleteNote = mutation({
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * List notes for a specific category and context.
+ * List notes about a specific subject (contextId).
+ * Returns all non-archived notes that the current user can see.
  *
- * Access rules:
- * - Clinicians see notes they created about the context (userId = current user)
- * - Patients see all notes about them from any clinician (contextId = current user)
+ * Access: User can see a note if:
+ * 1. They are the author (userId)
+ * 2. They are in the visibleTo array
  */
 export const listNotes = query({
   args: {
-    category: noteCategoryValidator,
-    contextId: v.string(),
+    contextId: v.id("users"), // Subject ID (who the notes are about)
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
     if (!user) {
-      return [];
+      return { notes: [], authors: {} };
     }
 
-    const isPatientViewingSelf =
-      args.category === NOTE_CATEGORIES.PATIENT && args.contextId === user._id;
-
-    if (isPatientViewingSelf) {
-      // Patient viewing notes about themselves - see all notes from any clinician
-      const notes = await ctx.db
-        .query("notes")
-        .withIndex("by_context", (q) => q.eq("contextId", user._id))
-        .filter((q) =>
-          q.and(
-            q.eq(q.field("category"), args.category),
-            q.neq(q.field("isArchived"), true)
-          )
-        )
-        .order("desc")
-        .collect();
-      return notes;
-    }
-
-    // Clinician viewing notes about a patient - see only their own notes
-    const notes = await ctx.db
+    // Get all non-archived notes about this subject
+    const allNotes = await ctx.db
       .query("notes")
-      .withIndex("by_user_category_context", (q) =>
-        q
-          .eq("userId", user._id)
-          .eq("category", args.category)
-          .eq("contextId", args.contextId)
-      )
+      .withIndex("by_context", (q) => q.eq("contextId", args.contextId))
       .filter((q) => q.neq(q.field("isArchived"), true))
       .order("desc")
       .collect();
 
-    return notes;
+    // Filter by visibility - user can see if:
+    // 1. They are the author (userId)
+    // 2. They are in the visibleTo array
+    const visibleNotes = allNotes.filter(note => {
+      const isAuthor = note.userId === user._id;
+      const isInVisibleTo = note.visibleTo?.includes(user._id) ?? false;
+      return isAuthor || isInVisibleTo;
+    });
+
+    // Get unique author IDs and fetch their names
+    const authorIds = [...new Set(visibleNotes.map(n => n.userId))];
+    const authors: Record<string, string> = {};
+    for (const authorId of authorIds) {
+      const author = await ctx.db.get(authorId);
+      authors[authorId] = author?.name || "Unknown";
+    }
+
+    return { notes: visibleNotes, authors };
   },
 });
 
@@ -315,8 +301,8 @@ export const listNotes = query({
  * Get a single note by ID.
  *
  * Access rules:
- * - Owner (clinician) can view their notes
- * - Subject (patient) can view notes about them
+ * - Owner can view their notes
+ * - Users in visibleTo array can view the note
  */
 export const getNote = query({
   args: { noteId: v.id("notes") },
@@ -331,11 +317,11 @@ export const getNote = query({
       return null;
     }
 
-    // Check access: owner or subject
+    // Check access: owner or in visibleTo
     const isOwner = note.userId === user._id;
-    const isSubject = note.category === NOTE_CATEGORIES.PATIENT && note.contextId === user._id;
+    const isInVisibleTo = note.visibleTo?.includes(user._id) ?? false;
 
-    if (!isOwner && !isSubject) {
+    if (!isOwner && !isInVisibleTo) {
       return null;
     }
 

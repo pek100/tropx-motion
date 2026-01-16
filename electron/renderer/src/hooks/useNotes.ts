@@ -9,21 +9,18 @@ import { api } from "../../../../convex/_generated/api";
 import { isConvexConfigured, useQuery } from "../lib/customConvex";
 import { useCurrentUser } from "./useCurrentUser";
 import type { Id } from "../../../../convex/_generated/dataModel";
-import type { NOTE_CATEGORIES } from "../../../../convex/schema";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────
 
-export type NoteCategory = (typeof NOTE_CATEGORIES)[keyof typeof NOTE_CATEGORIES];
-
 export interface Note {
   _id: Id<"notes">;
-  userId: Id<"users">;
-  category: NoteCategory;
-  contextId: string;
+  userId: Id<"users">; // Author
+  contextId: Id<"users">; // Subject
   content: string;
   imageIds?: Id<"_storage">[];
+  visibleTo?: Id<"users">[]; // Who can see this note (besides author)
   createdAt: number;
   modifiedAt: number;
   isArchived?: boolean;
@@ -33,15 +30,16 @@ export interface Note {
 export interface UseNotesResult {
   // Data
   notes: Note[];
+  authors: Record<string, string>; // userId -> name mapping
   isLoading: boolean;
 
-  // Mutations (no-op for read-only users)
-  createNote: (content: string, imageIds?: Id<"_storage">[]) => Promise<Id<"notes"> | null>;
-  updateNote: (noteId: Id<"notes">, content: string, imageIds?: Id<"_storage">[]) => Promise<boolean>;
+  // Mutations
+  createNote: (content: string, imageIds?: Id<"_storage">[], visibleTo?: Id<"users">[]) => Promise<Id<"notes"> | null>;
+  updateNote: (noteId: Id<"notes">, content: string, imageIds?: Id<"_storage">[], visibleTo?: Id<"users">[]) => Promise<boolean>;
   deleteNote: (noteId: Id<"notes">) => Promise<boolean>;
 
   // Access control
-  isReadOnly: boolean; // True if user can only view (patient viewing their own notes)
+  currentUserId?: string; // Current user ID for checking note ownership
 
   // Convex status
   isConvexEnabled: boolean;
@@ -53,6 +51,7 @@ export interface UseNotesResult {
 
 const DISABLED_RESULT: UseNotesResult = {
   notes: [],
+  authors: {},
   isLoading: false,
   createNote: async () => {
     console.warn("Convex not configured");
@@ -66,7 +65,7 @@ const DISABLED_RESULT: UseNotesResult = {
     console.warn("Convex not configured");
     return false;
   },
-  isReadOnly: true,
+  currentUserId: undefined,
   isConvexEnabled: false,
 };
 
@@ -75,17 +74,16 @@ const DISABLED_RESULT: UseNotesResult = {
 // ─────────────────────────────────────────────────────────────────
 
 interface UseNotesParams {
-  category: NoteCategory;
-  contextId: string;
+  contextId: string; // Subject ID (who the notes are about)
 }
 
-function useNotesEnabled({ category, contextId }: UseNotesParams): UseNotesResult {
+function useNotesEnabled({ contextId }: UseNotesParams): UseNotesResult {
   const { user } = useCurrentUser();
 
-  // Query for notes
+  // Query for notes - returns { notes, authors }
   const notesData = useQuery(
     api.notes.listNotes,
-    contextId ? { category, contextId } : "skip"
+    contextId ? { contextId: contextId as Id<"users"> } : "skip"
   );
 
   // Mutations
@@ -94,21 +92,18 @@ function useNotesEnabled({ category, contextId }: UseNotesParams): UseNotesResul
   const deleteNoteMutation = useMutation(api.notes.deleteNote);
 
   const isLoading = notesData === undefined;
-  const notes = (notesData ?? []) as Note[];
-
-  // Determine if user has read-only access
-  // Patients viewing notes about themselves can only read
-  const isReadOnly = category === "patient" && contextId === user?._id;
+  const notes = (notesData?.notes ?? []) as Note[];
+  const authors = (notesData?.authors ?? {}) as Record<string, string>;
 
   const createNote = useCallback(
-    async (content: string, imageIds?: Id<"_storage">[]): Promise<Id<"notes"> | null> => {
-      if (!contextId || isReadOnly) return null;
+    async (content: string, imageIds?: Id<"_storage">[], visibleTo?: Id<"users">[]): Promise<Id<"notes"> | null> => {
+      if (!contextId) return null;
       try {
         const result = await createNoteMutation({
-          category,
-          contextId,
+          contextId: contextId as Id<"users">,
           content,
           imageIds,
+          visibleTo,
         });
         return result.noteId;
       } catch (error) {
@@ -116,17 +111,17 @@ function useNotesEnabled({ category, contextId }: UseNotesParams): UseNotesResul
         return null;
       }
     },
-    [category, contextId, createNoteMutation, isReadOnly]
+    [contextId, createNoteMutation]
   );
 
   const updateNote = useCallback(
-    async (noteId: Id<"notes">, content: string, imageIds?: Id<"_storage">[]): Promise<boolean> => {
-      if (isReadOnly) return false;
+    async (noteId: Id<"notes">, content: string, imageIds?: Id<"_storage">[], visibleTo?: Id<"users">[]): Promise<boolean> => {
       try {
         await updateNoteMutation({
           noteId,
           content,
           imageIds,
+          visibleTo,
         });
         return true;
       } catch (error) {
@@ -134,12 +129,11 @@ function useNotesEnabled({ category, contextId }: UseNotesParams): UseNotesResul
         return false;
       }
     },
-    [updateNoteMutation, isReadOnly]
+    [updateNoteMutation]
   );
 
   const deleteNote = useCallback(
     async (noteId: Id<"notes">): Promise<boolean> => {
-      if (isReadOnly) return false;
       try {
         await deleteNoteMutation({ noteId });
         return true;
@@ -148,16 +142,17 @@ function useNotesEnabled({ category, contextId }: UseNotesParams): UseNotesResul
         return false;
       }
     },
-    [deleteNoteMutation, isReadOnly]
+    [deleteNoteMutation]
   );
 
   return {
     notes,
+    authors,
     isLoading,
     createNote,
     updateNote,
     deleteNote,
-    isReadOnly,
+    currentUserId: user?._id,
     isConvexEnabled: true,
   };
 }

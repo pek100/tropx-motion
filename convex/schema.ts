@@ -109,10 +109,6 @@ export const OPI_GRADES = {
   F: "F",
 } as const;
 
-export const NOTE_CATEGORIES = {
-  PATIENT: "patient",
-  // Future: SESSION: "session", GENERAL: "general"
-} as const;
 
 // ─── Horus Constants ───
 
@@ -229,10 +225,6 @@ const opiMovementTypeValidator = v.union(
   v.literal("unilateral")
 );
 
-const noteCategoryValidator = v.union(
-  v.literal(NOTE_CATEGORIES.PATIENT)
-  // Future: v.literal(NOTE_CATEGORIES.SESSION), v.literal(NOTE_CATEGORIES.GENERAL)
-);
 
 // ─── Horus Validators ───
 
@@ -811,16 +803,19 @@ export default defineSchema({
 
   // ─── Notes (Generic Notes System) ───
   notes: defineTable({
-    // Ownership
+    // Author (who wrote the note)
     userId: v.id("users"),
 
-    // Categorization
-    category: noteCategoryValidator,
-    contextId: v.string(), // e.g., subjectId for patient notes
+    // Subject (who/what the note is about)
+    contextId: v.id("users"),
 
     // Content (Lexical JSON, images as storageId refs)
     content: v.string(),
     imageIds: v.optional(v.array(v.id("_storage"))),
+
+    // Visibility - who can see this note (besides author)
+    // Empty/undefined = private (only author), array = author + listed users
+    visibleTo: v.optional(v.array(v.id("users"))),
 
     // Timestamps
     createdAt: v.number(),
@@ -831,9 +826,9 @@ export default defineSchema({
     // Auto-updated timestamp
     ...timestampField,
   })
-    .index("by_user_category_context", ["userId", "category", "contextId"])
-    .index("by_user_category", ["userId", "category"])
-    .index("by_context", ["contextId"]),
+    .index("by_user_context", ["userId", "contextId"])
+    .index("by_context", ["contextId"])
+    .index("by_user", ["userId"]),
 
   // ─── Storage Tracking (for orphan cleanup) ───
   // Tracks all file uploads to enable orphan detection and cleanup.

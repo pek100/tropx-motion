@@ -57,9 +57,9 @@ export const RELATIONSHIPS: Record<string, Relationship[]> = {
     { table: "horusAnalyses", field: "patientId", index: "by_patient" },
     { table: "horusAnalysisEmbeddings", field: "patientId", index: "by_patient" },
     { table: "horusChatHistory", field: "patientId", index: "by_patient" },
-    // Notes owned by this user
-    { table: "notes", field: "userId", index: "by_user_category" },
-    // Notes about this user (as patient/subject via contextId)
+    // Notes authored by this user
+    { table: "notes", field: "userId", index: "by_user" },
+    // Notes about this user (as subject via contextId)
     { table: "notes", field: "contextId", index: "by_context" },
     // Storage tracking records for this user's uploads
     { table: "storageTracking", field: "uploadedBy", index: "by_user" },
@@ -76,5 +76,6 @@ export const ARRAY_RELATIONSHIPS: Record<string, ArrayRelationship[]> = {
   ],
   "users._id": [
     { table: "recordingSessions", field: "sharedWith" },
+    { table: "notes", field: "visibleTo" }, // Clean up visibleTo when user deleted
   ],
 };
