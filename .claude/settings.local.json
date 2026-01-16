@@ -90,7 +90,10 @@
       "Bash(sudo apt-get install:*)",
       "WebFetch(domain:en.wikipedia.org)",
       "WebFetch(domain:automaticaddison.com)",
-      "WebFetch(domain:www.convex.dev)"
+      "WebFetch(domain:www.convex.dev)",
+      "WebFetch(domain:shadcn-editor.vercel.app)",
+      "Bash(npm search:*)",
+      "WebFetch(domain:lexical.dev)"
     ],
     "deny": [],
     "ask": [],

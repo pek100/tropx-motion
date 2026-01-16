@@ -20,6 +20,7 @@ import { useArchiveSession } from "@/hooks/useArchiveSession";
 import { PatientInfoCard } from "./PatientInfoCard";
 import { PatientNotes, type PatientNote } from "./PatientNotes";
 import { SessionsCarousel } from "./SessionsCarousel";
+import { useNotes } from "@/hooks/useNotes";
 import { ChartPane, type ChartTab } from "./ChartPane";
 import { HorusPane, type AnalysisMode, useHorusAnalysisToast } from "./horus";
 import { CompactMetricsPane } from "./CompactMetricsPane";
@@ -108,7 +109,29 @@ export function DashboardView({ className }: DashboardViewProps) {
   const [selectedMetrics, setSelectedMetrics] = useState<Set<string>>(
     new Set(savedState.current.selectedMetrics || ["opiScore"])
   );
-  const [patientNotes, setPatientNotes] = useState<PatientNote[]>([]);
+  // Patient notes from Convex
+  const {
+    notes: convexNotes,
+    createNote,
+    updateNote,
+    deleteNote,
+    isLoading: isNotesLoading,
+    isReadOnly: isNotesReadOnly,
+  } = useNotes({
+    category: "patient",
+    contextId: selectedPatientId || "",
+  });
+
+  // Map Convex notes to component format
+  const patientNotes: PatientNote[] = useMemo(
+    () =>
+      convexNotes.map((note) => ({
+        id: note._id,
+        content: note.content,
+        createdAt: note.createdAt,
+      })),
+    [convexNotes]
+  );
   const [hasInitialized, setHasInitialized] = useState(false);
   const [isTabsLinked, setIsTabsLinked] = useState(true);
 
@@ -502,36 +525,35 @@ export function DashboardView({ className }: DashboardViewProps) {
         sessionCount: 0,
       });
       setSelectedSessionId(null); // Reset session selection
-      setPatientNotes([]); // Reset notes for new patient
+      // Notes will auto-update via useNotes hook when selectedPatientId changes
       setIsPatientModalOpen(false);
     },
     []
   );
 
   // Handle adding a new note
-  const handleAddNote = useCallback((content: string) => {
-    const newNote: PatientNote = {
-      id: `note-${Date.now()}`,
-      content,
-      createdAt: Date.now(),
-    };
-    setPatientNotes((prev) => [newNote, ...prev]);
-    // TODO: Save to Convex
-  }, []);
+  const handleAddNote = useCallback(
+    async (content: string, imageIds?: string[]) => {
+      await createNote(content, imageIds as Id<"_storage">[] | undefined);
+    },
+    [createNote]
+  );
 
   // Handle editing a note
-  const handleEditNote = useCallback((noteId: string, content: string) => {
-    setPatientNotes((prev) =>
-      prev.map((n) => (n.id === noteId ? { ...n, content } : n))
-    );
-    // TODO: Update in Convex
-  }, []);
+  const handleEditNote = useCallback(
+    async (noteId: string, content: string, imageIds?: string[]) => {
+      await updateNote(noteId as Id<"notes">, content, imageIds as Id<"_storage">[] | undefined);
+    },
+    [updateNote]
+  );
 
   // Handle deleting a note
-  const handleDeleteNote = useCallback((noteId: string) => {
-    setPatientNotes((prev) => prev.filter((n) => n.id !== noteId));
-    // TODO: Delete from Convex
-  }, []);
+  const handleDeleteNote = useCallback(
+    async (noteId: string) => {
+      await deleteNote(noteId as Id<"notes">);
+    },
+    [deleteNote]
+  );
 
   // Handle applying custom phase offset
   const handlePhaseOffsetApply = useCallback(
@@ -665,7 +687,7 @@ export function DashboardView({ className }: DashboardViewProps) {
                 sessionCount={metricsHistory?.totalSessions ?? 0}
                 isMe={selectedPatient?.isMe}
                 onClick={isPatient ? undefined : () => setIsPatientModalOpen(true)}
-                onAddNote={() => {
+                onAddNote={isNotesReadOnly ? undefined : () => {
                   const content = prompt("Add a note:");
                   if (content?.trim()) {
                     handleAddNote(content.trim());
@@ -689,9 +711,10 @@ export function DashboardView({ className }: DashboardViewProps) {
                 />
                 <PatientNotes
                   notes={patientNotes}
-                  onAddNote={handleAddNote}
-                  onEditNote={handleEditNote}
-                  onDeleteNote={handleDeleteNote}
+                  onAddNote={isNotesReadOnly ? undefined : handleAddNote}
+                  onEditNote={isNotesReadOnly ? undefined : handleEditNote}
+                  onDeleteNote={isNotesReadOnly ? undefined : handleDeleteNote}
+                  isLoading={isNotesLoading}
                   className="flex-1 min-h-0 overflow-hidden"
                 />
               </div>

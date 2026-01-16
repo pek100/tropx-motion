@@ -24,4 +24,12 @@ crons.weekly(
   internal.lwwConflicts.cleanupOldConflicts
 );
 
+// Clean up orphaned storage files daily at 4:30 AM UTC
+// Handles: abandoned uploads (never saved) and cascade-deleted note images
+crons.daily(
+  "cleanup orphaned images",
+  { hourUTC: 4, minuteUTC: 30 },
+  internal.notes.cleanupOrphanedImages
+);
+
 export default crons;

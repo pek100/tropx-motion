@@ -6,11 +6,12 @@
 import { useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
-import { StickyNote, Plus, X, Trash2, Pencil } from "lucide-react";
+import { StickyNote, Plus, X, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Editor } from "@/components/ui/editor";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import type { SerializedEditorState } from "lexical";
 
 const MAX_DISPLAY_CHARS = 40;
 
@@ -26,8 +27,8 @@ export interface PatientNote {
 
 interface PatientNotesProps {
   notes: PatientNote[];
-  onAddNote?: (content: string) => void;
-  onEditNote?: (noteId: string, content: string) => void;
+  onAddNote?: (content: string, imageIds?: string[]) => void;
+  onEditNote?: (noteId: string, content: string, imageIds?: string[]) => void;
   onDeleteNote?: (noteId: string) => void;
   isLoading?: boolean;
   className?: string;
@@ -56,6 +57,93 @@ function formatNoteDate(timestamp: number): string {
   });
 }
 
+/**
+ * Parse note content - returns SerializedEditorState if valid JSON, otherwise treats as plain text
+ */
+function parseNoteContent(content: string): SerializedEditorState | string {
+  try {
+    const parsed = JSON.parse(content);
+    // Check if it looks like a Lexical serialized state
+    if (parsed && typeof parsed === "object" && "root" in parsed) {
+      return parsed as SerializedEditorState;
+    }
+    return content;
+  } catch {
+    // Not JSON, treat as plain text
+    return content;
+  }
+}
+
+/**
+ * Extract plain text from note content for display purposes
+ */
+function getPlainText(content: string): string {
+  const parsed = parseNoteContent(content);
+  if (typeof parsed === "string") {
+    return parsed;
+  }
+  // Extract text from serialized Lexical state
+  try {
+    return extractTextFromLexicalState(parsed);
+  } catch {
+    return content;
+  }
+}
+
+/**
+ * Recursively extract text from Lexical serialized state
+ */
+function extractTextFromLexicalState(state: SerializedEditorState): string {
+  const texts: string[] = [];
+
+  function traverse(node: any) {
+    if (node.text) {
+      texts.push(node.text);
+    }
+    if (node.children) {
+      for (const child of node.children) {
+        traverse(child);
+      }
+    }
+  }
+
+  if (state.root) {
+    traverse(state.root);
+  }
+
+  return texts.join(" ");
+}
+
+/**
+ * Extract all storageIds from image nodes in Lexical content
+ */
+function extractImageStorageIds(content: string): string[] {
+  const parsed = parseNoteContent(content);
+  if (typeof parsed === "string") {
+    return [];
+  }
+
+  const storageIds: string[] = [];
+
+  function traverse(node: any) {
+    // Check if this is an image node with a storageId
+    if (node.type === "image" && node.storageId) {
+      storageIds.push(node.storageId);
+    }
+    if (node.children) {
+      for (const child of node.children) {
+        traverse(child);
+      }
+    }
+  }
+
+  if (parsed.root) {
+    traverse(parsed.root);
+  }
+
+  return storageIds;
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────
@@ -70,7 +158,6 @@ export function PatientNotes({
 }: PatientNotesProps) {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingNote, setEditingNote] = useState<PatientNote | null>(null);
-  const [viewingNote, setViewingNote] = useState<PatientNote | null>(null);
   const [noteContent, setNoteContent] = useState("");
 
   // Sort notes by date (newest first)
@@ -85,17 +172,21 @@ export function PatientNotes({
   const openEditDialog = (note: PatientNote) => {
     setEditingNote(note);
     setNoteContent(note.content);
-    setViewingNote(null);
     setIsEditDialogOpen(true);
   };
 
   const handleSubmit = () => {
-    if (!noteContent.trim()) return;
+    // Check if there's actual content (not just empty editor state)
+    const plainText = getPlainText(noteContent);
+    if (!plainText.trim()) return;
+
+    // Extract image storageIds for tracking/cleanup
+    const imageIds = extractImageStorageIds(noteContent);
 
     if (editingNote && onEditNote) {
-      onEditNote(editingNote.id, noteContent.trim());
+      onEditNote(editingNote.id, noteContent, imageIds.length > 0 ? imageIds : undefined);
     } else if (onAddNote) {
-      onAddNote(noteContent.trim());
+      onAddNote(noteContent, imageIds.length > 0 ? imageIds : undefined);
     }
 
     setNoteContent("");
@@ -105,19 +196,19 @@ export function PatientNotes({
 
   const handleDelete = (noteId: string) => {
     onDeleteNote?.(noteId);
-    setViewingNote(null);
+    setIsEditDialogOpen(false);
+    setEditingNote(null);
   };
 
   const truncateContent = (content: string) => {
-    if (content.length <= MAX_DISPLAY_CHARS) return content;
-    return content.slice(0, MAX_DISPLAY_CHARS).trim() + "...";
+    const plainText = getPlainText(content);
+    if (plainText.length <= MAX_DISPLAY_CHARS) return plainText;
+    return plainText.slice(0, MAX_DISPLAY_CHARS).trim() + "...";
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      handleSubmit();
-    }
+  // Handle editor state changes - stringify for storage
+  const handleEditorChange = (state: SerializedEditorState) => {
+    setNoteContent(JSON.stringify(state));
   };
 
   return (
@@ -178,7 +269,7 @@ export function PatientNotes({
               <div
                 key={note.id}
                 className="px-3 py-2 group cursor-pointer hover:bg-[var(--tropx-muted)] transition-colors"
-                onClick={() => setViewingNote(note)}
+                onClick={() => openEditDialog(note)}
               >
                 <p className="text-[11px] text-[var(--tropx-text-main)] leading-relaxed">
                   {truncateContent(note.content)}
@@ -222,149 +313,68 @@ export function PatientNotes({
           <DialogPrimitive.Content
             className={cn(
               "fixed inset-0 z-[51] m-auto",
-              "w-full max-w-sm h-fit p-5",
+              "w-full max-w-3xl h-[70vh]",
               "bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]",
               "data-[state=open]:animate-[modal-bubble-in_0.2s_var(--spring-bounce)_forwards]",
               "data-[state=closed]:animate-[modal-bubble-out_0.12s_var(--spring-smooth)_forwards]",
-              "pointer-events-auto"
+              "pointer-events-auto overflow-hidden"
             )}
             onPointerDownOutside={() => setIsEditDialogOpen(false)}
             onInteractOutside={() => setIsEditDialogOpen(false)}
           >
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <DialogPrimitive.Title className="text-lg font-semibold text-[var(--tropx-text-main)]">
-                  {editingNote ? "Edit Note" : "Add Note"}
-                </DialogPrimitive.Title>
-                <DialogPrimitive.Description className="text-sm text-[var(--tropx-text-sub)] mt-0.5">
-                  {editingNote ? "Update your note" : "Write a note about this patient"}
-                </DialogPrimitive.Description>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsEditDialogOpen(false)}
-                className="rounded-full p-1.5 hover:bg-[var(--tropx-muted)] transition-colors cursor-pointer"
-              >
-                <X className="size-4 text-[var(--tropx-text-sub)]" />
-              </button>
-            </div>
-            <Textarea
-              value={noteContent}
-              onChange={(e) => setNoteContent(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Write your note here..."
-              className="min-h-[120px] resize-none text-sm"
-              autoFocus
-            />
-            <div className="flex items-center justify-between mt-4">
-              <span className="text-xs text-[var(--tropx-text-sub)]">
-                Ctrl+Enter to save
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setNoteContent("");
-                    setEditingNote(null);
-                    setIsEditDialogOpen(false);
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={handleSubmit}
-                  disabled={!noteContent.trim()}
-                  className="bg-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/90"
-                >
-                  {editingNote ? "Update" : "Save"}
-                </Button>
-              </div>
-            </div>
-          </DialogPrimitive.Content>
-        </DialogPrimitive.Portal>
-      </DialogPrimitive.Root>
+            {/* Hidden title for accessibility */}
+            <DialogPrimitive.Title className="sr-only">
+              {editingNote ? "Edit Note" : "Add Note"}
+            </DialogPrimitive.Title>
+            <DialogPrimitive.Description className="sr-only">
+              {editingNote ? "Update your note" : "Write a note about this patient"}
+            </DialogPrimitive.Description>
 
-      {/* View Note Modal */}
-      <DialogPrimitive.Root open={!!viewingNote} onOpenChange={(open) => !open && setViewingNote(null)}>
-        <DialogPrimitive.Portal>
-          <DialogPrimitive.Overlay
-            className={cn(
-              "fixed inset-0 z-50 modal-blur-overlay cursor-default",
-              "data-[state=open]:animate-[overlay-fade-in_0.15s_ease-out]",
-              "data-[state=closed]:animate-[overlay-fade-out_0.1s_ease-in]"
-            )}
-            style={{ willChange: "opacity", transform: "translateZ(0)" }}
-            onClick={() => setViewingNote(null)}
-          />
-          <DialogPrimitive.Content
-            className={cn(
-              "fixed inset-0 z-[51] m-auto",
-              "w-full max-w-sm h-fit p-5",
-              "bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]",
-              "data-[state=open]:animate-[modal-bubble-in_0.2s_var(--spring-bounce)_forwards]",
-              "data-[state=closed]:animate-[modal-bubble-out_0.12s_var(--spring-smooth)_forwards]",
-              "pointer-events-auto"
-            )}
-            onPointerDownOutside={() => setViewingNote(null)}
-            onInteractOutside={() => setViewingNote(null)}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <DialogPrimitive.Title className="text-lg font-semibold text-[var(--tropx-text-main)]">
-                  Note
-                </DialogPrimitive.Title>
-                <DialogPrimitive.Description className="text-sm text-[var(--tropx-text-sub)] mt-0.5">
-                  {viewingNote && formatNoteDate(viewingNote.createdAt)}
-                </DialogPrimitive.Description>
-              </div>
-              <button
-                type="button"
-                onClick={() => setViewingNote(null)}
-                className="rounded-full p-1.5 hover:bg-[var(--tropx-muted)] transition-colors cursor-pointer"
-              >
-                <X className="size-4 text-[var(--tropx-text-sub)]" />
-              </button>
-            </div>
-            <div className="bg-[var(--tropx-muted)] rounded-lg p-3 max-h-[200px] overflow-y-auto">
-              <p className="text-sm text-[var(--tropx-text-main)] leading-relaxed whitespace-pre-wrap">
-                {viewingNote?.content}
-              </p>
-            </div>
-            <div className="flex justify-between mt-4">
-              <div>
-                {onDeleteNote && viewingNote && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-red-500 hover:text-red-600 hover:bg-red-50"
-                    onClick={() => handleDelete(viewingNote.id)}
-                  >
-                    <Trash2 className="size-3.5 mr-1.5" />
-                    Delete
-                  </Button>
-                )}
-              </div>
-              <div className="flex gap-2">
-                {onEditNote && viewingNote && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openEditDialog(viewingNote)}
-                  >
-                    <Pencil className="size-3.5 mr-1.5" />
-                    Edit
-                  </Button>
-                )}
+            {/* Editor fills the modal */}
+            <Editor
+              key={editingNote?.id ?? "new"}
+              initialValue={noteContent ? parseNoteContent(noteContent) : undefined}
+              onChangeState={handleEditorChange}
+              placeholder="Write your note here..."
+              autoFocus
+              borderless
+              className="h-full"
+              contentClassName="pb-16"
+            />
+
+            {/* Floating action buttons */}
+            <div className="absolute bottom-4 right-4 flex gap-2">
+              {editingNote && onDeleteNote && (
                 <Button
-                  size="sm"
                   variant="outline"
-                  onClick={() => setViewingNote(null)}
+                  size="sm"
+                  onClick={() => handleDelete(editingNote.id)}
+                  className="text-red-500 hover:text-red-600 hover:bg-red-50 bg-[var(--tropx-card)]/80 backdrop-blur-sm"
                 >
-                  Close
+                  <Trash2 className="size-3.5 mr-1.5" />
+                  Delete
                 </Button>
-              </div>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setNoteContent("");
+                  setEditingNote(null);
+                  setIsEditDialogOpen(false);
+                }}
+                className="bg-[var(--tropx-card)]/80 backdrop-blur-sm"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSubmit}
+                disabled={!getPlainText(noteContent).trim()}
+                className="bg-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/90"
+              >
+                {editingNote ? "Update" : "Save"}
+              </Button>
             </div>
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>

@@ -72,6 +72,7 @@ import type * as lib_metrics_types from "../lib/metrics/types.js";
 import type * as lib_relationships from "../lib/relationships.js";
 import type * as lwwConflicts from "../lwwConflicts.js";
 import type * as migrations from "../migrations.js";
+import type * as notes from "../notes.js";
 import type * as notifications from "../notifications.js";
 import type * as recordingChunks from "../recordingChunks.js";
 import type * as recordingMetrics from "../recordingMetrics.js";
@@ -152,6 +153,7 @@ declare const fullApi: ApiFromModules<{
   "lib/relationships": typeof lib_relationships;
   lwwConflicts: typeof lwwConflicts;
   migrations: typeof migrations;
+  notes: typeof notes;
   notifications: typeof notifications;
   recordingChunks: typeof recordingChunks;
   recordingMetrics: typeof recordingMetrics;

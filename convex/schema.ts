@@ -109,6 +109,11 @@ export const OPI_GRADES = {
   F: "F",
 } as const;
 
+export const NOTE_CATEGORIES = {
+  PATIENT: "patient",
+  // Future: SESSION: "session", GENERAL: "general"
+} as const;
+
 // ─── Horus Constants ───
 
 export const HORUS_PIPELINE_STATUS = {
@@ -222,6 +227,11 @@ const opiGradeValidator = v.union(
 const opiMovementTypeValidator = v.union(
   v.literal("bilateral"),
   v.literal("unilateral")
+);
+
+const noteCategoryValidator = v.union(
+  v.literal(NOTE_CATEGORIES.PATIENT)
+  // Future: v.literal(NOTE_CATEGORIES.SESSION), v.literal(NOTE_CATEGORIES.GENERAL)
 );
 
 // ─── Horus Validators ───
@@ -798,6 +808,45 @@ export default defineSchema({
   })
     .index("by_user", ["userId", "lastUsedAt"])
     .index("by_user_tag", ["userId", "tag"]),
+
+  // ─── Notes (Generic Notes System) ───
+  notes: defineTable({
+    // Ownership
+    userId: v.id("users"),
+
+    // Categorization
+    category: noteCategoryValidator,
+    contextId: v.string(), // e.g., subjectId for patient notes
+
+    // Content (Lexical JSON, images as storageId refs)
+    content: v.string(),
+    imageIds: v.optional(v.array(v.id("_storage"))),
+
+    // Timestamps
+    createdAt: v.number(),
+
+    // Soft delete
+    ...softDeleteFields,
+
+    // Auto-updated timestamp
+    ...timestampField,
+  })
+    .index("by_user_category_context", ["userId", "category", "contextId"])
+    .index("by_user_category", ["userId", "category"])
+    .index("by_context", ["contextId"]),
+
+  // ─── Storage Tracking (for orphan cleanup) ───
+  // Tracks all file uploads to enable orphan detection and cleanup.
+  storageTracking: defineTable({
+    storageId: v.id("_storage"),
+    uploadedBy: v.id("users"),
+    uploadedAt: v.number(),
+    linkedAt: v.optional(v.number()), // Set when file is saved to a note
+    linkedTo: v.optional(v.id("notes")), // Which note uses this file
+  })
+    .index("by_storage", ["storageId"])
+    .index("by_user", ["uploadedBy"])
+    .index("by_unlinked", ["linkedAt"]), // null linkedAt = orphan candidate
 
   // ─── LWW Conflict Log (for observability) ───
   // Records when a mutation was rejected due to LWW conflict.
