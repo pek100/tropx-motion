@@ -161,17 +161,17 @@ export function MiniRecordingChart({
           stroke="var(--tropx-border)"
           strokeWidth="0.5"
         />
-        {/* Left knee (coral/red) */}
+        {/* Left knee (blue) */}
         {createAreaPath(
           points.map((p) => p.left),
-          'var(--tropx-coral, #f97066)',
-          '#f97066'
+          'var(--leg-left-band)',
+          'var(--leg-left-band)'
         )}
-        {/* Right knee (blue) */}
+        {/* Right knee (coral/red) */}
         {createAreaPath(
           points.map((p) => p.right),
-          'var(--tropx-sky, #60a5fa)',
-          '#60a5fa'
+          'var(--leg-right-band)',
+          'var(--leg-right-band)'
         )}
       </svg>
     </div>

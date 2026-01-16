@@ -183,8 +183,8 @@ function ClientModalIsland({
                 title={isStreaming ? "Stop streaming" : "Start streaming"}
                 style={{
                   opacity: (isValidatingState || isStoppingStreaming) ? 0.5 : 1,
-                  backgroundColor: isStreaming ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
-                  color: isStreaming ? '#dc2626' : '#16a34a',
+                  backgroundColor: isStreaming ? 'rgba(var(--streaming-stop-rgb), 0.1)' : 'rgba(var(--streaming-start-rgb), 0.1)',
+                  color: isStreaming ? 'var(--streaming-stop)' : 'var(--streaming-start)',
                 }}
               >
                 {isValidatingState ? (
@@ -289,8 +289,8 @@ export function ClientSnappedIsland({
                 title={isStreaming ? "Stop streaming" : "Start streaming"}
                 style={{
                   opacity: (isValidatingState || isStoppingStreaming) ? 0.5 : 1,
-                  backgroundColor: isStreaming ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
-                  color: isStreaming ? '#dc2626' : '#16a34a',
+                  backgroundColor: isStreaming ? 'rgba(var(--streaming-stop-rgb), 0.1)' : 'rgba(var(--streaming-start-rgb), 0.1)',
+                  color: isStreaming ? 'var(--streaming-stop)' : 'var(--streaming-start)',
                 }}
               >
                 {isValidatingState ? (

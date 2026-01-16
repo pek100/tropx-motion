@@ -1050,14 +1050,14 @@ function AppContent() {
   const isStoppingStreaming = pending.operations.has(PendingOp.STOP_STREAMING)
 
   const getFillStyle = () => {
-    // Use CSS variable for base background that respects theme
+    // Use CSS variables for colors (defined in globals.css)
     const isDark = document.documentElement.classList.contains('dark')
-    const baseBg = isDark ? "rgba(39, 39, 42, 0.5)" : "rgba(255, 255, 255, 0.3)"
+    const baseBg = isDark ? "rgba(var(--tropx-dark-rgb), 0.5)" : "rgba(var(--tropx-white-rgb), 0.3)"
     if (connectedDevicesCount === 0) return { backgroundColor: baseBg }
-    if (connectedDevicesCount === 1) return { backgroundColor: "rgba(255, 77, 53, 0.15)" }
-    if (connectedDevicesCount === 2) return { backgroundColor: "rgba(255, 77, 53, 0.3)" }
-    if (connectedDevicesCount === 3) return { backgroundColor: "rgba(255, 77, 53, 0.6)" }
-    if (connectedDevicesCount === 4) return { backgroundColor: "rgba(255, 77, 53, 1)", color: "white" }
+    if (connectedDevicesCount === 1) return { backgroundColor: "rgba(var(--tropx-vibrant-rgb), 0.15)" }
+    if (connectedDevicesCount === 2) return { backgroundColor: "rgba(var(--tropx-vibrant-rgb), 0.3)" }
+    if (connectedDevicesCount === 3) return { backgroundColor: "rgba(var(--tropx-vibrant-rgb), 0.6)" }
+    if (connectedDevicesCount === 4) return { backgroundColor: "var(--tropx-vibrant)", color: "white" }
     return {}
   }
 
@@ -1179,7 +1179,7 @@ function AppContent() {
                               onClick={handleLocate}
                               disabled={sortedDevices.some((d) => d.connectionStatus === "synchronizing") || isStreaming || isValidatingState || isValidatingLocate || isStoppingLocate}
                               className={`${btnClass} rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99]`}
-                              style={{ backgroundColor: (isLocating || isStoppingLocate) ? "rgba(75, 175, 39, 0.15)" : "var(--tropx-muted)", color: (isLocating || isStoppingLocate) ? "#4baf27" : "var(--tropx-shadow)", transition: "all 0.3s ease" }}
+                              style={{ backgroundColor: (isLocating || isStoppingLocate) ? "rgba(var(--tropx-green-rgb), 0.15)" : "var(--tropx-muted)", color: (isLocating || isStoppingLocate) ? "var(--tropx-green)" : "var(--tropx-shadow)", transition: "all 0.3s ease" }}
                             >
                               {(isValidatingLocate || isStoppingLocate) ? (
                                 <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -1214,7 +1214,7 @@ function AppContent() {
                             onClick={handleRefresh}
                             disabled={isLocating || isSyncing || isStreaming || isValidatingState || isValidatingLocate}
                             className={`${btnClass} rounded-full transition-all cursor-pointer backdrop-blur-md disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.99] flex items-center gap-2`}
-                            style={{ backgroundColor: isRefreshing ? "rgba(255, 77, 53, 0.15)" : "var(--tropx-muted)", transition: "all 0.3s ease" }}
+                            style={{ backgroundColor: isRefreshing ? "rgba(var(--tropx-vibrant-rgb), 0.15)" : "var(--tropx-muted)", transition: "all 0.3s ease" }}
                           >
                             <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`transition-transform ${isRefreshing ? "animate-spin" : ""}`} style={{ color: isRefreshing ? "var(--tropx-vibrant)" : "var(--tropx-shadow)" }}>
                               <path d="M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C14.8273 3 17.35 4.30367 19 6.34267" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -1234,7 +1234,7 @@ function AppContent() {
                         <>
                           <div className="absolute inset-0 locate-overlay-light z-20 pointer-events-none rounded-xl" />
                           <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none">
-                            <div className="py-3 px-6 rounded-full backdrop-blur-md border border-white/30" style={{ backgroundColor: "rgba(75, 175, 39, 0.15)", color: "#4baf27", border: "1px solid #4baf27" }}>
+                            <div className="py-3 px-6 rounded-full backdrop-blur-md border border-white/30" style={{ backgroundColor: "rgba(var(--tropx-green-rgb), 0.15)", color: "var(--tropx-green)", border: "1px solid var(--tropx-green)" }}>
                               <p className="text-sm whitespace-nowrap">Shake a device to locate</p>
                             </div>
                           </div>
@@ -1351,9 +1351,9 @@ function AppContent() {
                             <div
                               className="py-4 px-8 rounded-full backdrop-blur-md shadow-lg relative overflow-hidden"
                               style={{
-                                backgroundColor: "rgba(147, 51, 234, 0.25)",
-                                color: "#7c3aed",
-                                border: "2px solid rgba(147, 51, 234, 0.3)",
+                                backgroundColor: "rgba(var(--tropx-purple-rgb), 0.25)",
+                                color: "var(--leg-purple-band)",
+                                border: "2px solid rgba(var(--tropx-purple-rgb), 0.3)",
                               }}
                             >
                               {/* Progress border overlay */}
@@ -1372,7 +1372,7 @@ function AppContent() {
                                       }, 0)
                                       const percent = Math.round(totalProgress / syncingDevices.length)
                                       // Conic gradient for circular progress border
-                                      return `conic-gradient(#9333ea ${percent * 3.6}deg, transparent ${percent * 3.6}deg)`
+                                      return `conic-gradient(var(--leg-purple-band) ${percent * 3.6}deg, transparent ${percent * 3.6}deg)`
                                     })(),
                                     mask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
                                     maskComposite: 'xor',
@@ -1387,7 +1387,7 @@ function AppContent() {
                               </p>
                             </div>
                             {autoSyncOverlay === 'syncing' && (
-                              <span className="text-sm font-medium" style={{ color: "#7c3aed" }}>
+                              <span className="text-sm font-medium" style={{ color: "var(--leg-purple-band)" }}>
                                 {(() => {
                                   const syncingDevices = sortedDevices.filter(d =>
                                     d.connectionStatus === "connected" || d.connectionStatus === "synchronizing"
@@ -1459,7 +1459,7 @@ function AppContent() {
                               onMouseEnter={() => setIsTimerHovered(true)}
                               onMouseLeave={() => setIsTimerHovered(false)}
                               className={`${isCompact ? "px-5 py-4" : "px-4 py-3"} rounded-full font-medium flex items-center gap-2 backdrop-blur-md border transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.99]`}
-                              style={{ backgroundColor: isTimerHovered ? "rgba(239, 68, 68, 0.15)" : "var(--tropx-muted)", color: isTimerHovered ? "#dc2626" : "var(--tropx-shadow)", borderColor: isTimerHovered ? "#ef4444" : "var(--tropx-border)" }}
+                              style={{ backgroundColor: isTimerHovered ? "rgba(var(--tropx-red-rgb), 0.15)" : "var(--tropx-muted)", color: isTimerHovered ? "var(--tropx-red)" : "var(--tropx-shadow)", borderColor: isTimerHovered ? "rgba(var(--tropx-red-rgb), 1)" : "var(--tropx-border)" }}
                             >
                               <svg width={isCompact ? 20 : 16} height={isCompact ? 20 : 16} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" /><path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
                               <span className={isCompact ? "text-lg" : "text-base"}>{isTimerHovered ? "Clear" : formatElapsedTime(streamElapsedTime)}</span>

@@ -52,6 +52,33 @@
   --tropx-white: #ffffff;
   --tropx-green: #4baf27;
   --tropx-red: #ff3535;
+
+  /* RGB values for use with rgba() */
+  --tropx-vibrant-rgb: 255, 77, 53;
+  --tropx-green-rgb: 75, 175, 39;
+  --tropx-purple-rgb: 168, 85, 247;
+  --tropx-red-rgb: 239, 68, 68;
+
+  /* Leg colors (used for SVG legs AND charts - single source of truth) */
+  --leg-left-fill: #86C8ED;
+  --leg-left-band: #0080C0;
+  --leg-right-fill: #FFA4A4;
+  --leg-right-band: #BF0000;
+
+  /* Additional accent colors */
+  --tropx-purple: #a855f7;
+
+  /* Horus domain colors */
+  --domain-range: #10B981;
+  --domain-symmetry: #8B5CF6;
+  --domain-power: #F97316;
+  --domain-control: #06B6D4;
+  --domain-timing: #EC4899;
+
+  /* Axis colors */
+  --axis-x: #d946ef;
+  --axis-y: #06b6d4;
+  --axis-z: #8b5cf6;
 }
 
 .dark {
@@ -87,6 +114,27 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.269 0 0);
   --sidebar-ring: oklch(0.439 0 0);
+
+  /* Leg colors - dark mode (used for SVG legs AND charts) */
+  --leg-left-fill: #4A90B8;
+  --leg-left-band: #3B82F6;
+  --leg-right-fill: #B87070;
+  --leg-right-band: #EF4444;
+
+  /* Additional accent colors - dark mode */
+  --tropx-purple: #a855f7;
+
+  /* Horus domain colors - dark mode */
+  --domain-range: #10B981;
+  --domain-symmetry: #8B5CF6;
+  --domain-power: #F97316;
+  --domain-control: #06B6D4;
+  --domain-timing: #EC4899;
+
+  /* Axis colors - dark mode */
+  --axis-x: #d946ef;
+  --axis-y: #06b6d4;
+  --axis-z: #8b5cf6;
 }
 
 @theme inline {

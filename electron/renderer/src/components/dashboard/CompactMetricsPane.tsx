@@ -37,11 +37,11 @@ interface CompactMetricsPaneProps {
 
 const DOMAIN_CONFIG: Record<MetricDomain, { label: string; color: string }> = {
   opi: { label: "Score", color: "var(--tropx-vibrant)" },
-  range: { label: "Range", color: "#10b981" },
-  symmetry: { label: "Balance", color: "#8b5cf6" },
-  power: { label: "Power", color: "#f97316" },
-  control: { label: "Control", color: "#06b6d4" },
-  timing: { label: "Timing", color: "#ec4899" },
+  range: { label: "Range", color: "var(--domain-range)" },
+  symmetry: { label: "Balance", color: "var(--domain-symmetry)" },
+  power: { label: "Power", color: "var(--domain-power)" },
+  control: { label: "Control", color: "var(--domain-control)" },
+  timing: { label: "Timing", color: "var(--domain-timing)" },
 };
 
 // Priority metrics to show in compact view

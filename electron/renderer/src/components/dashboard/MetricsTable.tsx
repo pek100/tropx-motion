@@ -133,11 +133,11 @@ export const METRIC_DEFINITIONS: MetricDefinition[] = [
 
 const DOMAIN_COLORS: Record<MetricDomain, string> = {
   opi: "var(--tropx-vibrant)",
-  range: "#10b981",    // emerald - most intuitive
-  symmetry: "#8b5cf6", // violet
-  power: "#f97316",    // orange
-  control: "#06b6d4",  // cyan
-  timing: "#ec4899",   // pink
+  range: "var(--domain-range)",      // emerald - most intuitive
+  symmetry: "var(--domain-symmetry)", // violet
+  power: "var(--domain-power)",       // orange
+  control: "var(--domain-control)",   // cyan
+  timing: "var(--domain-timing)",     // pink
 };
 
 const DOMAIN_LABELS: Record<MetricDomain, string> = {

@@ -7,11 +7,11 @@ interface ChartTooltipProps {
   formatTime?: boolean // If true, format the time value as HH:MM:SS (for raw timestamps)
 }
 
-// Axis colors matching the chart
+// Axis colors matching the chart (using CSS variables from globals.css)
 const AXIS_COLORS = {
-  X: "#d946ef", // fuchsia-500
-  Y: "#06b6d4", // cyan-500
-  Z: "#8b5cf6", // violet-500
+  X: "var(--axis-x)", // fuchsia-500
+  Y: "var(--axis-y)", // cyan-500
+  Z: "var(--axis-z)", // violet-500
 } as const
 
 // Parse dataKey to get knee side and axis (e.g., "left_x" -> { knee: "Left", axis: "X" })

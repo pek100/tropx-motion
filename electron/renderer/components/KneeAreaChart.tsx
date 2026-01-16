@@ -41,11 +41,12 @@ const OPACITY = {
   TOOLTIP_BACKGROUND: 0.8
 };
 
+// Use CSS variables for knee colors (single source of truth in globals.css)
 const Colors = {
-  LEFT_KNEE_PRIMARY: '#2563eb',
-  LEFT_KNEE_SECONDARY: '#93c5fd',
-  RIGHT_KNEE_PRIMARY: '#dc2626',
-  RIGHT_KNEE_SECONDARY: '#fca5a5',
+  LEFT_KNEE_PRIMARY: 'var(--leg-left-band)',
+  LEFT_KNEE_SECONDARY: 'var(--leg-left-fill)',
+  RIGHT_KNEE_PRIMARY: 'var(--leg-right-band)',
+  RIGHT_KNEE_SECONDARY: 'var(--leg-right-fill)',
   GRID_COLOR: '#E5E7EB',
   TEXT_COLOR: '#6B7280',
   REFERENCE_LINE: '#9CA3AF',

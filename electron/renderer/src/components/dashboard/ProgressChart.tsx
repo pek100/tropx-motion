@@ -49,39 +49,41 @@ interface ChartDataPoint {
 // Metric Colors - matches domain colors from MetricsTable
 // ─────────────────────────────────────────────────────────────────
 
+// Using CSS variables from globals.css for base domain colors
+// Shade variations use Tailwind palette for visual distinction within domains
 const METRIC_COLORS: Record<string, string> = {
   // OPI
   opiScore: "var(--tropx-vibrant)",
 
-  // Range (emerald) - TIER 1
-  avgMaxROM: "#10b981",
-  avgPeakFlexion: "#34d399",
-  avgPeakExtension: "#059669",
+  // Range (emerald) - TIER 1 - base: var(--domain-range)
+  avgMaxROM: "var(--domain-range)",     // emerald-500
+  avgPeakFlexion: "#34d399",            // emerald-400
+  avgPeakExtension: "#059669",          // emerald-600
 
-  // Symmetry/Balance (violet) - TIER 2 & 3
-  romAsymmetry: "#8b5cf6",
-  realAsymmetryAvg: "#a78bfa",
-  velocityAsymmetry: "#7c3aed",
-  crossCorrelation: "#6d28d9",
-  netGlobalAsymmetry: "#c4b5fd",
+  // Symmetry/Balance (violet) - TIER 2 & 3 - base: var(--domain-symmetry)
+  romAsymmetry: "var(--domain-symmetry)", // violet-500
+  realAsymmetryAvg: "#a78bfa",            // violet-400
+  velocityAsymmetry: "#7c3aed",           // violet-600
+  crossCorrelation: "#6d28d9",            // violet-700
+  netGlobalAsymmetry: "#c4b5fd",          // violet-300
 
-  // Power (orange) - TIER 3
-  peakAngularVelocity: "#f97316",
-  explosivenessConcentric: "#ea580c",
-  explosivenessLoading: "#fb923c",
+  // Power (orange) - TIER 3 - base: var(--domain-power)
+  peakAngularVelocity: "var(--domain-power)", // orange-500
+  explosivenessConcentric: "#ea580c",         // orange-600
+  explosivenessLoading: "#fb923c",            // orange-400
 
-  // Control (cyan) - TIER 2 & 4
-  romCoV: "#22d3ee",
-  sparc: "#06b6d4",
-  ldlj: "#0891b2",
-  nVelocityPeaks: "#0e7490",
-  rmsJerk: "#155e75",
+  // Control (cyan) - TIER 2 & 4 - base: var(--domain-control)
+  romCoV: "#22d3ee",                    // cyan-400
+  sparc: "var(--domain-control)",       // cyan-500
+  ldlj: "#0891b2",                      // cyan-600
+  nVelocityPeaks: "#0e7490",            // cyan-700
+  rmsJerk: "#155e75",                   // cyan-800
 
-  // Timing (pink) - TIER 3 & 4
-  maxFlexionTimingDiff: "#ec4899",
-  phaseShift: "#f472b6",
-  temporalLag: "#db2777",
-  zeroVelocityPhaseMs: "#be185d",
+  // Timing (pink) - TIER 3 & 4 - base: var(--domain-timing)
+  maxFlexionTimingDiff: "var(--domain-timing)", // pink-500
+  phaseShift: "#f472b6",                        // pink-400
+  temporalLag: "#db2777",                       // pink-600
+  zeroVelocityPhaseMs: "#be185d",               // pink-700
 };
 
 // ─────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import { ChartContainer } from "@/components/ui/chart"
 import { ChartTooltip } from "./ChartTooltip"
 import { GlossyChartControls, type Axis } from "./GlossyChartControls"
 import { quaternionToAngle, type EulerAxis } from "../../../../shared/QuaternionCodec"
+import { useChartGradients } from "@/hooks/useChartGradients"
 
 // Debug trace logging (disabled in production)
 const DEBUG_TRACE = false;
@@ -95,18 +96,19 @@ const CHART_LAYOUT = {
   FONT_SIZE: 12,
 }
 
+// Use CSS variables for knee colors (single source of truth in globals.css)
 const Colors = {
-  LEFT_KNEE_PRIMARY: "#2563eb",
-  RIGHT_KNEE_PRIMARY: "#dc2626",
-  GRID_COLOR: "#e5e5e5",
-  REFERENCE_LINE: "#9CA3AF",
+  LEFT_KNEE_PRIMARY: "var(--chart-left)",   // coral
+  RIGHT_KNEE_PRIMARY: "var(--chart-right)", // blue
+  GRID_COLOR: "var(--tropx-border)",
+  REFERENCE_LINE: "var(--leg-gray-band)",
 }
 
-// Multi-axis mode colors (matching SessionChart)
+// Multi-axis mode colors (using CSS variables from globals.css)
 const AXIS_COLORS = {
-  x: "#d946ef", // fuchsia-500
-  y: "#06b6d4", // cyan-500
-  z: "#8b5cf6", // violet-500
+  x: "var(--axis-x)",
+  y: "var(--axis-y)",
+  z: "var(--axis-z)",
 } as const
 
 const DataKeys = {
@@ -183,6 +185,9 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
   clearTrigger = 0, // Added clearTrigger prop
   importedData, // Static imported data
 }) => {
+  // Get chart gradient values from CSS variables
+  const chartGradients = useChartGradients();
+
   const [kneeVisibility, setKneeVisibility] = useState({
     left: true,
     right: true,
@@ -523,38 +528,39 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
               margin={CHART_LAYOUT.MARGINS}
             >
               <defs>
+                {/* Main knee gradients - opacity from CSS variables */}
                 <linearGradient id="colorLeft" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={Colors.LEFT_KNEE_PRIMARY} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={Colors.LEFT_KNEE_PRIMARY} stopOpacity={0} />
+                  <stop offset="5%" stopColor={Colors.LEFT_KNEE_PRIMARY} stopOpacity={chartGradients.gradientStart} />
+                  <stop offset="95%" stopColor={Colors.LEFT_KNEE_PRIMARY} stopOpacity={chartGradients.gradientEnd} />
                 </linearGradient>
                 <linearGradient id="colorRight" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={Colors.RIGHT_KNEE_PRIMARY} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={Colors.RIGHT_KNEE_PRIMARY} stopOpacity={0} />
+                  <stop offset="5%" stopColor={Colors.RIGHT_KNEE_PRIMARY} stopOpacity={chartGradients.gradientStart} />
+                  <stop offset="95%" stopColor={Colors.RIGHT_KNEE_PRIMARY} stopOpacity={chartGradients.gradientEnd} />
                 </linearGradient>
                 {/* Multi-axis gradients */}
                 <linearGradient id="leftGradient_x" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
                 <linearGradient id="rightGradient_x" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
                 <linearGradient id="leftGradient_y" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
                 <linearGradient id="rightGradient_y" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
                 <linearGradient id="leftGradient_z" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
                 <linearGradient id="rightGradient_z" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
               </defs>
 

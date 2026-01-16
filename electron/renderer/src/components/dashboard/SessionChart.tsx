@@ -32,6 +32,7 @@ import {
   quaternionToAngle,
 } from "../../../../../shared/QuaternionCodec";
 import type { AsymmetryEventsData } from "./ChartPane";
+import { useChartGradients } from "@/hooks/useChartGradients";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -68,22 +69,23 @@ type ChartViewMode = "waveform" | "phase";
 // Constants
 // ─────────────────────────────────────────────────────────────────
 
-const LEFT_KNEE_COLOR = "#f97066"; // coral
-const RIGHT_KNEE_COLOR = "#60a5fa"; // blue
+// Use CSS variables for knee colors (single source of truth in globals.css)
+const LEFT_KNEE_COLOR = "var(--chart-left)";   // coral
+const RIGHT_KNEE_COLOR = "var(--chart-right)"; // blue
 const ZOOM_WINDOW_SAMPLES = 200; // Number of samples to show when zoomed
 
-// Multi-axis mode colors (Tailwind tokens)
+// Multi-axis mode colors (using CSS variables from globals.css)
 const AXIS_COLORS = {
-  x: "#d946ef", // fuchsia-500
-  y: "#06b6d4", // cyan-500
-  z: "#8b5cf6", // violet-500
+  x: "var(--axis-x)",
+  y: "var(--axis-y)",
+  z: "var(--axis-z)",
 } as const;
 
-// Asymmetry overlay colors
-const LEFT_DOMINANT_COLOR = "#f97066"; // coral (same as left knee)
-const RIGHT_DOMINANT_COLOR = "#60a5fa"; // blue (same as right knee)
-const OVERLAP_COLOR = "#a855f7"; // purple for overlapping regions
-const ASYMMETRY_OPACITY = 0.25; // Base opacity for overlays
+// Asymmetry overlay colors (match chart knee colors)
+const LEFT_DOMINANT_COLOR = "var(--chart-left)";
+const RIGHT_DOMINANT_COLOR = "var(--chart-right)";
+const OVERLAP_COLOR = "var(--tropx-purple)"; // purple for overlapping regions
+// Note: ASYMMETRY_OPACITY is now read from CSS variable via useChartGradients hook
 
 // ─────────────────────────────────────────────────────────────────
 // Overlap Detection
@@ -167,6 +169,9 @@ export function SessionChart({
   className,
   onPhaseOffsetApply,
 }: SessionChartProps) {
+  // Get chart gradient values from CSS variables
+  const chartGradients = useChartGradients();
+
   // Chart view mode (waveform vs phase diagram)
   const [chartViewMode, setChartViewMode] = useState<ChartViewMode>("waveform");
 
@@ -1047,38 +1052,39 @@ export function SessionChart({
               margin={{ top: 10, right: 20, left: 0, bottom: 10 }}
             >
               <defs>
+                {/* Main knee gradients - opacity from CSS variables */}
                 <linearGradient id="leftKneeGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.4} />
-                  <stop offset="95%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.1} />
+                  <stop offset="5%" stopColor={LEFT_KNEE_COLOR} stopOpacity={chartGradients.gradientStart} />
+                  <stop offset="95%" stopColor={LEFT_KNEE_COLOR} stopOpacity={chartGradients.gradientEnd} />
                 </linearGradient>
                 <linearGradient id="rightKneeGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.4} />
-                  <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.1} />
+                  <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={chartGradients.gradientStart} />
+                  <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={chartGradients.gradientEnd} />
                 </linearGradient>
                 {/* Multi-axis mode fill gradients */}
                 <linearGradient id="leftKneeGradient_x" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
                 <linearGradient id="rightKneeGradient_x" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.x} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.x} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
                 <linearGradient id="leftKneeGradient_y" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
                 <linearGradient id="rightKneeGradient_y" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.y} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.y} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
                 <linearGradient id="leftKneeGradient_z" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
                 <linearGradient id="rightKneeGradient_z" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={AXIS_COLORS.z} stopOpacity={chartGradients.axisGradientStart} />
+                  <stop offset="95%" stopColor={AXIS_COLORS.z} stopOpacity={chartGradients.axisGradientEnd} />
                 </linearGradient>
                 {/* Diagonal stripe pattern for overlapping asymmetry regions */}
                 <pattern
@@ -1147,7 +1153,7 @@ export function SessionChart({
                           ? LEFT_DOMINANT_COLOR
                           : RIGHT_DOMINANT_COLOR
                       }
-                      fillOpacity={ASYMMETRY_OPACITY + (event.avgAsymmetry / 100) * 0.15}
+                      fillOpacity={chartGradients.asymmetryOpacity + (event.avgAsymmetry / 100) * 0.15}
                       stroke={
                         event.direction === "left_dominant"
                           ? LEFT_DOMINANT_COLOR

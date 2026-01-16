@@ -378,8 +378,8 @@ export function BlockRenderer({ block, context, className }: BlockRendererProps)
             });
           });
           series.push(
-            { name: "Left Leg", dataKey: "left", color: "#3B82F6" },
-            { name: "Right Leg", dataKey: "right", color: "#EF4444" }
+            { name: "Left Leg", dataKey: "left", color: "var(--leg-left-band)" },
+            { name: "Right Leg", dataKey: "right", color: "var(--leg-right-band)" }
           );
         }
 

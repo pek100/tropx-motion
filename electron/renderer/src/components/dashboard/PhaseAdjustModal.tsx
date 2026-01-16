@@ -25,6 +25,7 @@ import {
   unpackToAngles,
 } from "../../../../../shared/QuaternionCodec";
 import type { PhaseAlignmentData } from "./ChartPane";
+import { useChartGradients } from "@/hooks/useChartGradients";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -53,8 +54,9 @@ interface ChartDataPoint {
 // Constants
 // ─────────────────────────────────────────────────────────────────
 
-const LEFT_KNEE_COLOR = "#f97066";
-const RIGHT_KNEE_COLOR = "#60a5fa";
+// Use CSS variables for knee colors (single source of truth in globals.css)
+const LEFT_KNEE_COLOR = "var(--chart-left)";   // coral
+const RIGHT_KNEE_COLOR = "var(--chart-right)"; // blue
 const TARGET_POINTS = 300; // More points for detail in modal
 
 // ─────────────────────────────────────────────────────────────────
@@ -106,6 +108,9 @@ export function PhaseAdjustModal({
   sampleRate,
   onApply,
 }: PhaseAdjustModalProps) {
+  // Get chart gradient values from CSS variables
+  const chartGradients = useChartGradients();
+
   // Slider offset value in ms (starts at current offset)
   const [sliderOffsetMs, setSliderOffsetMs] = useState(currentOffsetMs);
 
@@ -269,13 +274,14 @@ export function PhaseAdjustModal({
                 margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
               >
                 <defs>
+                  {/* Main knee gradients - opacity from CSS variables */}
                   <linearGradient id="modalLeftGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.4} />
-                    <stop offset="95%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.1} />
+                    <stop offset="5%" stopColor={LEFT_KNEE_COLOR} stopOpacity={chartGradients.gradientStart} />
+                    <stop offset="95%" stopColor={LEFT_KNEE_COLOR} stopOpacity={chartGradients.gradientEnd} />
                   </linearGradient>
                   <linearGradient id="modalRightGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.4} />
-                    <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.1} />
+                    <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={chartGradients.gradientStart} />
+                    <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={chartGradients.gradientEnd} />
                   </linearGradient>
                 </defs>
 

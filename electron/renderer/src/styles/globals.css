@@ -54,6 +54,16 @@
   --tropx-red: #ff3535;
   --tropx-hover: #ffe5de;
 
+  /* RGB values for use with rgba() - e.g., rgba(var(--tropx-vibrant-rgb), 0.15) */
+  --tropx-vibrant-rgb: 255, 77, 53;
+  --tropx-green-rgb: 75, 175, 39;
+  --tropx-purple-rgb: 168, 85, 247;
+  --tropx-red-rgb: 239, 68, 68;
+  --tropx-warning-rgb: 217, 119, 6;
+  --tropx-info-rgb: 37, 99, 235;
+  --tropx-dark-rgb: 39, 39, 42;
+  --tropx-white-rgb: 255, 255, 255;
+
   /* Semantic dark mode colors - Light mode values */
   --tropx-bg: #FFF7F5;
   --tropx-card: #FFFFFF;
@@ -62,7 +72,7 @@
   --tropx-border: #e2e8f0;
   --tropx-muted: #f1f5f9;
 
-  /* Leg SVG colors */
+  /* Leg colors (used for SVG legs AND charts - single source of truth) */
   --leg-left-fill: #86C8ED;
   --leg-left-band: #0080C0;
   --leg-right-fill: #FFA4A4;
@@ -79,6 +89,44 @@
   --tropx-warning-text: #D97706;
   --tropx-info-bg: #EFF6FF;
   --tropx-info-text: #2563EB;
+
+  /* Additional accent colors */
+  --tropx-purple: #a855f7;
+
+  /* Horus domain colors (for metrics visualization) */
+  --domain-range: #10B981;       /* emerald-500 - ROM/flexibility */
+  --domain-symmetry: #8B5CF6;    /* violet-500 - balance/asymmetry */
+  --domain-power: #F97316;       /* orange-500 - velocity/explosiveness */
+  --domain-control: #06B6D4;     /* cyan-500 - smoothness/stability */
+  --domain-timing: #EC4899;      /* pink-500 - phase/temporal */
+
+  /* Axis colors (for multi-axis chart visualization) */
+  --axis-x: #d946ef;             /* fuchsia-500 - Roll */
+  --axis-y: #06b6d4;             /* cyan-500 - Pitch */
+  --axis-z: #8b5cf6;             /* violet-500 - Yaw */
+
+  /* DynamicIsland client type colors (iOS-style accents) */
+  --island-main: #0a84ff;        /* iOS blue - main client */
+  --island-recording: #ff375f;   /* iOS red/pink - recording client */
+  --island-monitor: #30d158;     /* iOS green - monitor client */
+  --island-custom: #bf5af2;      /* iOS purple - custom client */
+
+  /* Streaming state colors (Tailwind red-600/green-600) */
+  --streaming-stop: #dc2626;     /* red-600 - stop streaming */
+  --streaming-start: #16a34a;    /* green-600 - start streaming */
+  --streaming-stop-rgb: 220, 38, 38;
+  --streaming-start-rgb: 22, 163, 74;
+
+  /* Chart waveform colors */
+  --chart-left: #2563eb;         /* blue-600 - left knee waveform */
+  --chart-right: #dc2626;        /* red-600 - right knee waveform */
+
+  /* Chart gradient opacity values (for area chart fills) */
+  --chart-gradient-start: 0.15;  /* opacity at top of gradient */
+  --chart-gradient-end: 0;       /* opacity at bottom of gradient */
+  --chart-axis-gradient-start: 0.15;  /* multi-axis mode gradient start */
+  --chart-axis-gradient-end: 0.02;    /* multi-axis mode gradient end */
+  --chart-asymmetry-opacity: 0.25;    /* base opacity for asymmetry overlays */
 }
 
 .dark {
@@ -134,7 +182,7 @@
   --tropx-warning-bg: rgba(217, 119, 6, 0.1);
   --tropx-info-bg: rgba(37, 99, 235, 0.1);
 
-  /* Leg SVG colors - dark mode (muted to match card gradients) */
+  /* Leg colors - dark mode (used for SVG legs AND charts) */
   --leg-left-fill: #4A90B8;
   --leg-left-band: #3B82F6;
   --leg-right-fill: #B87070;
@@ -143,6 +191,21 @@
   --leg-gray-band: #6B7280;
   --leg-purple-fill: #A78BFA;
   --leg-purple-band: #8B5CF6;
+
+  /* Additional accent colors - dark mode */
+  --tropx-purple: #a855f7;
+
+  /* Horus domain colors - dark mode (same values, good contrast on dark) */
+  --domain-range: #10B981;
+  --domain-symmetry: #8B5CF6;
+  --domain-power: #F97316;
+  --domain-control: #06B6D4;
+  --domain-timing: #EC4899;
+
+  /* Axis colors - dark mode */
+  --axis-x: #d946ef;
+  --axis-y: #06b6d4;
+  --axis-z: #8b5cf6;
 }
 
 /* Tailwind v3 doesn't use @theme - colors are defined in tailwind.config.ts */
@@ -223,7 +286,7 @@
 }
 
 .dark .gradient-red-card {
-  background: linear-gradient(135deg, rgba(255, 77, 53, 0.15) 0%, rgba(255, 77, 53, 0.08) 100%);
+  background: linear-gradient(135deg, rgba(var(--tropx-vibrant-rgb), 0.15) 0%, rgba(var(--tropx-vibrant-rgb), 0.08) 100%);
 }
 
 /* Adding purple gradient for synchronizing state */
@@ -232,7 +295,7 @@
 }
 
 .dark .gradient-purple-card {
-  background: linear-gradient(135deg, rgba(168, 85, 247, 0.15) 0%, rgba(168, 85, 247, 0.08) 100%);
+  background: linear-gradient(135deg, rgba(var(--tropx-purple-rgb), 0.15) 0%, rgba(var(--tropx-purple-rgb), 0.08) 100%);
 }
 
 /* Adding gray gradient for unavailable state */
@@ -250,7 +313,7 @@
 }
 
 .dark .gradient-coral-card {
-  background: linear-gradient(135deg, rgba(255, 95, 53, 0.15) 0%, rgba(255, 95, 53, 0.08) 100%);
+  background: linear-gradient(135deg, rgba(var(--tropx-vibrant-rgb), 0.15) 0%, rgba(var(--tropx-vibrant-rgb), 0.08) 100%);
 }
 
 .gradient-green-card {
@@ -258,7 +321,7 @@
 }
 
 .dark .gradient-green-card {
-  background: linear-gradient(135deg, rgba(75, 175, 39, 0.15) 0%, rgba(75, 175, 39, 0.08) 100%);
+  background: linear-gradient(135deg, rgba(var(--tropx-green-rgb), 0.15) 0%, rgba(var(--tropx-green-rgb), 0.08) 100%);
 }
 
 .gradient-amber-card {
@@ -266,7 +329,7 @@
 }
 
 .dark .gradient-amber-card {
-  background: linear-gradient(135deg, rgba(217, 119, 6, 0.15) 0%, rgba(217, 119, 6, 0.08) 100%);
+  background: linear-gradient(135deg, rgba(var(--tropx-warning-rgb), 0.15) 0%, rgba(var(--tropx-warning-rgb), 0.08) 100%);
 }
 
 .gradient-info-card {
@@ -274,7 +337,7 @@
 }
 
 .dark .gradient-info-card {
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.15) 0%, rgba(37, 99, 235, 0.08) 100%);
+  background: linear-gradient(135deg, rgba(var(--tropx-info-rgb), 0.15) 0%, rgba(var(--tropx-info-rgb), 0.08) 100%);
 }
 
 /* Adding flash animation for left pane validation feedback */
@@ -282,11 +345,11 @@
   0%,
   100% {
     border-color: var(--tropx-border);
-    box-shadow: 0 0 0 0 rgba(255, 77, 53, 0);
+    box-shadow: 0 0 0 0 rgba(var(--tropx-vibrant-rgb), 0);
   }
   50% {
     border-color: var(--tropx-vibrant);
-    box-shadow: 0 0 20px 5px rgba(255, 77, 53, 0.3);
+    box-shadow: 0 0 20px 5px rgba(var(--tropx-vibrant-rgb), 0.3);
   }
 }
 

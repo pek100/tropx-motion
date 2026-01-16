@@ -32,8 +32,9 @@ interface SvgPreviewChartProps {
 // Constants
 // ─────────────────────────────────────────────────────────────────
 
-const LEFT_KNEE_COLOR = "#60a5fa";
-const RIGHT_KNEE_COLOR = "#f97066";
+// Use CSS variables for knee colors (single source of truth in globals.css)
+const LEFT_KNEE_COLOR = "var(--leg-left-band)";
+const RIGHT_KNEE_COLOR = "var(--leg-right-band)";
 
 // ─────────────────────────────────────────────────────────────────
 // Component

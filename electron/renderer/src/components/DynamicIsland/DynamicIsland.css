@@ -20,6 +20,6 @@
 }
 
 .dynamic-island-content-wrapper {
-  color: #000;
+  color: var(--foreground);
   user-select: none;
 }

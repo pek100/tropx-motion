@@ -75,9 +75,10 @@ const CHART_LAYOUT = {
   FONT_SIZE: 12,
 }
 
+// Use CSS variables for knee colors (single source of truth in globals.css)
 const Colors = {
-  LEFT_KNEE_PRIMARY: "#2563eb",
-  RIGHT_KNEE_PRIMARY: "#dc2626",
+  LEFT_KNEE_PRIMARY: "var(--leg-left-band)",
+  RIGHT_KNEE_PRIMARY: "var(--leg-right-band)",
   GRID_COLOR: "#e5e5e5",
   REFERENCE_LINE: "#9CA3AF",
 }

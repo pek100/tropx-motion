@@ -8,11 +8,12 @@ interface ClientRegistryProps {
   onActionTrigger: (clientId: string, actionId: string) => void;
 }
 
+// Use CSS variables for colors (single source of truth in globals.css)
 const CLIENT_TYPE_COLORS: Record<string, string> = {
-  main: '#0a84ff',
-  recording: '#ff375f',
-  monitor: '#30d158',
-  custom: '#bf5af2',
+  main: 'var(--island-main)',
+  recording: 'var(--island-recording)',
+  monitor: 'var(--island-monitor)',
+  custom: 'var(--island-custom)',
 };
 
 const CLIENT_TYPE_ICONS: Record<string, string> = {

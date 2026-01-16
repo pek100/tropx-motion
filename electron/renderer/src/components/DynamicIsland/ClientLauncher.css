@@ -96,7 +96,7 @@
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  color: #000;
+  color: var(--foreground);
   transition: all 0.2s ease;
   white-space: nowrap;
 }
@@ -111,12 +111,12 @@
 }
 
 .modal-island-btn-danger {
-  background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
+  background: rgba(var(--streaming-stop-rgb), 0.1);
+  color: var(--streaming-stop);
 }
 
 .modal-island-btn-danger:hover {
-  background: rgba(239, 68, 68, 0.2);
+  background: rgba(var(--streaming-stop-rgb), 0.2);
 }
 
 .modal-island-divider {
@@ -167,7 +167,7 @@
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
-  color: #000;
+  color: var(--foreground);
   transition: all 0.2s ease;
   white-space: nowrap;
 }
@@ -182,12 +182,12 @@
 }
 
 .snapped-island-btn-danger {
-  background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
+  background: rgba(var(--streaming-stop-rgb), 0.1);
+  color: var(--streaming-stop);
 }
 
 .snapped-island-btn-danger:hover {
-  background: rgba(239, 68, 68, 0.2);
+  background: rgba(var(--streaming-stop-rgb), 0.2);
 }
 
 /* Client iframe for snapped panes */
@@ -221,7 +221,7 @@
 .client-launcher-error p:first-child {
   font-size: 18px;
   font-weight: 600;
-  color: #dc2626;
+  color: var(--streaming-stop);
 }
 
 .client-launcher-error .error-details {

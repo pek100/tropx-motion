@@ -25,7 +25,7 @@ interface DomainBadgeProps {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Domain Colors (matching convex/horus/metrics.ts DOMAIN_COLORS)
+// Domain Colors (using CSS variables from globals.css)
 // ─────────────────────────────────────────────────────────────────
 
 const domainStyles: Record<
@@ -33,32 +33,32 @@ const domainStyles: Record<
   { color: string; bgColor: string; label: string; icon: typeof Maximize2 }
 > = {
   range: {
-    color: "#10B981", // Emerald
-    bgColor: "rgba(16, 185, 129, 0.1)",
+    color: "var(--domain-range)",
+    bgColor: "color-mix(in srgb, var(--domain-range) 10%, transparent)",
     label: "Range",
     icon: Maximize2,
   },
   symmetry: {
-    color: "#8B5CF6", // Violet
-    bgColor: "rgba(139, 92, 246, 0.1)",
+    color: "var(--domain-symmetry)",
+    bgColor: "color-mix(in srgb, var(--domain-symmetry) 10%, transparent)",
     label: "Symmetry",
     icon: Scale,
   },
   power: {
-    color: "#F97316", // Orange
-    bgColor: "rgba(249, 115, 22, 0.1)",
+    color: "var(--domain-power)",
+    bgColor: "color-mix(in srgb, var(--domain-power) 10%, transparent)",
     label: "Power",
     icon: Zap,
   },
   control: {
-    color: "#06B6D4", // Cyan
-    bgColor: "rgba(6, 182, 212, 0.1)",
+    color: "var(--domain-control)",
+    bgColor: "color-mix(in srgb, var(--domain-control) 10%, transparent)",
     label: "Control",
     icon: Target,
   },
   timing: {
-    color: "#EC4899", // Pink
-    bgColor: "rgba(236, 72, 153, 0.1)",
+    color: "var(--domain-timing)",
+    bgColor: "color-mix(in srgb, var(--domain-timing) 10%, transparent)",
     label: "Timing",
     icon: Clock,
   },

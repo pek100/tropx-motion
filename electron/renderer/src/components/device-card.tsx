@@ -115,7 +115,9 @@ export function DeviceCard({
   }
 
   const SignalIcon = () => {
-    const barColor = isLeft ? "#0080C0" : "#BF0000"
+    // Use CSS variables for leg colors (single source of truth in globals.css)
+    const barColor = isLeft ? "var(--leg-left-band)" : "var(--leg-right-band)"
+    const grayColor = "var(--leg-gray-fill)"
     const iconSize = profile.sizing.iconSizeLg
 
     if (connectionStatus === "synchronizing") {
@@ -135,20 +137,20 @@ export function DeviceCard({
     if (connectionStatus === "unavailable") {
       return (
         <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="2" y="14" width="3" height="8" rx="1" fill="#D1D5DB" />
-          <rect x="7" y="10" width="3" height="12" rx="1" fill="#D1D5DB" />
-          <rect x="12" y="6" width="3" height="16" rx="1" fill="#D1D5DB" />
-          <rect x="17" y="2" width="3" height="20" rx="1" fill="#D1D5DB" />
+          <rect x="2" y="14" width="3" height="8" rx="1" fill={grayColor} />
+          <rect x="7" y="10" width="3" height="12" rx="1" fill={grayColor} />
+          <rect x="12" y="6" width="3" height="16" rx="1" fill={grayColor} />
+          <rect x="17" y="2" width="3" height="20" rx="1" fill={grayColor} />
         </svg>
       )
     }
 
     const signalSvg = (
       <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect x="2" y="14" width="3" height="8" rx="1" fill={signalStrength >= 1 ? barColor : "#D1D5DB"} />
-        <rect x="7" y="10" width="3" height="12" rx="1" fill={signalStrength >= 2 ? barColor : "#D1D5DB"} />
-        <rect x="12" y="6" width="3" height="16" rx="1" fill={signalStrength >= 3 ? barColor : "#D1D5DB"} />
-        <rect x="17" y="2" width="3" height="20" rx="1" fill={signalStrength >= 4 ? barColor : "#D1D5DB"} />
+        <rect x="2" y="14" width="3" height="8" rx="1" fill={signalStrength >= 1 ? barColor : grayColor} />
+        <rect x="7" y="10" width="3" height="12" rx="1" fill={signalStrength >= 2 ? barColor : grayColor} />
+        <rect x="12" y="6" width="3" height="16" rx="1" fill={signalStrength >= 3 ? barColor : grayColor} />
+        <rect x="17" y="2" width="3" height="20" rx="1" fill={signalStrength >= 4 ? barColor : grayColor} />
       </svg>
     )
 
@@ -169,23 +171,24 @@ export function DeviceCard({
   }
 
   const ConnectionIcon = () => {
-    const iconColor = isLeft ? "#0080FF" : "#FF3535"
+    // Use CSS variables for colors (single source of truth in globals.css)
+    const iconColor = isLeft ? "var(--leg-left-band)" : "var(--leg-right-band)"
     const iconClass = !profile.features.textLabels ? "w-6 h-6" : "w-5 h-5"
 
     if (isDisconnecting) {
       return <div className="animate-spin"><Loader2 className={iconClass} style={{ color: iconColor }} /></div>
     } else if (isReconnecting || connectionStatus === "reconnecting") {
-      return <div className="animate-spin"><RefreshCw className={iconClass} style={{ color: "#ef4444" }} /></div>
+      return <div className="animate-spin"><RefreshCw className={iconClass} style={{ color: "var(--tropx-red)" }} /></div>
     } else if (connectionStatus === "connected") {
       return <LinkOff className={iconClass} style={{ color: iconColor }} />
     } else if (connectionStatus === "disconnected") {
       return <Link className={iconClass} style={{ color: iconColor }} />
     } else if (connectionStatus === "synchronizing") {
-      return <div className="animate-spin"><RefreshCw className={iconClass} style={{ color: "#9333ea" }} /></div>
+      return <div className="animate-spin"><RefreshCw className={iconClass} style={{ color: "var(--leg-purple-band)" }} /></div>
     } else if (connectionStatus === "connecting") {
       return <div className="animate-spin"><Loader2 className={iconClass} style={{ color: iconColor }} /></div>
     } else if (connectionStatus === "unavailable") {
-      return <LinkOff className={iconClass} style={{ color: "#9CA3AF" }} />
+      return <LinkOff className={iconClass} style={{ color: "var(--leg-gray-band)" }} />
     } else {
       return <LinkOff className={`${iconClass} opacity-30`} style={{ color: iconColor }} />
     }
@@ -214,11 +217,12 @@ export function DeviceCard({
   }
 
   const getStatusColor = () => {
-    if (isReconnecting || connectionStatus === "reconnecting") return "#ef4444"
-    if (connectionStatus === "disconnected") return "#9CA3AF"
-    if (connectionStatus === "unavailable") return "#9CA3AF"
-    if (connectionStatus === "synchronizing") return "#9333ea"
-    return isLeft ? "#0080C0" : "#BF0000"
+    // Use CSS variables for colors (single source of truth in globals.css)
+    if (isReconnecting || connectionStatus === "reconnecting") return "var(--tropx-red)"
+    if (connectionStatus === "disconnected") return "var(--leg-gray-band)"
+    if (connectionStatus === "unavailable") return "var(--leg-gray-band)"
+    if (connectionStatus === "synchronizing") return "var(--leg-purple-band)"
+    return isLeft ? "var(--leg-left-band)" : "var(--leg-right-band)"
   }
 
   // Derive compact mode from profile
@@ -264,7 +268,7 @@ export function DeviceCard({
             {connectionStatus === "connected" && batteryPercentage !== null && (
               <span
                 className={`font-bold flex-shrink-0 ${isCompact ? 'text-base' : 'text-lg'}`}
-                style={{ color: isLeft ? "#0080C0" : "#BF0000" }}
+                style={{ color: isLeft ? "var(--leg-left-band)" : "var(--leg-right-band)" }}
               >
                 {batteryPercentage}%
               </span>
@@ -278,12 +282,12 @@ export function DeviceCard({
                     className={`cursor-pointer bg-[var(--tropx-card)] rounded-full ${isCompact ? 'w-11 h-11' : 'px-3 py-2'} flex items-center justify-center gap-2`}
                   >
                     {isCompact ? (
-                      <X className="w-6 h-6" style={{ color: "#6b7280" }} />
+                      <X className="w-6 h-6" style={{ color: "var(--muted-foreground)" }} />
                     ) : (
                       <>
-                        <RefreshCw className="w-4 h-4" style={{ color: "#6b7280" }} />
-                        <X className="w-5 h-5" style={{ color: "#6b7280" }} />
-                        <span className="text-sm font-medium" style={{ color: "#6b7280" }}>Cancel</span>
+                        <RefreshCw className="w-4 h-4" style={{ color: "var(--muted-foreground)" }} />
+                        <X className="w-5 h-5" style={{ color: "var(--muted-foreground)" }} />
+                        <span className="text-sm font-medium" style={{ color: "var(--muted-foreground)" }}>Cancel</span>
                       </>
                     )}
                   </button>
@@ -299,14 +303,14 @@ export function DeviceCard({
                   >
                     {isCompact ? (
                       <>
-                        <Loader2 className="w-5 h-5 animate-spin" style={{ color: isLeft ? "#0080C0" : "#BF0000" }} />
-                        <X className="w-5 h-5" style={{ color: isLeft ? "#0080C0" : "#BF0000" }} />
+                        <Loader2 className="w-5 h-5 animate-spin" style={{ color: isLeft ? "var(--leg-left-band)" : "var(--leg-right-band)" }} />
+                        <X className="w-5 h-5" style={{ color: isLeft ? "var(--leg-left-band)" : "var(--leg-right-band)" }} />
                       </>
                     ) : (
                       <>
-                        <Loader2 className="w-4 h-4 animate-spin" style={{ color: isLeft ? "#0080C0" : "#BF0000" }} />
-                        <X className="w-5 h-5" style={{ color: isLeft ? "#0080C0" : "#BF0000" }} />
-                        <span className="text-sm font-medium" style={{ color: isLeft ? "#0080C0" : "#BF0000" }}>Cancel</span>
+                        <Loader2 className="w-4 h-4 animate-spin" style={{ color: isLeft ? "var(--leg-left-band)" : "var(--leg-right-band)" }} />
+                        <X className="w-5 h-5" style={{ color: isLeft ? "var(--leg-left-band)" : "var(--leg-right-band)" }} />
+                        <span className="text-sm font-medium" style={{ color: isLeft ? "var(--leg-left-band)" : "var(--leg-right-band)" }}>Cancel</span>
                       </>
                     )}
                   </button>
@@ -322,7 +326,7 @@ export function DeviceCard({
                   >
                     <ConnectionIcon />
                     {!isCompact && (
-                      <span className="text-sm font-medium" style={{ color: isLeft ? "#0080C0" : "#BF0000" }}>Disconnecting</span>
+                      <span className="text-sm font-medium" style={{ color: isLeft ? "var(--leg-left-band)" : "var(--leg-right-band)" }}>Disconnecting</span>
                     )}
                   </button>
                 </TooltipTrigger>
@@ -337,8 +341,8 @@ export function DeviceCard({
                       disabled={disabled}
                       className={`cursor-pointer bg-[var(--tropx-card)] rounded-full ${isCompact ? 'w-10 h-10' : 'px-3 py-2'} flex items-center justify-center gap-1 hover:bg-[var(--tropx-muted)] disabled:opacity-50`}
                     >
-                      <RefreshCw className={isCompact ? "w-5 h-5" : "w-4 h-4"} style={{ color: "#6b7280" }} />
-                      {!isCompact && <span className="text-sm font-medium" style={{ color: "#6b7280" }}>Retry</span>}
+                      <RefreshCw className={isCompact ? "w-5 h-5" : "w-4 h-4"} style={{ color: "var(--muted-foreground)" }} />
+                      {!isCompact && <span className="text-sm font-medium" style={{ color: "var(--muted-foreground)" }}>Retry</span>}
                     </button>
                   </TooltipTrigger>
                   <TooltipContent><p>{errorMessage || "Retry connection"}</p></TooltipContent>
@@ -349,8 +353,8 @@ export function DeviceCard({
                       onClick={onRemove}
                       className={`cursor-pointer bg-[var(--tropx-card)] rounded-full ${isCompact ? 'w-10 h-10' : 'px-3 py-2'} flex items-center justify-center gap-1 hover:bg-red-50 dark:hover:bg-red-950/30`}
                     >
-                      <Trash2 className={isCompact ? "w-5 h-5" : "w-4 h-4"} style={{ color: "#ef4444" }} />
-                      {!isCompact && <span className="text-sm font-medium" style={{ color: "#ef4444" }}>Clear</span>}
+                      <Trash2 className={isCompact ? "w-5 h-5" : "w-4 h-4"} style={{ color: "var(--tropx-red)" }} />
+                      {!isCompact && <span className="text-sm font-medium" style={{ color: "var(--tropx-red)" }}>Clear</span>}
                     </button>
                   </TooltipTrigger>
                   <TooltipContent><p>Remove device from list</p></TooltipContent>
@@ -366,10 +370,10 @@ export function DeviceCard({
                   >
                     <ConnectionIcon />
                     {!isCompact && connectionStatus === "disconnected" && (
-                      <span className="text-sm font-medium" style={{ color: isLeft ? "#0080C0" : "#BF0000" }}>Connect</span>
+                      <span className="text-sm font-medium" style={{ color: isLeft ? "var(--leg-left-band)" : "var(--leg-right-band)" }}>Connect</span>
                     )}
                     {!isCompact && connectionStatus === "synchronizing" && (
-                      <span className="text-sm font-medium" style={{ color: "#9333ea" }}>Syncing</span>
+                      <span className="text-sm font-medium" style={{ color: "var(--leg-purple-band)" }}>Syncing</span>
                     )}
                   </button>
                 </TooltipTrigger>

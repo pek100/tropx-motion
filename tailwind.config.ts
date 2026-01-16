@@ -93,6 +93,30 @@ const config: Config = {
           fill: 'var(--leg-right-fill)',
           band: 'var(--leg-right-band)',
         },
+        'leg-gray': {
+          fill: 'var(--leg-gray-fill)',
+          band: 'var(--leg-gray-band)',
+        },
+        'leg-purple': {
+          fill: 'var(--leg-purple-fill)',
+          band: 'var(--leg-purple-band)',
+        },
+        // Additional accent colors
+        'tropx-purple': 'var(--tropx-purple)',
+        // Horus domain colors (for metrics visualization)
+        'domain': {
+          range: 'var(--domain-range)',
+          symmetry: 'var(--domain-symmetry)',
+          power: 'var(--domain-power)',
+          control: 'var(--domain-control)',
+          timing: 'var(--domain-timing)',
+        },
+        // Axis colors (for multi-axis chart visualization)
+        'axis': {
+          x: 'var(--axis-x)',
+          y: 'var(--axis-y)',
+          z: 'var(--axis-z)',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',

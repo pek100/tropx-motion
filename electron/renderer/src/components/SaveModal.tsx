@@ -176,10 +176,10 @@ function MiniRecordingChart({ samples }: { samples: QuaternionSample[] }) {
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
         {/* Grid line at center */}
         <line x1={padding} y1={height/2} x2={width-padding} y2={height/2} stroke="var(--tropx-border)" strokeWidth="0.5" />
-        {/* Left knee (coral/red) */}
-        {createPath(points.map(p => p.left), 'var(--tropx-coral, #f97066)')}
-        {/* Right knee (blue) */}
-        {createPath(points.map(p => p.right), 'var(--tropx-sky, #60a5fa)')}
+        {/* Left knee (blue) */}
+        {createPath(points.map(p => p.left), 'var(--leg-left-band)')}
+        {/* Right knee (coral/red) */}
+        {createPath(points.map(p => p.right), 'var(--leg-right-band)')}
       </svg>
     </div>
   );
