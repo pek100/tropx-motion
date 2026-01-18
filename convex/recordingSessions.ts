@@ -27,6 +27,7 @@ export const createSession = mutation({
     rightKneePreview: v.optional(v.array(v.number())),
 
     // User metadata
+    title: v.optional(v.string()),
     notes: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     subjectId: v.optional(v.id("users")),
@@ -74,6 +75,7 @@ export const createSession = mutation({
       leftKneePaths: leftPaths ?? undefined,
       rightKneePaths: rightPaths ?? undefined,
       compressionVersion: COMPRESSION.VERSION,
+      title: args.title,
       notes: args.notes,
       tags: args.tags,
       activityProfile: args.activityProfile as any,
@@ -138,6 +140,7 @@ export const getSession = query({
         : null,
       subject,
       subjectAlias: session.subjectAlias,
+      title: session.title,
       notes: session.notes,
       tags: session.tags,
       activeJoints: session.activeJoints,
@@ -182,6 +185,7 @@ export const listMySessions = query({
           subjectId: session.subjectId,
           subjectName,
           subjectAlias: session.subjectAlias,
+          title: session.title,
           notes: session.notes,
           tags: session.tags,
           activeJoints: session.activeJoints,
@@ -223,6 +227,7 @@ export const listSessionsOfMe = query({
         return {
           sessionId: session.sessionId,
           ownerName: owner?.name ?? "Unknown",
+          title: session.title,
           notes: session.notes,
           tags: session.tags,
           activeJoints: session.activeJoints,
@@ -322,6 +327,7 @@ export const searchSessions = query({
     if (searchTerm) {
       allSessions = allSessions.filter((session) => {
         const searchFields = [
+          session.title,
           session.notes,
           session.subjectAlias,
           ...(session.tags ?? []),
@@ -368,6 +374,7 @@ export const searchSessions = query({
           subjectImage,
           subjectAlias: session.subjectAlias,
           isSubjectMe: isMe,
+          title: session.title,
           notes: session.notes,
           tags: session.tags ?? [],
           systemTags: session.systemTags ?? [],
@@ -509,7 +516,7 @@ export const getDistinctSubjects = query({
 // ─────────────────────────────────────────────────────────────────
 
 // Editable fields for diff tracking
-const EDITABLE_FIELDS = ["notes", "tags", "subjectId", "subjectAlias"] as const;
+const EDITABLE_FIELDS = ["title", "notes", "tags", "subjectId", "subjectAlias"] as const;
 
 // Helper to compute diffs between old and new values
 function computeDiffs(
@@ -544,6 +551,7 @@ function computeDiffs(
 export const updateSession = mutation({
   args: {
     sessionId: v.string(),
+    title: v.optional(v.string()),
     notes: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     subjectId: v.optional(v.id("users")),
@@ -568,6 +576,7 @@ export const updateSession = mutation({
 
     // Build updates object
     const updates: Record<string, unknown> = {};
+    if (args.title !== undefined) updates.title = args.title;
     if (args.notes !== undefined) updates.notes = args.notes;
     if (args.tags !== undefined) updates.tags = args.tags;
     if (args.subjectId !== undefined) updates.subjectId = args.subjectId;
@@ -579,6 +588,7 @@ export const updateSession = mutation({
 
     // Compute diffs for modification history
     const oldData: Record<string, unknown> = {
+      title: session.title,
       notes: session.notes,
       tags: session.tags,
       subjectId: session.subjectId,
@@ -602,18 +612,18 @@ export const updateSession = mutation({
       // Check if subject was changed to a different user (not the owner)
       const subjectDiff = diffs.find(d => d.field === "subjectId");
       if (subjectDiff && args.subjectId && args.subjectId !== user._id && args.subjectId !== session.subjectId) {
-        const title = args.tags?.[0] || session.tags?.[0] || "Untitled Recording";
+        const recordingTitle = args.title ?? session.title ?? "Untitled Recording";
         await ctx.db.insert("notifications", {
           userId: args.subjectId,
           type: "added_as_subject",
           title: "You were added to a recording",
-          body: `${user.name ?? "Someone"} added you as the subject of "${title}"`,
+          body: `${user.name ?? "Someone"} added you as the subject of "${recordingTitle}"`,
           data: {
             sessionId: args.sessionId,
             ownerId: user._id,
             ownerName: user.name,
             ownerImage: user.image,
-            recordingTitle: title,
+            recordingTitle,
           },
           read: false,
         });

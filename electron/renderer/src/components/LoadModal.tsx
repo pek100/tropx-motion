@@ -65,6 +65,7 @@ interface SessionSummary {
   subjectImage?: string;
   subjectAlias?: string;
   isSubjectMe: boolean;
+  title?: string;
   notes?: string;
   tags: string[];
   systemTags: string[];
@@ -108,7 +109,7 @@ function RecordingCard({
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const title = session.tags[0] || 'Untitled Recording';
+  const title = session.title || 'Untitled Recording';
 
   // Handle delete (fire-and-forget: optimistic update is instant)
   const handleDelete = () => {
@@ -229,18 +230,18 @@ function RecordingCard({
         <div className="flex-1" />
 
         {/* Tags */}
-        {(session.systemTags.includes('source:csv') || session.tags.length > 1) && (
+        {(session.systemTags.includes('source:csv') || session.tags.length > 0) && (
           <div className="flex items-center gap-1">
             {session.systemTags.includes('source:csv') && (
               <Badge variant="secondary" className="text-[10px] px-1.5 py-0">CSV</Badge>
             )}
-            {session.tags.slice(1, 2).map((tag) => (
+            {session.tags.slice(0, 1).map((tag) => (
               <Badge key={tag} className="text-[10px] px-1.5 py-0 bg-[var(--tropx-vibrant)]">
                 {tag}
               </Badge>
             ))}
-            {session.tags.length > 2 && (
-              <span className="text-[10px] text-muted-foreground">+{session.tags.length - 2}</span>
+            {session.tags.length > 1 && (
+              <span className="text-[10px] text-muted-foreground">+{session.tags.length - 1}</span>
             )}
           </div>
         )}
@@ -376,26 +377,26 @@ function RecordingPreview({
   // Reset edit state when session changes
   useEffect(() => {
     if (session) {
-      setEditTitle(session.tags[0] || '');
+      setEditTitle(session.title || '');
       setEditNotes(session.notes || '');
-      setEditTags(session.tags.slice(1)); // Tags excluding title (first tag)
+      setEditTags(session.tags);
     }
     setIsEditing(false);
-  }, [session?.sessionId]);
+  }, [session]);
 
   const handleStartEdit = () => {
     if (!session) return;
-    setEditTitle(session.tags[0] || '');
+    setEditTitle(session.title || '');
     setEditNotes(session.notes || '');
-    setEditTags(session.tags.slice(1));
+    setEditTags(session.tags);
     setIsEditing(true);
   };
 
   const handleCancelEdit = () => {
     if (!session) return;
-    setEditTitle(session.tags[0] || '');
+    setEditTitle(session.title || '');
     setEditNotes(session.notes || '');
-    setEditTags(session.tags.slice(1));
+    setEditTags(session.tags);
     setIsEditing(false);
   };
 
@@ -403,15 +404,18 @@ function RecordingPreview({
     if (!session) return;
     setIsSaving(true);
     try {
-      // Combine title (first tag) with other tags
-      const allTags = [editTitle.trim(), ...editTags].filter(Boolean);
+      // Only include subject fields if user made a change (editSubject !== undefined)
+      const subjectFields = editSubject !== undefined ? {
+        subjectId: editSubject?.id || undefined, // undefined clears the field
+        subjectAlias: editSubject?.id ? undefined : editSubject?.name, // only set alias if no id
+      } : {};
+
       await updateSession({
         sessionId: session.sessionId,
-        notes: editNotes.trim() || undefined,
-        tags: allTags.length > 0 ? allTags : undefined,
-        // Include subject change if editSubject is provided
-        subjectId: editSubject?.id ?? undefined,
-        subjectAlias: editSubject && !editSubject.id ? editSubject.name : undefined,
+        title: editTitle.trim(),
+        notes: editNotes.trim(),
+        tags: editTags,
+        ...subjectFields,
       });
       setIsEditing(false);
       onSessionUpdated?.();
@@ -431,7 +435,7 @@ function RecordingPreview({
     );
   }
 
-  const title = session.tags[0] || 'Untitled Recording';
+  const title = session.title || 'Untitled Recording';
 
   return (
     <div className="h-full flex flex-col space-y-4">
@@ -772,7 +776,7 @@ function RecordingPreview({
       )}
 
       {/* Tags */}
-      {(isEditing || session.tags.length > 1 || session.systemTags.length > 0) && (
+      {(isEditing || session.tags.length > 0 || session.systemTags.length > 0) && (
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">Tags</Label>
           {isEditing ? (
@@ -789,7 +793,7 @@ function RecordingPreview({
                   {tag}
                 </Badge>
               ))}
-              {session.tags.slice(1).map((tag) => (
+              {session.tags.map((tag) => (
                 <Badge key={tag} className="text-xs bg-[var(--tropx-vibrant)]">
                   {tag}
                 </Badge>

@@ -375,6 +375,145 @@ export const batchRecomputeAllMetrics = internalAction({
 // Timestamp Field Stats
 // ─────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────
+// Title Field Migration (move tags[0] to title)
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Count sessions with/without title field.
+ *
+ * Usage: npx convex run migrations:countTitleStatus
+ */
+export const countTitleStatus = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const sessions = await ctx.db.query("recordingSessions").collect();
+
+    let withTitle = 0;
+    let withoutTitle = 0;
+    let withTags = 0;
+
+    for (const session of sessions) {
+      if (session.title) {
+        withTitle++;
+      } else {
+        withoutTitle++;
+      }
+      if (session.tags && session.tags.length > 0) {
+        withTags++;
+      }
+    }
+
+    return {
+      total: sessions.length,
+      withTitle,
+      withoutTitle,
+      withTags,
+    };
+  },
+});
+
+/**
+ * Migrate a single session: move tags[0] to title, keep remaining tags.
+ */
+export const migrateTitleForSession = internalMutation({
+  args: { sessionId: v.string() },
+  handler: async (ctx, args) => {
+    const session = await ctx.db
+      .query("recordingSessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+
+    if (!session) {
+      return { success: false, error: "Session not found" };
+    }
+
+    // Skip if title already exists
+    if (session.title) {
+      return { success: true, skipped: true, reason: "Title already exists" };
+    }
+
+    const tags = session.tags ?? [];
+    if (tags.length === 0) {
+      return { success: true, skipped: true, reason: "No tags to migrate" };
+    }
+
+    // Extract title from tags[0], keep remaining tags
+    const title = tags[0];
+    const remainingTags = tags.slice(1);
+
+    await ctx.db.patch(session._id, {
+      title,
+      tags: remainingTags,
+    });
+
+    return { success: true, title, remainingTags: remainingTags.length };
+  },
+});
+
+/**
+ * Batch migrate all sessions: move tags[0] to title field.
+ *
+ * Usage: npx convex run migrations:batchMigrateTitle
+ */
+export const batchMigrateTitle = internalAction({
+  args: {
+    delayBetweenMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const delayMs = args.delayBetweenMs ?? 100;
+
+    // Get all session IDs
+    const sessionIds = await ctx.runQuery(internal.migrations.getAllSessionIds, {});
+
+    console.log(`Starting title migration for ${sessionIds.length} sessions`);
+
+    const results: Array<{ sessionId: string; success: boolean; skipped?: boolean; error?: string }> = [];
+
+    for (let i = 0; i < sessionIds.length; i++) {
+      const sessionId = sessionIds[i];
+
+      try {
+        const result = await ctx.runMutation(internal.migrations.migrateTitleForSession, { sessionId });
+        results.push({ sessionId, ...result });
+        if (!result.skipped) {
+          console.log(`[${i + 1}/${sessionIds.length}] Migrated: ${sessionId}`);
+        }
+      } catch (error) {
+        results.push({
+          sessionId,
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error"
+        });
+        console.error(`[${i + 1}/${sessionIds.length}] Failed: ${sessionId}`, error);
+      }
+
+      // Add delay between sessions
+      if (i < sessionIds.length - 1 && delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
+    const migrated = results.filter((r) => r.success && !r.skipped).length;
+    const skipped = results.filter((r) => r.success && r.skipped).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    console.log(`Title migration complete: ${migrated} migrated, ${skipped} skipped, ${failed} failed`);
+
+    return {
+      total: sessionIds.length,
+      migrated,
+      skipped,
+      failed,
+      results,
+    };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────
+// Timestamp Field Stats
+// ─────────────────────────────────────────────────────────────────
+
 /**
  * Count documents with/without modifiedAt field.
  *

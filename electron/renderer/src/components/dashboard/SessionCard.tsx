@@ -22,6 +22,7 @@ export interface PreviewPaths {
 export interface SessionData {
   sessionId: string;
   recordedAt: number;
+  title?: string;
   tags: string[];
   opiScore: number;
   opiGrade: string;
@@ -118,7 +119,7 @@ export function SessionCard({
 
   const config = MOVEMENT_CONFIG[session.movementType] || MOVEMENT_CONFIG.unknown;
   const Icon = config.icon;
-  const title = session.tags[0] || "Untitled";
+  const title = session.title || "Untitled";
   const gradeColor = GRADE_COLORS[session.opiGrade] || "text-[var(--tropx-dark)]";
 
   // Handle recompute button click (stop propagation to prevent card selection)

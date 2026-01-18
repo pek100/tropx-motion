@@ -383,6 +383,7 @@ export function DashboardView({ className }: DashboardViewProps) {
         return {
           sessionId: s.sessionId,
           recordedAt: s.recordedAt,
+          title: s.title,
           tags: Array.isArray(s.tags) ? s.tags : [],
           opiScore: typeof s.opiScore === 'number' ? s.opiScore : 0,
           opiGrade: typeof s.opiGrade === 'string' ? s.opiGrade : 'C',

@@ -637,6 +637,7 @@ export default defineSchema({
     compressionVersion: v.string(),
 
     // User Metadata
+    title: v.optional(v.string()),
     notes: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     subjectNotes: v.optional(v.array(subjectNoteValidator)),

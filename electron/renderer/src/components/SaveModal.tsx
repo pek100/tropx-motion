@@ -496,23 +496,12 @@ export function SaveModal({
       // Raw samples are now passed directly - alignment happens in UploadService
       const rawSamples: RawDeviceSample[] = response.samples;
 
-      // Build tags array: title as first tag (if provided), followed by user tags
-      const allTags: string[] = [];
-      if (recordingTitle.trim()) {
-        allTags.push(recordingTitle.trim());
-      }
-      // Add user tags (avoiding duplicates with the title)
-      for (const tag of tags) {
-        if (tag.toLowerCase() !== recordingTitle.trim().toLowerCase()) {
-          allTags.push(tag);
-        }
-      }
-
       const options: UseRecordingUploadOptions = {
         subjectId: selectedPatientId || undefined,
         subjectAlias: selectedPatientName || undefined,
+        title: recordingTitle.trim() || undefined,
         notes: notes || undefined,
-        tags: allTags.length > 0 ? allTags : undefined,
+        tags: tags.length > 0 ? tags : undefined,
         activityProfile,
       };
 

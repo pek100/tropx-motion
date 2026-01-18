@@ -31,6 +31,7 @@ export type ActivityProfile = 'power' | 'endurance' | 'rehabilitation' | 'genera
 export interface UploadOptions {
   subjectId?: Id<'users'>;
   subjectAlias?: string;
+  title?: string;
   notes?: string;
   tags?: string[];
   activityProfile?: ActivityProfile;
@@ -183,6 +184,7 @@ export class UploadService {
         endTime: compressed.session.endTime,
         leftKneePreview: compressed.session.leftKneePreview ?? undefined,
         rightKneePreview: compressed.session.rightKneePreview ?? undefined,
+        title: options.title,
         notes: options.notes,
         tags: options.tags,
         subjectId: options.subjectId,

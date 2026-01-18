@@ -84,6 +84,7 @@ export const getPatientMetricsHistory = query({
           sessionId: session.sessionId,
           recordedAt: session.recordedAt ?? session.startTime,
           activityProfile: session.activityProfile ?? "general",
+          title: session.title,
           tags: session.tags ?? [],
           notes: session.notes,
 

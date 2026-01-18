@@ -78,30 +78,33 @@ export function SessionEditModal({
   const recordedAt = sessionDetails?.startTime || 0;
   const isSubjectMe = sessionDetails?.subject?._id === sessionDetails?.owner?._id;
 
-  // Initialize edit state when session data loads
+  // Initialize edit state when modal opens or session data loads
   useEffect(() => {
-    if (sessionDetails) {
-      setEditTitle(sessionDetails.tags?.[0] || '');
+    if (open && sessionDetails) {
+      setEditTitle(sessionDetails.title || '');
       setEditNotes(sessionDetails.notes || '');
-      setEditTags(sessionDetails.tags?.slice(1) || []);
+      setEditTags(sessionDetails.tags || []);
       setEditSubject(null); // Reset to use original subject
     }
-  }, [sessionDetails?.sessionId]);
+  }, [open, sessionDetails]);
 
   // Handle save
   const handleSave = useCallback(async () => {
     if (!sessionDetails) return;
     setIsSaving(true);
     try {
-      // Combine title (first tag) with other tags
-      const allTags = [editTitle.trim(), ...editTags].filter(Boolean);
+      // Only include subject fields if user made a change (editSubject !== null)
+      const subjectFields = editSubject !== null ? {
+        subjectId: editSubject.id || undefined, // undefined clears the field
+        subjectAlias: editSubject.id ? undefined : editSubject.name, // only set alias if no id
+      } : {};
+
       await updateSession({
         sessionId,
-        notes: editNotes.trim() || undefined,
-        tags: allTags.length > 0 ? allTags : undefined,
-        // Include subject change if editSubject is set
-        subjectId: editSubject?.id ?? undefined,
-        subjectAlias: editSubject && !editSubject.id ? editSubject.name : undefined,
+        title: editTitle.trim(),
+        notes: editNotes.trim(),
+        tags: editTags,
+        ...subjectFields,
       });
       onSaved?.();
       onOpenChange(false);

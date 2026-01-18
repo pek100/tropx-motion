@@ -33,6 +33,7 @@ export type ActivityProfile = 'power' | 'endurance' | 'rehabilitation' | 'genera
 export interface UseRecordingUploadOptions {
   subjectId?: Id<'users'>;
   subjectAlias?: string;
+  title?: string;
   notes?: string;
   tags?: string[];
   activityProfile?: ActivityProfile;
@@ -145,6 +146,7 @@ export function useRecordingUpload(): UseRecordingUploadReturn {
         const uploadOptions: UploadOptions = {
           subjectId: options.subjectId,
           subjectAlias: options.subjectAlias,
+          title: options.title,
           notes: options.notes,
           tags: options.tags,
           activityProfile: options.activityProfile,
