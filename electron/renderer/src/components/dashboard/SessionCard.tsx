@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { formatDate, formatTime } from "@/lib/utils";
-import { Dumbbell, Footprints, Activity, Shuffle, HelpCircle, RefreshCw, Loader2, Pencil, Trash2 } from "lucide-react";
+import { Dumbbell, Footprints, Activity, Shuffle, HelpCircle, RefreshCw, Loader2, Pencil, Trash2, Filter } from "lucide-react";
 import type { MovementType } from "./MetricsTable";
 
 // ─────────────────────────────────────────────────────────────────
@@ -49,6 +49,10 @@ interface SessionCardProps {
   onDelete?: () => void;
   /** Whether delete is in progress */
   isDeleting?: boolean;
+  /** Whether this card matches the active tag filter */
+  isMatchingFilter?: boolean;
+  /** Callback to apply all tags from this session to the filter */
+  onApplyAllTags?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -106,6 +110,8 @@ export function SessionCard({
   onEdit,
   onDelete,
   isDeleting,
+  isMatchingFilter,
+  onApplyAllTags,
 }: SessionCardProps) {
   const [showRegenConfirm, setShowRegenConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -163,15 +169,61 @@ export function SessionCard({
     <button
       onClick={onClick}
       className={cn(
-        "relative w-full p-2 sm:p-4 rounded-lg sm:rounded-xl border-2 bg-[var(--tropx-card)] text-left",
+        "relative w-full p-2 sm:p-4 rounded-lg sm:rounded-xl border-2 text-left",
         "transition-all duration-200",
         "group overflow-hidden",
+        // Background: subtle gradient when matching filter, card bg otherwise
+        isMatchingFilter
+          ? "gradient-diagonal-subtle"
+          : "bg-[var(--tropx-card)]",
         isActive
           ? "border-[var(--tropx-vibrant)] shadow-sm"
           : "border-[var(--tropx-border)] hover:border-[var(--tropx-vibrant)]/30 scale-[0.97] opacity-80 hover:opacity-100",
         className
       )}
     >
+      {/* Filter badge and apply all tags button */}
+      {isMatchingFilter && (
+        <div
+          className={cn(
+            "absolute right-1 sm:right-2 bottom-[52px] sm:bottom-[72px] z-10",
+            "flex items-center gap-0.5"
+          )}
+        >
+          {/* Filter icon */}
+          <div
+            className={cn(
+              "size-4 sm:size-5 rounded-full",
+              "bg-[var(--tropx-vibrant)]/20 backdrop-blur-sm",
+              "flex items-center justify-center"
+            )}
+          >
+            <Filter className="size-2 sm:size-2.5 text-[var(--tropx-vibrant)]" fill="currentColor" />
+          </div>
+          {/* Apply all tags button - only on active card with multiple tags */}
+          {isActive && session.tags.length > 1 && onApplyAllTags && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onApplyAllTags();
+              }}
+              className={cn(
+                "h-4 sm:h-5 px-1.5 rounded",
+                "bg-[var(--tropx-vibrant)]/10 border border-[var(--tropx-vibrant)]/40",
+                "flex items-center justify-center gap-0.5",
+                "hover:bg-[var(--tropx-vibrant)]/30 hover:border-[var(--tropx-vibrant)] active:scale-95",
+                "transition-all duration-150"
+              )}
+              title="Apply all tags to filter"
+            >
+              <Filter className="size-2 sm:size-2.5 text-[var(--tropx-vibrant)]" />
+              <span className="text-[8px] sm:text-[9px] font-bold text-[var(--tropx-vibrant)]">+{session.tags.length - 1}</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Background accent - hidden on mobile */}
       <div
         className={cn(
@@ -253,7 +305,7 @@ export function SessionCard({
         <p className="text-[8px] sm:text-[10px] text-[var(--tropx-text-sub)] hidden sm:block">{config.label}</p>
 
         {/* OPI + Grade - inline on mobile, stacked on desktop */}
-        <div className="sm:mt-3 sm:pt-3 sm:border-t sm:border-dashed sm:border-[var(--tropx-border)] flex items-center justify-between">
+        <div className="sm:mt-3 sm:pt-3 sm:border-t sm:border-dashed border-[var(--tropx-shadow)]/30 dark:border-[var(--tropx-border)] flex items-center justify-between">
           <div className="flex items-center gap-1 sm:gap-2">
             {/* Recompute button - only visible on active card */}
             {isActive && onRecomputeMetrics && !showRegenConfirm && (

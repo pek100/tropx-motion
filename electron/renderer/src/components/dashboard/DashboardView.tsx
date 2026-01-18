@@ -45,6 +45,7 @@ interface DashboardState {
   selectedPatientIsMe: boolean;
   selectedSessionId: string | null;
   selectedMetrics: string[];
+  autoFilterCount?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -137,6 +138,13 @@ export function DashboardView({ className }: DashboardViewProps) {
   const [hasInitialized, setHasInitialized] = useState(false);
   const [isTabsLinked, setIsTabsLinked] = useState(true);
 
+  // Tag filter state
+  const [filterTags, setFilterTags] = useState<string[]>([]);
+  // Auto-filter count: how many tags to auto-apply (0 = disabled)
+  const [autoFilterCount, setAutoFilterCount] = useState<number>(
+    savedState.current.autoFilterCount ?? 1
+  );
+
   // Sync states for linked tabs (used to trigger sync in the other pane)
   const [syncChartTab, setSyncChartTab] = useState<ChartTab>("progress");
   const [syncAnalysisMode, setSyncAnalysisMode] = useState<AnalysisMode>("overall");
@@ -167,6 +175,7 @@ export function DashboardView({ className }: DashboardViewProps) {
       selectedPatientIsMe: selectedPatient?.isMe || false,
       selectedSessionId: selectedSessionId,
       selectedMetrics: Array.from(selectedMetrics),
+      autoFilterCount: autoFilterCount,
     };
 
     try {
@@ -174,7 +183,7 @@ export function DashboardView({ className }: DashboardViewProps) {
     } catch (e) {
       console.warn("Failed to save dashboard state:", e);
     }
-  }, [selectedPatientId, selectedPatient, selectedSessionId, selectedMetrics, hasInitialized]);
+  }, [selectedPatientId, selectedPatient, selectedSessionId, selectedMetrics, autoFilterCount, hasInitialized]);
 
   // Auto-select self for patients, show modal for physiotherapists
   useEffect(() => {
@@ -386,6 +395,31 @@ export function DashboardView({ className }: DashboardViewProps) {
       });
   }, [metricsHistory]);
 
+  // Extract all unique tags from sessions
+  const allTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    sessions.forEach((s) => s.tags.forEach((t) => tagSet.add(t)));
+    return Array.from(tagSet).sort();
+  }, [sessions]);
+
+  // Filter sessions for chart (AND logic: must have ALL filter tags)
+  const chartFilteredSessions = useMemo(() => {
+    if (filterTags.length === 0) return sessions;
+    return sessions.filter((s) =>
+      filterTags.every((tag) => s.tags.includes(tag))
+    );
+  }, [sessions, filterTags]);
+
+  // Compute matching session IDs for carousel highlighting
+  const matchingSessionIds = useMemo(() => {
+    if (filterTags.length === 0) return new Set<string>();
+    return new Set(
+      sessions
+        .filter((s) => filterTags.every((tag) => s.tags.includes(tag)))
+        .map((s) => s.sessionId)
+    );
+  }, [sessions, filterTags]);
+
   // Auto-select latest session when data loads
   useEffect(() => {
     if (sessions.length > 0 && !selectedSessionId) {
@@ -499,7 +533,7 @@ export function DashboardView({ className }: DashboardViewProps) {
     return result;
   }, [metricsHistory]);
 
-  // Handle session selection (from carousel or chart)
+  // Handle session selection
   const handleSelectSession = useCallback(
     (sessionId: string) => {
       setSelectedSessionId(sessionId);
@@ -514,6 +548,23 @@ export function DashboardView({ className }: DashboardViewProps) {
     },
     [carouselApi, sessions]
   );
+
+  // Auto-filter: update filter when selected session changes
+  useEffect(() => {
+    // If auto-filter is disabled (0) or no session selected, clear filter
+    if (autoFilterCount === 0 || !selectedSessionId) {
+      setFilterTags([]);
+      return;
+    }
+
+    const selected = sessions.find((s) => s.sessionId === selectedSessionId);
+    if (selected && selected.tags.length > 0) {
+      // Apply up to autoFilterCount tags
+      setFilterTags(selected.tags.slice(0, autoFilterCount));
+    } else {
+      setFilterTags([]);
+    }
+  }, [selectedSessionId, sessions, autoFilterCount]);
 
   // Handle patient selection
   const handlePatientSelect = useCallback(
@@ -732,6 +783,8 @@ export function DashboardView({ className }: DashboardViewProps) {
                   onEditSession={handleEditSession}
                   onDeleteSession={handleDeleteSession}
                   isDeleting={isDeleting}
+                  matchingSessionIds={matchingSessionIds}
+                  onApplyAllTags={setFilterTags}
                 />
               </div>
             </div>
@@ -752,7 +805,7 @@ export function DashboardView({ className }: DashboardViewProps) {
 
               {/* Chart Pane */}
               <ChartPane
-                sessions={sessions}
+                sessions={chartFilteredSessions}
                 selectedSessionId={selectedSessionId}
                 onSelectSession={handleSelectSession}
                 sessionPreviewData={sessionPackedData}
@@ -766,6 +819,11 @@ export function DashboardView({ className }: DashboardViewProps) {
                 onLinkedChange={setIsTabsLinked}
                 onTabChange={handleChartTabChange}
                 syncToTab={syncChartTab}
+                filterTags={filterTags}
+                onFilterTagsChange={setFilterTags}
+                allTags={allTags}
+                autoFilterCount={autoFilterCount}
+                onAutoFilterCountChange={setAutoFilterCount}
               />
             </div>
 

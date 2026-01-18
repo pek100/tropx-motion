@@ -4,7 +4,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { TrendingUp, Activity, Link, Unlink, RotateCcw } from "lucide-react";
+import { TrendingUp, Activity, Link, Unlink, RotateCcw, Filter } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Tooltip,
@@ -19,6 +19,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { ProgressChart } from "./ProgressChart";
 import { SessionChart } from "./SessionChart";
+import { TagFilterBar } from "./TagFilterBar";
 import type { SessionData } from "./SessionCard";
 import type { PackedChunkData } from "../../../../../shared/QuaternionCodec";
 
@@ -86,6 +87,13 @@ interface ChartPaneProps {
   onTabChange?: (tab: ChartTab) => void;
   /** External tab to sync to when linked */
   syncToTab?: ChartTab;
+  /** Tag filter props */
+  filterTags?: string[];
+  onFilterTagsChange?: (tags: string[]) => void;
+  allTags?: string[];
+  /** Auto-filter count (0 = disabled, 1-10 = number of tags to auto-apply) */
+  autoFilterCount?: number;
+  onAutoFilterCountChange?: (count: number) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -113,6 +121,11 @@ export function ChartPane({
   onLinkedChange,
   onTabChange,
   syncToTab,
+  filterTags = [],
+  onFilterTagsChange,
+  allTags = [],
+  autoFilterCount = 1,
+  onAutoFilterCountChange,
 }: ChartPaneProps) {
   const [activeTab, setActiveTab] = useState<ChartTab>("progress");
 
@@ -365,66 +378,111 @@ export function ChartPane({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            {/* Date range pickers (only for Progress tab) */}
-            {activeTab === "progress" && sessions.length > 0 && (
-              <div className="flex items-center gap-1">
-                {/* Start date picker */}
-                <Popover open={startDatePickerOpen} onOpenChange={setStartDatePickerOpen}>
+            {/* Tag filter bar with auto-filter settings (only for Progress tab) */}
+            {activeTab === "progress" && allTags.length > 0 && onFilterTagsChange && (
+              <div className="hidden sm:flex items-center gap-1.5">
+                <TagFilterBar
+                  activeTags={filterTags}
+                  onTagsChange={onFilterTagsChange}
+                  availableTags={allTags}
+                  className="max-w-[200px]"
+                />
+                {/* Auto-filter settings button */}
+                <Popover>
                   <PopoverTrigger asChild>
                     <button
+                      type="button"
                       className={cn(
-                        "px-2 py-1 rounded-md text-xs sm:text-sm font-medium",
-                        "bg-[var(--tropx-muted)] border border-[var(--tropx-border)]",
-                        "hover:border-[var(--tropx-vibrant)] hover:text-[var(--tropx-vibrant)]",
-                        "transition-colors cursor-pointer text-[var(--tropx-text-main)]"
+                        "h-8 px-2 rounded-lg flex items-center gap-1.5",
+                        "border bg-[var(--tropx-card)] transition-all",
+                        autoFilterCount > 0
+                          ? "border-[var(--tropx-vibrant)]/30 hover:border-[var(--tropx-vibrant)] text-[var(--tropx-vibrant)]"
+                          : "border-[var(--tropx-border)] hover:border-[var(--tropx-text-sub)] text-[var(--tropx-text-sub)] grayscale"
                       )}
+                      title="Auto-filter settings"
                     >
-                      {filteredSessions[0]
-                        ? new Date(filteredSessions[0].recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' })
-                        : '—'}
+                      <Filter className="size-3.5" />
+                      <span className="text-xs font-medium">{autoFilterCount}</span>
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0 bg-[var(--tropx-card)] border-[var(--tropx-border)]" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={sessions[timelineRange[0]] ? new Date(sessions[timelineRange[0]].recordedAt) : undefined}
-                      onSelect={handleStartDateSelect}
-                      defaultMonth={sessions[timelineRange[0]] ? new Date(sessions[timelineRange[0]].recordedAt) : undefined}
-                    />
+                  <PopoverContent
+                    className="w-64 p-4 bg-[var(--tropx-card)] border-[var(--tropx-border)]"
+                    align="end"
+                  >
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-[var(--tropx-text-main)]">
+                          Auto-apply tags
+                        </span>
+                        <div className="flex items-center gap-2">
+                          {autoFilterCount !== 1 && (
+                            <button
+                              type="button"
+                              onClick={() => onAutoFilterCountChange?.(1)}
+                              className={cn(
+                                "p-1 rounded",
+                                "hover:bg-[var(--tropx-muted)]",
+                                "hover:text-[var(--tropx-vibrant)]",
+                                "transition-colors text-[var(--tropx-text-sub)]"
+                              )}
+                              title="Reset to default (1)"
+                            >
+                              <RotateCcw className="size-3.5" />
+                            </button>
+                          )}
+                          <span className={cn(
+                            "text-sm font-bold min-w-[1.5ch] text-right",
+                            autoFilterCount > 0 ? "text-[var(--tropx-vibrant)]" : "text-[var(--tropx-text-sub)]"
+                          )}>
+                            {autoFilterCount}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Slider */}
+                      <input
+                        type="range"
+                        min={0}
+                        max={10}
+                        value={autoFilterCount}
+                        onChange={(e) => onAutoFilterCountChange?.(parseInt(e.target.value))}
+                        className={cn(
+                          "w-full h-2 rounded-full appearance-none cursor-pointer",
+                          "bg-[var(--tropx-muted)]",
+                          "[&::-webkit-slider-thumb]:appearance-none",
+                          "[&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4",
+                          "[&::-webkit-slider-thumb]:rounded-full",
+                          "[&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer",
+                          "[&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white",
+                          "[&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:hover:scale-110",
+                          autoFilterCount > 0
+                            ? "[&::-webkit-slider-thumb]:bg-[var(--tropx-vibrant)]"
+                            : "[&::-webkit-slider-thumb]:bg-[var(--tropx-text-sub)]",
+                          "[&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4",
+                          "[&::-moz-range-thumb]:rounded-full",
+                          "[&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white",
+                          "[&::-moz-range-thumb]:cursor-pointer",
+                          autoFilterCount > 0
+                            ? "[&::-moz-range-thumb]:bg-[var(--tropx-vibrant)]"
+                            : "[&::-moz-range-thumb]:bg-[var(--tropx-text-sub)]"
+                        )}
+                      />
+
+                      {/* Description */}
+                      <p className="text-xs text-[var(--tropx-text-sub)]">
+                        {autoFilterCount === 0 ? (
+                          <span className="italic">
+                            No tags will be auto-applied when selecting a session
+                          </span>
+                        ) : autoFilterCount === 1 ? (
+                          <>Auto-apply the <strong>first tag</strong> when selecting a session</>
+                        ) : (
+                          <>Auto-apply up to <strong>{autoFilterCount} tags</strong> when selecting a session</>
+                        )}
+                      </p>
+                    </div>
                   </PopoverContent>
                 </Popover>
-
-                <span className="text-[var(--tropx-text-sub)] text-xs">–</span>
-
-                {/* End date picker */}
-                <Popover open={endDatePickerOpen} onOpenChange={setEndDatePickerOpen}>
-                  <PopoverTrigger asChild>
-                    <button
-                      className={cn(
-                        "px-2 py-1 rounded-md text-xs sm:text-sm font-medium",
-                        "bg-[var(--tropx-muted)] border border-[var(--tropx-border)]",
-                        "hover:border-[var(--tropx-vibrant)] hover:text-[var(--tropx-vibrant)]",
-                        "transition-colors cursor-pointer text-[var(--tropx-text-main)]"
-                      )}
-                    >
-                      {filteredSessions[filteredSessions.length - 1]
-                        ? new Date(filteredSessions[filteredSessions.length - 1].recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' })
-                        : '—'}
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0 bg-[var(--tropx-card)] border-[var(--tropx-border)]" align="end">
-                    <Calendar
-                      mode="single"
-                      selected={sessions[timelineRange[1]] ? new Date(sessions[timelineRange[1]].recordedAt) : undefined}
-                      onSelect={handleEndDateSelect}
-                      defaultMonth={sessions[timelineRange[1]] ? new Date(sessions[timelineRange[1]].recordedAt) : undefined}
-                    />
-                  </PopoverContent>
-                </Popover>
-
-                <span className="text-[10px] text-[var(--tropx-text-sub)] ml-1">
-                  ({filteredSessions.length}/{sessions.length})
-                </span>
               </div>
             )}
 
@@ -490,9 +548,32 @@ export function ChartPane({
             {/* Timeline with dual-range slider (like SessionChart) */}
             {totalSessions > 0 && (
               <div className="flex items-center gap-2 pt-3 border-t border-[var(--tropx-border)] mt-3">
-                <span className="text-[10px] font-mono text-[var(--tropx-text-sub)] w-20 text-right">
-                  {filteredSessions[0] ? new Date(filteredSessions[0].recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : ''}
-                </span>
+                {/* Start date picker */}
+                <Popover open={startDatePickerOpen} onOpenChange={setStartDatePickerOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      className={cn(
+                        "px-2 py-1 rounded-md text-[10px] font-mono",
+                        "bg-[var(--tropx-muted)] border border-[var(--tropx-border)]",
+                        "hover:border-[var(--tropx-vibrant)] hover:text-[var(--tropx-vibrant)]",
+                        "transition-colors cursor-pointer text-[var(--tropx-text-sub)]",
+                        "min-w-[70px] text-center"
+                      )}
+                    >
+                      {filteredSessions[0]
+                        ? new Date(filteredSessions[0].recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' })
+                        : '—'}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0 bg-[var(--tropx-card)] border-[var(--tropx-border)]" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={sessions[timelineRange[0]] ? new Date(sessions[timelineRange[0]].recordedAt) : undefined}
+                      onSelect={handleStartDateSelect}
+                      defaultMonth={sessions[timelineRange[0]] ? new Date(sessions[timelineRange[0]].recordedAt) : undefined}
+                    />
+                  </PopoverContent>
+                </Popover>
 
                 {/* Dual-range slider */}
                 <div className="flex-1 relative h-6 flex items-center range-slider-container">
@@ -575,9 +656,32 @@ export function ChartPane({
                   />
                 </div>
 
-                <span className="text-[10px] font-mono text-[var(--tropx-text-sub)] w-20">
-                  {filteredSessions[filteredSessions.length - 1] ? new Date(filteredSessions[filteredSessions.length - 1].recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : ''}
-                </span>
+                {/* End date picker */}
+                <Popover open={endDatePickerOpen} onOpenChange={setEndDatePickerOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      className={cn(
+                        "px-2 py-1 rounded-md text-[10px] font-mono",
+                        "bg-[var(--tropx-muted)] border border-[var(--tropx-border)]",
+                        "hover:border-[var(--tropx-vibrant)] hover:text-[var(--tropx-vibrant)]",
+                        "transition-colors cursor-pointer text-[var(--tropx-text-sub)]",
+                        "min-w-[70px] text-center"
+                      )}
+                    >
+                      {filteredSessions[filteredSessions.length - 1]
+                        ? new Date(filteredSessions[filteredSessions.length - 1].recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' })
+                        : '—'}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0 bg-[var(--tropx-card)] border-[var(--tropx-border)]" align="end">
+                    <Calendar
+                      mode="single"
+                      selected={sessions[timelineRange[1]] ? new Date(sessions[timelineRange[1]].recordedAt) : undefined}
+                      onSelect={handleEndDateSelect}
+                      defaultMonth={sessions[timelineRange[1]] ? new Date(sessions[timelineRange[1]].recordedAt) : undefined}
+                    />
+                  </PopoverContent>
+                </Popover>
 
                 {/* Reset button */}
                 <Tooltip delayDuration={0}>

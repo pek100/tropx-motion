@@ -34,6 +34,10 @@ interface SessionsCarouselProps {
   onDeleteSession?: (sessionId: string) => void;
   /** Whether delete is in progress */
   isDeleting?: boolean;
+  /** Session IDs matching the active tag filter (for highlighting) */
+  matchingSessionIds?: Set<string>;
+  /** Callback to apply all tags from a session to the filter */
+  onApplyAllTags?: (tags: string[]) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -51,6 +55,8 @@ export function SessionsCarousel({
   onEditSession,
   onDeleteSession,
   isDeleting,
+  matchingSessionIds,
+  onApplyAllTags,
 }: SessionsCarouselProps) {
   // Sessions ordered chronologically (oldest first, newest last)
   const orderedSessions = sessions;
@@ -227,6 +233,8 @@ export function SessionsCarousel({
                 onEdit={session.sessionId === selectedSessionId && onEditSession ? () => onEditSession(session.sessionId) : undefined}
                 onDelete={session.sessionId === selectedSessionId && onDeleteSession ? () => onDeleteSession(session.sessionId) : undefined}
                 isDeleting={session.sessionId === selectedSessionId ? isDeleting : false}
+                isMatchingFilter={matchingSessionIds?.has(session.sessionId)}
+                onApplyAllTags={onApplyAllTags ? () => onApplyAllTags(session.tags) : undefined}
               />
             </CarouselItem>
           ))}
