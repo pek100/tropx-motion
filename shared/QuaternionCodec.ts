@@ -48,6 +48,9 @@ export interface PackedChunkData {
   rightKneeMissing: number[];
 }
 
+/** Type alias for merged packed data (result of mergeChunks) */
+export type MergedPackedData = PackedChunkData;
+
 export interface AngleSample {
   t: number;
   relative_s: number;

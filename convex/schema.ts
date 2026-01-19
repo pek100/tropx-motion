@@ -643,6 +643,12 @@ export default defineSchema({
     subjectNotes: v.optional(v.array(subjectNoteValidator)),
     activityProfile: v.optional(activityProfileValidator),
 
+    // Crop: Trimmed data stored separately for potential recovery
+    trimmedStartBlob: v.optional(v.bytes()), // Compressed samples before crop start
+    trimmedEndBlob: v.optional(v.bytes()),   // Compressed samples after crop end
+    originalDurationMs: v.optional(v.number()),    // Full duration before crop
+    originalSampleCount: v.optional(v.number()),   // Full sample count before crop
+
     // System Metadata
     systemTags: v.optional(v.array(v.string())),
 

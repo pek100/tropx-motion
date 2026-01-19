@@ -7,7 +7,7 @@ import { v } from "convex/values";
 import { query, internalAction, internalQuery } from "./_generated/server";
 import { mutation, internalMutation } from "./lib/functions";
 import { internal, api } from "./_generated/api";
-import { Id } from "./_generated/dataModel";
+import { Id, Doc } from "./_generated/dataModel";
 import { METRIC_STATUS, ACTIVITY_PROFILES } from "./schema";
 import { computeAllMetrics, type RecordingChunk, type ActivityProfile } from "./lib/metrics";
 import { recalculateWithCustomPhaseOffset, quaternionArrayToAngles } from "./lib/metrics/compute";
@@ -268,7 +268,7 @@ export const computeMetricsInternal = internalAction({
         (session.activityProfile as ActivityProfile) || ACTIVITY_PROFILES.GENERAL;
 
       // Decompress each chunk
-      recordingChunks = chunks.map((chunk) => {
+      recordingChunks = chunks.map((chunk: Doc<"recordingChunks">) => {
         // Decompress quaternion data
         let leftKneeQ: number[] = [];
         let rightKneeQ: number[] = [];
@@ -517,37 +517,43 @@ export const recalculatePhaseMetricsInternal = internalAction({
       const { session, chunks } = compressedData;
       const timeStep = 1 / session.sampleRate;
 
-      // Decompress and combine all chunks into angle arrays
-      const leftAngles: number[] = [];
-      const rightAngles: number[] = [];
+      // Decompress chunks and build RecordingChunk format
+      const recordingChunks: RecordingChunk[] = chunks
+        .sort((a: Doc<"recordingChunks">, b: Doc<"recordingChunks">) => a.chunkIndex - b.chunkIndex)
+        .map((chunk: Doc<"recordingChunks">) => {
+          let leftKneeQ: number[] = [];
+          let rightKneeQ: number[] = [];
 
-      // Sort chunks by index
-      const sortedChunks = [...chunks].sort((a, b) => a.chunkIndex - b.chunkIndex);
+          if (chunk.leftKneeCompressed) {
+            const bytes = new Uint8Array(chunk.leftKneeCompressed);
+            const decompressed = decompressQuaternions(bytes);
+            leftKneeQ = Array.from(decompressed);
+          }
 
-      for (const chunk of sortedChunks) {
-        // Decompress quaternion data
-        let leftKneeQ: number[] = [];
-        let rightKneeQ: number[] = [];
+          if (chunk.rightKneeCompressed) {
+            const bytes = new Uint8Array(chunk.rightKneeCompressed);
+            const decompressed = decompressQuaternions(bytes);
+            rightKneeQ = Array.from(decompressed);
+          }
 
-        if (chunk.leftKneeCompressed) {
-          const bytes = new Uint8Array(chunk.leftKneeCompressed);
-          const decompressed = decompressQuaternions(bytes);
-          leftKneeQ = Array.from(decompressed);
-        }
+          return {
+            sessionId: chunk.sessionId,
+            chunkIndex: chunk.chunkIndex,
+            totalChunks: session.totalChunks,
+            sampleRate: session.sampleRate,
+            sampleCount: chunk.sampleCount,
+            leftKneeQ,
+            rightKneeQ,
+            leftKneeInterpolated: chunk.leftKneeInterpolated,
+            leftKneeMissing: chunk.leftKneeMissing,
+            rightKneeInterpolated: chunk.rightKneeInterpolated,
+            rightKneeMissing: chunk.rightKneeMissing,
+          };
+        });
 
-        if (chunk.rightKneeCompressed) {
-          const bytes = new Uint8Array(chunk.rightKneeCompressed);
-          const decompressed = decompressQuaternions(bytes);
-          rightKneeQ = Array.from(decompressed);
-        }
-
-        // Convert quaternions to angles and append
-        const chunkLeftAngles = quaternionArrayToAngles(leftKneeQ, "y");
-        const chunkRightAngles = quaternionArrayToAngles(rightKneeQ, "y");
-
-        leftAngles.push(...chunkLeftAngles);
-        rightAngles.push(...chunkRightAngles);
-      }
+      // Extract angles
+      const { extractAnglesFromChunks } = await import("./lib/metrics/compute");
+      const { leftAngles, rightAngles } = extractAnglesFromChunks(recordingChunks);
 
       if (leftAngles.length === 0 || rightAngles.length === 0) {
         throw new Error("No angle data available");

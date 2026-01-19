@@ -11,19 +11,8 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useConvex, useQuery, useSyncOptional } from '@/lib/customConvex';
 import { api } from '../../../../convex/_generated/api';
-import {
-  PackedChunkData,
-  AngleSample,
-  UniformSample,
-  mergeChunks,
-  unpack,
-  toAngles,
-} from '../../../../shared/QuaternionCodec';
-import {
-  decompressAllChunks,
-  type CompressedChunk,
-  type SessionMetadata as CompressionSessionMeta,
-} from '../../../../shared/compression/decompressSession';
+import type { AngleSample, UniformSample } from '../../../../shared/QuaternionCodec';
+import { loadSessionData as loadSessionDataCentral } from '@/lib/recording/SessionLoader';
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -106,98 +95,50 @@ export function useRecordingSession(): UseRecordingSessionReturn {
   }, [sessionsQuery]);
 
   const loadSession = useCallback(async (sessionId: string) => {
-    console.log("[loadSession] Starting load for:", sessionId);
     setIsLoadingSession(true);
     setLoadError(null);
     setLoadedSession(null);
 
     try {
-      // Check sync cache first
-      const cacheKey = `recordingChunks:getSessionWithChunks:${JSON.stringify({ sessionId })}`;
-      let result = sync?.getQuery(cacheKey) as { session: any; chunks: any[] } | undefined;
-      const fromCache = !!result;
-
-      // If not cached, fetch from Convex
-      if (!result) {
-        console.log("[loadSession] Fetching from Convex...");
-        result = await convex.query(api.recordingChunks.getSessionWithChunks, { sessionId });
-        // Cache the result
-        if (result && sync) {
-          sync.setQuery(cacheKey, result);
+      // Use centralized SessionLoader
+      const result = await loadSessionDataCentral(
+        convex as unknown as import("convex/browser").ConvexClient,
+        sessionId,
+        {
+          syncCache: sync ? {
+            getQuery: (key) => sync.getQuery(key),
+            setQuery: (key, value) => sync.setQuery(key, value),
+          } : undefined,
         }
-      }
-      console.log("[loadSession] Got result, fromCache:", fromCache, "chunks:", result?.chunks?.length);
+      );
 
-      if (!result || result.chunks.length === 0) {
+      if (!result) {
         throw new Error('Session not found or empty');
       }
 
-      const { session, chunks } = result;
-
-      // Build session metadata for decompression
-      const sessionMeta: CompressionSessionMeta = {
-        sessionId: session.sessionId,
-        sampleRate: session.sampleRate,
-        totalSamples: session.totalSamples,
-        totalChunks: session.totalChunks,
-        activeJoints: session.activeJoints,
-        startTime: session.startTime,
-        endTime: session.endTime,
-      };
-
-      // Decompress all chunks
-      const decompressedChunks = decompressAllChunks(
-        chunks as CompressedChunk[],
-        sessionMeta
-      );
-
-      // Convert to PackedChunkData format
-      const packedChunks: PackedChunkData[] = decompressedChunks.map((chunk) => ({
-        startTime: chunk.startTime,
-        endTime: chunk.endTime,
-        sampleRate: chunk.sampleRate,
-        sampleCount: chunk.sampleCount,
-        activeJoints: chunk.activeJoints,
-        leftKneeQ: chunk.leftKneeQ,
-        rightKneeQ: chunk.rightKneeQ,
-        leftKneeInterpolated: chunk.leftKneeInterpolated,
-        leftKneeMissing: chunk.leftKneeMissing,
-        rightKneeInterpolated: chunk.rightKneeInterpolated,
-        rightKneeMissing: chunk.rightKneeMissing,
-      }));
-
-      // Merge chunks
-      const merged = mergeChunks(packedChunks);
-
-      // Unpack to samples
-      const samples = unpack(merged);
-
-      // Convert to angles
-      const angles = toAngles(samples);
-
-      // Build metadata
+      // Map SessionLoader metadata to hook's SessionMetadata format
       const metadata: SessionMetadata = {
-        sessionId: session.sessionId,
-        owner: null, // Would need separate query
+        sessionId: result.metadata.sessionId,
+        owner: null,
         subject: null,
-        subjectAlias: session.subjectAlias,
-        notes: session.notes,
-        tags: session.tags,
-        activeJoints: session.activeJoints,
-        sampleRate: session.sampleRate,
-        totalChunks: session.totalChunks,
-        startTime: session.startTime,
-        endTime: session.endTime,
-        totalSampleCount: session.totalSamples,
-        durationMs: session.endTime - session.startTime,
-        createdAt: session._creationTime,
-        isArchived: session.isArchived,
+        subjectAlias: result.metadata.subjectAlias,
+        notes: result.metadata.notes,
+        tags: result.metadata.tags,
+        activeJoints: result.metadata.activeJoints,
+        sampleRate: result.metadata.sampleRate,
+        totalChunks: result.metadata.totalChunks,
+        startTime: result.metadata.startTime,
+        endTime: result.metadata.endTime,
+        totalSampleCount: result.metadata.sampleCount,
+        durationMs: result.metadata.durationMs,
+        createdAt: result.metadata.createdAt ?? result.metadata.startTime,
+        isArchived: result.metadata.isArchived,
       };
 
       setLoadedSession({
         metadata,
-        samples,
-        angles,
+        samples: result.samples,
+        angles: result.angles,
       });
       setLoadError(null);
     } catch (error) {

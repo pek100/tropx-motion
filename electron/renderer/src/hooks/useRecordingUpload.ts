@@ -37,6 +37,7 @@ export interface UseRecordingUploadOptions {
   notes?: string;
   tags?: string[];
   activityProfile?: ActivityProfile;
+  cropRange?: { startMs: number; endMs: number };
 }
 
 export interface UseRecordingUploadReturn {
@@ -150,6 +151,7 @@ export function useRecordingUpload(): UseRecordingUploadReturn {
           notes: options.notes,
           tags: options.tags,
           activityProfile: options.activityProfile,
+          cropRange: options.cropRange,
         };
 
         // Use the upload service directly for progress tracking

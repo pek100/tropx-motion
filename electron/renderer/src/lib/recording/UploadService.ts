@@ -21,6 +21,7 @@ import {
   generateSessionId,
   getCompressionStats,
 } from '../../../../../motionProcessing/recording/Chunker';
+import { compressQuaternions } from '../../../../../shared/compression/index';
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -36,6 +37,8 @@ export interface UploadOptions {
   tags?: string[];
   activityProfile?: ActivityProfile;
   targetHz?: number;
+  /** Crop range in ms - if specified, data outside this range is stored separately */
+  cropRange?: { startMs: number; endMs: number };
 }
 
 export interface UploadProgress {
@@ -68,6 +71,53 @@ export interface UploadResult {
 // ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_TARGET_HZ = 100;
+
+// ─────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Compress trimmed samples into a blob for storage.
+ * Combines left and right knee quaternions into a single compressed blob.
+ * Format: [leftQuaternions compressed][rightQuaternions compressed]
+ */
+function compressTrimmedSamples(samples: UniformSample[]): ArrayBuffer | undefined {
+  if (samples.length === 0) return undefined;
+
+  // Extract quaternion values into flat arrays
+  const leftValues: number[] = [];
+  const rightValues: number[] = [];
+
+  for (const s of samples) {
+    if (s.lq) {
+      leftValues.push(s.lq.w, s.lq.x, s.lq.y, s.lq.z);
+    }
+    if (s.rq) {
+      rightValues.push(s.rq.w, s.rq.x, s.rq.y, s.rq.z);
+    }
+  }
+
+  // Compress each leg separately
+  const leftCompressed = leftValues.length > 0 ? compressQuaternions(leftValues) : new Uint8Array(0);
+  const rightCompressed = rightValues.length > 0 ? compressQuaternions(rightValues) : new Uint8Array(0);
+
+  // Combine into single blob with length headers
+  // Format: [leftLength:4][leftData][rightLength:4][rightData]
+  const totalLength = 4 + leftCompressed.length + 4 + rightCompressed.length;
+  const combined = new Uint8Array(totalLength);
+  const view = new DataView(combined.buffer);
+
+  let offset = 0;
+  view.setUint32(offset, leftCompressed.length, true);
+  offset += 4;
+  combined.set(leftCompressed, offset);
+  offset += leftCompressed.length;
+  view.setUint32(offset, rightCompressed.length, true);
+  offset += 4;
+  combined.set(rightCompressed, offset);
+
+  return combined.buffer;
+}
 
 // ─────────────────────────────────────────────────────────────────
 // Upload Service
@@ -132,13 +182,71 @@ export class UploadService {
       console.log(`[UploadService] Processed ${rawSamples.length} raw → ${alignedSamples.length} samples at ${targetHz}Hz`);
 
       // Convert to UniformSample format for Chunker
-      const uniformSamples: UniformSample[] = alignedSamples.map(s => ({
+      let uniformSamples: UniformSample[] = alignedSamples.map(s => ({
         t: s.t,
         lq: s.lq,
         rq: s.rq,
         leftFlag: s.lq ? SampleFlag.REAL : SampleFlag.MISSING,
         rightFlag: s.rq ? SampleFlag.REAL : SampleFlag.MISSING,
       }));
+
+      // Apply crop if specified - slice samples and compress trimmed portions
+      let trimmedStartBlob: ArrayBuffer | undefined;
+      let trimmedEndBlob: ArrayBuffer | undefined;
+      let originalDurationMs: number | undefined;
+      let originalSampleCount: number | undefined;
+
+      if (options.cropRange && uniformSamples.length > 0) {
+        const { startMs, endMs } = options.cropRange;
+        const firstSampleTime = uniformSamples[0].t;
+        const lastSampleTime = uniformSamples[uniformSamples.length - 1].t;
+
+        // Store original metrics before cropping
+        originalDurationMs = lastSampleTime - firstSampleTime;
+        originalSampleCount = uniformSamples.length;
+
+        // Find crop indices based on relative time
+        const cropStartIndex = uniformSamples.findIndex(s => (s.t - firstSampleTime) >= startMs);
+        const cropEndIndex = uniformSamples.findIndex(s => (s.t - firstSampleTime) > endMs);
+
+        // Handle edge cases
+        const startIdx = cropStartIndex === -1 ? 0 : cropStartIndex;
+        const endIdx = cropEndIndex === -1 ? uniformSamples.length : cropEndIndex;
+
+        // Extract and compress trimmed portions
+        const trimmedStart = uniformSamples.slice(0, startIdx);
+        const trimmedEnd = uniformSamples.slice(endIdx);
+
+        if (trimmedStart.length > 0) {
+          trimmedStartBlob = compressTrimmedSamples(trimmedStart);
+          console.log(`[UploadService] Trimmed ${trimmedStart.length} samples from start`);
+        }
+        if (trimmedEnd.length > 0) {
+          trimmedEndBlob = compressTrimmedSamples(trimmedEnd);
+          console.log(`[UploadService] Trimmed ${trimmedEnd.length} samples from end`);
+        }
+
+        // Keep only cropped portion
+        uniformSamples = uniformSamples.slice(startIdx, endIdx);
+
+        // Rebase timestamps to start at 0
+        if (uniformSamples.length > 0) {
+          const newFirstTime = uniformSamples[0].t;
+          uniformSamples = uniformSamples.map(s => ({
+            ...s,
+            t: s.t - newFirstTime,
+          }));
+        }
+
+        console.log(`[UploadService] Cropped: ${originalSampleCount} → ${uniformSamples.length} samples`);
+
+        if (uniformSamples.length === 0) {
+          return {
+            success: false,
+            error: 'Crop range contains no samples',
+          };
+        }
+      }
 
       // Phase 2: Compress and chunk
       onProgress?.({
@@ -190,6 +298,11 @@ export class UploadService {
         subjectId: options.subjectId,
         subjectAlias: options.subjectAlias,
         activityProfile: options.activityProfile,
+        // Crop: trimmed data stored separately for potential recovery
+        trimmedStartBlob,
+        trimmedEndBlob,
+        originalDurationMs,
+        originalSampleCount,
       });
 
       // Phase 4: Upload compressed chunks

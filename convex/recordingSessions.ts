@@ -34,6 +34,12 @@ export const createSession = mutation({
     subjectAlias: v.optional(v.string()),
     activityProfile: v.optional(v.string()),
 
+    // Crop: Trimmed data for recovery (already compressed)
+    trimmedStartBlob: v.optional(v.bytes()),
+    trimmedEndBlob: v.optional(v.bytes()),
+    originalDurationMs: v.optional(v.number()),
+    originalSampleCount: v.optional(v.number()),
+
     // LWW timestamp (from useMutation)
     modifiedAt: v.optional(v.number()),
   },
@@ -79,6 +85,10 @@ export const createSession = mutation({
       notes: args.notes,
       tags: args.tags,
       activityProfile: args.activityProfile as any,
+      trimmedStartBlob: args.trimmedStartBlob,
+      trimmedEndBlob: args.trimmedEndBlob,
+      originalDurationMs: args.originalDurationMs,
+      originalSampleCount: args.originalSampleCount,
       metricsStatus: METRIC_STATUS.PENDING,
       modifiedAt: args.modifiedAt ?? Date.now(),
     });
@@ -152,6 +162,9 @@ export const getSession = query({
       isArchived: session.isArchived,
       activityProfile: session.activityProfile,
       subjectNotes: session.subjectNotes,
+      // Crop info: if trimmed blobs exist, session was cropped
+      isCropped: !!(session.trimmedStartBlob || session.trimmedEndBlob),
+      originalDurationMs: session.originalDurationMs,
     };
   },
 });
@@ -515,7 +528,7 @@ export const getDistinctSubjects = query({
 // Session Updates
 // ─────────────────────────────────────────────────────────────────
 
-// Editable fields for diff tracking
+// Editable fields for diff tracking (crop cannot be edited after save)
 const EDITABLE_FIELDS = ["title", "notes", "tags", "subjectId", "subjectAlias"] as const;
 
 // Helper to compute diffs between old and new values

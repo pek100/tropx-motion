@@ -66,8 +66,12 @@ export interface RecordingChunk {
 // Data Extraction
 // ─────────────────────────────────────────────────────────────────
 
-/** Extract angles from recording chunks and combine into full session. */
-export function extractAnglesFromChunks(chunks: RecordingChunk[]): {
+/** Extract angles from recording chunks and combine into full session.
+ * @param chunks - Recording chunks to extract angles from
+ */
+export function extractAnglesFromChunks(
+  chunks: RecordingChunk[]
+): {
   leftAngles: number[];
   rightAngles: number[];
   sampleRate: number;
@@ -79,8 +83,8 @@ export function extractAnglesFromChunks(chunks: RecordingChunk[]): {
   // Sort chunks by index
   const sorted = [...chunks].sort((a, b) => a.chunkIndex - b.chunkIndex);
 
-  const leftAngles: number[] = [];
-  const rightAngles: number[] = [];
+  let leftAngles: number[] = [];
+  let rightAngles: number[] = [];
   const leftInterpolatedIndices = new Set<number>();
   const rightInterpolatedIndices = new Set<number>();
   const leftMissingIndices = new Set<number>();
@@ -132,7 +136,11 @@ export function extractAnglesFromChunks(chunks: RecordingChunk[]): {
 // Main Computation Pipeline
 // ─────────────────────────────────────────────────────────────────
 
-/** Compute all metrics for a recording session. */
+/** Compute all metrics for a recording session.
+ * @param chunks - Recording chunks to compute metrics from
+ * @param sessionId - Session identifier
+ * @param activityProfile - Activity profile for OPI scoring
+ */
 export function computeAllMetrics(
   chunks: RecordingChunk[],
   sessionId: string,

@@ -37,6 +37,8 @@ import {
   ChevronRight,
   Activity,
   Sparkles,
+  Scissors,
+  Pencil,
 } from 'lucide-react';
 import { cn, formatDuration, formatDateTime } from '@/lib/utils';
 import { isWeb } from '@/lib/platform';
@@ -48,7 +50,9 @@ import { InterpolationService } from '../../../../motionProcessing/recording/Int
 import { detectActivityProfile } from '../../../../shared/classification';
 import { Id } from '../../../../convex/_generated/dataModel';
 import { TagsInput } from './TagsInput';
+import { CropModal, CropRange } from './CropModal';
 import { PatientSearchModal } from './PatientSearchModal';
+import { detectAutoCrop } from '../lib/recording/AutoCropService';
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -114,8 +118,41 @@ const hasBackendAPI = (): boolean => {
 /**
  * Mini chart component for recording preview.
  * Renders downsampled angle data as a sparkline using the shared quaternionToAngle codec.
+ * Supports crop overlay and hover crop button.
  */
-function MiniRecordingChart({ samples }: { samples: QuaternionSample[] }) {
+function MiniRecordingChart({
+  samples,
+  durationMs,
+  cropRange,
+  onCropClick,
+}: {
+  samples: QuaternionSample[];
+  durationMs?: number;
+  cropRange?: CropRange | null;
+  onCropClick?: () => void;
+}) {
+  const [isHovered, setIsHovered] = useState(false);
+  const [showHint, setShowHint] = useState(true);
+  const hintDismissedRef = useRef(false);
+
+  // Hide hint after 1.5 seconds (only once)
+  useEffect(() => {
+    if (onCropClick && !hintDismissedRef.current) {
+      const timer = setTimeout(() => {
+        setShowHint(false);
+        hintDismissedRef.current = true;
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [onCropClick]);
+
+  // Hide hint permanently on first hover
+  const handleMouseEnter = () => {
+    setIsHovered(true);
+    setShowHint(false);
+    hintDismissedRef.current = true;
+  };
+
   // Downsample to ~50 points for performance
   const targetPoints = 50;
   const step = Math.max(1, Math.floor(samples.length / targetPoints));
@@ -172,7 +209,16 @@ function MiniRecordingChart({ samples }: { samples: QuaternionSample[] }) {
   };
 
   return (
-    <div className="h-14 bg-[var(--tropx-muted)] rounded-lg border border-[var(--tropx-border)] overflow-hidden">
+    <div
+      className={cn(
+        "relative h-14 bg-[var(--tropx-muted)] rounded-lg border overflow-hidden transition-colors",
+        isHovered && onCropClick
+          ? "border-[var(--tropx-vibrant)]"
+          : "border-[var(--tropx-border)]"
+      )}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
         {/* Grid line at center */}
         <line x1={padding} y1={height/2} x2={width-padding} y2={height/2} stroke="var(--tropx-border)" strokeWidth="0.5" />
@@ -181,6 +227,58 @@ function MiniRecordingChart({ samples }: { samples: QuaternionSample[] }) {
         {/* Right knee (coral/red) */}
         {createPath(points.map(p => p.right), 'var(--leg-right-band)')}
       </svg>
+
+      {/* Red overlay for cropped/excluded regions */}
+      {cropRange && durationMs && (
+        <>
+          <div
+            className="absolute left-0 top-0 bottom-0 bg-red-500/30 pointer-events-none"
+            style={{ width: `${(cropRange.startMs / durationMs) * 100}%` }}
+          />
+          <div
+            className="absolute right-0 top-0 bottom-0 bg-red-500/30 pointer-events-none"
+            style={{ width: `${100 - (cropRange.endMs / durationMs) * 100}%` }}
+          />
+        </>
+      )}
+
+      {/* Hover overlay with edit button */}
+      {isHovered && onCropClick && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onCropClick(); }}
+          className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--tropx-dark)]/50 backdrop-blur-[2px] rounded-lg cursor-pointer"
+        >
+          <Scissors className="size-4 text-[var(--tropx-vibrant)]" />
+        </button>
+      )}
+
+      {/* Cropped indicator badge */}
+      {cropRange && (
+        <span className="absolute bottom-1 left-1 z-10 px-1.5 py-0.5 text-[9px] font-medium bg-[var(--tropx-card)] text-red-500 rounded">
+          Cropped
+        </span>
+      )}
+
+      {/* Hover to edit hint - fades out over 1.5s */}
+      {showHint && onCropClick && !isHovered && (
+        <div
+          className="absolute inset-0 z-5 flex items-center justify-center pointer-events-none"
+          style={{
+            animation: 'fadeOut 1.5s ease-out forwards',
+          }}
+        >
+          <span className="text-[11px] font-medium px-2 py-1 rounded text-black dark:text-white bg-white/70 dark:bg-black/50 backdrop-blur-sm">
+            Hover to edit
+          </span>
+        </div>
+      )}
+      <style>{`
+        @keyframes fadeOut {
+          0% { opacity: 1; }
+          70% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -348,17 +446,101 @@ export function SaveModal({
   sessionId,
   onEditSuccess,
 }: SaveModalProps) {
+  // Persisted form state (survives component remounts for same recording)
+  const STORAGE_KEY = 'tropx-save-modal-state';
+
+  interface PersistedState {
+    recordingHash: string; // Hash to detect if recording data changed
+    notes: string;
+    tags: string[];
+    activityProfile: ActivityProfile;
+    isProfileAutoDetected: boolean;
+    cropRange: CropRange | null;
+    hasRunAutoCrop: boolean;
+  }
+
+  // Generate a simple hash from recording data (sample count + duration + first/last timestamps)
+  const generateRecordingHash = useCallback((samples: QuaternionSample[], durationMs: number): string => {
+    if (samples.length === 0) return '';
+    const first = samples[0];
+    const last = samples[samples.length - 1];
+    // Include sample count, duration, and some sample data for uniqueness
+    const hashInput = `${samples.length}-${durationMs}-${first.lq?.w ?? 0}-${last.lq?.w ?? 0}`;
+    // Simple hash function
+    let hash = 0;
+    for (let i = 0; i < hashInput.length; i++) {
+      const char = hashInput.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return hash.toString(36);
+  }, []);
+
+  const loadPersistedState = useCallback((): PersistedState | null => {
+    try {
+      const saved = sessionStorage.getItem(STORAGE_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const savePersistedState = useCallback((state: Partial<PersistedState>) => {
+    const current = loadPersistedState() || {
+      recordingHash: '',
+      notes: '',
+      tags: [],
+      activityProfile: 'general' as ActivityProfile,
+      isProfileAutoDetected: false,
+      cropRange: null,
+      hasRunAutoCrop: false,
+    };
+    const updated = { ...current, ...state };
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  }, [loadPersistedState]);
+
+  const clearPersistedState = useCallback(() => {
+    sessionStorage.removeItem(STORAGE_KEY);
+  }, []);
+
+  // Initialize state from sessionStorage (will validate hash when recording loads)
+  const initialState = loadPersistedState();
+
   // State
   const [recordingInfo, setRecordingInfo] = useState<RecordingInfo | null>(null);
   const [isLoadingInfo, setIsLoadingInfo] = useState(false);
-  const [notes, setNotes] = useState('');
-  const [tags, setTags] = useState<string[]>([]);
-  const [activityProfile, setActivityProfile] = useState<ActivityProfile>('general');
-  const [isProfileAutoDetected, setIsProfileAutoDetected] = useState(false);
+  const [notes, setNotesState] = useState(initialState?.notes || '');
+  const [tags, setTagsState] = useState<string[]>(initialState?.tags || []);
+  const [activityProfile, setActivityProfileState] = useState<ActivityProfile>(initialState?.activityProfile || 'general');
+  const [isProfileAutoDetected, setIsProfileAutoDetected] = useState(initialState?.isProfileAutoDetected || false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isPatientSearchOpen, setIsPatientSearchOpen] = useState(false);
+  const [isCropModalOpen, setIsCropModalOpen] = useState(false);
+  const [cropRange, setCropRangeState] = useState<CropRange | null>(initialState?.cropRange || null);
+
+  // Wrapped setters that also persist to sessionStorage
+  const setNotes = useCallback((value: string) => {
+    setNotesState(value);
+    savePersistedState({ notes: value });
+  }, [savePersistedState]);
+
+  const setTags = useCallback((value: string[]) => {
+    setTagsState(value);
+    savePersistedState({ tags: value });
+  }, [savePersistedState]);
+
+  const setActivityProfile = useCallback((value: ActivityProfile, autoDetected: boolean = false) => {
+    setActivityProfileState(value);
+    setIsProfileAutoDetected(autoDetected);
+    savePersistedState({ activityProfile: value, isProfileAutoDetected: autoDetected });
+  }, [savePersistedState]);
+
+  const setCropRange = useCallback((range: CropRange | null) => {
+    setCropRangeState(range);
+    savePersistedState({ cropRange: range });
+  }, [savePersistedState]);
 
   // Upload hook (for save mode)
   const {
@@ -435,10 +617,38 @@ export function SaveModal({
               samples: alignedSamples,
             });
 
-            // Auto-detect activity profile from movement classification
-            const { profile } = detectActivityProfile(alignedSamples);
-            setActivityProfile(profile);
-            setIsProfileAutoDetected(true);
+            // Generate hash to detect if recording changed
+            const currentHash = generateRecordingHash(alignedSamples, actualDuration);
+            const persisted = loadPersistedState();
+
+            // Check if this is the same recording
+            if (persisted && persisted.recordingHash === currentHash) {
+              // Same recording - restore persisted state (already initialized from sessionStorage)
+              // Just skip auto-detection since values are already set
+              console.log('[SaveModal] Restored persisted state for same recording');
+            } else {
+              // Different recording or no persisted state - run auto-detection
+              clearPersistedState();
+
+              // Auto-detect activity profile
+              const { profile } = detectActivityProfile(alignedSamples);
+              setActivityProfile(profile, true);
+
+              // Auto-detect crop boundaries
+              const autoCropResult = detectAutoCrop(alignedSamples, actualDuration);
+              if (autoCropResult.detected) {
+                setCropRange({
+                  startMs: autoCropResult.startMs,
+                  endMs: autoCropResult.endMs,
+                });
+              }
+
+              // Save the hash so we know this recording has been processed
+              savePersistedState({
+                recordingHash: currentHash,
+                hasRunAutoCrop: true,
+              });
+            }
           }
         } else {
           // Fallback to state if no samples
@@ -458,28 +668,34 @@ export function SaveModal({
     };
 
     loadInfo();
-  }, [open, mode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mode, generateRecordingHash, loadPersistedState, savePersistedState, clearPersistedState, setActivityProfile, setCropRange]);
 
   // Pre-fill form for edit mode
   useEffect(() => {
-    if (mode === 'edit' && sessionData) {
-      setNotes(sessionData.notes ?? '');
-      setTags(sessionData.tags ?? []);
+    if (open && mode === 'edit' && sessionData) {
+      setNotesState(sessionData.notes ?? '');
+      setTagsState(sessionData.tags ?? []);
+      // Crop editing is disabled - cropped data is now physically stored
     }
-  }, [mode, sessionData]);
+  }, [open, mode, sessionData]);
 
   // Reset state when modal closes
   useEffect(() => {
     if (!open) {
-      setNotes('');
-      setTags([]);
-      setActivityProfile('general');
+      setNotesState('');
+      setTagsState([]);
+      setActivityProfileState('general');
       setIsProfileAutoDetected(false);
       setSaveError(null);
       setSaveSuccess(false);
       setIsPatientSearchOpen(false);
+      setCropRangeState(null);
+      setIsCropModalOpen(false);
+      // Clear persisted state for next recording
+      clearPersistedState();
     }
-  }, [open]);
+  }, [open, clearPersistedState]);
 
   // Handle save (new recording)
   const handleSave = useCallback(async () => {
@@ -503,6 +719,7 @@ export function SaveModal({
         notes: notes || undefined,
         tags: tags.length > 0 ? tags : undefined,
         activityProfile,
+        cropRange: cropRange || undefined,
       };
 
       const result = await upload(rawSamples, options);
@@ -518,7 +735,7 @@ export function SaveModal({
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed');
     }
-  }, [mode, notes, tags, recordingTitle, activityProfile, selectedPatientId, selectedPatientName, upload, syncUserTags, onOpenChange]);
+  }, [mode, notes, tags, recordingTitle, activityProfile, selectedPatientId, selectedPatientName, cropRange, upload, syncUserTags, onOpenChange]);
 
   // Handle edit (update existing)
   const handleEdit = useCallback(async () => {
@@ -532,6 +749,7 @@ export function SaveModal({
         sessionId,
         notes: notes || undefined,
         tags: tags.length > 0 ? tags : undefined,
+        // Crop editing is disabled - cropped data is physically stored at save time
       });
 
       // Sync user tags for autocomplete history
@@ -598,7 +816,7 @@ export function SaveModal({
             )}
             onPointerDownOutside={(e) => {
               // Don't close if clicking within the side-by-side container area
-              if (isPatientSearchOpen) {
+              if (isPatientSearchOpen || isCropModalOpen) {
                 e.preventDefault();
               } else {
                 handleClose();
@@ -678,12 +896,29 @@ export function SaveModal({
                     </span>
                   </div>
                 </div>
+                {/* Crop indicator in edit mode (read-only) */}
+                {sessionData.isCropped && (
+                  <div className="mt-2 pt-2 border-t border-[var(--tropx-border)] flex items-center gap-2 text-sm">
+                    <Scissors className="size-3.5 text-[var(--tropx-vibrant)]" />
+                    <span className="text-[var(--tropx-shadow)]">Cropped</span>
+                    {sessionData.originalDurationMs && (
+                      <span className="text-[var(--tropx-text-sub)]">
+                        (was {formatDuration(sessionData.originalDurationMs)})
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
             {/* Mini Chart Preview */}
             {mode === 'save' && recordingInfo && recordingInfo.samples && recordingInfo.samples.length > 0 && (
-              <MiniRecordingChart samples={recordingInfo.samples} />
+              <MiniRecordingChart
+                samples={recordingInfo.samples}
+                durationMs={recordingInfo.durationMs}
+                cropRange={cropRange}
+                onCropClick={() => setIsCropModalOpen(true)}
+              />
             )}
 
             {/* Activity Profile Selector */}
@@ -1001,6 +1236,26 @@ export function SaveModal({
                   setIsPatientSearchOpen(false);
                 }}
                 selectedPatientId={selectedPatientId}
+                embedded
+              />
+            </div>
+          )}
+
+          {/* CropModal rendered beside SaveModal (embedded mode) */}
+          {isCropModalOpen && mode === 'save' && recordingInfo?.samples && (
+            <div
+              className={cn(
+                'h-fit pointer-events-auto',
+                'animate-[modal-bubble-in_0.15s_var(--spring-bounce)_forwards]'
+              )}
+            >
+              <CropModal
+                open={isCropModalOpen}
+                onOpenChange={setIsCropModalOpen}
+                samples={recordingInfo.samples}
+                durationMs={recordingInfo.durationMs}
+                cropRange={cropRange}
+                onCropChange={setCropRange}
                 embedded
               />
             </div>
