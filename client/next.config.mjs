@@ -9,6 +9,8 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Transpile convex packages for proper bundling
+  transpilePackages: ['convex', '@convex-dev/auth'],
 }
 
 export default nextConfig

@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useAuthActions } from "@convex-dev/auth/react";
-import { useConvexAuth, useAction } from "@/lib/customConvex";
-import { api } from "../../../../../convex/_generated/api";
+import { useConvexAuth, useAction } from "convex/react";
+import { api } from "@convex/_generated/api";
 import { setOAuthInProgress, shouldSkipStaleTokenCheck } from "@/lib/auth/oauthState";
 
 const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';
@@ -125,9 +125,6 @@ export function AutoSignIn() {
       window.history.replaceState({}, '', url.toString());
     } else if (pendingElectronAuth) {
       // Returning from OAuth redirect - restore state from localStorage
-      // Note: The Electron OAuth flow uses the system browser, so isElectron()
-      // will be false here. We still need to restore the state to complete
-      // the callback to the Electron app.
       setIsElectronAuth(true);
       if (storedCallbackUrl) {
         setCallbackUrl(storedCallbackUrl);
@@ -253,8 +250,8 @@ export function AutoSignIn() {
 
 
   // Check localStorage as fallback for render conditions
-  const pendingElectronAuthForRender = localStorage.getItem(ELECTRON_AUTH_KEY) === 'true';
-  const storedCallbackUrlForRender = localStorage.getItem(ELECTRON_CALLBACK_URL_KEY);
+  const pendingElectronAuthForRender = typeof window !== 'undefined' && localStorage.getItem(ELECTRON_AUTH_KEY) === 'true';
+  const storedCallbackUrlForRender = typeof window !== 'undefined' && localStorage.getItem(ELECTRON_CALLBACK_URL_KEY);
   const effectiveIsElectronAuthForRender = isElectronAuth || pendingElectronAuthForRender;
   const effectiveCallbackUrlForRender = callbackUrl || storedCallbackUrlForRender;
 
@@ -263,24 +260,24 @@ export function AutoSignIn() {
     // If we have a callback URL, show redirecting message
     if (effectiveCallbackUrlForRender) {
       return (
-        <div className="fixed inset-0 bg-[var(--tropx-bg)] flex items-center justify-center z-[9999]">
+        <div className="fixed inset-0 bg-[#fff6f3] flex items-center justify-center z-[9999]">
           <div className="text-center p-8 max-w-md">
             {/* Success Icon */}
-            <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-              <svg className="w-10 h-10 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-green-100 flex items-center justify-center">
+              <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             </div>
 
-            <h1 className="text-2xl font-semibold text-[var(--tropx-text-main)] mb-3">
+            <h1 className="text-2xl font-semibold text-gray-900 mb-3">
               Sign-in Successful!
             </h1>
-            <p className="text-[var(--tropx-text-sub)] mb-4">
+            <p className="text-gray-600 mb-4">
               Returning to TropX Motion...
             </p>
 
             {/* Spinner */}
-            <div className="w-6 h-6 mx-auto rounded-full animate-spin border-2 border-[var(--tropx-border)] border-t-[var(--tropx-vibrant)]" />
+            <div className="w-6 h-6 mx-auto rounded-full animate-spin border-2 border-gray-300 border-t-[#ff4d35]" />
           </div>
         </div>
       );
@@ -288,19 +285,19 @@ export function AutoSignIn() {
 
     // No callback URL - show manual return button (fallback)
     return (
-      <div className="fixed inset-0 bg-[var(--tropx-bg)] flex items-center justify-center z-[9999]">
+      <div className="fixed inset-0 bg-[#fff6f3] flex items-center justify-center z-[9999]">
         <div className="text-center p-8 max-w-md">
           {/* Success Icon */}
-          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-            <svg className="w-10 h-10 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-green-100 flex items-center justify-center">
+            <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
           </div>
 
-          <h1 className="text-2xl font-semibold text-[var(--tropx-text-main)] mb-3">
+          <h1 className="text-2xl font-semibold text-gray-900 mb-3">
             Sign-in Successful!
           </h1>
-          <p className="text-[var(--tropx-text-sub)] mb-4">
+          <p className="text-gray-600 mb-4">
             You can close this tab and return to TropX Motion.
           </p>
         </div>
@@ -319,22 +316,22 @@ export function AutoSignIn() {
     }
 
     return (
-      <div className="fixed inset-0 bg-[var(--tropx-bg)] flex items-center justify-center z-[9999]">
+      <div className="fixed inset-0 bg-[#fff6f3] flex items-center justify-center z-[9999]">
         <div className="text-center p-8 max-w-md">
           {/* Error Icon */}
-          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-            <svg className="w-10 h-10 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-red-100 flex items-center justify-center">
+            <svg className="w-10 h-10 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </div>
 
-          <h1 className="text-2xl font-semibold text-[var(--tropx-text-main)] mb-3">
+          <h1 className="text-2xl font-semibold text-gray-900 mb-3">
             Sign-in Failed
           </h1>
-          <p className="text-[var(--tropx-text-sub)] mb-4">
+          <p className="text-gray-600 mb-4">
             {authError}
           </p>
-          <p className="text-sm text-[var(--tropx-shadow)]">
+          <p className="text-sm text-gray-500">
             You can close this tab and try again.
           </p>
         </div>
@@ -345,7 +342,7 @@ export function AutoSignIn() {
   // Show loading screen for Electron auth while processing
   if (effectiveIsElectronAuthForRender && isLoading) {
     return (
-      <div className="fixed inset-0 bg-[var(--tropx-bg)] flex items-center justify-center z-[9999]">
+      <div className="fixed inset-0 bg-[#fff6f3] flex items-center justify-center z-[9999]">
         <div className="text-center p-8">
           {/* TropX Logo */}
           <svg
@@ -354,18 +351,18 @@ export function AutoSignIn() {
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
           >
-            <path d="M536.573 188.5C480.508 217.268 427.514 275.625 441.339 293.707C458.235 315.077 528.125 283.844 583.423 229.597C645.632 167.952 620.288 146.582 536.573 188.5Z" fill="var(--tropx-vibrant)"/>
-            <path d="M753.405 396.365C627.93 499.319 494.412 599.86 487.977 595.838C484.76 594.229 480.738 549.187 478.325 497.71C471.89 367.409 452.587 326.388 397.892 326.388C348.828 326.388 279.656 410.038 191.985 575.73C116.378 718.9 98.6828 808.18 138.899 840.353C150.964 850.005 167.051 857.244 175.898 857.244C199.224 857.244 260.352 823.462 326.307 773.594L385.023 729.356L406.74 771.181C452.587 862.874 525.78 873.331 658.494 807.376C699.515 786.463 771.904 739.812 818.555 702.813C899.792 640.076 986.66 563.665 986.66 555.622C986.66 553.209 960.117 570.099 927.14 591.816C817.751 665.814 673.777 728.552 615.061 728.552C583.692 728.552 534.628 701.205 515.324 673.053L496.02 644.098L537.845 607.903C675.385 490.471 853.141 327.193 848.315 322.367C847.511 320.758 804.078 353.736 753.405 396.365ZM389.849 566.882C396.284 603.077 398.697 637.663 396.284 644.098C393.871 650.532 375.371 664.206 355.263 673.858C321.481 690.748 316.655 690.748 296.547 679.488C265.983 662.597 262.765 616.75 289.308 576.534C316.655 535.513 359.285 493.688 370.545 497.71C375.371 499.319 384.219 529.883 389.849 566.882Z" fill="var(--tropx-vibrant)"/>
+            <path d="M536.573 188.5C480.508 217.268 427.514 275.625 441.339 293.707C458.235 315.077 528.125 283.844 583.423 229.597C645.632 167.952 620.288 146.582 536.573 188.5Z" fill="#ff4d35"/>
+            <path d="M753.405 396.365C627.93 499.319 494.412 599.86 487.977 595.838C484.76 594.229 480.738 549.187 478.325 497.71C471.89 367.409 452.587 326.388 397.892 326.388C348.828 326.388 279.656 410.038 191.985 575.73C116.378 718.9 98.6828 808.18 138.899 840.353C150.964 850.005 167.051 857.244 175.898 857.244C199.224 857.244 260.352 823.462 326.307 773.594L385.023 729.356L406.74 771.181C452.587 862.874 525.78 873.331 658.494 807.376C699.515 786.463 771.904 739.812 818.555 702.813C899.792 640.076 986.66 563.665 986.66 555.622C986.66 553.209 960.117 570.099 927.14 591.816C817.751 665.814 673.777 728.552 615.061 728.552C583.692 728.552 534.628 701.205 515.324 673.053L496.02 644.098L537.845 607.903C675.385 490.471 853.141 327.193 848.315 322.367C847.511 320.758 804.078 353.736 753.405 396.365ZM389.849 566.882C396.284 603.077 398.697 637.663 396.284 644.098C393.871 650.532 375.371 664.206 355.263 673.858C321.481 690.748 316.655 690.748 296.547 679.488C265.983 662.597 262.765 616.75 289.308 576.534C316.655 535.513 359.285 493.688 370.545 497.71C375.371 499.319 384.219 529.883 389.849 566.882Z" fill="#ff4d35"/>
           </svg>
 
           {/* Spinner */}
-          <div className="w-8 h-8 mx-auto mb-5 rounded-full animate-spin border-3 border-[var(--tropx-hover)] border-t-[var(--tropx-vibrant)]" />
+          <div className="w-8 h-8 mx-auto mb-5 rounded-full animate-spin border-[3px] border-gray-200 border-t-[#ff4d35]" />
 
           {/* Text */}
-          <h1 className="text-xl font-semibold text-[var(--tropx-text-main)] mb-2">
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">
             Completing sign-in...
           </h1>
-          <p className="text-sm text-[var(--tropx-text-sub)]">
+          <p className="text-sm text-gray-600">
             Please wait
           </p>
         </div>
@@ -376,7 +373,7 @@ export function AutoSignIn() {
   // Show loading screen while redirecting to Google
   if (isAutoSignIn) {
     return (
-      <div className="fixed inset-0 bg-[var(--tropx-bg)] flex items-center justify-center z-[9999]">
+      <div className="fixed inset-0 bg-[#fff6f3] flex items-center justify-center z-[9999]">
         <div className="text-center p-8">
           {/* TropX Logo */}
           <svg
@@ -385,18 +382,18 @@ export function AutoSignIn() {
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
           >
-            <path d="M536.573 188.5C480.508 217.268 427.514 275.625 441.339 293.707C458.235 315.077 528.125 283.844 583.423 229.597C645.632 167.952 620.288 146.582 536.573 188.5Z" fill="var(--tropx-vibrant)"/>
-            <path d="M753.405 396.365C627.93 499.319 494.412 599.86 487.977 595.838C484.76 594.229 480.738 549.187 478.325 497.71C471.89 367.409 452.587 326.388 397.892 326.388C348.828 326.388 279.656 410.038 191.985 575.73C116.378 718.9 98.6828 808.18 138.899 840.353C150.964 850.005 167.051 857.244 175.898 857.244C199.224 857.244 260.352 823.462 326.307 773.594L385.023 729.356L406.74 771.181C452.587 862.874 525.78 873.331 658.494 807.376C699.515 786.463 771.904 739.812 818.555 702.813C899.792 640.076 986.66 563.665 986.66 555.622C986.66 553.209 960.117 570.099 927.14 591.816C817.751 665.814 673.777 728.552 615.061 728.552C583.692 728.552 534.628 701.205 515.324 673.053L496.02 644.098L537.845 607.903C675.385 490.471 853.141 327.193 848.315 322.367C847.511 320.758 804.078 353.736 753.405 396.365ZM389.849 566.882C396.284 603.077 398.697 637.663 396.284 644.098C393.871 650.532 375.371 664.206 355.263 673.858C321.481 690.748 316.655 690.748 296.547 679.488C265.983 662.597 262.765 616.75 289.308 576.534C316.655 535.513 359.285 493.688 370.545 497.71C375.371 499.319 384.219 529.883 389.849 566.882Z" fill="var(--tropx-vibrant)"/>
+            <path d="M536.573 188.5C480.508 217.268 427.514 275.625 441.339 293.707C458.235 315.077 528.125 283.844 583.423 229.597C645.632 167.952 620.288 146.582 536.573 188.5Z" fill="#ff4d35"/>
+            <path d="M753.405 396.365C627.93 499.319 494.412 599.86 487.977 595.838C484.76 594.229 480.738 549.187 478.325 497.71C471.89 367.409 452.587 326.388 397.892 326.388C348.828 326.388 279.656 410.038 191.985 575.73C116.378 718.9 98.6828 808.18 138.899 840.353C150.964 850.005 167.051 857.244 175.898 857.244C199.224 857.244 260.352 823.462 326.307 773.594L385.023 729.356L406.74 771.181C452.587 862.874 525.78 873.331 658.494 807.376C699.515 786.463 771.904 739.812 818.555 702.813C899.792 640.076 986.66 563.665 986.66 555.622C986.66 553.209 960.117 570.099 927.14 591.816C817.751 665.814 673.777 728.552 615.061 728.552C583.692 728.552 534.628 701.205 515.324 673.053L496.02 644.098L537.845 607.903C675.385 490.471 853.141 327.193 848.315 322.367C847.511 320.758 804.078 353.736 753.405 396.365ZM389.849 566.882C396.284 603.077 398.697 637.663 396.284 644.098C393.871 650.532 375.371 664.206 355.263 673.858C321.481 690.748 316.655 690.748 296.547 679.488C265.983 662.597 262.765 616.75 289.308 576.534C316.655 535.513 359.285 493.688 370.545 497.71C375.371 499.319 384.219 529.883 389.849 566.882Z" fill="#ff4d35"/>
           </svg>
 
           {/* Spinner */}
-          <div className="w-8 h-8 mx-auto mb-5 rounded-full animate-spin border-3 border-[var(--tropx-hover)] border-t-[var(--tropx-vibrant)]" />
+          <div className="w-8 h-8 mx-auto mb-5 rounded-full animate-spin border-[3px] border-gray-200 border-t-[#ff4d35]" />
 
           {/* Text */}
-          <h1 className="text-xl font-semibold text-[var(--tropx-text-main)] mb-2">
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">
             Signing in to TropX
           </h1>
-          <p className="text-sm text-[var(--tropx-text-sub)]">
+          <p className="text-sm text-gray-600">
             Redirecting to Google...
           </p>
         </div>

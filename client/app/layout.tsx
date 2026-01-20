@@ -5,12 +5,13 @@ import { GeistMono } from "geist/font/mono"
 import { Analytics } from "@vercel/analytics/next"
 import { Toaster } from "@/components/ui/toaster"
 import { Suspense } from "react"
+import { ConvexClientProvider } from "@/lib/convex/ConvexClientProvider"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "v0 App",
-  description: "Created with v0",
-  generator: "v0.app",
+  title: "TropX Motion",
+  description: "Motion tracking and analysis platform",
+  generator: "TropX",
 }
 
 export default function RootLayout({
@@ -21,11 +22,13 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
-        <Suspense fallback={null}>
-          {children}
-          <Analytics />
-          <Toaster />
-        </Suspense>
+        <ConvexClientProvider>
+          <Suspense fallback={null}>
+            {children}
+            <Analytics />
+            <Toaster />
+          </Suspense>
+        </ConvexClientProvider>
       </body>
     </html>
   )
