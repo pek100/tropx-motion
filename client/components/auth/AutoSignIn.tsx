@@ -8,6 +8,24 @@ import { setOAuthInProgress, shouldSkipStaleTokenCheck } from "@/lib/auth/oauthS
 
 const ELECTRON_AUTH_KEY = 'tropx_electron_auth_pending';
 const ELECTRON_CALLBACK_URL_KEY = 'tropx_electron_callback_url';
+const CALLBACK_TIMEOUT_MS = 10000; // 10 seconds timeout for callback
+
+/**
+ * Validate that callback URL is localhost only (security measure).
+ * Prevents token leakage to malicious external URLs.
+ */
+function isValidCallbackUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    return (
+      parsed.protocol === 'http:' &&
+      (hostname === 'localhost' || hostname === '127.0.0.1')
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Submit tokens to callback URL via POST (more secure than GET).
@@ -34,25 +52,6 @@ function postToCallback(
 
   document.body.appendChild(form);
   form.submit();
-}
-
-// Find Convex Auth tokens in localStorage by prefix
-function findConvexAuthTokens(): { jwt: string | null; refreshToken: string | null } {
-  let jwt: string | null = null;
-  let refreshToken: string | null = null;
-
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (!key) continue;
-
-    if (key.startsWith('__convexAuthJWT')) {
-      jwt = localStorage.getItem(key);
-    } else if (key.startsWith('__convexAuthRefreshToken')) {
-      refreshToken = localStorage.getItem(key);
-    }
-  }
-
-  return { jwt, refreshToken };
 }
 
 function hasConvexAuthJWT(): boolean {
@@ -101,6 +100,7 @@ export function AutoSignIn() {
   const [hasCheckedStaleTokens, setHasCheckedStaleTokens] = useState(false);
   const [creatingElectronSession, setCreatingElectronSession] = useState(false);
   const [authStabilized, setAuthStabilized] = useState(false);
+  const [callbackTimedOut, setCallbackTimedOut] = useState(false);
   const { signIn } = useAuthActions();
   const { isAuthenticated, isLoading } = useConvexAuth();
   const createElectronSession = useAction(api.electronAuth.createElectronSession);
@@ -122,9 +122,15 @@ export function AutoSignIn() {
       setIsElectronAuth(isElectron);
 
       // Store callback URL if provided (for localhost callback)
+      // Security: Only accept localhost URLs to prevent token leakage
       if (callbackUrlParam) {
-        setCallbackUrl(callbackUrlParam);
-        localStorage.setItem(ELECTRON_CALLBACK_URL_KEY, callbackUrlParam);
+        if (isValidCallbackUrl(callbackUrlParam)) {
+          setCallbackUrl(callbackUrlParam);
+          localStorage.setItem(ELECTRON_CALLBACK_URL_KEY, callbackUrlParam);
+        } else {
+          console.error('[AutoSignIn] Invalid callback URL rejected:', callbackUrlParam);
+          setAuthError('Invalid callback URL. Only localhost URLs are allowed.');
+        }
       }
 
       // Persist electron auth flag across OAuth redirect
@@ -195,12 +201,11 @@ export function AutoSignIn() {
 
     // Give Convex Auth a moment to fully hydrate isAuthenticated
     const timer = setTimeout(() => {
-      console.log('[AutoSignIn] Auth stabilized, isAuthenticated:', isAuthenticated);
       setAuthStabilized(true);
     }, 100); // 100ms buffer
 
     return () => clearTimeout(timer);
-  }, [isLoading, isAuthenticated]);
+  }, [isLoading]); // Note: intentionally not including isAuthenticated to avoid reset
 
   // When auth completes for Electron, create a separate session
   useEffect(() => {
@@ -286,6 +291,42 @@ export function AutoSignIn() {
     });
   }, [isAutoSignIn, triggered, signIn, isAuthenticated, isLoading, authStabilized]);
 
+  // Handle non-Electron autoSignIn: clear loading screen after auth completes
+  useEffect(() => {
+    if (!isAutoSignIn || isElectronAuth || isLoading) return;
+    if (isAuthenticated && authStabilized) {
+      // Non-Electron autoSignIn completed - clear state to show normal UI
+      setIsAutoSignIn(false);
+    }
+  }, [isAutoSignIn, isElectronAuth, isAuthenticated, isLoading, authStabilized]);
+
+  // Handle error callback via effect (not during render)
+  useEffect(() => {
+    if (!authError || redirected) return;
+
+    const pendingElectronAuth = localStorage.getItem(ELECTRON_AUTH_KEY) === 'true';
+    const storedCallbackUrl = localStorage.getItem(ELECTRON_CALLBACK_URL_KEY);
+    const effectiveIsElectronAuth = isElectronAuth || pendingElectronAuth;
+    const effectiveCallbackUrl = callbackUrl || storedCallbackUrl;
+
+    if (effectiveIsElectronAuth && effectiveCallbackUrl) {
+      setRedirected(true);
+      localStorage.removeItem(ELECTRON_AUTH_KEY);
+      localStorage.removeItem(ELECTRON_CALLBACK_URL_KEY);
+      postToCallback(effectiveCallbackUrl, { error: authError });
+    }
+  }, [authError, redirected, isElectronAuth, callbackUrl]);
+
+  // Callback timeout: if we've been waiting too long, show error
+  useEffect(() => {
+    if (!redirected || callbackTimedOut) return;
+
+    const timer = setTimeout(() => {
+      setCallbackTimedOut(true);
+    }, CALLBACK_TIMEOUT_MS);
+
+    return () => clearTimeout(timer);
+  }, [redirected, callbackTimedOut]);
 
   // Check localStorage as fallback for render conditions
   const pendingElectronAuthForRender = typeof window !== 'undefined' && localStorage.getItem(ELECTRON_AUTH_KEY) === 'true';
@@ -347,16 +388,8 @@ export function AutoSignIn() {
     );
   }
 
-  // For Electron flow: Show error screen
+  // For Electron flow: Show error screen (side effects handled in useEffect above)
   if (effectiveIsElectronAuthForRender && authError) {
-    // If we have a callback URL, POST error to callback
-    if (effectiveCallbackUrlForRender && !redirected) {
-      setRedirected(true);
-      localStorage.removeItem(ELECTRON_AUTH_KEY);
-      localStorage.removeItem(ELECTRON_CALLBACK_URL_KEY);
-      postToCallback(effectiveCallbackUrlForRender, { error: authError });
-    }
-
     return (
       <div className="fixed inset-0 bg-[#fff6f3] flex items-center justify-center z-[9999]">
         <div className="text-center p-8 max-w-md">
@@ -375,6 +408,32 @@ export function AutoSignIn() {
           </p>
           <p className="text-sm text-gray-500">
             You can close this tab and try again.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // For Electron flow: Show timeout error if callback didn't work
+  if (effectiveIsElectronAuthForRender && callbackTimedOut) {
+    return (
+      <div className="fixed inset-0 bg-[#fff6f3] flex items-center justify-center z-[9999]">
+        <div className="text-center p-8 max-w-md">
+          {/* Warning Icon */}
+          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-yellow-100 flex items-center justify-center">
+            <svg className="w-10 h-10 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+
+          <h1 className="text-2xl font-semibold text-gray-900 mb-3">
+            Connection Issue
+          </h1>
+          <p className="text-gray-600 mb-4">
+            Unable to connect back to TropX Motion. The app may have been closed.
+          </p>
+          <p className="text-sm text-gray-500">
+            Please close this tab and try signing in again from the app.
           </p>
         </div>
       </div>
