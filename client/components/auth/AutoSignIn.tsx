@@ -65,6 +65,17 @@ function hasConvexAuthJWT(): boolean {
   return false;
 }
 
+// Check URL params synchronously to prevent UI flash on first render
+const getInitialAuthState = () => {
+  if (typeof window === 'undefined') return { hasAutoSignIn: false, hasElectronAuth: false, hasPending: false };
+  const params = new URLSearchParams(window.location.search);
+  return {
+    hasAutoSignIn: params.get('autoSignIn') === 'google',
+    hasElectronAuth: params.get('electronAuth') === 'true',
+    hasPending: localStorage.getItem(ELECTRON_AUTH_KEY) === 'true',
+  };
+};
+
 /**
  * AutoSignIn Component
  *
@@ -78,14 +89,18 @@ function hasConvexAuthJWT(): boolean {
  * Uses localStorage to persist the electronAuth flag across OAuth redirects.
  */
 export function AutoSignIn() {
-  const [isAutoSignIn, setIsAutoSignIn] = useState(false);
-  const [isElectronAuth, setIsElectronAuth] = useState(false);
+  // Get initial state synchronously to prevent flash
+  const initialState = getInitialAuthState();
+
+  const [isAutoSignIn, setIsAutoSignIn] = useState(initialState.hasAutoSignIn);
+  const [isElectronAuth, setIsElectronAuth] = useState(initialState.hasElectronAuth || initialState.hasPending);
   const [callbackUrl, setCallbackUrl] = useState<string | null>(null);
   const [triggered, setTriggered] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [redirected, setRedirected] = useState(false);
   const [hasCheckedStaleTokens, setHasCheckedStaleTokens] = useState(false);
   const [creatingElectronSession, setCreatingElectronSession] = useState(false);
+  const [authStabilized, setAuthStabilized] = useState(false);
   const { signIn } = useAuthActions();
   const { isAuthenticated, isLoading } = useConvexAuth();
   const createElectronSession = useAction(api.electronAuth.createElectronSession);
@@ -170,6 +185,23 @@ export function AutoSignIn() {
     setHasCheckedStaleTokens(true);
   }, [isLoading, isAuthenticated, hasCheckedStaleTokens, isElectronAuth, triggered]);
 
+  // Wait for auth state to stabilize after loading completes
+  // This prevents triggering OAuth before isAuthenticated has fully resolved
+  useEffect(() => {
+    if (isLoading) {
+      setAuthStabilized(false);
+      return;
+    }
+
+    // Give Convex Auth a moment to fully hydrate isAuthenticated
+    const timer = setTimeout(() => {
+      console.log('[AutoSignIn] Auth stabilized, isAuthenticated:', isAuthenticated);
+      setAuthStabilized(true);
+    }, 100); // 100ms buffer
+
+    return () => clearTimeout(timer);
+  }, [isLoading, isAuthenticated]);
+
   // When auth completes for Electron, create a separate session
   useEffect(() => {
     // Also check localStorage directly as fallback in case state hasn't updated yet
@@ -231,29 +263,39 @@ export function AutoSignIn() {
   }, [isElectronAuth, isAuthenticated, isLoading, redirected, callbackUrl, creatingElectronSession, createElectronSession]);
 
   // Trigger OAuth after detecting param (only if not already authenticated)
-  // Wait for isLoading to be false before deciding
+  // Wait for auth state to fully stabilize before deciding
   useEffect(() => {
-    // Don't do anything while still loading auth state
-    if (isLoading) return;
+    // Wait for auth state to fully stabilize
+    if (isLoading || !authStabilized) return;
+    if (!isAutoSignIn || triggered) return;
 
-    if (isAutoSignIn && !triggered && !isAuthenticated) {
+    // Already authenticated - skip OAuth
+    if (isAuthenticated) {
+      console.log('[AutoSignIn] Already authenticated, skipping OAuth');
       setTriggered(true);
-      setOAuthInProgress();
-      signIn("google").catch((err) => {
-        setAuthError(err.message || 'OAuth failed');
-        localStorage.removeItem(ELECTRON_AUTH_KEY);
-      });
-    } else if (isAutoSignIn && isAuthenticated && !triggered) {
-      setTriggered(true);
+      return;
     }
-  }, [isAutoSignIn, triggered, signIn, isElectronAuth, isAuthenticated, isLoading]);
+
+    // Not authenticated - trigger OAuth
+    console.log('[AutoSignIn] Not authenticated, triggering OAuth');
+    setTriggered(true);
+    setOAuthInProgress();
+    signIn("google").catch((err) => {
+      setAuthError(err.message || 'OAuth failed');
+      localStorage.removeItem(ELECTRON_AUTH_KEY);
+    });
+  }, [isAutoSignIn, triggered, signIn, isAuthenticated, isLoading, authStabilized]);
 
 
   // Check localStorage as fallback for render conditions
   const pendingElectronAuthForRender = typeof window !== 'undefined' && localStorage.getItem(ELECTRON_AUTH_KEY) === 'true';
   const storedCallbackUrlForRender = typeof window !== 'undefined' && localStorage.getItem(ELECTRON_CALLBACK_URL_KEY);
-  const effectiveIsElectronAuthForRender = isElectronAuth || pendingElectronAuthForRender;
+  const effectiveIsElectronAuthForRender = isElectronAuth || pendingElectronAuthForRender || initialState.hasElectronAuth || initialState.hasPending;
   const effectiveCallbackUrlForRender = callbackUrl || storedCallbackUrlForRender;
+
+  // Show loading screen immediately if we have autoSignIn params or pending electron auth
+  // This prevents the main page from flashing before we decide what to do
+  const shouldShowLoadingScreen = initialState.hasAutoSignIn || initialState.hasPending || isAutoSignIn || effectiveIsElectronAuthForRender;
 
   // For Electron flow: Show "return to app" screen after successful auth
   if (effectiveIsElectronAuthForRender && !isLoading && isAuthenticated) {
@@ -370,8 +412,9 @@ export function AutoSignIn() {
     );
   }
 
-  // Show loading screen while redirecting to Google
-  if (isAutoSignIn) {
+  // Show loading screen while redirecting to Google or waiting for auth
+  // Use shouldShowLoadingScreen to prevent flash on first render
+  if (shouldShowLoadingScreen) {
     return (
       <div className="fixed inset-0 bg-[#fff6f3] flex items-center justify-center z-[9999]">
         <div className="text-center p-8">
@@ -394,7 +437,7 @@ export function AutoSignIn() {
             Signing in to TropX
           </h1>
           <p className="text-sm text-gray-600">
-            Redirecting to Google...
+            Please wait...
           </p>
         </div>
       </div>
