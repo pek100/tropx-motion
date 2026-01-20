@@ -36,6 +36,8 @@ export interface UploadOptions {
   notes?: string;
   tags?: string[];
   activityProfile?: ActivityProfile;
+  sets?: number;
+  reps?: number;
   targetHz?: number;
   /** Crop range in ms - if specified, data outside this range is stored separately */
   cropRange?: { startMs: number; endMs: number };
@@ -298,6 +300,8 @@ export class UploadService {
         subjectId: options.subjectId,
         subjectAlias: options.subjectAlias,
         activityProfile: options.activityProfile,
+        sets: options.sets,
+        reps: options.reps,
         // Crop: trimmed data stored separately for potential recovery
         trimmedStartBlob,
         trimmedEndBlob,

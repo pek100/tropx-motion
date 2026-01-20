@@ -1,22 +1,11 @@
 /**
- * AutoCropService - Automatically detect optimal crop boundaries using FFT.
+ * AutoCropService - Detect crop boundaries using autocorrelation.
  *
- * Uses FFT to filter the signal to human movement frequencies, then applies
- * threshold-based detection to find where meaningful movement starts and ends.
- *
- * Algorithm:
- * 1. Convert quaternions to angles for each joint
- * 2. FFT the entire signal
- * 3. Bandpass filter: zero out frequencies outside human movement range (0.2-5 Hz)
- * 4. Inverse FFT to get filtered signal
- * 5. Compute envelope (absolute value) of filtered signal
- * 6. Threshold to find where movement starts and ends
- * 7. Take the intersection across all joints
- *
- * Human movement frequency bands:
- * - Slow movements (rehab, stretching): 0.1 - 0.5 Hz
- * - Walking, squats, lunges: 0.5 - 2 Hz
- * - Running, jumping: 2 - 5 Hz
+ * Simple approach:
+ * 1. Slide a window across the signal
+ * 2. For each window, compute autocorrelation at human movement lags (0.3-3s)
+ * 3. If any lag has high correlation → repetitive movement detected
+ * 4. Find regions with consistent repetitive movement
  */
 
 import { QuaternionSample, quaternionToAngle } from '../../../../../shared/QuaternionCodec';
@@ -24,41 +13,33 @@ import { QuaternionSample, quaternionToAngle } from '../../../../../shared/Quate
 export interface AutoCropResult {
   startMs: number;
   endMs: number;
-  confidence: number; // 0-1, how confident we are in the crop
-  detected: boolean;  // Whether a crop was detected (false = keep full recording)
-}
-
-interface JointCropResult {
-  startIdx: number;
-  endIdx: number;
   confidence: number;
+  detected: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────
 
-const MIN_CROP_SAMPLES = 50;         // Minimum samples to attempt auto-crop
+const MIN_CROP_SAMPLES = 50;
 
-// Human movement frequency bands (Hz)
-const MIN_MOVEMENT_FREQ = 0.6;       // Slowest meaningful movement
-const MAX_MOVEMENT_FREQ = 5.0;       // Fastest meaningful movement
+// Human movement periods to check (seconds)
+// We'll sample a few specific lag values instead of computing full ACF
+const CHECK_PERIODS = [0.4, 0.6, 0.8, 1.0, 1.3, 1.6, 2.0, 2.5, 3.0];
 
 // Detection thresholds
-const ENVELOPE_THRESHOLD_PERCENTILE = 0.65;  // Top 85% of envelope amplitude = moving
-const EDGE_PADDING_MS = 0;         // Padding to add at edges after detection
-const MIN_DURATION_RATIO = 0;      // Minimum crop must be 10% of original
-const SMOOTHING_WINDOW = 0;         // Samples to smooth the envelope
+const REGULARITY_THRESHOLD = 0.3;    // Correlation ratio to consider "periodic"
+const WINDOW_DURATION_SEC = 4.0;     // Window size for analysis
+const WINDOW_STEP_SEC = 1.0;         // Step between windows
+
+// Edge handling
+const EDGE_PADDING_MS = 500;          // buffer at edges
+const MIN_DURATION_RATIO = 0.1;
 
 // ─────────────────────────────────────────────────────────────────
 // Main Function
 // ─────────────────────────────────────────────────────────────────
 
-/**
- * Detect optimal crop boundaries for a recording using FFT bandpass filtering.
- * @param samples QuaternionSample array from the recording
- * @param durationMs Total duration in milliseconds
- */
 export function detectAutoCrop(
   samples: QuaternionSample[],
   durationMs: number
@@ -67,243 +48,116 @@ export function detectAutoCrop(
     return { startMs: 0, endMs: durationMs, confidence: 0, detected: false };
   }
 
-  // Calculate sample rate dynamically from data
   const sampleRate = samples.length / (durationMs / 1000);
-  const timeStep = durationMs / samples.length; // ms per sample
+  const timeStep = durationMs / samples.length;
 
-  // Extract angles for each joint
-  const leftAngles = samples.map(s => s.lq ? quaternionToAngle(s.lq, 'y') : null);
-  const rightAngles = samples.map(s => s.rq ? quaternionToAngle(s.rq, 'y') : null);
+  // Extract angles (combine both joints for robustness)
+  const angles = samples.map(s => {
+    const left = s.lq ? quaternionToAngle(s.lq, 'y') : null;
+    const right = s.rq ? quaternionToAngle(s.rq, 'y') : null;
+    if (left !== null && right !== null) return (left + right) / 2;
+    return left ?? right ?? 0;
+  });
 
-  // Detect crop for each joint
-  const results: JointCropResult[] = [];
+  // Sliding window analysis
+  const windowSize = Math.floor(WINDOW_DURATION_SEC * sampleRate);
+  const stepSize = Math.floor(WINDOW_STEP_SEC * sampleRate);
 
-  if (leftAngles.some(a => a !== null)) {
-    const leftResult = detectJointCrop(leftAngles, sampleRate);
-    if (leftResult) results.push(leftResult);
-  }
-
-  if (rightAngles.some(a => a !== null)) {
-    const rightResult = detectJointCrop(rightAngles, sampleRate);
-    if (rightResult) results.push(rightResult);
-  }
-
-  if (results.length === 0) {
+  if (angles.length < windowSize) {
+    // Short recording - analyze whole thing
+    const score = computeRegularity(angles, sampleRate);
+    if (score >= REGULARITY_THRESHOLD) {
+      return { startMs: 0, endMs: durationMs, confidence: score, detected: false };
+    }
     return { startMs: 0, endMs: durationMs, confidence: 0, detected: false };
   }
 
-  // Take the intersection (max start, min end) across joints
-  const startIdx = Math.max(...results.map(r => r.startIdx));
-  const endIdx = Math.min(...results.map(r => r.endIdx));
-  const avgConfidence = results.reduce((sum, r) => sum + r.confidence, 0) / results.length;
+  // Compute regularity for each window position (track center point)
+  const halfWindow = Math.floor(windowSize / 2);
+  const windowScores: { center: number; score: number }[] = [];
 
-  // Validate the crop makes sense
+  for (let i = 0; i <= angles.length - windowSize; i += stepSize) {
+    const window = angles.slice(i, i + windowSize);
+    const score = computeRegularity(window, sampleRate);
+    windowScores.push({ center: i + halfWindow, score });
+  }
+
+  // Find ALL windows above threshold (don't require contiguity)
+  const passingWindows = windowScores.filter(w => w.score >= REGULARITY_THRESHOLD);
+
+  if (passingWindows.length === 0) {
+    return { startMs: 0, endMs: durationMs, confidence: 0, detected: false };
+  }
+
+  // Use first and last passing windows to define the region
+  const firstCenter = passingWindows[0].center;
+  const lastCenter = passingWindows[passingWindows.length - 1].center;
+  const bestScore = Math.max(...passingWindows.map(w => w.score));
+
+  const bestRegion = { startCenter: firstCenter, endCenter: lastCenter };
+
+  // The center is where we're MOST confident about movement
+  // Don't expand by halfWindow - just use centers with small padding
+  const startIdx = bestRegion.startCenter;
+  const endIdx = bestRegion.endCenter;
+
+  // Validate crop size
   const cropLength = endIdx - startIdx;
   if (cropLength < samples.length * MIN_DURATION_RATIO) {
     return { startMs: 0, endMs: durationMs, confidence: 0, detected: false };
   }
 
-  // Convert to milliseconds with padding
+  // Convert to ms - ADD padding to expand the kept region
   let startMs = Math.max(0, (startIdx * timeStep) - EDGE_PADDING_MS);
   let endMs = Math.min(durationMs, (endIdx * timeStep) + EDGE_PADDING_MS);
 
-  // If crop is very close to full duration, don't bother
-  if (startMs < 100 && endMs > durationMs - 100) {
-    return { startMs: 0, endMs: durationMs, confidence: 0, detected: false };
+  // Skip if nearly full duration
+  if (startMs < 200 && endMs > durationMs - 200) {
+    return { startMs: 0, endMs: durationMs, confidence: bestScore, detected: false };
   }
 
-  return {
-    startMs,
-    endMs,
-    confidence: avgConfidence,
-    detected: true,
-  };
+  return { startMs, endMs, confidence: bestScore, detected: true };
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Joint-level Detection
-// ─────────────────────────────────────────────────────────────────
-
-function detectJointCrop(
-  angles: (number | null)[],
-  sampleRate: number
-): JointCropResult | null {
-  // Fill nulls with interpolation
-  const filled = fillNulls(angles);
-  if (filled.length < MIN_CROP_SAMPLES) return null;
-
-  // FFT the entire signal, bandpass filter, then inverse FFT
-  const filtered = bandpassFilter(filled, sampleRate, MIN_MOVEMENT_FREQ, MAX_MOVEMENT_FREQ);
-
-  // Compute envelope (absolute value) and smooth it
-  const envelope = filtered.map(Math.abs);
-  const smoothed = smoothSignal(envelope, SMOOTHING_WINDOW);
-
-  // Find threshold based on percentile
-  const sortedEnvelope = [...smoothed].sort((a, b) => a - b);
-  const thresholdIdx = Math.floor(sortedEnvelope.length * ENVELOPE_THRESHOLD_PERCENTILE);
-  const threshold = sortedEnvelope[thresholdIdx];
-
-  // Find where envelope exceeds threshold
-  const aboveThreshold = smoothed.map(v => v > threshold);
-
-  // Find first and last regions above threshold
-  const startIdx = findFirstAboveThreshold(aboveThreshold);
-  const endIdx = findLastAboveThreshold(aboveThreshold);
-
-  if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
-    return null;
-  }
-
-  // Confidence based on how much of the signal is in the movement region
-  const regionEnvelope = smoothed.slice(startIdx, endIdx + 1);
-  const maxEnvelope = Math.max(...smoothed);
-  const avgRegionEnvelope = regionEnvelope.reduce((a, b) => a + b, 0) / regionEnvelope.length;
-  const confidence = maxEnvelope > 0 ? avgRegionEnvelope / maxEnvelope : 0;
-
-  return { startIdx, endIdx, confidence };
-}
-
-// ─────────────────────────────────────────────────────────────────
-// FFT Bandpass Filter
+// Regularity Detection
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * Apply bandpass filter using FFT.
- * 1. FFT the signal
- * 2. Zero out frequencies outside the passband
- * 3. Inverse FFT to reconstruct
+ * Compute regularity score by checking autocorrelation at specific lags.
+ * Returns 0-1 where higher = more periodic.
  */
-function bandpassFilter(
-  signal: number[],
-  sampleRate: number,
-  lowFreq: number,
-  highFreq: number
-): number[] {
+function computeRegularity(signal: number[], sampleRate: number): number {
   const n = signal.length;
+  if (n < 20) return 0;
 
-  // Remove DC component (mean)
+  // Remove mean
   const mean = signal.reduce((a, b) => a + b, 0) / n;
   const centered = signal.map(v => v - mean);
 
-  // Compute FFT
-  const fft = computeFFT(centered);
+  // Compute variance (autocorrelation at lag 0)
+  const variance = centered.reduce((sum, v) => sum + v * v, 0);
+  if (variance < 1e-10) return 0;
 
-  // Apply bandpass filter in frequency domain
-  const freqResolution = sampleRate / n;
+  // Check autocorrelation at specific human movement periods
+  let maxCorrelation = 0;
 
-  for (let k = 0; k < n; k++) {
-    // For real signals, frequency bins are symmetric
-    // k < n/2: positive frequencies
-    // k > n/2: negative frequencies (mirror)
-    const freq = k <= n / 2 ? k * freqResolution : (n - k) * freqResolution;
+  for (const period of CHECK_PERIODS) {
+    const lag = Math.round(period * sampleRate);
+    if (lag >= n / 2) continue; // Lag too large for window
 
-    // Zero out frequencies outside the passband
-    if (freq < lowFreq || freq > highFreq) {
-      fft.real[k] = 0;
-      fft.imag[k] = 0;
+    // Compute autocorrelation at this lag
+    let correlation = 0;
+    for (let i = 0; i < n - lag; i++) {
+      correlation += centered[i] * centered[i + lag];
     }
+
+    // Normalize by variance
+    const normalized = correlation / variance;
+    maxCorrelation = Math.max(maxCorrelation, normalized);
   }
 
-  // Inverse FFT to reconstruct filtered signal
-  const filtered = computeInverseFFT(fft);
-
-  return filtered;
-}
-
-/**
- * Compute FFT using DFT (O(n²) but acceptable for typical recording lengths).
- */
-function computeFFT(signal: number[]): { real: number[]; imag: number[] } {
-  const n = signal.length;
-  const real: number[] = new Array(n).fill(0);
-  const imag: number[] = new Array(n).fill(0);
-
-  for (let k = 0; k < n; k++) {
-    for (let t = 0; t < n; t++) {
-      const angle = (2 * Math.PI * k * t) / n;
-      real[k] += signal[t] * Math.cos(angle);
-      imag[k] -= signal[t] * Math.sin(angle);
-    }
-  }
-
-  return { real, imag };
-}
-
-/**
- * Compute inverse FFT.
- */
-function computeInverseFFT(fft: { real: number[]; imag: number[] }): number[] {
-  const n = fft.real.length;
-  const result: number[] = new Array(n).fill(0);
-
-  for (let t = 0; t < n; t++) {
-    for (let k = 0; k < n; k++) {
-      const angle = (2 * Math.PI * k * t) / n;
-      result[t] += fft.real[k] * Math.cos(angle) - fft.imag[k] * Math.sin(angle);
-    }
-    result[t] /= n;
-  }
-
-  return result;
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────
-
-function fillNulls(data: (number | null)[]): number[] {
-  const result: number[] = [];
-  let lastValid = 0;
-
-  for (const val of data) {
-    if (val !== null) {
-      lastValid = val;
-      result.push(val);
-    } else {
-      result.push(lastValid);
-    }
-  }
-
-  return result;
-}
-
-/**
- * Smooth signal using moving average.
- */
-function smoothSignal(signal: number[], windowSize: number): number[] {
-  const halfWindow = Math.floor(windowSize / 2);
-  const result: number[] = [];
-
-  for (let i = 0; i < signal.length; i++) {
-    const start = Math.max(0, i - halfWindow);
-    const end = Math.min(signal.length, i + halfWindow + 1);
-    const window = signal.slice(start, end);
-    const avg = window.reduce((a, b) => a + b, 0) / window.length;
-    result.push(avg);
-  }
-
-  return result;
-}
-
-/**
- * Find first index where the signal is above threshold.
- */
-function findFirstAboveThreshold(flags: boolean[]): number {
-  for (let i = 0; i < flags.length; i++) {
-    if (flags[i]) return i;
-  }
-  return -1;
-}
-
-/**
- * Find last index where the signal is above threshold.
- */
-function findLastAboveThreshold(flags: boolean[]): number {
-  for (let i = flags.length - 1; i >= 0; i--) {
-    if (flags[i]) return i;
-  }
-  return -1;
+  return Math.max(0, maxCorrelation);
 }
 
 export default detectAutoCrop;

@@ -43,6 +43,7 @@ import { TagsInput } from './TagsInput';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
+import { NumberStepper } from '@/components/ui/NumberStepper';
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -80,6 +81,8 @@ interface SessionSummary {
   createdAt: number;
   modifiedAt?: number;
   subjectNotes: SubjectNote[];
+  sets?: number;
+  reps?: number;
 }
 
 interface LoadModalProps {
@@ -370,6 +373,8 @@ function RecordingPreview({
   const [editTitle, setEditTitle] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editTags, setEditTags] = useState<string[]>([]);
+  const [editSets, setEditSets] = useState<number | null>(null);
+  const [editReps, setEditReps] = useState<number | null>(null);
 
   // Mutation for updating session
   const updateSession = useMutation(api.recordingSessions.updateSession);
@@ -380,6 +385,8 @@ function RecordingPreview({
       setEditTitle(session.title || '');
       setEditNotes(session.notes || '');
       setEditTags(session.tags);
+      setEditSets(session.sets ?? null);
+      setEditReps(session.reps ?? null);
     }
     setIsEditing(false);
   }, [session]);
@@ -389,6 +396,8 @@ function RecordingPreview({
     setEditTitle(session.title || '');
     setEditNotes(session.notes || '');
     setEditTags(session.tags);
+    setEditSets(session.sets ?? null);
+    setEditReps(session.reps ?? null);
     setIsEditing(true);
   };
 
@@ -397,6 +406,8 @@ function RecordingPreview({
     setEditTitle(session.title || '');
     setEditNotes(session.notes || '');
     setEditTags(session.tags);
+    setEditSets(session.sets ?? null);
+    setEditReps(session.reps ?? null);
     setIsEditing(false);
   };
 
@@ -415,6 +426,8 @@ function RecordingPreview({
         title: editTitle.trim(),
         notes: editNotes.trim(),
         tags: editTags,
+        sets: editSets,
+        reps: editReps,
         ...subjectFields,
       });
       setIsEditing(false);
@@ -800,6 +813,30 @@ function RecordingPreview({
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Set and Reps */}
+      {isEditing && (
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <Label className="text-xs text-muted-foreground">Set</Label>
+            <NumberStepper
+              value={editSets}
+              onChange={setEditSets}
+              max={99}
+              disabled={isSaving}
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Label className="text-xs text-muted-foreground">Reps</Label>
+            <NumberStepper
+              value={editReps}
+              onChange={setEditReps}
+              max={999}
+              disabled={isSaving}
+            />
+          </div>
         </div>
       )}
 

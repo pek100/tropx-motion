@@ -23,6 +23,7 @@ import { TagsInput } from '../TagsInput';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { SvgPreviewChart, type PreviewPaths } from '../SvgPreviewChart';
+import { NumberStepper } from '@/components/ui/NumberStepper';
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -65,6 +66,8 @@ export function SessionEditModal({
   const [editTitle, setEditTitle] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editTags, setEditTags] = useState<string[]>([]);
+  const [editSets, setEditSets] = useState<number | null>(null);
+  const [editReps, setEditReps] = useState<number | null>(null);
   const [editSubject, setEditSubject] = useState<{
     id: Id<'users'> | null;
     name: string;
@@ -84,6 +87,8 @@ export function SessionEditModal({
       setEditTitle(sessionDetails.title || '');
       setEditNotes(sessionDetails.notes || '');
       setEditTags(sessionDetails.tags || []);
+      setEditSets(sessionDetails.sets ?? null);
+      setEditReps(sessionDetails.reps ?? null);
       setEditSubject(null); // Reset to use original subject
     }
   }, [open, sessionDetails]);
@@ -104,6 +109,8 @@ export function SessionEditModal({
         title: editTitle.trim(),
         notes: editNotes.trim(),
         tags: editTags,
+        sets: editSets,
+        reps: editReps,
         ...subjectFields,
       });
       onSaved?.();
@@ -113,7 +120,7 @@ export function SessionEditModal({
     } finally {
       setIsSaving(false);
     }
-  }, [sessionDetails, sessionId, editTitle, editNotes, editTags, editSubject, updateSession, onSaved, onOpenChange]);
+  }, [sessionDetails, sessionId, editTitle, editNotes, editTags, editSets, editReps, editSubject, updateSession, onSaved, onOpenChange]);
 
   // Handle cancel
   const handleCancel = useCallback(() => {
@@ -301,6 +308,28 @@ export function SessionEditModal({
                       placeholder="Add tags..."
                       disabled={isSaving}
                     />
+                  </div>
+
+                  {/* Set and Reps */}
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-xs text-muted-foreground">Set</Label>
+                      <NumberStepper
+                        value={editSets}
+                        onChange={setEditSets}
+                        max={99}
+                        disabled={isSaving}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-xs text-muted-foreground">Reps</Label>
+                      <NumberStepper
+                        value={editReps}
+                        onChange={setEditReps}
+                        max={999}
+                        disabled={isSaving}
+                      />
+                    </div>
                   </div>
                 </>
               )}

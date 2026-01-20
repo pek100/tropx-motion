@@ -1,17 +1,11 @@
 /**
- * SaveModal - Modal for saving new recordings or editing existing ones.
+ * SaveModal - Unified modal for saving recordings with integrated crop.
  *
- * Modes:
- * - "save": New recording from buffer → upload to Convex
- * - "edit": Existing recording → update metadata with diff tracking
- *
- * Features:
- * - Smart tags with autocomplete and recent suggestions
- * - Notes textarea
- * - System tags display (non-removable)
- * - Modification history viewer
- * - Subject notes section (for subjects)
- * - Upload progress (save mode)
+ * Layout:
+ * - Top: Title + Patient selector
+ * - Center: Interactive crop chart with handles
+ * - Middle: Tags + Activity Profile
+ * - Bottom: Notes
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -25,22 +19,19 @@ import {
   CheckCircle2,
   AlertCircle,
   WifiOff,
-  Save,
-  History,
-  MessageSquare,
   User,
-  ChevronDown,
-  ChevronUp,
-  Tag,
-  Type,
-  StickyNote,
   ChevronRight,
-  Activity,
-  Sparkles,
-  Scissors,
-  Pencil,
+  RotateCcw,
+  Wand2,
 } from 'lucide-react';
-import { cn, formatDuration, formatDateTime } from '@/lib/utils';
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  ResponsiveContainer,
+} from 'recharts';
+import { cn, formatDuration } from '@/lib/utils';
 import { isWeb } from '@/lib/platform';
 import { useRecordingUpload, UseRecordingUploadOptions } from '@/hooks/useRecordingUpload';
 import { QuaternionSample, quaternionToAngle } from '../../../../shared/QuaternionCodec';
@@ -50,17 +41,27 @@ import { InterpolationService } from '../../../../motionProcessing/recording/Int
 import { detectActivityProfile } from '../../../../shared/classification';
 import { Id } from '../../../../convex/_generated/dataModel';
 import { TagsInput } from './TagsInput';
-import { CropModal, CropRange } from './CropModal';
 import { PatientSearchModal } from './PatientSearchModal';
+import { NumberStepper } from '@/components/ui/NumberStepper';
 import { detectAutoCrop } from '../lib/recording/AutoCropService';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
 
 // ─────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────
 
-type ModalMode = 'save' | 'edit';
-
 type ActivityProfile = 'power' | 'endurance' | 'rehabilitation' | 'general';
+
+export interface CropRange {
+  startMs: number;
+  endMs: number;
+}
 
 const ACTIVITY_PROFILE_OPTIONS: { value: ActivityProfile; label: string }[] = [
   { value: 'general', label: 'General' },
@@ -72,40 +73,35 @@ const ACTIVITY_PROFILE_OPTIONS: { value: ActivityProfile; label: string }[] = [
 export interface SaveModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  mode: ModalMode;
-  // For save mode
   selectedPatientId?: Id<'users'> | null;
   selectedPatientName?: string;
   selectedPatientImage?: string;
-  recordingSource?: 'app' | 'csv';
-  // Recording title (synced with toolbar)
   recordingTitle?: string;
   onRecordingTitleChange?: (title: string) => void;
-  // Patient selection callback
   onPatientSelect?: (patient: { userId: Id<'users'>; name: string; image?: string } | null) => void;
-  // For edit mode
-  sessionId?: string;
-  onEditSuccess?: () => void;
 }
 
 interface RecordingInfo {
   sampleCount: number;
   durationMs: number;
   startTime: number | null;
-  samples?: QuaternionSample[]; // For mini chart preview
+  samples?: QuaternionSample[];
 }
 
-interface ModificationHistoryEntry {
-  modifiedAt: number;
-  modifiedBy: Id<'users'>;
-  diffs: Array<{ field: string; old: unknown; new: unknown }>;
+interface ChartDataPoint {
+  time: number;
+  left: number | null;
+  right: number | null;
 }
 
-interface SubjectNote {
-  userId: Id<'users'>;
-  note: string;
-  createdAt: number;
-}
+// ─────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────
+
+const MIN_CROP_DURATION_MS = 1000;
+const CHART_HEIGHT = 220;
+const LEFT_KNEE_COLOR = 'var(--chart-left)';
+const RIGHT_KNEE_COLOR = 'var(--chart-right)';
 
 // ─────────────────────────────────────────────────────────────────
 // Helper Functions
@@ -115,317 +111,14 @@ const hasBackendAPI = (): boolean => {
   return !isWeb() && !!window.electronAPI?.recording?.getSamples;
 };
 
-/**
- * Mini chart component for recording preview.
- * Renders downsampled angle data as a sparkline using the shared quaternionToAngle codec.
- * Supports crop overlay and hover crop button.
- */
-function MiniRecordingChart({
-  samples,
-  durationMs,
-  cropRange,
-  onCropClick,
-}: {
-  samples: QuaternionSample[];
-  durationMs?: number;
-  cropRange?: CropRange | null;
-  onCropClick?: () => void;
-}) {
-  const [isHovered, setIsHovered] = useState(false);
-  const [showHint, setShowHint] = useState(true);
-  const hintDismissedRef = useRef(false);
-
-  // Hide hint after 1.5 seconds (only once)
-  useEffect(() => {
-    if (onCropClick && !hintDismissedRef.current) {
-      const timer = setTimeout(() => {
-        setShowHint(false);
-        hintDismissedRef.current = true;
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [onCropClick]);
-
-  // Hide hint permanently on first hover
-  const handleMouseEnter = () => {
-    setIsHovered(true);
-    setShowHint(false);
-    hintDismissedRef.current = true;
-  };
-
-  // Downsample to ~50 points for performance
-  const targetPoints = 50;
-  const step = Math.max(1, Math.floor(samples.length / targetPoints));
-
-  const points: { left: number; right: number }[] = [];
-  for (let i = 0; i < samples.length; i += step) {
-    const sample = samples[i];
-    // Use shared codec's quaternionToAngle for proper Euler Y-axis extraction
-    points.push({
-      left: sample.lq ? quaternionToAngle(sample.lq, 'y') : 0,
-      right: sample.rq ? quaternionToAngle(sample.rq, 'y') : 0,
-    });
+function formatTimeMs(ms: number): string {
+  const totalSeconds = ms / 1000;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes > 0) {
+    return `${minutes}:${seconds.toFixed(1).padStart(4, '0')}`;
   }
-
-  if (points.length === 0) return null;
-
-  // Find min/max to normalize the chart view
-  const allValues = points.flatMap(p => [p.left, p.right]);
-  const minVal = Math.min(...allValues);
-  const maxVal = Math.max(...allValues);
-  const range = maxVal - minVal || 1;
-
-  // Normalize to chart dimensions
-  const width = 280;
-  const height = 48;
-  const padding = 4;
-
-  const chartWidth = width - padding * 2;
-  const chartHeight = height - padding * 2;
-
-  // Generate SVG paths
-  const createPath = (data: number[], color: string) => {
-    const xStep = chartWidth / (data.length - 1 || 1);
-    const pathData = data.map((val, i) => {
-      const x = padding + i * xStep;
-      // Normalize value to chart height (flip Y so higher angles are at top)
-      const normalized = (val - minVal) / range;
-      const y = padding + normalized * chartHeight;
-      return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
-    }).join(' ');
-
-    return (
-      <path
-        key={color}
-        d={pathData}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity="0.8"
-      />
-    );
-  };
-
-  return (
-    <div
-      className={cn(
-        "relative h-14 bg-[var(--tropx-muted)] rounded-lg border overflow-hidden transition-colors",
-        isHovered && onCropClick
-          ? "border-[var(--tropx-vibrant)]"
-          : "border-[var(--tropx-border)]"
-      )}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
-        {/* Grid line at center */}
-        <line x1={padding} y1={height/2} x2={width-padding} y2={height/2} stroke="var(--tropx-border)" strokeWidth="0.5" />
-        {/* Left knee (blue) */}
-        {createPath(points.map(p => p.left), 'var(--leg-left-band)')}
-        {/* Right knee (coral/red) */}
-        {createPath(points.map(p => p.right), 'var(--leg-right-band)')}
-      </svg>
-
-      {/* Red overlay for cropped/excluded regions */}
-      {cropRange && durationMs && (
-        <>
-          <div
-            className="absolute left-0 top-0 bottom-0 bg-red-500/30 pointer-events-none"
-            style={{ width: `${(cropRange.startMs / durationMs) * 100}%` }}
-          />
-          <div
-            className="absolute right-0 top-0 bottom-0 bg-red-500/30 pointer-events-none"
-            style={{ width: `${100 - (cropRange.endMs / durationMs) * 100}%` }}
-          />
-        </>
-      )}
-
-      {/* Hover overlay with edit button */}
-      {isHovered && onCropClick && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onCropClick(); }}
-          className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--tropx-dark)]/50 backdrop-blur-[2px] rounded-lg cursor-pointer"
-        >
-          <Scissors className="size-4 text-[var(--tropx-vibrant)]" />
-        </button>
-      )}
-
-      {/* Cropped indicator badge */}
-      {cropRange && (
-        <span className="absolute bottom-1 left-1 z-10 px-1.5 py-0.5 text-[9px] font-medium bg-[var(--tropx-card)] text-red-500 rounded">
-          Cropped
-        </span>
-      )}
-
-      {/* Hover to edit hint - fades out over 1.5s */}
-      {showHint && onCropClick && !isHovered && (
-        <div
-          className="absolute inset-0 z-5 flex items-center justify-center pointer-events-none"
-          style={{
-            animation: 'fadeOut 1.5s ease-out forwards',
-          }}
-        >
-          <span className="text-[11px] font-medium px-2 py-1 rounded text-black dark:text-white bg-white/70 dark:bg-black/50 backdrop-blur-sm">
-            Hover to edit
-          </span>
-        </div>
-      )}
-      <style>{`
-        @keyframes fadeOut {
-          0% { opacity: 1; }
-          70% { opacity: 1; }
-          100% { opacity: 0; }
-        }
-      `}</style>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Sub-Components
-// ─────────────────────────────────────────────────────────────────
-
-// Modification history viewer
-function ModificationHistory({
-  history,
-}: {
-  history: ModificationHistoryEntry[];
-}) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  if (history.length === 0) return null;
-
-  return (
-    <div className="border border-[var(--tropx-border)] rounded-lg overflow-hidden">
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between p-3 bg-[var(--tropx-muted)] hover:bg-[var(--tropx-hover)] transition-colors"
-      >
-        <div className="flex items-center gap-2 text-sm text-[var(--tropx-shadow)]">
-          <History className="size-4" />
-          <span>{history.length} modification{history.length > 1 ? 's' : ''}</span>
-        </div>
-        {isExpanded ? (
-          <ChevronUp className="size-4 text-[var(--tropx-shadow)]" />
-        ) : (
-          <ChevronDown className="size-4 text-[var(--tropx-shadow)]" />
-        )}
-      </button>
-
-      {isExpanded && (
-        <div className="p-3 space-y-3 max-h-48 overflow-y-auto">
-          {history
-            .slice()
-            .reverse()
-            .map((entry, idx) => (
-              <div key={idx} className="text-xs">
-                <p className="text-[var(--tropx-shadow)] mb-1">
-                  {formatDateTime(entry.modifiedAt)}
-                </p>
-                <ul className="space-y-1">
-                  {entry.diffs.map((diff, diffIdx) => (
-                    <li key={diffIdx} className="flex items-start gap-2">
-                      <span className="font-medium text-[var(--tropx-text-main)]">
-                        {diff.field}:
-                      </span>
-                      <span className="text-red-500 line-through">
-                        {JSON.stringify(diff.old) || '(empty)'}
-                      </span>
-                      <span>→</span>
-                      <span className="text-green-600">
-                        {JSON.stringify(diff.new) || '(empty)'}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Subject notes section
-function SubjectNotesSection({
-  notes,
-  sessionId,
-  isSubject,
-  currentUserId,
-}: {
-  notes: SubjectNote[];
-  sessionId: string;
-  isSubject: boolean;
-  currentUserId?: Id<'users'>;
-}) {
-  const [newNote, setNewNote] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const addSubjectNote = useMutation(api.recordingSessions.addSubjectNote);
-
-  const handleAddNote = async () => {
-    if (!newNote.trim() || !isSubject) return;
-
-    setIsSubmitting(true);
-    try {
-      await addSubjectNote({ sessionId, note: newNote.trim() });
-      setNewNote('');
-    } catch (err) {
-      console.error('Failed to add note:', err);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="border border-[var(--tropx-border)] rounded-lg overflow-hidden">
-      <div className="flex items-center gap-2 p-3 bg-[var(--tropx-muted)] text-sm text-[var(--tropx-shadow)]">
-        <MessageSquare className="size-4" />
-        <span>Subject Notes ({notes.length})</span>
-      </div>
-
-      {notes.length > 0 && (
-        <div className="p-3 space-y-2 max-h-32 overflow-y-auto">
-          {notes.map((note, idx) => (
-            <div key={idx} className="text-xs p-2 bg-[var(--tropx-muted)] rounded">
-              <p className="text-[var(--tropx-text-main)]">{note.note}</p>
-              <p className="text-[var(--tropx-shadow)] mt-1">
-                {formatDateTime(note.createdAt)}
-              </p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {isSubject && (
-        <div className="p-3 border-t border-[var(--tropx-border)]">
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
-              placeholder="Add a note..."
-              className="flex-1 px-3 py-2 text-sm border border-[var(--tropx-border)] bg-[var(--tropx-card)] rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)]"
-              disabled={isSubmitting}
-            />
-            <button
-              onClick={handleAddNote}
-              disabled={!newNote.trim() || isSubmitting}
-              className={cn(
-                'px-3 py-2 rounded-lg text-sm font-medium',
-                newNote.trim() && !isSubmitting
-                  ? 'bg-violet-500 text-white hover:bg-violet-600'
-                  : 'bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] cursor-not-allowed'
-              )}
-            >
-              {isSubmitting ? <Loader2 className="size-4 animate-spin" /> : 'Add'}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  return `${seconds.toFixed(1)}s`;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -435,38 +128,34 @@ function SubjectNotesSection({
 export function SaveModal({
   open,
   onOpenChange,
-  mode,
   selectedPatientId,
   selectedPatientName,
   selectedPatientImage,
-  recordingSource = 'app',
   recordingTitle = '',
   onRecordingTitleChange,
   onPatientSelect,
-  sessionId,
-  onEditSuccess,
 }: SaveModalProps) {
-  // Persisted form state (survives component remounts for same recording)
+  // Persisted form state
   const STORAGE_KEY = 'tropx-save-modal-state';
 
   interface PersistedState {
-    recordingHash: string; // Hash to detect if recording data changed
+    recordingHash: string;
     notes: string;
     tags: string[];
     activityProfile: ActivityProfile;
-    isProfileAutoDetected: boolean;
+    autoDetectedProfile: ActivityProfile | null;
     cropRange: CropRange | null;
+    isCropAutoDetected: boolean;
     hasRunAutoCrop: boolean;
+    sets: number | null;
+    reps: number | null;
   }
 
-  // Generate a simple hash from recording data (sample count + duration + first/last timestamps)
   const generateRecordingHash = useCallback((samples: QuaternionSample[], durationMs: number): string => {
     if (samples.length === 0) return '';
     const first = samples[0];
     const last = samples[samples.length - 1];
-    // Include sample count, duration, and some sample data for uniqueness
     const hashInput = `${samples.length}-${durationMs}-${first.lq?.w ?? 0}-${last.lq?.w ?? 0}`;
-    // Simple hash function
     let hash = 0;
     for (let i = 0; i < hashInput.length; i++) {
       const char = hashInput.charCodeAt(i);
@@ -491,9 +180,12 @@ export function SaveModal({
       notes: '',
       tags: [],
       activityProfile: 'general' as ActivityProfile,
-      isProfileAutoDetected: false,
+      autoDetectedProfile: null,
       cropRange: null,
+      isCropAutoDetected: false,
       hasRunAutoCrop: false,
+      sets: null,
+      reps: null,
     };
     const updated = { ...current, ...state };
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
@@ -503,7 +195,6 @@ export function SaveModal({
     sessionStorage.removeItem(STORAGE_KEY);
   }, []);
 
-  // Initialize state from sessionStorage (will validate hash when recording loads)
   const initialState = loadPersistedState();
 
   // State
@@ -512,15 +203,21 @@ export function SaveModal({
   const [notes, setNotesState] = useState(initialState?.notes || '');
   const [tags, setTagsState] = useState<string[]>(initialState?.tags || []);
   const [activityProfile, setActivityProfileState] = useState<ActivityProfile>(initialState?.activityProfile || 'general');
-  const [isProfileAutoDetected, setIsProfileAutoDetected] = useState(initialState?.isProfileAutoDetected || false);
-  const [isSaving, setIsSaving] = useState(false);
+  const [autoDetectedProfile, setAutoDetectedProfile] = useState<ActivityProfile | null>(initialState?.autoDetectedProfile || null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isPatientSearchOpen, setIsPatientSearchOpen] = useState(false);
-  const [isCropModalOpen, setIsCropModalOpen] = useState(false);
   const [cropRange, setCropRangeState] = useState<CropRange | null>(initialState?.cropRange || null);
+  const [sets, setSetsState] = useState<number | null>(initialState?.sets ?? null);
+  const [reps, setRepsState] = useState<number | null>(initialState?.reps ?? null);
 
-  // Wrapped setters that also persist to sessionStorage
+  // Crop chart state
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [localRange, setLocalRange] = useState<[number, number]>([0, 0]);
+  const [dragMode, setDragMode] = useState<'left' | 'right' | null>(null);
+  const [isCropAutoDetected, setIsCropAutoDetected] = useState(initialState?.isCropAutoDetected || false);
+
+  // Wrapped setters that persist to sessionStorage
   const setNotes = useCallback((value: string) => {
     setNotesState(value);
     savePersistedState({ notes: value });
@@ -531,10 +228,9 @@ export function SaveModal({
     savePersistedState({ tags: value });
   }, [savePersistedState]);
 
-  const setActivityProfile = useCallback((value: ActivityProfile, autoDetected: boolean = false) => {
+  const setActivityProfile = useCallback((value: ActivityProfile) => {
     setActivityProfileState(value);
-    setIsProfileAutoDetected(autoDetected);
-    savePersistedState({ activityProfile: value, isProfileAutoDetected: autoDetected });
+    savePersistedState({ activityProfile: value });
   }, [savePersistedState]);
 
   const setCropRange = useCallback((range: CropRange | null) => {
@@ -542,7 +238,17 @@ export function SaveModal({
     savePersistedState({ cropRange: range });
   }, [savePersistedState]);
 
-  // Upload hook (for save mode)
+  const setSets = useCallback((value: number | null) => {
+    setSetsState(value);
+    savePersistedState({ sets: value });
+  }, [savePersistedState]);
+
+  const setReps = useCallback((value: number | null) => {
+    setRepsState(value);
+    savePersistedState({ reps: value });
+  }, [savePersistedState]);
+
+  // Upload hook
   const {
     isUploading,
     progress,
@@ -551,40 +257,23 @@ export function SaveModal({
     upload,
   } = useRecordingUpload();
 
-  // Edit mutation
-  const updateSession = useMutation(api.recordingSessions.updateSession);
-
-  // Sync tags mutation
   const syncUserTags = useMutation(api.tags.syncUserTags);
 
-  // Fetch session data for edit mode
-  const sessionData = useQuery(
-    api.recordingSessions.getSession,
-    mode === 'edit' && sessionId ? { sessionId } : 'skip'
-  );
-
-  // Current user
-  const currentUser = useQuery(api.users.getMe, {});
-
-  // Compute if user is the subject (not owner)
-  const isSubject = useMemo(() => {
-    if (!sessionData || !currentUser) return false;
-    return (
-      sessionData.subject?._id === currentUser._id &&
-      sessionData.owner?._id !== currentUser._id
-    );
-  }, [sessionData, currentUser]);
-
-  // Compute if user is the owner
-  const isOwner = useMemo(() => {
-    if (!sessionData || !currentUser) return false;
-    return sessionData.owner?._id === currentUser._id;
-  }, [sessionData, currentUser]);
-
-
-  // Load recording info for save mode
+  // Sync local crop range to parent state
   useEffect(() => {
-    if (!open || mode !== 'save') return;
+    if (!recordingInfo?.durationMs) return;
+    const durationMs = recordingInfo.durationMs;
+
+    if (localRange[0] === 0 && localRange[1] === durationMs) {
+      setCropRange(null);
+    } else if (localRange[0] > 0 || localRange[1] < durationMs) {
+      setCropRange({ startMs: localRange[0], endMs: localRange[1] });
+    }
+  }, [localRange, recordingInfo?.durationMs, setCropRange]);
+
+  // Load recording info
+  useEffect(() => {
+    if (!open) return;
 
     const loadInfo = async () => {
       if (!hasBackendAPI()) {
@@ -594,70 +283,69 @@ export function SaveModal({
 
       setIsLoadingInfo(true);
       try {
-        // Get raw samples for accurate duration calculation and preview chart
         const response = await window.electronAPI.recording.getSamples();
         if (response.success && response.samples.length > 0) {
           const rawSamples = response.samples as RawDeviceSample[];
-
-          // Process raw samples through GridSnapService + InterpolationService for preview
-          // Use 100Hz for preview (default target)
           const gridData = GridSnapService.snap(rawSamples, 100);
           const alignedSamples = InterpolationService.interpolate(gridData);
 
           if (alignedSamples.length > 0) {
-            // Calculate actual duration from timestamps
             const firstTs = alignedSamples[0].t;
             const lastTs = alignedSamples[alignedSamples.length - 1].t;
             const actualDuration = lastTs - firstTs;
 
             setRecordingInfo({
-              sampleCount: rawSamples.length,  // Show raw sample count
+              sampleCount: rawSamples.length,
               durationMs: actualDuration,
               startTime: firstTs,
               samples: alignedSamples,
             });
 
-            // Generate hash to detect if recording changed
             const currentHash = generateRecordingHash(alignedSamples, actualDuration);
             const persisted = loadPersistedState();
 
-            // Check if this is the same recording
             if (persisted && persisted.recordingHash === currentHash) {
-              // Same recording - restore persisted state (already initialized from sessionStorage)
-              // Just skip auto-detection since values are already set
-              console.log('[SaveModal] Restored persisted state for same recording');
+              // Restore persisted crop range
+              if (persisted.cropRange) {
+                setLocalRange([persisted.cropRange.startMs, persisted.cropRange.endMs]);
+              } else {
+                setLocalRange([0, actualDuration]);
+              }
             } else {
-              // Different recording or no persisted state - run auto-detection
+              // New recording - run auto-detection
               clearPersistedState();
 
-              // Auto-detect activity profile
               const { profile } = detectActivityProfile(alignedSamples);
-              setActivityProfile(profile, true);
+              setActivityProfile(profile);
+              setAutoDetectedProfile(profile);
 
-              // Auto-detect crop boundaries
               const autoCropResult = detectAutoCrop(alignedSamples, actualDuration);
-              if (autoCropResult.detected) {
-                setCropRange({
-                  startMs: autoCropResult.startMs,
-                  endMs: autoCropResult.endMs,
-                });
+              const cropAutoDetected = autoCropResult.detected;
+              if (cropAutoDetected) {
+                setLocalRange([autoCropResult.startMs, autoCropResult.endMs]);
+                setCropRange({ startMs: autoCropResult.startMs, endMs: autoCropResult.endMs });
+                setIsCropAutoDetected(true);
+              } else {
+                setLocalRange([0, actualDuration]);
+                setIsCropAutoDetected(false);
               }
 
-              // Save the hash so we know this recording has been processed
               savePersistedState({
                 recordingHash: currentHash,
                 hasRunAutoCrop: true,
+                autoDetectedProfile: profile,
+                isCropAutoDetected: cropAutoDetected,
               });
             }
           }
         } else {
-          // Fallback to state if no samples
           const state = await window.electronAPI.recording.getState();
           setRecordingInfo({
             sampleCount: state.sampleCount,
             durationMs: state.durationMs,
             startTime: state.startTime,
           });
+          setLocalRange([0, state.durationMs]);
         }
       } catch (err) {
         console.error('Failed to load recording info:', err);
@@ -668,17 +356,7 @@ export function SaveModal({
     };
 
     loadInfo();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, mode, generateRecordingHash, loadPersistedState, savePersistedState, clearPersistedState, setActivityProfile, setCropRange]);
-
-  // Pre-fill form for edit mode
-  useEffect(() => {
-    if (open && mode === 'edit' && sessionData) {
-      setNotesState(sessionData.notes ?? '');
-      setTagsState(sessionData.tags ?? []);
-      // Crop editing is disabled - cropped data is now physically stored
-    }
-  }, [open, mode, sessionData]);
+  }, [open, generateRecordingHash, loadPersistedState, savePersistedState, clearPersistedState, setActivityProfile, setCropRange]);
 
   // Reset state when modal closes
   useEffect(() => {
@@ -686,20 +364,156 @@ export function SaveModal({
       setNotesState('');
       setTagsState([]);
       setActivityProfileState('general');
-      setIsProfileAutoDetected(false);
+      setAutoDetectedProfile(null);
+      setIsCropAutoDetected(false);
       setSaveError(null);
       setSaveSuccess(false);
       setIsPatientSearchOpen(false);
       setCropRangeState(null);
-      setIsCropModalOpen(false);
-      // Clear persisted state for next recording
+      setLocalRange([0, 0]);
+      setSetsState(null);
+      setRepsState(null);
       clearPersistedState();
     }
   }, [open, clearPersistedState]);
 
-  // Handle save (new recording)
+  // Chart data
+  const chartData = useMemo<ChartDataPoint[]>(() => {
+    if (!recordingInfo?.samples || recordingInfo.samples.length === 0) return [];
+
+    const samples = recordingInfo.samples;
+    const durationMs = recordingInfo.durationMs;
+    const targetPoints = 300;
+    const step = Math.max(1, Math.floor(samples.length / targetPoints));
+    const timeStep = durationMs / samples.length;
+
+    const points: ChartDataPoint[] = [];
+    for (let i = 0; i < samples.length; i += step) {
+      const sample = samples[i];
+      points.push({
+        time: i * timeStep,
+        left: sample.lq ? Math.round(quaternionToAngle(sample.lq, 'y') * 10) / 10 : null,
+        right: sample.rq ? Math.round(quaternionToAngle(sample.rq, 'y') * 10) / 10 : null,
+      });
+    }
+    return points;
+  }, [recordingInfo?.samples, recordingInfo?.durationMs]);
+
+  const yDomain = useMemo(() => {
+    if (chartData.length === 0) return [-45, 90];
+    const allValues = chartData.flatMap((p) => [p.left, p.right]).filter((v): v is number => v !== null);
+    if (allValues.length === 0) return [-45, 90];
+    const min = Math.min(...allValues);
+    const max = Math.max(...allValues);
+    const padding = (max - min) * 0.1;
+    return [Math.floor(min - padding), Math.ceil(max + padding)];
+  }, [chartData]);
+
+  const durationMs = recordingInfo?.durationMs || 1;
+  const leftCropPercent = (localRange[0] / durationMs) * 100;
+  const rightCropPercent = (localRange[1] / durationMs) * 100;
+  const selectedDuration = localRange[1] - localRange[0];
+  const isCropped = localRange[0] > 0 || localRange[1] < durationMs;
+
+  // Crop drag handlers
+  const getTimeFromEvent = useCallback((e: MouseEvent | TouchEvent) => {
+    if (!chartRef.current) return 0;
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const rect = chartRef.current.getBoundingClientRect();
+    const percent = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return percent * durationMs;
+  }, [durationMs]);
+
+  const handleDragStart = useCallback((mode: 'left' | 'right', e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragMode(mode);
+  }, []);
+
+  const handleChartClick = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    if (!chartRef.current) return;
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const rect = chartRef.current.getBoundingClientRect();
+    const clickTime = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * durationMs;
+
+    const distToLeft = Math.abs(clickTime - localRange[0]);
+    const distToRight = Math.abs(clickTime - localRange[1]);
+    const closerHandle = distToLeft <= distToRight ? 'left' : 'right';
+    setDragMode(closerHandle);
+
+    if (closerHandle === 'left') {
+      const maxAllowed = localRange[1] - MIN_CROP_DURATION_MS;
+      const newStart = Math.max(0, Math.min(clickTime, maxAllowed));
+      setLocalRange([newStart, localRange[1]]);
+    } else {
+      const minAllowed = localRange[0] + MIN_CROP_DURATION_MS;
+      const newEnd = Math.min(durationMs, Math.max(clickTime, minAllowed));
+      setLocalRange([localRange[0], newEnd]);
+    }
+  }, [durationMs, localRange]);
+
+  const handleDragMove = useCallback((e: MouseEvent | TouchEvent) => {
+    if (!dragMode || !chartRef.current) return;
+    const currentTime = getTimeFromEvent(e);
+
+    if (dragMode === 'left') {
+      const maxAllowed = localRange[1] - MIN_CROP_DURATION_MS;
+      const newStart = Math.max(0, Math.min(currentTime, maxAllowed));
+      setLocalRange([newStart, localRange[1]]);
+    } else if (dragMode === 'right') {
+      const minAllowed = localRange[0] + MIN_CROP_DURATION_MS;
+      const newEnd = Math.min(durationMs, Math.max(currentTime, minAllowed));
+      setLocalRange([localRange[0], newEnd]);
+    }
+  }, [dragMode, durationMs, localRange, getTimeFromEvent]);
+
+  const handleDragEnd = useCallback(() => {
+    setDragMode(null);
+    // Manual adjustment clears auto-detected flag
+    setIsCropAutoDetected(false);
+    savePersistedState({ isCropAutoDetected: false });
+  }, [savePersistedState]);
+
+  useEffect(() => {
+    if (dragMode) {
+      window.addEventListener('mousemove', handleDragMove);
+      window.addEventListener('mouseup', handleDragEnd);
+      window.addEventListener('touchmove', handleDragMove);
+      window.addEventListener('touchend', handleDragEnd);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleDragMove);
+      window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('touchmove', handleDragMove);
+      window.removeEventListener('touchend', handleDragEnd);
+    };
+  }, [dragMode, handleDragMove, handleDragEnd]);
+
+  const handleReset = useCallback(() => {
+    if (recordingInfo?.durationMs) {
+      setLocalRange([0, recordingInfo.durationMs]);
+      setIsCropAutoDetected(false);
+      savePersistedState({ isCropAutoDetected: false });
+    }
+  }, [recordingInfo?.durationMs, savePersistedState]);
+
+  const handleAuto = useCallback(() => {
+    if (!recordingInfo?.samples || !recordingInfo.durationMs) return;
+    const result = detectAutoCrop(recordingInfo.samples, recordingInfo.durationMs);
+    if (result.detected) {
+      setLocalRange([result.startMs, result.endMs]);
+      setIsCropAutoDetected(true);
+      savePersistedState({ isCropAutoDetected: true });
+    } else {
+      setLocalRange([0, recordingInfo.durationMs]);
+      setIsCropAutoDetected(false);
+      savePersistedState({ isCropAutoDetected: false });
+    }
+  }, [recordingInfo?.samples, recordingInfo?.durationMs, savePersistedState]);
+
+  // Save handler
   const handleSave = useCallback(async () => {
-    if (mode !== 'save' || !hasBackendAPI()) return;
+    if (!hasBackendAPI()) return;
 
     try {
       const response = await window.electronAPI.recording.getSamples();
@@ -709,7 +523,6 @@ export function SaveModal({
         return;
       }
 
-      // Raw samples are now passed directly - alignment happens in UploadService
       const rawSamples: RawDeviceSample[] = response.samples;
 
       const options: UseRecordingUploadOptions = {
@@ -719,13 +532,14 @@ export function SaveModal({
         notes: notes || undefined,
         tags: tags.length > 0 ? tags : undefined,
         activityProfile,
+        sets: sets || undefined,
+        reps: reps || undefined,
         cropRange: cropRange || undefined,
       };
 
       const result = await upload(rawSamples, options);
 
       if (result.success) {
-        // Sync user tags for autocomplete history (don't include title)
         if (tags.length > 0) {
           await syncUserTags({ tags });
         }
@@ -735,56 +549,12 @@ export function SaveModal({
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed');
     }
-  }, [mode, notes, tags, recordingTitle, activityProfile, selectedPatientId, selectedPatientName, cropRange, upload, syncUserTags, onOpenChange]);
-
-  // Handle edit (update existing)
-  const handleEdit = useCallback(async () => {
-    if (mode !== 'edit' || !sessionId || !isOwner) return;
-
-    setIsSaving(true);
-    setSaveError(null);
-
-    try {
-      await updateSession({
-        sessionId,
-        notes: notes || undefined,
-        tags: tags.length > 0 ? tags : undefined,
-        // Crop editing is disabled - cropped data is physically stored at save time
-      });
-
-      // Sync user tags for autocomplete history
-      if (tags.length > 0) {
-        await syncUserTags({ tags });
-      }
-
-      setSaveSuccess(true);
-      onEditSuccess?.();
-      setTimeout(() => onOpenChange(false), 1000);
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Update failed');
-    } finally {
-      setIsSaving(false);
-    }
-  }, [mode, sessionId, isOwner, notes, tags, updateSession, syncUserTags, onEditSuccess, onOpenChange]);
+  }, [notes, tags, recordingTitle, activityProfile, sets, reps, selectedPatientId, selectedPatientName, cropRange, upload, syncUserTags, onOpenChange]);
 
   const handleClose = () => onOpenChange(false);
 
-  // Compute if can save/edit
-  const canSave =
-    mode === 'save' &&
-    hasBackendAPI() &&
-    recordingInfo &&
-    recordingInfo.sampleCount > 0 &&
-    !isUploading;
-
-  const canEdit = mode === 'edit' && isOwner && !isSaving;
-
-  const isProcessing = isUploading || isSaving;
-
-  // Title based on mode
-  const title = mode === 'save' ? 'Save Recording' : 'Edit Recording';
-  const actionLabel = mode === 'save' ? 'Save to Cloud' : 'Save Changes';
-  const ActionIcon = mode === 'save' ? CloudUpload : Save;
+  const canSave = hasBackendAPI() && recordingInfo && recordingInfo.sampleCount > 0 && !isUploading;
+  const isProcessing = isUploading;
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -798,7 +568,6 @@ export function SaveModal({
           onClick={handleClose}
         />
 
-        {/* Side-by-side container for both modals */}
         <div
           className={cn(
             'fixed inset-0 z-[51] flex items-center justify-center gap-4 pointer-events-none',
@@ -806,456 +575,400 @@ export function SaveModal({
             'data-[state=closed]:animate-[modal-bubble-out_0.12s_var(--spring-smooth)_forwards]'
           )}
         >
-          {/* SaveModal Content */}
           <DialogPrimitive.Content
             className={cn(
-              'w-full max-w-sm h-fit max-h-[85vh] overflow-y-auto p-5',
-              'bg-[var(--tropx-card)] rounded-2xl shadow-lg border border-[var(--tropx-border)]',
-              'pointer-events-auto',
-              'transition-transform duration-200 ease-out'
+              'w-full max-w-lg p-4 pointer-events-auto',
+              'bg-[var(--tropx-card)] rounded-2xl border border-[var(--tropx-border)] shadow-xl'
             )}
             onPointerDownOutside={(e) => {
-              // Don't close if clicking within the side-by-side container area
-              if (isPatientSearchOpen || isCropModalOpen) {
+              if (isPatientSearchOpen) {
                 e.preventDefault();
               } else {
                 handleClose();
               }
             }}
           >
-          {/* Header */}
-          <div className="flex items-center justify-between mb-4">
-            <DialogPrimitive.Title className="text-lg font-semibold text-[var(--tropx-text-main)]">
-              {title}
-            </DialogPrimitive.Title>
-            <DialogPrimitive.Description className="sr-only">
-              {mode === 'save' ? 'Save recording to cloud storage' : 'Edit recording metadata'}
-            </DialogPrimitive.Description>
-            <button
-              onClick={handleClose}
-              className="rounded-full p-1.5 hover:bg-[var(--tropx-muted)] transition-colors cursor-pointer"
-            >
-              <XIcon className="size-4 text-[var(--tropx-shadow)]" />
-            </button>
-          </div>
+            <DialogPrimitive.Title className="sr-only">Save Recording</DialogPrimitive.Title>
+            <DialogPrimitive.Description className="sr-only">Save recording to cloud storage</DialogPrimitive.Description>
 
-          {/* Content */}
-          <div className="space-y-3">
-            {/* Connection Status (save mode) */}
-            {mode === 'save' && !isConnected && (
-              <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700">
+            {/* Connection Status */}
+            {!isConnected && (
+              <div className="flex items-center gap-2 p-2 mb-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm">
                 <WifiOff className="size-4" />
-                <span className="text-sm">Offline - will be queued</span>
+                <span>Offline - will be queued</span>
               </div>
             )}
 
-            {/* Recording Info (save mode) */}
-            {mode === 'save' && (
-              isLoadingInfo ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader2 className="size-5 animate-spin text-[var(--tropx-shadow)]" />
-                </div>
-              ) : recordingInfo ? (
-                <div className="p-3 bg-[var(--tropx-muted)] rounded-lg">
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <span className="text-[var(--tropx-shadow)]">Samples:</span>
-                      <span className="ml-2 font-medium">
-                        {recordingInfo.sampleCount.toLocaleString()}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-[var(--tropx-shadow)]">Duration:</span>
-                      <span className="ml-2 font-medium">
-                        {formatDuration(recordingInfo.durationMs)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-4 bg-[var(--tropx-muted)] rounded-lg text-center text-[var(--tropx-shadow)] text-sm">
-                  No recording data available
-                </div>
-              )
-            )}
+            {/* Top Row: Title + Patient */}
+            <div className="flex gap-2 mb-3">
+              <input
+                type="text"
+                value={recordingTitle}
+                onChange={(e) => onRecordingTitleChange?.(e.target.value)}
+                placeholder="Title..."
+                className="flex-1 px-3 py-2 border border-[var(--tropx-border)] bg-[var(--tropx-muted)] rounded-lg text-sm text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)] focus:outline-none focus:ring-2 focus:ring-[var(--tropx-vibrant)] focus:border-transparent"
+                disabled={isProcessing}
+              />
+              <button
+                type="button"
+                onClick={() => setIsPatientSearchOpen(true)}
+                disabled={isProcessing}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm transition-colors',
+                  selectedPatientId
+                    ? 'border-violet-200 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300'
+                    : 'border-[var(--tropx-border)] bg-[var(--tropx-muted)] text-[var(--tropx-shadow)] hover:bg-[var(--tropx-hover)]',
+                  isProcessing && 'opacity-50 cursor-not-allowed'
+                )}
+              >
+                {selectedPatientImage ? (
+                  <img src={selectedPatientImage} alt="" className="size-5 rounded-full object-cover" />
+                ) : (
+                  <User className="size-4" />
+                )}
+                <span className="max-w-[80px] truncate">{selectedPatientName || 'Patient'}</span>
+              </button>
+            </div>
 
-            {/* Session Info (edit mode) */}
-            {mode === 'edit' && sessionData && (
-              <div className="p-3 bg-[var(--tropx-muted)] rounded-lg">
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div>
-                    <span className="text-[var(--tropx-shadow)]">Duration:</span>
-                    <span className="ml-2 font-medium">
-                      {formatDuration(sessionData.endTime - sessionData.startTime)}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-[var(--tropx-shadow)]">Recorded:</span>
-                    <span className="ml-2 font-medium">
-                      {formatDateTime(sessionData.startTime)}
-                    </span>
-                  </div>
+            {/* Chart Section */}
+            {isLoadingInfo ? (
+              <div className="flex items-center justify-center py-12 bg-[var(--tropx-muted)] rounded-xl">
+                <Loader2 className="size-6 animate-spin text-[var(--tropx-shadow)]" />
+              </div>
+            ) : recordingInfo?.samples && chartData.length > 0 ? (
+              <div
+                ref={chartRef}
+                className="relative cursor-ew-resize rounded-xl overflow-hidden bg-[var(--tropx-muted)] mb-3"
+                style={{ height: CHART_HEIGHT }}
+                onMouseDown={handleChartClick}
+                onTouchStart={handleChartClick}
+              >
+                {/* Chart */}
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 20, right: 8, left: 0, bottom: 8 }}>
+                    <defs>
+                      <linearGradient id="saveLeftGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={LEFT_KNEE_COLOR} stopOpacity={0.05} />
+                      </linearGradient>
+                      <linearGradient id="saveRightGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={RIGHT_KNEE_COLOR} stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="time"
+                      type="number"
+                      domain={[0, durationMs]}
+                      tickFormatter={(ms) => formatTimeMs(ms)}
+                      tick={{ fill: 'var(--tropx-shadow)', fontSize: 10 }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickCount={5}
+                    />
+                    <YAxis domain={yDomain} reversed hide />
+                    <Area
+                      type="monotone"
+                      dataKey="left"
+                      stroke={LEFT_KNEE_COLOR}
+                      strokeWidth={1.5}
+                      fill="url(#saveLeftGradient)"
+                      isAnimationActive={false}
+                      dot={false}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="right"
+                      stroke={RIGHT_KNEE_COLOR}
+                      strokeWidth={1.5}
+                      fill="url(#saveRightGradient)"
+                      isAnimationActive={false}
+                      dot={false}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+
+                {/* Crop overlays */}
+                {localRange[0] > 0 && (
+                  <div
+                    className="absolute top-0 bottom-0 left-0 bg-red-500/30 cursor-ew-resize hover:bg-red-500/40 transition-colors"
+                    style={{ width: `${leftCropPercent}%` }}
+                    onMouseDown={(e) => handleDragStart('left', e)}
+                    onTouchStart={(e) => handleDragStart('left', e)}
+                  />
+                )}
+                {localRange[1] < durationMs && (
+                  <div
+                    className="absolute top-0 bottom-0 right-0 bg-red-500/30 cursor-ew-resize hover:bg-red-500/40 transition-colors"
+                    style={{ width: `${100 - rightCropPercent}%` }}
+                    onMouseDown={(e) => handleDragStart('right', e)}
+                    onTouchStart={(e) => handleDragStart('right', e)}
+                  />
+                )}
+
+                {/* Crop handles */}
+                <div
+                  className="absolute top-0 bottom-0 w-4 cursor-ew-resize z-20 flex justify-center"
+                  style={{ left: `calc(${leftCropPercent}% - 8px)` }}
+                  onMouseDown={(e) => handleDragStart('left', e)}
+                  onTouchStart={(e) => handleDragStart('left', e)}
+                >
+                  <div className={cn("h-full w-1 transition-colors bg-red-500 hover:bg-red-400", dragMode === 'left' && "bg-red-400")} />
                 </div>
-                {/* Crop indicator in edit mode (read-only) */}
-                {sessionData.isCropped && (
-                  <div className="mt-2 pt-2 border-t border-[var(--tropx-border)] flex items-center gap-2 text-sm">
-                    <Scissors className="size-3.5 text-[var(--tropx-vibrant)]" />
-                    <span className="text-[var(--tropx-shadow)]">Cropped</span>
-                    {sessionData.originalDurationMs && (
-                      <span className="text-[var(--tropx-text-sub)]">
-                        (was {formatDuration(sessionData.originalDurationMs)})
-                      </span>
+                <div
+                  className="absolute top-0 bottom-0 w-4 cursor-ew-resize z-20 flex justify-center"
+                  style={{ left: `calc(${rightCropPercent}% - 8px)` }}
+                  onMouseDown={(e) => handleDragStart('right', e)}
+                  onTouchStart={(e) => handleDragStart('right', e)}
+                >
+                  <div className={cn("h-full w-1 transition-colors bg-red-500 hover:bg-red-400", dragMode === 'right' && "bg-red-400")} />
+                </div>
+
+                {/* Hint text */}
+                <div className="absolute top-1 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+                  <span className="text-[10px] text-red-500 font-medium px-2 py-0.5 rounded bg-[var(--tropx-card)]/80 backdrop-blur-sm">
+                    Click to drag closest edge
+                  </span>
+                </div>
+
+                {/* Duration badge */}
+                <div className="absolute top-1 right-2 z-30 pointer-events-none">
+                  <span className="text-[10px] text-[var(--tropx-shadow)] font-mono px-1.5 py-0.5 rounded bg-[var(--tropx-card)]/80 backdrop-blur-sm">
+                    {formatDuration(selectedDuration)}
+                  </span>
+                </div>
+
+                {/* Chart action buttons */}
+                <div
+                  className="absolute bottom-2 right-2 z-30 flex items-center gap-1.5"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onTouchStart={(e) => e.stopPropagation()}
+                >
+                  <button
+                    onClick={handleReset}
+                    disabled={!isCropped}
+                    className={cn(
+                      "size-8 flex items-center justify-center rounded-lg transition-all border border-[var(--tropx-border)] shadow-md",
+                      isCropped
+                        ? "bg-[var(--tropx-card)] text-[var(--tropx-text-main)] hover:bg-[var(--tropx-hover)] hover:scale-105"
+                        : "bg-[var(--tropx-muted)]/50 text-[var(--tropx-shadow)]/50 cursor-not-allowed"
                     )}
+                    title="Reset crop"
+                  >
+                    <RotateCcw className="size-4" />
+                  </button>
+                  <button
+                    onClick={handleAuto}
+                    className="size-8 flex items-center justify-center rounded-lg transition-all border border-[var(--tropx-border)] shadow-md bg-[var(--tropx-card)] text-[var(--tropx-text-main)] hover:bg-[var(--tropx-hover)] hover:scale-105"
+                    title="Auto-detect crop"
+                  >
+                    <Wand2 className="size-4" />
+                  </button>
+                </div>
+
+                {/* Cropped badge */}
+                {isCropped && (
+                  <div className="absolute bottom-2 left-2 z-30 pointer-events-none">
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-[var(--tropx-vibrant)] text-white shadow-sm">
+                      Cropped{isCropAutoDetected && ' - Auto'}
+                    </span>
                   </div>
                 )}
               </div>
-            )}
-
-            {/* Mini Chart Preview */}
-            {mode === 'save' && recordingInfo && recordingInfo.samples && recordingInfo.samples.length > 0 && (
-              <MiniRecordingChart
-                samples={recordingInfo.samples}
-                durationMs={recordingInfo.durationMs}
-                cropRange={cropRange}
-                onCropClick={() => setIsCropModalOpen(true)}
-              />
-            )}
-
-            {/* Activity Profile Selector */}
-            {mode === 'save' && (
-              <div>
-                <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--tropx-text-main)] mb-1.5">
-                  <Activity className="size-3.5" />
-                  Activity Profile
-                  {isProfileAutoDetected && (
-                    <span className="ml-auto flex items-center gap-1 text-xs font-normal text-[var(--tropx-vibrant)]">
-                      <Sparkles className="size-3" />
-                      Auto-Detected
-                    </span>
-                  )}
-                </label>
-                <div className="flex rounded-lg border border-[var(--tropx-border)] overflow-hidden">
-                  {ACTIVITY_PROFILE_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => {
-                        setActivityProfile(option.value);
-                        setIsProfileAutoDetected(false);
-                      }}
-                      disabled={isProcessing}
-                      className={cn(
-                        'flex-1 px-3 py-1.5 text-sm font-medium transition-colors',
-                        activityProfile === option.value
-                          ? 'bg-[var(--tropx-vibrant)] text-white'
-                          : 'bg-[var(--tropx-card)] text-[var(--tropx-shadow)] hover:bg-[var(--tropx-muted)]',
-                        isProcessing && 'opacity-50 cursor-not-allowed'
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
+            ) : (
+              <div className="flex items-center justify-center py-12 bg-[var(--tropx-muted)] rounded-xl mb-3 text-[var(--tropx-shadow)] text-sm">
+                No recording data available
               </div>
             )}
 
-            {/* Recording Title & Patient - Compact inline row */}
-            {mode === 'save' && (
-              <div className="flex gap-2">
-                {/* Title - compact input with icon */}
-                <div className="flex-1 relative">
-                  <Type className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-[var(--tropx-shadow)]" />
-                  <input
-                    type="text"
-                    value={recordingTitle}
-                    onChange={(e) => onRecordingTitleChange?.(e.target.value)}
-                    placeholder="Title..."
-                    className="w-full pl-8 pr-2.5 py-1.5 border border-[var(--tropx-border)] bg-[var(--tropx-card)] rounded-lg text-sm text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)] focus:outline-none focus:ring-2 focus:ring-[var(--tropx-vibrant)] focus:border-transparent"
-                    disabled={isProcessing}
-                  />
-                </div>
-
-                {/* Patient selector button - opens PatientSearchModal beside */}
-                <button
-                  type="button"
-                  onClick={() => setIsPatientSearchOpen(true)}
+            {/* Sets/Reps + Activity Profile Row */}
+            <div className="flex items-center justify-between mb-3">
+              {/* Set */}
+              <div className="flex items-center gap-1.5">
+                <label className="text-sm text-[var(--tropx-shadow)]">Set</label>
+                <NumberStepper
+                  value={sets}
+                  onChange={setSets}
+                  max={99}
                   disabled={isProcessing}
-                  className={cn(
-                    'flex items-center gap-1.5 px-2.5 py-1.5 border rounded-lg text-sm transition-colors',
-                    selectedPatientId
-                      ? 'border-violet-200 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300'
-                      : 'border-[var(--tropx-border)] text-[var(--tropx-shadow)] hover:bg-[var(--tropx-muted)]',
-                    isProcessing && 'opacity-50 cursor-not-allowed'
-                  )}
+                />
+              </div>
+
+              {/* Reps */}
+              <div className="flex items-center gap-1.5">
+                <label className="text-sm text-[var(--tropx-shadow)]">Reps</label>
+                <NumberStepper
+                  value={reps}
+                  onChange={setReps}
+                  max={999}
+                  disabled={isProcessing}
+                />
+              </div>
+
+              {/* Activity Profile Dropdown */}
+              <div className="flex items-center gap-1.5">
+                <label className="text-sm text-[var(--tropx-shadow)]">Profile</label>
+                <Select
+                  value={activityProfile}
+                  onValueChange={(value) => setActivityProfile(value as ActivityProfile)}
+                  disabled={isProcessing}
                 >
-                  {selectedPatientImage ? (
-                    <img
-                      src={selectedPatientImage}
-                      alt=""
-                      className="size-5 rounded-full object-cover"
-                    />
-                  ) : (
-                    <User className="size-3.5" />
-                  )}
-                  <span className="max-w-[80px] truncate">
-                    {selectedPatientName || 'Patient'}
-                  </span>
-                  <ChevronRight className="size-3.5 opacity-50" />
-                </button>
+                  <SelectTrigger
+                    className={cn(
+                      "h-auto px-3 py-1.5 text-sm rounded-lg",
+                      "border-[var(--tropx-border)] bg-[var(--tropx-muted)]",
+                      "text-[var(--tropx-text-main)]",
+                      "hover:bg-[var(--tropx-hover)]",
+                      "focus:ring-2 focus:ring-[var(--tropx-vibrant)] focus:ring-offset-0",
+                      isProcessing && "opacity-50"
+                    )}
+                  >
+                    <span>
+                      {ACTIVITY_PROFILE_OPTIONS.find(o => o.value === activityProfile)?.label}
+                      {autoDetectedProfile === activityProfile && <span className="text-[var(--tropx-shadow)] ml-1">- Auto</span>}
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent
+                    position="popper"
+                    side="bottom"
+                    align="start"
+                    sideOffset={4}
+                    className={cn(
+                      "z-[200] min-w-[140px]",
+                      "bg-[var(--tropx-card)] border-[var(--tropx-border)]"
+                    )}
+                  >
+                    {ACTIVITY_PROFILE_OPTIONS.map((option) => (
+                      <SelectItem
+                        key={option.value}
+                        value={option.value}
+                        className={cn(
+                          "text-sm cursor-pointer",
+                          "text-[var(--tropx-text-main)]",
+                          "focus:bg-[var(--tropx-muted)] focus:text-[var(--tropx-text-main)]",
+                          "data-[state=checked]:text-[var(--tropx-vibrant)]"
+                        )}
+                      >
+                        {option.label}
+                        {autoDetectedProfile === option.value && <span className="text-[var(--tropx-shadow)] ml-1">- Auto</span>}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-            )}
-
-            {/* Subject Info (edit mode - read only) */}
-            {mode === 'edit' && sessionData?.subject && (
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-[var(--tropx-muted)]">
-                <div className="size-8 rounded-full bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center">
-                  <User className="size-4 text-violet-600" />
-                </div>
-                <div>
-                  <p className="text-xs text-[var(--tropx-shadow)]">Subject</p>
-                  <p className="text-sm font-medium text-[var(--tropx-text-main)]">
-                    {sessionData.subject.name}
-                  </p>
-                </div>
-              </div>
-            )}
-
-
-            {/* Tags */}
-            <div>
-              <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--tropx-text-main)] mb-1">
-                <Tag className="size-3.5" />
-                Tags
-              </label>
-              <TagsInput
-                value={tags}
-                onChange={setTags}
-                placeholder="Add tags (exercises, notes, etc.)"
-                disabled={isProcessing || (mode === 'edit' && !isOwner)}
-              />
             </div>
 
             {/* Notes */}
-            <div>
-              <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--tropx-text-main)] mb-1">
-                <StickyNote className="size-3.5" />
-                Notes
-              </label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Optional notes..."
-                rows={3}
-                className="w-full px-3 py-2 border border-[var(--tropx-border)] bg-[var(--tropx-card)] rounded-lg text-sm text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)] focus:outline-none focus:ring-2 focus:ring-[var(--tropx-vibrant)] focus:border-transparent resize-none"
-                disabled={isProcessing || (mode === 'edit' && !isOwner)}
-              />
-            </div>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Optional notes..."
+              rows={2}
+              className="w-full px-3 py-2 border border-[var(--tropx-border)] bg-[var(--tropx-muted)] rounded-lg text-sm text-[var(--tropx-text-main)] placeholder-[var(--tropx-text-sub)] focus:outline-none focus:ring-2 focus:ring-[var(--tropx-vibrant)] focus:border-transparent resize-none"
+              disabled={isProcessing}
+            />
 
-            {/* Modification History (edit mode) */}
-            {mode === 'edit' && (sessionData as any)?.modificationHistory && (
-              <ModificationHistory
-                history={(sessionData as any).modificationHistory}
-              />
-            )}
-
-            {/* Subject Notes (edit mode) */}
-            {mode === 'edit' && sessionId && (
-              <SubjectNotesSection
-                notes={(sessionData as any)?.subjectNotes ?? []}
-                sessionId={sessionId}
-                isSubject={isSubject}
-                currentUserId={currentUser?._id}
-              />
-            )}
-
-            {/* Upload Progress (save mode) */}
-            {mode === 'save' && isUploading && progress && (
-              <div className="p-4 bg-[var(--tropx-muted)] border border-[var(--tropx-border)] rounded-xl">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="relative">
-                      <CloudUpload className="size-5 text-[var(--tropx-vibrant)]" />
-                      <div className="absolute -top-0.5 -right-0.5 size-2 bg-[var(--tropx-vibrant)] rounded-full animate-pulse" />
-                    </div>
-                    <span className="text-sm font-medium text-[var(--tropx-text-main)]">
-                      {progress.message}
-                    </span>
+            {/* Upload Progress */}
+            {isUploading && progress && (
+              <div className="mt-3 p-3 bg-[var(--tropx-muted)] border border-[var(--tropx-border)] rounded-xl">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <CloudUpload className="size-4 text-[var(--tropx-vibrant)]" />
+                    <span className="text-sm font-medium text-[var(--tropx-text-main)]">{progress.message}</span>
                   </div>
                   {progress.totalChunks > 0 && (
-                    <span className="text-xs font-medium text-[var(--tropx-shadow)] tabular-nums">
+                    <span className="text-xs text-[var(--tropx-shadow)] tabular-nums">
                       {progress.currentChunk}/{progress.totalChunks}
                     </span>
                   )}
                 </div>
                 {progress.totalChunks > 0 && (
-                  <div className="w-full bg-[var(--tropx-border)] rounded-full h-2 overflow-hidden">
+                  <div className="w-full bg-[var(--tropx-border)] rounded-full h-1.5 overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-[var(--tropx-vibrant)] to-[var(--tropx-coral,#f97066)] transition-all duration-300 ease-out"
-                      style={{
-                        width: `${(progress.currentChunk / progress.totalChunks) * 100}%`,
-                      }}
+                      className="h-full rounded-full bg-gradient-to-r from-[var(--tropx-vibrant)] to-[var(--tropx-coral,#f97066)] transition-all duration-300"
+                      style={{ width: `${(progress.currentChunk / progress.totalChunks) * 100}%` }}
                     />
                   </div>
                 )}
               </div>
             )}
 
-            {/* Success/Error Messages */}
+            {/* Success/Error */}
             {saveSuccess && (
-              <div className="p-4 rounded-xl flex items-center gap-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
-                <div className="size-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center">
-                  <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" />
-                </div>
-                <div>
-                  <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
-                    {mode === 'save' ? 'Saved successfully' : 'Updated successfully'}
-                  </span>
-                  <p className="text-xs text-emerald-600/70 dark:text-emerald-400/70">
-                    Your recording is now in the cloud
-                  </p>
-                </div>
+              <div className="mt-3 p-3 rounded-xl flex items-center gap-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+                <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Saved successfully</span>
               </div>
             )}
 
             {saveError && (
-              <div className="p-4 rounded-xl flex items-center gap-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
-                <div className="size-8 rounded-full bg-red-100 dark:bg-red-900/50 flex items-center justify-center">
-                  <AlertCircle className="size-5 text-red-600 dark:text-red-400" />
-                </div>
-                <div>
-                  <span className="text-sm font-medium text-red-700 dark:text-red-300">
-                    Upload failed
-                  </span>
-                  <p className="text-xs text-red-600/70 dark:text-red-400/70">
-                    {saveError}
-                  </p>
-                </div>
+              <div className="mt-3 p-3 rounded-xl flex items-center gap-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+                <AlertCircle className="size-5 text-red-600 dark:text-red-400" />
+                <span className="text-sm font-medium text-red-700 dark:text-red-300">{saveError}</span>
               </div>
             )}
 
-            {/* Last upload result (save mode) */}
-            {mode === 'save' && lastResult && !isUploading && !saveSuccess && (
-              <div
-                className={cn(
-                  'p-4 rounded-xl flex items-center gap-3',
-                  lastResult.success
-                    ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800'
-                    : 'bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800'
-                )}
-              >
-                {lastResult.success ? (
-                  <>
-                    <div className="size-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center">
-                      <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" />
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
-                        Saved successfully
-                      </span>
-                      <p className="text-xs text-emerald-600/70 dark:text-emerald-400/70">
-                        Your recording is now in the cloud
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="size-8 rounded-full bg-red-100 dark:bg-red-900/50 flex items-center justify-center">
-                      <AlertCircle className="size-5 text-red-600 dark:text-red-400" />
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-red-700 dark:text-red-300">
-                        Upload failed
-                      </span>
-                      <p className="text-xs text-red-600/70 dark:text-red-400/70">
-                        {lastResult.error || 'Something went wrong'}
-                      </p>
-                    </div>
-                  </>
-                )}
+            {/* Bottom Row: Tags + Action Buttons */}
+            <div className="flex items-start gap-2 mt-4">
+              {/* Tags - left side */}
+              <div className="flex-1 min-w-0">
+                <TagsInput
+                  value={tags}
+                  onChange={setTags}
+                  placeholder="Add tags... (exercise, session, etc...)"
+                  disabled={isProcessing}
+                />
               </div>
-            )}
-          </div>
+              {/* Action buttons - right side */}
+              <div className="flex gap-2 shrink-0 self-start">
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  disabled={isProcessing}
+                  className={cn(
+                    'px-4 py-2 text-sm font-medium rounded-lg transition-colors',
+                    'border border-[var(--tropx-border)] bg-[var(--tropx-muted)] text-[var(--tropx-text-main)]',
+                    'hover:bg-[var(--tropx-hover)]',
+                    isProcessing && 'opacity-50 cursor-not-allowed'
+                  )}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={!canSave}
+                  className={cn(
+                    'px-4 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-2',
+                    canSave
+                      ? 'bg-[var(--tropx-vibrant)] text-white hover:bg-[var(--tropx-vibrant)]/90'
+                      : 'bg-[var(--tropx-muted)] text-[var(--tropx-shadow)] cursor-not-allowed'
+                  )}
+                >
+                  {isUploading ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Save'
+                  )}
+                </button>
+              </div>
+            </div>
+          </DialogPrimitive.Content>
 
-          {/* Actions */}
-          <div className="flex gap-3 mt-4">
-            <button
-              onClick={handleClose}
-              className="flex-1 px-4 py-2 border border-[var(--tropx-border)] rounded-lg text-sm font-medium text-[var(--tropx-shadow)] hover:bg-[var(--tropx-muted)] transition-colors"
-              disabled={isProcessing}
-            >
-              Cancel
-            </button>
-
-            {/* Only show action button if owner (or save mode) */}
-            {(mode === 'save' || isOwner) && (
-              <button
-                onClick={mode === 'save' ? handleSave : handleEdit}
-                disabled={mode === 'save' ? !canSave : !canEdit}
-                className={cn(
-                  'flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2',
-                  (mode === 'save' ? canSave : canEdit)
-                    ? 'bg-[var(--tropx-vibrant)] text-white hover:opacity-90'
-                    : 'bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] cursor-not-allowed'
-                )}
-              >
-                {isProcessing ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    {mode === 'save' ? 'Saving...' : 'Updating...'}
-                  </>
-                ) : (
-                  <>
-                    <ActionIcon className="size-4" />
-                    {actionLabel}
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-        </DialogPrimitive.Content>
-
-          {/* PatientSearchModal rendered beside SaveModal (embedded mode) */}
-          {isPatientSearchOpen && mode === 'save' && (
-            <div
-              className={cn(
-                'h-fit pointer-events-auto',
-                'animate-[modal-bubble-in_0.15s_var(--spring-bounce)_forwards]'
-              )}
-            >
+          {/* Patient Search Modal */}
+          {isPatientSearchOpen && (
+            <div className="h-fit pointer-events-auto animate-[modal-bubble-in_0.15s_var(--spring-bounce)_forwards]">
               <PatientSearchModal
                 open={isPatientSearchOpen}
-                onOpenChange={(open) => {
-                  setIsPatientSearchOpen(open);
-                }}
+                onOpenChange={setIsPatientSearchOpen}
                 onSelectPatient={(patient) => {
-                  onPatientSelect?.({
-                    userId: patient.userId,
-                    name: patient.name,
-                    image: patient.image,
-                  });
+                  onPatientSelect?.({ userId: patient.userId, name: patient.name, image: patient.image });
                   setIsPatientSearchOpen(false);
                 }}
                 selectedPatientId={selectedPatientId}
-                embedded
-              />
-            </div>
-          )}
-
-          {/* CropModal rendered beside SaveModal (embedded mode) */}
-          {isCropModalOpen && mode === 'save' && recordingInfo?.samples && (
-            <div
-              className={cn(
-                'h-fit pointer-events-auto',
-                'animate-[modal-bubble-in_0.15s_var(--spring-bounce)_forwards]'
-              )}
-            >
-              <CropModal
-                open={isCropModalOpen}
-                onOpenChange={setIsCropModalOpen}
-                samples={recordingInfo.samples}
-                durationMs={recordingInfo.durationMs}
-                cropRange={cropRange}
-                onCropChange={setCropRange}
                 embedded
               />
             </div>

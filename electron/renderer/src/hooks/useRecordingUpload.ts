@@ -37,6 +37,8 @@ export interface UseRecordingUploadOptions {
   notes?: string;
   tags?: string[];
   activityProfile?: ActivityProfile;
+  sets?: number;
+  reps?: number;
   cropRange?: { startMs: number; endMs: number };
 }
 
@@ -151,6 +153,8 @@ export function useRecordingUpload(): UseRecordingUploadReturn {
           notes: options.notes,
           tags: options.tags,
           activityProfile: options.activityProfile,
+          sets: options.sets,
+          reps: options.reps,
           cropRange: options.cropRange,
         };
 

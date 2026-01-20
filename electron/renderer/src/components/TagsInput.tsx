@@ -25,9 +25,35 @@ export function TagsInput({
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
+  const [isFocused, setIsFocused] = useState(false);
+  const [isOverflowing, setIsOverflowing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Check if content overflows
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const checkOverflow = () => {
+      setIsOverflowing(container.scrollWidth > container.clientWidth);
+    };
+
+    checkOverflow();
+    // Recheck on resize
+    const resizeObserver = new ResizeObserver(checkOverflow);
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, [value]);
+
+  // Scroll to end when focused
+  useEffect(() => {
+    if (isFocused && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollLeft = scrollContainerRef.current.scrollWidth;
+    }
+  }, [isFocused, value]);
 
   // Fetch user's tags + defaults (no limit for cache key consistency)
   const tagsData = useQuery(api.tags.getTagsWithDefaults, {});
@@ -127,16 +153,19 @@ export function TagsInput({
     }
   }, [editingTag]);
 
-  // Handle key down
+  // Handle key down - uses dropdownItems which is either filtered suggestions or all suggested tags
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (disabled) return;
+
+    // Get the current dropdown items based on input state
+    const currentItems = input.trim().length > 0 ? suggestions : suggestedTags;
 
     switch (e.key) {
       case 'Enter':
       case ',':
         e.preventDefault();
-        if (highlightIndex >= 0 && suggestions[highlightIndex]) {
-          addTag(suggestions[highlightIndex].tag);
+        if (highlightIndex >= 0 && currentItems[highlightIndex]) {
+          addTag(currentItems[highlightIndex].tag);
         } else if (input.trim()) {
           addTag(input);
         }
@@ -150,18 +179,18 @@ export function TagsInput({
 
       case 'ArrowDown':
         e.preventDefault();
-        if (suggestions.length > 0) {
+        if (currentItems.length > 0) {
           setHighlightIndex((prev) =>
-            prev < suggestions.length - 1 ? prev + 1 : 0
+            prev < currentItems.length - 1 ? prev + 1 : 0
           );
         }
         break;
 
       case 'ArrowUp':
         e.preventDefault();
-        if (suggestions.length > 0) {
+        if (currentItems.length > 0) {
           setHighlightIndex((prev) =>
-            prev > 0 ? prev - 1 : suggestions.length - 1
+            prev > 0 ? prev - 1 : currentItems.length - 1
           );
         }
         break;
@@ -189,20 +218,65 @@ export function TagsInput({
     setHighlightIndex(-1);
   }, [input]);
 
-  const showDropdown = isOpen && suggestions.length > 0 && input.trim().length > 0;
+  // Show dropdown when focused - either with filtered suggestions or all suggested tags
+  const showDropdown = isOpen && (suggestions.length > 0 || (suggestedTags.length > 0 && !input.trim()));
+
+  // Items to display in dropdown
+  const dropdownItems = input.trim().length > 0 ? suggestions : suggestedTags;
 
   return (
-    <div ref={containerRef} className="space-y-2">
+    <div ref={containerRef} className="relative">
       {/* Input area with chips */}
       <div
+        ref={scrollContainerRef}
         className={cn(
-          'flex flex-wrap items-center gap-1.5 p-2 min-h-[42px]',
-          'border border-[var(--tropx-border)] rounded-lg bg-[var(--tropx-card)]',
+          'flex items-center gap-1.5 px-3 h-[38px] overflow-x-auto overflow-y-hidden',
+          'border border-[var(--tropx-border)] rounded-lg bg-[var(--tropx-muted)]',
           'focus-within:ring-2 focus-within:ring-[var(--tropx-vibrant)] focus-within:border-transparent',
+          // Hide scrollbar but allow scrolling
+          'scrollbar-none [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]',
           disabled && 'opacity-50 cursor-not-allowed'
         )}
         onClick={() => inputRef.current?.focus()}
+        onFocus={() => setIsFocused(true)}
+        onBlur={(e) => {
+          // Only blur if focus is leaving the container entirely
+          if (!e.currentTarget.contains(e.relatedTarget)) {
+            setIsFocused(false);
+          }
+        }}
       >
+        {/* Marquee wrapper for tags when not focused and overflowing */}
+        {!isFocused && isOverflowing && value.length > 0 ? (
+          <div
+            className="flex items-center gap-1.5 shrink-0 animate-marquee"
+            style={{
+              animationDuration: `${Math.max(8, value.length * 3)}s`,
+            }}
+          >
+            {/* First set of tags */}
+            {value.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium shrink-0 bg-[var(--tropx-vibrant)] text-white shadow-sm"
+              >
+                {tag}
+              </span>
+            ))}
+            {/* Spacer */}
+            <span className="w-8 shrink-0" />
+            {/* Duplicate tags for seamless loop */}
+            {value.map((tag) => (
+              <span
+                key={`dup-${tag}`}
+                className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium shrink-0 bg-[var(--tropx-vibrant)] text-white shadow-sm"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 shrink-0">
         {/* Selected tags as chips */}
         {value.map((tag) => (
           editingTag === tag ? (
@@ -224,7 +298,7 @@ export function TagsInput({
                 e.stopPropagation();
               }}
               className={cn(
-                'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium',
+                'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium shrink-0',
                 'bg-[var(--tropx-vibrant)] text-white',
                 'outline-none ring-2 ring-white ring-offset-1 ring-offset-[var(--tropx-vibrant)]',
                 'min-w-[60px] w-auto'
@@ -236,7 +310,7 @@ export function TagsInput({
             <span
               key={tag}
               className={cn(
-                'group relative inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium',
+                'group relative inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium shrink-0',
                 'bg-[var(--tropx-vibrant)] text-white',
                 'shadow-sm',
                 !disabled && 'cursor-pointer'
@@ -286,6 +360,8 @@ export function TagsInput({
             </span>
           )
         ))}
+        </div>
+        )}
 
         {/* Input */}
         {value.length < MAX_TAGS && (
@@ -311,88 +387,46 @@ export function TagsInput({
 
       {/* Autocomplete dropdown */}
       {showDropdown && (
-        <div className="relative">
-          <div className={cn(
-            'absolute z-10 w-full bg-[var(--tropx-card)] rounded-xl shadow-lg max-h-48 overflow-y-auto',
-            'border border-[var(--tropx-border)] backdrop-blur-sm'
-          )}>
-            {suggestions.map((suggestion, idx) => (
+        <div
+          className={cn(
+            'absolute top-full left-0 right-0 z-50 mt-1',
+            'bg-[var(--tropx-card)] rounded-lg shadow-lg',
+            'border border-[var(--tropx-border)] backdrop-blur-sm',
+            'max-h-28 overflow-y-auto',
+            // Custom scrollbar styling
+            'scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[var(--tropx-border)]',
+            '[&::-webkit-scrollbar]:w-1.5',
+            '[&::-webkit-scrollbar-track]:bg-transparent',
+            '[&::-webkit-scrollbar-thumb]:bg-[var(--tropx-border)]',
+            '[&::-webkit-scrollbar-thumb]:rounded-full'
+          )}
+        >
+          <div className="py-0.5">
+            {dropdownItems.map((item, idx) => (
               <button
-                key={suggestion.tag}
+                key={item.tag}
                 type="button"
-                onClick={() => addTag(suggestion.tag)}
+                onClick={() => addTag(item.tag)}
                 className={cn(
-                  'w-full text-left px-3 py-2.5 text-sm transition-all',
+                  'w-full text-left px-2.5 py-2 text-sm transition-all',
                   'hover:bg-gradient-to-r hover:from-[var(--tropx-muted)] hover:to-transparent',
-                  idx === highlightIndex && 'bg-[var(--tropx-muted)]',
-                  idx === 0 && 'rounded-t-xl',
-                  idx === suggestions.length - 1 && 'rounded-b-xl'
+                  idx === highlightIndex && 'bg-[var(--tropx-muted)]'
                 )}
               >
-                <span className="text-[var(--tropx-text-main)] font-medium">{suggestion.tag}</span>
-                {suggestion.isDefault ? (
-                  <span className="text-[var(--tropx-vibrant)] text-xs ml-2 inline-flex items-center gap-1">
+                <span className="text-[var(--tropx-text-main)] font-medium">{item.tag}</span>
+                {item.isDefault ? (
+                  <span className="text-[var(--tropx-vibrant)] text-xs ml-1.5 inline-flex items-center gap-0.5">
                     <Sparkles className="size-3" />
                     suggested
                   </span>
                 ) : (
-                  <span className="text-[var(--tropx-text-sub)] text-xs ml-2">
-                    used {suggestion.usageCount}x
+                  <span className="text-[var(--tropx-text-sub)] text-xs ml-1.5">
+                    {item.usageCount}x
                   </span>
                 )}
               </button>
             ))}
           </div>
-        </div>
-      )}
-
-      {/* Suggested tags - animated on focus */}
-      <div
-        className={cn(
-          'grid transition-all duration-300 ease-out',
-          isOpen && suggestedTags.length > 0 && !disabled
-            ? 'grid-rows-[1fr] opacity-100'
-            : 'grid-rows-[0fr] opacity-0'
-        )}
-      >
-        <div className="overflow-hidden">
-          <div className="flex flex-wrap items-center gap-1.5 pt-2">
-            <span className="text-xs text-[var(--tropx-text-sub)] flex items-center gap-1">
-              <Sparkles className="size-3" />
-            </span>
-            {suggestedTags.map((tag, idx) => (
-              <button
-                key={tag.tag}
-                type="button"
-                onClick={() => addTag(tag.tag)}
-                disabled={disabled}
-                style={{
-                  transitionDelay: isOpen ? `${idx * 30}ms` : '0ms',
-                }}
-                className={cn(
-                  'px-2.5 py-1 rounded-full text-xs font-medium',
-                  'transition-all duration-200',
-                  'hover:scale-105 active:scale-95',
-                  isOpen
-                    ? 'translate-y-0 opacity-100'
-                    : 'translate-y-2 opacity-0',
-                  // Ghost orange style for all suggested tags
-                  'bg-transparent text-[var(--tropx-vibrant)] border border-[var(--tropx-vibrant)]/40',
-                  'hover:border-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/5',
-                  disabled && 'cursor-not-allowed opacity-50'
-                )}
-              >
-                {tag.tag}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Tag count indicator */}
-      {value.length > 0 && (
-        <div className="text-xs text-[var(--tropx-text-sub)] text-right">
-          {value.length}/{MAX_TAGS} tags
         </div>
       )}
     </div>

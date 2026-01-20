@@ -70,18 +70,15 @@ export function ActionModal({
     )
   }
 
-  // For save, use SaveModal
-  // If currentSessionId exists, it's edit mode; otherwise save mode
+  // For save, use SaveModal (new recordings only)
   if (actionId === 'save') {
     return (
       <SaveModal
         open={open}
         onOpenChange={onOpenChange}
-        mode={currentSessionId ? 'edit' : 'save'}
         selectedPatientId={selectedPatientId}
         selectedPatientName={selectedPatientName}
         selectedPatientImage={selectedPatientImage}
-        recordingSource={recordingSource}
         recordingTitle={recordingTitle}
         onRecordingTitleChange={onRecordingTitleChange}
         onPatientSelect={(patient) => {
@@ -92,11 +89,9 @@ export function ActionModal({
               image: patient.image,
             })
           } else {
-            // Clear selection - need to handle in App.tsx
             onPatientSelect?.(undefined as any)
           }
         }}
-        sessionId={currentSessionId ?? undefined}
       />
     )
   }

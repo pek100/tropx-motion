@@ -33,6 +33,8 @@ export const createSession = mutation({
     subjectId: v.optional(v.id("users")),
     subjectAlias: v.optional(v.string()),
     activityProfile: v.optional(v.string()),
+    sets: v.optional(v.number()),
+    reps: v.optional(v.number()),
 
     // Crop: Trimmed data for recovery (already compressed)
     trimmedStartBlob: v.optional(v.bytes()),
@@ -85,6 +87,8 @@ export const createSession = mutation({
       notes: args.notes,
       tags: args.tags,
       activityProfile: args.activityProfile as any,
+      sets: args.sets,
+      reps: args.reps,
       trimmedStartBlob: args.trimmedStartBlob,
       trimmedEndBlob: args.trimmedEndBlob,
       originalDurationMs: args.originalDurationMs,
@@ -162,6 +166,8 @@ export const getSession = query({
       isArchived: session.isArchived,
       activityProfile: session.activityProfile,
       subjectNotes: session.subjectNotes,
+      sets: session.sets,
+      reps: session.reps,
       // Crop info: if trimmed blobs exist, session was cropped
       isCropped: !!(session.trimmedStartBlob || session.trimmedEndBlob),
       originalDurationMs: session.originalDurationMs,
@@ -402,6 +408,8 @@ export const searchSessions = query({
           createdAt: session._creationTime,
           modifiedAt: session.modifiedAt,
           subjectNotes: session.subjectNotes ?? [],
+          sets: session.sets,
+          reps: session.reps,
         };
       })
     );
@@ -529,7 +537,7 @@ export const getDistinctSubjects = query({
 // ─────────────────────────────────────────────────────────────────
 
 // Editable fields for diff tracking (crop cannot be edited after save)
-const EDITABLE_FIELDS = ["title", "notes", "tags", "subjectId", "subjectAlias"] as const;
+const EDITABLE_FIELDS = ["title", "notes", "tags", "subjectId", "subjectAlias", "sets", "reps"] as const;
 
 // Helper to compute diffs between old and new values
 function computeDiffs(
@@ -569,6 +577,8 @@ export const updateSession = mutation({
     tags: v.optional(v.array(v.string())),
     subjectId: v.optional(v.id("users")),
     subjectAlias: v.optional(v.string()),
+    sets: v.optional(v.union(v.number(), v.null())),
+    reps: v.optional(v.union(v.number(), v.null())),
     modifiedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -594,6 +604,9 @@ export const updateSession = mutation({
     if (args.tags !== undefined) updates.tags = args.tags;
     if (args.subjectId !== undefined) updates.subjectId = args.subjectId;
     if (args.subjectAlias !== undefined) updates.subjectAlias = args.subjectAlias;
+    // Handle sets/reps: null clears the field (stored as null), undefined means don't change
+    if (args.sets !== undefined) updates.sets = args.sets;
+    if (args.reps !== undefined) updates.reps = args.reps;
 
     if (Object.keys(updates).length === 0) {
       return args.sessionId;
@@ -606,6 +619,8 @@ export const updateSession = mutation({
       tags: session.tags,
       subjectId: session.subjectId,
       subjectAlias: session.subjectAlias,
+      sets: session.sets,
+      reps: session.reps,
     };
 
     const diffs = computeDiffs(oldData, updates, EDITABLE_FIELDS);

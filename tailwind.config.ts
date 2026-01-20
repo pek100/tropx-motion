@@ -155,6 +155,10 @@ const config: Config = {
           '0%': { transform: 'translateY(-100%)' },
           '100%': { transform: 'translateY(800px)' },
         },
+        'marquee': {
+          '0%': { transform: 'translateX(0)' },
+          '100%': { transform: 'translateX(-50%)' },
+        },
       },
       animation: {
         'pulsate-color': 'pulsate-color 1s ease-in-out infinite',
@@ -163,6 +167,7 @@ const config: Config = {
         'smooth-spin': 'smooth-spin 1s linear infinite',
         vibrate: 'vibrate 0.5s ease-in-out infinite',
         'visor-scan': 'visor-scan 2.5s ease-in-out infinite',
+        'marquee': 'marquee 10s linear infinite',
       },
     },
   },

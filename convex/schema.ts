@@ -642,6 +642,8 @@ export default defineSchema({
     tags: v.optional(v.array(v.string())),
     subjectNotes: v.optional(v.array(subjectNoteValidator)),
     activityProfile: v.optional(activityProfileValidator),
+    sets: v.optional(v.union(v.number(), v.null())),
+    reps: v.optional(v.union(v.number(), v.null())),
 
     // Crop: Trimmed data stored separately for potential recovery
     trimmedStartBlob: v.optional(v.bytes()), // Compressed samples before crop start
