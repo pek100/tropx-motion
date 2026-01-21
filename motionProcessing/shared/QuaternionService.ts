@@ -1,5 +1,6 @@
 import { Quaternion } from './types';
 import { QUATERNION } from './constants';
+import { quaternionToAngle } from '../../shared/QuaternionCodec';
 
 /**
  * Centralized service for all quaternion mathematical operations.
@@ -196,25 +197,10 @@ export class QuaternionService {
 
     /**
      * Extracts rotation angle around specified axis from relative quaternion.
-     * Uses same math as AngleCalculationService for consistency.
+     * Delegates to shared QuaternionCodec for single source of truth.
      */
     static toEulerAngle(q: Quaternion, axis: 'x' | 'y' | 'z' = 'y'): number {
-        const buffer = new Float32Array([q.w, q.x, q.y, q.z]);
-        const matrix = new Float32Array(9);
-        QuaternionService.quaternionToMatrix(buffer, matrix);
-
-        // Standard Euler extraction (ZYX/roll-pitch-yaw convention):
-        // X (roll):  atan2(m7, m8) = atan2(yz+wx, 1-(xx+yy))
-        // Y (pitch): atan2(m2, m0) = atan2(xz+wy, 1-(yy+zz))
-        // Z (yaw):   atan2(m3, m0) = atan2(xy+wz, 1-(yy+zz))
-        const axisExtractionMap = {
-            x: [7, 8],
-            y: [2, 0],
-            z: [3, 0],
-        };
-
-        const [a, b] = axisExtractionMap[axis];
-        return Math.atan2(matrix[a], matrix[b]) * (180 / Math.PI);
+        return quaternionToAngle(q, axis);
     }
 }
 

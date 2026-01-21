@@ -19,14 +19,15 @@ const QUATERNION_CONSTANTS = {
 
 const DEG_PER_RAD = 180 / Math.PI;
 
-// Standard Euler extraction (ZYX/roll-pitch-yaw convention):
-// X (roll):  atan2(m7, m8) = atan2(yz+wx, 1-(xx+yy))
-// Y (pitch): atan2(m2, m0) = atan2(xz+wy, 1-(yy+zz))
-// Z (yaw):   atan2(m3, m0) = atan2(xy+wz, 1-(yy+zz))
+// Decoupled axis extraction (each axis uses a denominator that excludes its own component):
+// X (roll):  atan2(R21, R11) = atan2(yz+wx, 1-(xx+zz)) - denominator excludes y²
+// Y (pitch): atan2(R02, R00) = atan2(xz+wy, 1-(yy+zz)) - denominator excludes x²
+// Z (yaw):   atan2(R10, R11) = atan2(xy+wz, 1-(xx+zz)) - denominator excludes y²
+// This prevents Y rotation from contaminating X and Z readings
 const AXIS_EXTRACTION_MAP = {
-  x: [7, 8],
-  y: [2, 0],
-  z: [3, 0],
+  x: [7, 4],  // R21, R11 (changed from R22 to R11 to exclude yy)
+  y: [2, 0],  // R02, R00
+  z: [3, 4],  // R10, R11 (changed from R00 to R11 to exclude yy)
 } as const;
 
 /** Creates identity quaternion (no rotation). */

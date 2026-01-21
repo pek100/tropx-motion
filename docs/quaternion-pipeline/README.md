@@ -9,8 +9,10 @@ related_files:
   - electron/renderer/src/hooks/useDevices.ts
   - shared/QuaternionCodec.ts
   - electron/renderer/src/components/knee-area-chart.tsx
+related_docs:
+  - /docs/quaternion-euler-fix/README.md
 status: complete
-last_sync: 2025-01-04
+last_sync: 2025-01-21
 ---
 
 # Quaternion Pipeline
@@ -65,19 +67,21 @@ Float32Array[8]: [lqW, lqX, lqY, lqZ, rqW, rqX, rqY, rqZ]
 
 ## Angle Formula
 
-Rotation matrix extraction (same in backend QuaternionService and frontend QuaternionCodec):
+Rotation matrix extraction (QuaternionService delegates to QuaternionCodec):
 
 ```typescript
-// Matrix from quaternion
-matrix[0] = 1 - 2(y² + z²)   matrix[2] = 2(xz + wy)
-matrix[4] = 1 - 2(x² + z²)   matrix[5] = 2(yz - wx)
-matrix[1] = 2(xy - wz)       matrix[3] = 2(xy + wz)
+// Matrix from quaternion (row-major)
+m0 = 1 - 2(y² + z²)   m1 = 2(xy - wz)      m2 = 2(xz + wy)
+m3 = 2(xy + wz)       m4 = 1 - 2(x² + z²)  m5 = 2(yz - wx)
+m6 = 2(xz - wy)       m7 = 2(yz + wx)      m8 = 1 - 2(x² + y²)
 
-// Axis extraction
-X: atan2(matrix[5], matrix[4])
-Y: atan2(matrix[2], matrix[0])  // knee flexion
-Z: atan2(matrix[1], matrix[3])
+// Decoupled axis extraction (prevents Y contaminating X/Z)
+X: atan2(m7, m4)  // atan2(R21, R11) - denominator excludes y²
+Y: atan2(m2, m0)  // atan2(R02, R00) - knee flexion
+Z: atan2(m3, m4)  // atan2(R10, R11) - denominator excludes y²
 ```
+
+See [quaternion-euler-fix](/docs/quaternion-euler-fix/README.md) for details on the decoupled extraction.
 
 ## Key Files
 

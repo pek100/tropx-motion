@@ -139,17 +139,19 @@ export function slerp(q1: Quaternion, q2: Quaternion, t: number): Quaternion {
 
 /**
  * Convert quaternion to Euler angle for a specific axis using rotation matrix.
- * Uses the same formula as the backend AngleCalculationService for consistency.
  *
  * Rotation matrix from quaternion q = (w, x, y, z):
  * matrix[0] = 1 - 2(y² + z²)   matrix[1] = 2(xy - wz)      matrix[2] = 2(xz + wy)
  * matrix[3] = 2(xy + wz)       matrix[4] = 1 - 2(x² + z²)  matrix[5] = 2(yz - wx)
  * matrix[6] = 2(xz - wy)       matrix[7] = 2(yz + wx)      matrix[8] = 1 - 2(x² + y²)
  *
- * Standard Euler extraction (ZYX/roll-pitch-yaw convention):
- * - X (roll):  atan2(matrix[7], matrix[8]) = atan2(2(yz + wx), 1 - 2(x² + y²))
- * - Y (pitch): atan2(matrix[2], matrix[0]) = atan2(2(xz + wy), 1 - 2(y² + z²))
- * - Z (yaw):   atan2(matrix[3], matrix[0]) = atan2(2(xy + wz), 1 - 2(y² + z²))
+ * Decoupled axis extraction (each axis uses a denominator that excludes its own component):
+ * - X (roll):  atan2(R21, R11) = atan2(yz + wx, 1 - (x² + z²)) - denominator excludes y²
+ * - Y (pitch): atan2(R02, R00) = atan2(xz + wy, 1 - (y² + z²)) - denominator excludes x²
+ * - Z (yaw):   atan2(R10, R11) = atan2(xy + wz, 1 - (x² + z²)) - denominator excludes y²
+ *
+ * This prevents cross-axis contamination where large Y rotations (>90°) would cause
+ * spurious ±180° readings on X and Z axes.
  *
  * @param q - Quaternion to convert
  * @param axis - Target axis ('x', 'y', or 'z'), defaults to 'y'
@@ -158,7 +160,8 @@ export function slerp(q1: Quaternion, q2: Quaternion, t: number): Quaternion {
 export function quaternionToAngle(q: Quaternion, axis: EulerAxis = 'y'): number {
   const { w, x, y, z } = q;
 
-  // Compute rotation matrix elements (same as QuaternionService.quaternionToMatrix)
+  // Compute rotation matrix elements
+  // Note: x2 = 2x, so xx = 2x², xy = 2xy, etc. (factor of 2 built in)
   const x2 = x + x, y2 = y + y, z2 = z + z;
   const xx = x * x2, xy = x * y2, xz = x * z2;
   const yy = y * y2, yz = y * z2, zz = z * z2;
@@ -170,27 +173,28 @@ export function quaternionToAngle(q: Quaternion, axis: EulerAxis = 'y'): number 
 
   let angle: number;
 
-  // Standard Euler extraction (ZYX/roll-pitch-yaw convention):
-  // X (roll):  atan2(m7, m8) = atan2(yz+wx, 1-(xx+yy))
-  // Y (pitch): atan2(m2, m0) = atan2(xz+wy, 1-(yy+zz))
-  // Z (yaw):   atan2(m3, m0) = atan2(xy+wz, 1-(yy+zz))
+  // Decoupled axis extraction - each axis uses denominator without its own squared term
+  // This prevents Y rotation from contaminating X and Z readings
   switch (axis) {
     case 'x': {
-      const m7 = yz + wx;
-      const m8 = 1 - (xx + yy);
-      angle = Math.atan2(m7, m8);
+      // X: atan2(R21, R11) - R11 = 1-(xx+zz) excludes yy
+      const sinX = yz + wx;
+      const cosX = 1 - (xx + zz);
+      angle = Math.atan2(sinX, cosX);
       break;
     }
     case 'y': {
-      const m2 = xz + wy;
-      const m0 = 1 - (yy + zz);
-      angle = Math.atan2(m2, m0);
+      // Y: atan2(R02, R00) - standard formula works well for primary axis
+      const sinY = xz + wy;
+      const cosY = 1 - (yy + zz);
+      angle = Math.atan2(sinY, cosY);
       break;
     }
     case 'z': {
-      const m3 = xy + wz;
-      const m0 = 1 - (yy + zz);
-      angle = Math.atan2(m3, m0);
+      // Z: atan2(R10, R11) - R11 = 1-(xx+zz) excludes yy
+      const sinZ = xy + wz;
+      const cosZ = 1 - (xx + zz);
+      angle = Math.atan2(sinZ, cosZ);
       break;
     }
   }
