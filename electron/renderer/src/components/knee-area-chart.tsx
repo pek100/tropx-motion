@@ -312,36 +312,63 @@ const KneeAreaChart: React.FC<KneeAreaChartProps> = ({
       // Check if quaternions are available
       const hasQuaternions = dataToProcess.some(p => p.lq || p.rq);
 
+      // Determine which axes to compute
+      const axesToCompute = multiAxisMode ? Array.from(selectedAxes) : [selectedAxis];
+
       return dataToProcess.map((point, idx) => {
-        let leftAngle: number;
-        let rightAngle: number;
-
-        if (hasQuaternions && selectedAxis !== 'y') {
-          // Use quaternions to compute angles for X/Z axis
-          leftAngle = point.lq
-            ? quaternionToAngle(point.lq, selectedAxis as EulerAxis)
-            : point.l ?? 0;
-          rightAngle = point.rq
-            ? quaternionToAngle(point.rq, selectedAxis as EulerAxis)
-            : point.r ?? 0;
-        } else {
-          // Use pre-computed Y-axis angles (from l/r columns)
-          leftAngle = point.l ?? 0;
-          rightAngle = point.r ?? 0;
-        }
-
-        return {
-          time: point.t || idx * 10, // Use timestamp or generate from index
-          leftAngle: roundToOneDecimal(clampValue(leftAngle)),
-          rightAngle: roundToOneDecimal(clampValue(rightAngle)),
+        // Base point with default leftAngle/rightAngle for single-axis mode
+        const dataPoint: ChartDataPoint = {
+          time: point.t || idx * 10,
+          leftAngle: 0,
+          rightAngle: 0,
           _updateId: idx,
         };
+
+        if (multiAxisMode && hasQuaternions) {
+          // Multi-axis mode: compute angles for all selected axes
+          for (const axis of axesToCompute) {
+            const leftVal = point.lq
+              ? quaternionToAngle(point.lq, axis as EulerAxis)
+              : (axis === 'y' ? point.l ?? 0 : 0);
+            const rightVal = point.rq
+              ? quaternionToAngle(point.rq, axis as EulerAxis)
+              : (axis === 'y' ? point.r ?? 0 : 0);
+
+            (dataPoint as any)[`left_${axis}`] = roundToOneDecimal(clampValue(leftVal));
+            (dataPoint as any)[`right_${axis}`] = roundToOneDecimal(clampValue(rightVal));
+          }
+          // Also set leftAngle/rightAngle to first selected axis for compatibility
+          const primaryAxis = axesToCompute[0];
+          dataPoint.leftAngle = (dataPoint as any)[`left_${primaryAxis}`] ?? 0;
+          dataPoint.rightAngle = (dataPoint as any)[`right_${primaryAxis}`] ?? 0;
+        } else {
+          // Single-axis mode
+          let leftAngle: number;
+          let rightAngle: number;
+
+          if (hasQuaternions && selectedAxis !== 'y') {
+            leftAngle = point.lq
+              ? quaternionToAngle(point.lq, selectedAxis as EulerAxis)
+              : point.l ?? 0;
+            rightAngle = point.rq
+              ? quaternionToAngle(point.rq, selectedAxis as EulerAxis)
+              : point.r ?? 0;
+          } else {
+            leftAngle = point.l ?? 0;
+            rightAngle = point.r ?? 0;
+          }
+
+          dataPoint.leftAngle = roundToOneDecimal(clampValue(leftAngle));
+          dataPoint.rightAngle = roundToOneDecimal(clampValue(rightAngle));
+        }
+
+        return dataPoint;
       });
     } catch (err) {
       console.error('Failed to process imported data:', err);
       return null;
     }
-  }, [importedData, selectedAxis]);
+  }, [importedData, selectedAxis, multiAxisMode, selectedAxes]);
 
   // Use imported data if available, otherwise use streaming data
   const displayData = importedChartData || chartData;

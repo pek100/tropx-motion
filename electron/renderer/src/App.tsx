@@ -717,12 +717,18 @@ function AppContent() {
       }
 
       // Convert to ImportedSample format for the chart
-      const chartData: ImportedSample[] = result.angles.map(sample => ({
-        t: sample.t,
-        relative: sample.relative_s,
-        l: sample.left,
-        r: sample.right,
-      }))
+      // Include quaternions from samples for X/Z axis selection
+      const chartData: ImportedSample[] = result.angles.map((angle, idx) => {
+        const sample = result.samples[idx];
+        return {
+          t: angle.t,
+          relative: angle.relative_s,
+          l: angle.left,
+          r: angle.right,
+          lq: sample?.lq ?? undefined,
+          rq: sample?.rq ?? undefined,
+        };
+      })
 
       // Update state
       setLoadedRecording(chartData)
