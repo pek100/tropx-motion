@@ -14,6 +14,7 @@ export { ClassificationBadge } from "./ClassificationBadge";
 export { LimbBadge } from "./LimbBadge";
 export { BenchmarkBadge } from "./BenchmarkBadge";
 export { DomainBadge } from "./DomainBadge";
+export { EvidenceTierBadge } from "./EvidenceTierBadge";
 export { IconWrapper, getIconSizeClass } from "./IconWrapper";
 
 // ─────────────────────────────────────────────────────────────────
@@ -25,4 +26,5 @@ export type { Classification } from "./ClassificationBadge";
 export type { Limb } from "./LimbBadge";
 export type { Benchmark } from "./BenchmarkBadge";
 export type { MetricDomain } from "./DomainBadge";
+export type { EvidenceTier } from "./EvidenceTierBadge";
 export type { IconSize } from "./IconWrapper";

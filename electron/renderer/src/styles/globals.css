@@ -100,6 +100,18 @@
   --domain-control: #06B6D4;     /* cyan-500 - smoothness/stability */
   --domain-timing: #EC4899;      /* pink-500 - phase/temporal */
 
+  /* Evidence tier colors (for Horus v2 research quality) */
+  --evidence-tier-s: #D97706;    /* amber-600 - Systematic Review/Meta-analysis */
+  --evidence-tier-a: #EA580C;    /* orange-600 - RCT (uses warm tone, avoids purple) */
+  --evidence-tier-b: #2563EB;    /* blue-600 - Peer-reviewed */
+  --evidence-tier-c: #64748B;    /* slate-500 - Professional/Clinical */
+  --evidence-tier-d: #9CA3AF;    /* gray-400 - General/Educational */
+  --evidence-tier-s-bg: rgba(217, 119, 6, 0.1);
+  --evidence-tier-a-bg: rgba(234, 88, 12, 0.1);
+  --evidence-tier-b-bg: rgba(37, 99, 235, 0.1);
+  --evidence-tier-c-bg: rgba(100, 116, 139, 0.1);
+  --evidence-tier-d-bg: rgba(156, 163, 175, 0.1);
+
   /* Axis colors (for multi-axis chart visualization) */
   --axis-x: #d946ef;             /* fuchsia-500 - Roll */
   --axis-y: #06b6d4;             /* cyan-500 - Pitch */
@@ -201,6 +213,18 @@
   --domain-power: #F97316;
   --domain-control: #06B6D4;
   --domain-timing: #EC4899;
+
+  /* Evidence tier colors - dark mode */
+  --evidence-tier-s: #F59E0B;    /* amber-500 - brighter for dark bg */
+  --evidence-tier-a: #F97316;    /* orange-500 - brighter for dark bg */
+  --evidence-tier-b: #3B82F6;    /* blue-500 - brighter for dark bg */
+  --evidence-tier-c: #94A3B8;    /* slate-400 - brighter for dark bg */
+  --evidence-tier-d: #6B7280;    /* gray-500 */
+  --evidence-tier-s-bg: rgba(245, 158, 11, 0.15);
+  --evidence-tier-a-bg: rgba(249, 115, 22, 0.15);
+  --evidence-tier-b-bg: rgba(59, 130, 246, 0.15);
+  --evidence-tier-c-bg: rgba(148, 163, 184, 0.15);
+  --evidence-tier-d-bg: rgba(107, 114, 128, 0.15);
 
   /* Axis colors - dark mode */
   --axis-x: #d946ef;

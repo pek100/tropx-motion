@@ -174,26 +174,94 @@ export type { EvaluationContext } from "./visualization";
 // Usage Information
 // ─────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────
+// v2 Pipeline (New Two-Stage Architecture)
+// ─────────────────────────────────────────────────────────────────
+
+export type {
+  // Core section types
+  Section,
+  EnrichedSection,
+  QAReasoning,
+  MetricContribution,
+
+  // Research types
+  Citation,
+  QualityLink,
+  UserExplanation,
+  EvidenceStrength,
+  EvidenceTier,
+  CacheEntry,
+
+  // Agent outputs
+  AnalysisAgentOutput,
+  ResearchAgentOutput,
+
+  // Pipeline types
+  V2PipelineOutput,
+  V2PipelineState,
+  V2PipelineStatus,
+  V2AgentName,
+} from "./v2";
+
+export {
+  // Validation utilities
+  validateSection,
+  validateEnrichedSection,
+  validateAnalysisOutput,
+  safeJSONParse,
+  extractJSON,
+
+  // Search utilities
+  getTierForUrl,
+  filterHighQualityResults,
+  getDiverseResults,
+} from "./v2";
+
+// ─────────────────────────────────────────────────────────────────
+// Usage Information
+// ─────────────────────────────────────────────────────────────────
+
 /**
  * Horus API Usage Examples:
  *
- * 1. Trigger analysis for a session:
+ * === v2 Pipeline (Recommended) ===
+ *
+ * 1. Trigger v2 analysis for a session:
+ *    const result = await ctx.runAction(api.horus.v2.actions.analyzeSession, { sessionId });
+ *
+ * 2. Get v2 analysis results:
+ *    const analysis = await ctx.runQuery(api.horus.v2.queries.getAnalysisV2, { sessionId });
+ *
+ * 3. Get enriched sections only:
+ *    const sections = await ctx.runQuery(api.horus.v2.queries.getEnrichedSections, { sessionId });
+ *
+ * 4. Test v2 pipeline with mock data:
+ *    const test = await ctx.runAction(api.horus.v2.actions.testPipeline, {});
+ *
+ * === v1 Pipeline (Legacy) ===
+ *
+ * 1. Trigger v1 analysis for a session:
  *    await ctx.runAction(api.horus.actions.analyzeSession, { sessionId });
  *
- * 2. Get analysis results:
+ * 2. Get v1 analysis results:
  *    const analysis = await ctx.runQuery(api.horus.queries.getAnalysis, { sessionId });
  *
  * 3. Get progress report:
  *    const progress = await ctx.runQuery(api.horus.queries.getProgressReport, { patientId });
  *
- * 4. Retry failed analysis:
- *    await ctx.runAction(api.horus.actions.retryAnalysis, { sessionId });
+ * === Common ===
  *
- * 5. Check system health:
- *    const health = await ctx.runAction(api.horus.actions.getSystemHealth, {});
+ * - Retry failed analysis (v2):
+ *   await ctx.runAction(api.horus.v2.actions.retryAnalysis, { sessionId });
+ *
+ * - Check system health:
+ *   const health = await ctx.runAction(api.horus.actions.getSystemHealth, {});
  *
  * Environment Variables Required:
  * - VERTEX_AI_PROJECT_ID: Google Cloud project ID
  * - VERTEX_AI_LOCATION: GCP region (default: us-central1)
  * - GOOGLE_APPLICATION_CREDENTIALS_JSON: Service account JSON (or run on GCP)
+ *
+ * Note: v2 uses Gemini's built-in Google Search grounding - no external search API needed.
  */

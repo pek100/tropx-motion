@@ -94,7 +94,15 @@
       "WebFetch(domain:shadcn-editor.vercel.app)",
       "Bash(npm search:*)",
       "WebFetch(domain:lexical.dev)",
-      "WebFetch(domain:app.tropx.ai)"
+      "WebFetch(domain:app.tropx.ai)",
+      "Bash(tree:*)",
+      "Skill(coding)",
+      "Skill(uiux)",
+      "Bash(npm run lint:*)",
+      "WebFetch(domain:paulwallas.medium.com)",
+      "WebFetch(domain:www.freshconsulting.com)",
+      "WebFetch(domain:ui.shadcn.com)",
+      "WebFetch(domain:www.tremor.so)"
     ],
     "deny": [],
     "ask": [],

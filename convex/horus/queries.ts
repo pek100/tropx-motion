@@ -246,6 +246,32 @@ export const getPipelineStatusInternal = internalQuery({
 });
 
 /**
+ * Get metrics for a session (used by v2 orchestrator).
+ */
+export const getMetricsForSession = internalQuery({
+  args: { sessionId: v.string() },
+  handler: async (ctx, { sessionId }) => {
+    return ctx.db
+      .query("recordingMetrics")
+      .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+      .first();
+  },
+});
+
+/**
+ * Get session info for analysis (used by v2 orchestrator).
+ */
+export const getSessionForAnalysis = internalQuery({
+  args: { sessionId: v.string() },
+  handler: async (ctx, { sessionId }) => {
+    return ctx.db
+      .query("recordingSessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", sessionId))
+      .first();
+  },
+});
+
+/**
  * Get all active pipelines.
  */
 export const getActivePipelines = query({

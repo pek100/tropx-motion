@@ -1,13 +1,12 @@
 /**
  * HorusPane
  *
- * AI Analysis pane with beautiful timeline-based sections.
+ * AI Analysis pane for biomechanical session analysis.
  * Uses the same styling as ChartPane for consistency.
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,18 +14,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Plus,
   Send,
-  Clock,
-  Dumbbell,
-  Timer,
-  Zap,
-  AlertTriangle,
-  Rocket,
-  Target,
-  Link,
-  Unlink,
   Loader2,
-  MessageSquare,
-  X,
   Pencil,
   Trash2,
   User,
@@ -39,29 +27,12 @@ import type { Id } from "../../../../../../convex/_generated/dataModel";
 import type { VisualizationBlock, EvaluationContext } from "./types";
 import { BlockRenderer } from "./BlockRenderer";
 import { useVisualization } from "./hooks/useVisualization";
-
-// Sub-components
-import { ScoreRing } from "./components/ScoreRing";
-import { MetricPill } from "./components/MetricPill";
-import { MiniBarChart } from "./components/MiniBarChart";
-import { RecommendationCard } from "./components/RecommendationCard";
-import {
-  Timeline,
-  TimelineItem,
-  TimelineHeader,
-  TimelineSeparator,
-  TimelineIndicator,
-  TimelineTitle,
-  TimelineContent,
-  TimelineDate,
-} from "./components/Timeline";
-import { Check, Play, CircleDot, ArrowRight } from "lucide-react";
+import { useV2Analysis } from "./hooks/useV2Analysis";
+import { V2SectionsView } from "./v2";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────
-
-export type AnalysisMode = "overall" | "session";
 
 interface ChatMessage {
   id: string;
@@ -88,30 +59,9 @@ interface HorusPaneProps {
   sessions: SessionData[];
   borderless?: boolean;
   className?: string;
-  /** Force show demo content for development/showcase */
-  forceDemo?: boolean;
-  /** Whether tabs are linked with Chart pane */
-  isLinked?: boolean;
-  /** Callback when link state changes */
-  onLinkedChange?: (linked: boolean) => void;
-  /** Called when mode changes (so parent can sync other pane) */
-  onModeChange?: (mode: AnalysisMode) => void;
-  /** External mode to sync to when linked */
-  syncToMode?: AnalysisMode;
   /** User's profile image URL for chat avatar */
   userImage?: string;
 }
-
-// ─────────────────────────────────────────────────────────────────
-// Demo Data
-// ─────────────────────────────────────────────────────────────────
-
-const DEMO_VELOCITY_DATA = [
-  { name: "Set 1", value: 420 },
-  { name: "Set 2", value: 455 },
-  { name: "Set 3", value: 515, highlight: true },
-  { name: "Set 4", value: 480 },
-];
 
 // ─────────────────────────────────────────────────────────────────
 // Component
@@ -123,29 +73,8 @@ export function HorusPane({
   sessions,
   borderless,
   className,
-  forceDemo = false,
-  isLinked = true,
-  onLinkedChange,
-  onModeChange,
-  syncToMode,
   userImage,
 }: HorusPaneProps) {
-  const [mode, setModeInternal] = useState<AnalysisMode>("overall");
-
-  // Sync to external mode when linked
-  useEffect(() => {
-    if (isLinked && syncToMode !== undefined && syncToMode !== mode) {
-      setModeInternal(syncToMode);
-    }
-  }, [syncToMode, isLinked]);
-
-  // Handle mode change
-  const setMode = useCallback((newMode: AnalysisMode) => {
-    setModeInternal(newMode);
-    if (isLinked) {
-      onModeChange?.(newMode);
-    }
-  }, [onModeChange, isLinked]);
 
   const [chatInput, setChatInput] = useState("");
 
@@ -171,6 +100,9 @@ export function HorusPane({
 
   // User query action
   const askAnalysis = useAction(api.horus.userQuery.askAnalysis);
+
+  // V2 Analysis hook for session mode
+  const v2Analysis = useV2Analysis(selectedSessionId ?? undefined);
 
   // Generate unique ID
   const generateId = useCallback(() => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`, []);
@@ -376,10 +308,8 @@ export function HorusPane({
   }, [editingMessageId, editingContent, chatHistory, selectedSessionId, patientId, deleteMessageMutation, generateId, askAnalysis, addMessagesMutation]);
 
   // Get visualization data
-  const { isLoading, hasAnalysis, context, overallBlocks, sessionBlocks, error } =
+  const { isLoading, context } =
     useVisualization(patientId, selectedSessionId, sessions);
-
-  const effectiveMode = selectedSessionId ? mode : "overall";
 
   // Fallback context when real context isn't available (metrics not loaded)
   const fallbackContext: EvaluationContext = {
@@ -393,102 +323,6 @@ export function HorusPane({
     },
   };
   const effectiveContext = context || fallbackContext;
-
-  // Force demo mode - skip empty states
-  if (forceDemo) {
-    return (
-      <div
-        className={cn(
-          "flex flex-col bg-[var(--tropx-card)] overflow-hidden",
-          borderless
-            ? "rounded-none border-0 shadow-none sm:rounded-xl sm:border sm:border-[var(--tropx-border)] sm:shadow-sm"
-            : "rounded-xl border border-[var(--tropx-border)] shadow-sm",
-          className
-        )}
-      >
-        {/* Header - shrink-0 to prevent compression */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-3 sm:py-4 border-b border-[var(--tropx-border)] shrink-0">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <div className="text-tropx-vibrant">
-                <AtomSpin className="size-4" />
-              </div>
-              <h3 className="font-bold text-base sm:text-lg text-[var(--tropx-text-main)]">
-                AI Analysis
-              </h3>
-            </div>
-            <p className="hidden sm:block text-sm text-[var(--tropx-text-sub)]">
-              Longitudinal insights across all sessions
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Tabs value={mode} onValueChange={(v) => setMode(v as AnalysisMode)}>
-              <TabsList className="h-8 sm:h-9 bg-[var(--tropx-muted)]">
-                <TabsTrigger
-                  value="overall"
-                  className={cn(
-                    "text-xs px-2 sm:px-3 transition-all",
-                    mode === "overall" &&
-                      "bg-[var(--tropx-vibrant)] text-white data-[state=active]:bg-[var(--tropx-vibrant)] data-[state=active]:text-white dark:bg-[var(--tropx-vibrant)] dark:text-white dark:data-[state=active]:bg-[var(--tropx-vibrant)] dark:data-[state=active]:text-white"
-                  )}
-                >
-                  Overall Analysis
-                </TabsTrigger>
-                <TabsTrigger
-                  value="session"
-                  className={cn(
-                    "text-xs px-2 sm:px-3 transition-all",
-                    mode === "session" &&
-                      "bg-[var(--tropx-vibrant)] text-white data-[state=active]:bg-[var(--tropx-vibrant)] data-[state=active]:text-white dark:bg-[var(--tropx-vibrant)] dark:text-white dark:data-[state=active]:bg-[var(--tropx-vibrant)] dark:data-[state=active]:text-white"
-                  )}
-                >
-                  Session Analysis
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-
-            {/* Link toggle */}
-            <button
-              type="button"
-              onClick={() => onLinkedChange?.(!isLinked)}
-              className={cn(
-                "p-1.5 rounded-md transition-colors",
-                isLinked
-                  ? "text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/10"
-                  : "text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] hover:bg-[var(--tropx-muted)]"
-              )}
-              title={isLinked ? "Unlink from Chart" : "Link with Chart"}
-            >
-              {isLinked ? <Link className="size-4" /> : <Unlink className="size-4" />}
-            </button>
-          </div>
-        </div>
-
-        {/* Scrollable content area */}
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="p-4 sm:p-5">
-            <DemoContent mode={mode} />
-          </div>
-        </ScrollArea>
-
-        {/* Chat input - shrink-0 to prevent compression */}
-        <div className="border-t border-[var(--tropx-border)] px-4 sm:px-5 py-3 shrink-0">
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-[var(--tropx-text-sub)]">
-              <Plus className="size-4" />
-            </Button>
-            <Input
-              placeholder="Ask a question about this analysis..."
-              className="h-9 text-sm bg-[var(--tropx-muted)] border-0"
-            />
-            <Button size="icon" className="h-9 w-9 shrink-0 bg-tropx-vibrant hover:bg-tropx-vibrant/90">
-              <Send className="size-4" />
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   // Empty state
   if (!patientId) {
@@ -539,120 +373,43 @@ export function HorusPane({
         className
       )}
     >
-      {/* Header with Tabs - matches ChartPane style */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-3 sm:py-4 border-b border-[var(--tropx-border)] shrink-0">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <div className="text-tropx-vibrant">
-              <AtomSpin className="size-4" />
-            </div>
-            <h3 className="font-bold text-base sm:text-lg text-[var(--tropx-text-main)]">
-              AI Analysis
-            </h3>
-            {isLoading && (
-              <Badge variant="outline" className="text-xs">
-                Analyzing...
-              </Badge>
-            )}
-          </div>
-          <p className="hidden sm:block text-sm text-[var(--tropx-text-sub)]">
-            {effectiveMode === "overall"
-              ? "Longitudinal insights across all sessions"
-              : "Detailed analysis for this session"}
-          </p>
+      {/* Header - Horus branding */}
+      <div className="flex items-center gap-4 px-4 sm:px-5 py-4 sm:py-5 border-b border-[var(--tropx-border)] shrink-0">
+        <div style={{ color: 'var(--tropx-vibrant)' }}>
+          <AtomSpin className="size-8 sm:size-10" />
         </div>
-
-        {/* Tabs - styled like ChartPane */}
-        <div className="flex items-center gap-2">
-          <Tabs value={effectiveMode} onValueChange={(v) => setMode(v as AnalysisMode)}>
-            <TabsList className="h-8 sm:h-9 bg-[var(--tropx-muted)]">
-              <TabsTrigger
-                value="overall"
-                className={cn(
-                  "text-xs px-2 sm:px-3 transition-all",
-                  effectiveMode === "overall" &&
-                    "bg-[var(--tropx-vibrant)] text-white data-[state=active]:bg-[var(--tropx-vibrant)] data-[state=active]:text-white dark:bg-[var(--tropx-vibrant)] dark:text-white dark:data-[state=active]:bg-[var(--tropx-vibrant)] dark:data-[state=active]:text-white"
-                )}
-              >
-                Overall Analysis
-              </TabsTrigger>
-              <TabsTrigger
-                value="session"
-                disabled={!selectedSessionId}
-                className={cn(
-                  "text-xs px-2 sm:px-3 transition-all",
-                  effectiveMode === "session" &&
-                    "bg-[var(--tropx-vibrant)] text-white data-[state=active]:bg-[var(--tropx-vibrant)] data-[state=active]:text-white dark:bg-[var(--tropx-vibrant)] dark:text-white dark:data-[state=active]:bg-[var(--tropx-vibrant)] dark:data-[state=active]:text-white"
-                )}
-              >
-                Session Analysis
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-
-          {/* Link toggle */}
-          <button
-            type="button"
-            onClick={() => onLinkedChange?.(!isLinked)}
-            className={cn(
-              "p-1.5 rounded-md transition-colors",
-              isLinked
-                ? "text-[var(--tropx-vibrant)] hover:bg-[var(--tropx-vibrant)]/10"
-                : "text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] hover:bg-[var(--tropx-muted)]"
-            )}
-            title={isLinked ? "Unlink from Chart" : "Link with Chart"}
-          >
-            {isLinked ? <Link className="size-4" /> : <Unlink className="size-4" />}
-          </button>
+        <div className="flex flex-col">
+          <h2 className="font-bold text-xl sm:text-2xl bg-gradient-to-r from-[var(--tropx-vibrant)] to-[rgba(var(--tropx-vibrant-rgb),0.8)] bg-clip-text text-transparent">
+            Horus
+          </h2>
+          <span className="font-semibold text-sm sm:text-base bg-gradient-to-r from-black to-black/80 dark:from-white dark:to-white/80 bg-clip-text text-transparent">
+            AI Analysis
+          </span>
         </div>
+        {isLoading && (
+          <Badge variant="outline" className="text-xs ml-auto">
+            Analyzing...
+          </Badge>
+        )}
       </div>
 
       {/* Scrollable content area */}
       <ScrollArea className="flex-1 min-h-0">
         <div className="p-4 sm:p-5">
-          {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-16">
-              <div className="text-tropx-vibrant mb-4">
-                <AtomSpin className="size-10" />
-              </div>
-              <p className="text-sm text-[var(--tropx-text-sub)]">Analyzing session data...</p>
-            </div>
-          ) : error ? (
-            <div className="flex flex-col items-center justify-center py-16">
-              <div className="text-status-error-text mb-2 font-medium">Analysis Error</div>
-              <p className="text-sm text-[var(--tropx-text-sub)]">{error}</p>
-            </div>
-          ) : hasAnalysis ? (
-            <div className="space-y-4">
-              {(effectiveMode === "overall" ? overallBlocks : sessionBlocks).map(
-                (block, index) => (
-                  <BlockRenderer
-                    key={index}
-                    block={block as VisualizationBlock}
-                    context={effectiveContext}
-                  />
-                )
-              )}
-              {(effectiveMode === "overall" ? overallBlocks : sessionBlocks).length === 0 && (
-                <div className="flex flex-col items-center justify-center py-16">
-                  <div className="text-tropx-vibrant mb-4">
-                    <AtomSpin className="size-10" />
-                  </div>
-                  <p className="text-sm text-[var(--tropx-text-sub)]">
-                    No {effectiveMode} analysis blocks available yet
-                  </p>
-                </div>
-              )}
-            </div>
+          {selectedSessionId ? (
+            <V2SectionsView
+              output={v2Analysis.output}
+              status={v2Analysis.status}
+              error={v2Analysis.error}
+              onRetry={v2Analysis.retryAnalysis}
+            />
           ) : (
             <div className="flex flex-col items-center justify-center py-16">
               <div className="text-tropx-vibrant mb-4">
                 <AtomSpin className="size-10" />
               </div>
               <p className="text-sm text-[var(--tropx-text-sub)]">
-                {selectedSessionId
-                  ? "Analysis pending - regenerate OPI to trigger AI analysis"
-                  : "Select a session to view AI analysis"}
+                Select a session to view AI analysis
               </p>
             </div>
           )}
@@ -912,146 +669,6 @@ export function HorusPane({
       </div>
 
     </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Demo Content (matches concept image with Timeline component)
-// ─────────────────────────────────────────────────────────────────
-
-function DemoContent({ mode }: { mode: AnalysisMode }) {
-  return (
-    <Timeline defaultValue={1}>
-      {/* Session Summary */}
-      <TimelineItem step={1} status="active">
-        <TimelineSeparator />
-        <TimelineIndicator>
-          <Play className="size-3" />
-        </TimelineIndicator>
-        <TimelineHeader>
-          <TimelineTitle>Session Summary</TimelineTitle>
-        </TimelineHeader>
-        <TimelineContent>
-          <div className="rounded-xl border border-[var(--tropx-border)] bg-[var(--tropx-card)] p-4">
-            <div className="flex gap-6 items-start">
-              {/* Text content */}
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-[var(--tropx-text-sub)] leading-relaxed mb-4">
-                  Overall session intensity was <strong className="text-[var(--tropx-text-main)]">High</strong>.
-                  Strong power output with eccentric control challenges in later sets.
-                  Fatigue pattern detected in quadriceps after 20 minutes.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <MetricPill icon={<Timer className="size-3" />} label="Duration" value="45m 12s" />
-                  <MetricPill icon={<Dumbbell className="size-3" />} label="Sets" value="12" />
-                  <MetricPill icon={<Zap className="size-3" />} label="Load" value="4,200 kg" />
-                </div>
-              </div>
-              {/* Visualization container */}
-              <div className="shrink-0 bg-[var(--tropx-card)]/80 dark:bg-[var(--tropx-muted)]/30 p-4 rounded-lg border border-[var(--tropx-border)]/50 min-w-[120px] flex items-center justify-center">
-                <ScoreRing value={85} label="Rating" size="sm" />
-              </div>
-            </div>
-          </div>
-        </TimelineContent>
-      </TimelineItem>
-
-      {/* Velocity Breakthrough */}
-      <TimelineItem step={2} status="completed">
-        <TimelineSeparator />
-        <TimelineIndicator>
-          <Check className="size-3" />
-        </TimelineIndicator>
-        <TimelineHeader>
-          <TimelineTitle>Velocity Breakthrough</TimelineTitle>
-          <Badge className="bg-status-success-bg text-status-success-text text-xs px-1.5 py-0.5 font-medium">
-            +12% vs Avg
-          </Badge>
-        </TimelineHeader>
-        <TimelineContent>
-          <div className="rounded-xl border border-[var(--tropx-border)] bg-[var(--tropx-card)] p-4">
-            <div className="flex gap-6 items-start">
-              {/* Text content */}
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-[var(--tropx-text-sub)] leading-relaxed mb-3">
-                  Peak angular velocity hit <strong className="text-[var(--tropx-text-main)]">515°/s</strong> during the 3rd set of Knee Extensions.
-                  Significant improvement in explosive power compared to last week's 460°/s average.
-                </p>
-                <div className="flex items-center gap-1.5 text-xs text-tropx-vibrant">
-                  <Rocket className="size-3.5 shrink-0" />
-                  <span>Suggestion: Maintain this velocity but monitor landing mechanics.</span>
-                </div>
-              </div>
-              {/* Visualization container */}
-              <div className="shrink-0 bg-[var(--tropx-card)]/80 dark:bg-[var(--tropx-muted)]/30 p-3 rounded-lg border border-[var(--tropx-border)]/50 min-w-[140px]">
-                <MiniBarChart
-                  data={DEMO_VELOCITY_DATA}
-                  title="Velocity (°/s)"
-                  highlightValue="515"
-                />
-              </div>
-            </div>
-          </div>
-        </TimelineContent>
-      </TimelineItem>
-
-      {/* Stability Alert */}
-      <TimelineItem step={3} status="warning">
-        <TimelineSeparator />
-        <TimelineIndicator>
-          <AlertTriangle className="size-3" />
-        </TimelineIndicator>
-        <TimelineHeader>
-          <TimelineTitle>Stability Alert</TimelineTitle>
-        </TimelineHeader>
-        <TimelineContent>
-          <div className="rounded-xl border border-[var(--tropx-border)] bg-[var(--tropx-card)] p-4">
-            <div className="flex gap-6 items-start">
-              {/* Text content */}
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-[var(--tropx-text-sub)] leading-relaxed">
-                  Rapid deceleration caused form loss in the eccentric phase of squats.
-                  Knee valgus angle exceeded safe threshold (15°) during reps 8 and 9.
-                </p>
-              </div>
-              {/* Visualization container */}
-              <div className="shrink-0 bg-[var(--tropx-card)]/80 dark:bg-[var(--tropx-muted)]/30 p-4 rounded-lg border border-[var(--tropx-border)]/50 min-w-[120px] flex items-center justify-center">
-                <ScoreRing value={42} label="Stability" size="sm" color="warning" />
-              </div>
-            </div>
-          </div>
-        </TimelineContent>
-      </TimelineItem>
-
-      {/* Next Steps */}
-      <TimelineItem step={4} status="upcoming">
-        <TimelineSeparator />
-        <TimelineIndicator>
-          <ArrowRight className="size-3" />
-        </TimelineIndicator>
-        <TimelineHeader>
-          <TimelineTitle>Recommended Next Steps</TimelineTitle>
-        </TimelineHeader>
-        <TimelineContent>
-          <div className="rounded-xl border border-[var(--tropx-border)] bg-[var(--tropx-card)] p-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <RecommendationCard
-                icon={<Target className="size-4" />}
-                title="Velocity Modulation"
-                description="Reduce concentric velocity by 10% in the next session to prioritize control."
-                color="coral"
-              />
-              <RecommendationCard
-                icon={<Clock className="size-4" />}
-                title="Tempo Training"
-                description="Incorporate 3-0-3 tempo squats to improve eccentric stability."
-                color="blue"
-              />
-            </div>
-          </div>
-        </TimelineContent>
-      </TimelineItem>
-    </Timeline>
   );
 }
 

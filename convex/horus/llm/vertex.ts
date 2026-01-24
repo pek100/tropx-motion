@@ -54,6 +54,27 @@ export interface VertexResponse {
   finishReason: string;
 }
 
+export interface GroundingChunk {
+  web?: {
+    uri: string;
+    title: string;
+  };
+}
+
+export interface GroundingMetadata {
+  webSearchQueries?: string[];
+  groundingChunks?: GroundingChunk[];
+  groundingSupports?: Array<{
+    segment: { startIndex: number; endIndex: number; text: string };
+    groundingChunkIndices: number[];
+    confidenceScores: number[];
+  }>;
+}
+
+export interface VertexGroundedResponse extends VertexResponse {
+  groundingMetadata?: GroundingMetadata;
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Main LLM Call Action
 // ─────────────────────────────────────────────────────────────────
@@ -201,6 +222,127 @@ export const callVertexAI = action({
         estimatedCost,
       },
       finishReason,
+    };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────
+// Grounded LLM Call (with Google Search)
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Call Vertex AI Gemini model with Google Search grounding.
+ * Returns response with web search citations - no external API key needed.
+ */
+export const callVertexAIGrounded = action({
+  args: {
+    systemPrompt: v.string(),
+    userPrompt: v.string(),
+    temperature: v.optional(v.number()),
+    maxTokens: v.optional(v.number()),
+    responseSchema: v.optional(v.any()),
+  },
+  handler: async (ctx, args): Promise<VertexGroundedResponse> => {
+    const projectId = process.env.VERTEX_AI_PROJECT_ID;
+    const location = process.env.VERTEX_AI_LOCATION || VERTEX_CONFIG.LOCATION;
+
+    if (!projectId) {
+      throw new Error("VERTEX_AI_PROJECT_ID environment variable is not set");
+    }
+
+    const accessToken = await getAccessToken();
+
+    const endpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${VERTEX_CONFIG.MODEL}:generateContent`;
+
+    // Build generation config
+    const generationConfig: Record<string, unknown> = {
+      ...VERTEX_CONFIG.GENERATION_CONFIG,
+      temperature: args.temperature ?? 0.3,
+      maxOutputTokens: args.maxTokens ?? 8192,
+      thinkingConfig: { thinkingBudget: 0 },
+    };
+
+    // If response schema provided, enable JSON mode
+    if (args.responseSchema) {
+      generationConfig.responseMimeType = "application/json";
+      generationConfig.responseSchema = args.responseSchema;
+    }
+
+    const requestBody = {
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: args.userPrompt }],
+        },
+      ],
+      systemInstruction: {
+        parts: [{ text: args.systemPrompt }],
+      },
+      generationConfig,
+      safetySettings: VERTEX_CONFIG.SAFETY_SETTINGS,
+      // Enable Google Search grounding (new API format as of late 2025)
+      tools: [
+        {
+          google_search: {},
+        },
+      ],
+    };
+
+    console.log("[Vertex AI Grounded] Calling API with Google Search enabled");
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("[Vertex AI Grounded] API Error:", response.status, errorText);
+      throw new Error(`Vertex AI API error (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+
+    const candidate = data.candidates?.[0];
+    if (!candidate) {
+      throw new Error("No response candidate from Vertex AI");
+    }
+
+    const text = candidate.content?.parts?.[0]?.text || "";
+    const finishReason = candidate.finishReason || "UNKNOWN";
+
+    // Extract grounding metadata (search results)
+    const groundingMetadata = candidate.groundingMetadata as GroundingMetadata | undefined;
+
+    if (groundingMetadata) {
+      console.log("[Vertex AI Grounded] Search queries:", groundingMetadata.webSearchQueries);
+      console.log("[Vertex AI Grounded] Sources found:", groundingMetadata.groundingChunks?.length || 0);
+    }
+
+    // Extract token usage
+    const usageMetadata = data.usageMetadata || {};
+    const inputTokens = usageMetadata.promptTokenCount || 0;
+    const outputTokens = usageMetadata.candidatesTokenCount || 0;
+    const totalTokens = inputTokens + outputTokens;
+
+    const estimatedCost =
+      (inputTokens / 1_000_000) * VERTEX_CONFIG.PRICING.INPUT_PER_1M +
+      (outputTokens / 1_000_000) * VERTEX_CONFIG.PRICING.OUTPUT_PER_1M;
+
+    return {
+      text,
+      tokenUsage: {
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        estimatedCost,
+      },
+      finishReason,
+      groundingMetadata,
     };
   },
 });

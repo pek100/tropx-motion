@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 // Use standard Convex useQuery for real-time updates (not cached custom version)
 import { useQuery } from "convex/react";
 import { api } from "../../../../../../convex/_generated/api";
-import { X, Brain, Search, FlaskConical, ShieldCheck, TrendingUp, Check, Loader2, AlertCircle, ChevronLeft, ChevronRight } from "lucide-react";
+import { X, Brain, Search, Check, Loader2, AlertCircle, ChevronLeft, ChevronRight, Square } from "lucide-react";
 import { AtomSpin } from "@/components/AtomSpin";
 
 // ─────────────────────────────────────────────────────────────────
@@ -28,13 +28,12 @@ interface AgentInfo {
   status: AgentStatus;
 }
 
+// V2 Pipeline Status (two-stage: Analysis Agent → Research Agents)
+// Note: DB stores "analysis"/"research", not "analyzing"/"researching"
 type PipelineStatus =
   | "pending"
-  | "decomposition"
-  | "research"
   | "analysis"
-  | "validation"
-  | "progress"
+  | "research"
   | "complete"
   | "error";
 
@@ -47,19 +46,17 @@ interface HorusAnalysisToastProps {
   sessions: AnalysisSession[];
   onClose: () => void;
   onRemoveSession: (sessionId: string) => void;
+  onStopAnalysis?: (sessionId: string) => void;
   className?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Agent Configuration
+// V2 Agent Configuration (Two-Stage Pipeline)
 // ─────────────────────────────────────────────────────────────────
 
 const AGENTS: Omit<AgentInfo, "status">[] = [
-  { id: "decomposition", name: "Pattern Detection", shortName: "Patterns", icon: <Brain className="size-3.5" /> },
-  { id: "research", name: "Research Lookup", shortName: "Research", icon: <Search className="size-3.5" /> },
-  { id: "analysis", name: "Deep Analysis", shortName: "Analysis", icon: <FlaskConical className="size-3.5" /> },
-  { id: "validation", name: "Quality Check", shortName: "Validate", icon: <ShieldCheck className="size-3.5" /> },
-  { id: "progress", name: "Progress Report", shortName: "Progress", icon: <TrendingUp className="size-3.5" /> },
+  { id: "analysis", name: "Analysis Agent", shortName: "Analysis", icon: <Brain className="size-3.5" /> },
+  { id: "research", name: "Research Agents", shortName: "Research", icon: <Search className="size-3.5" /> },
 ];
 
 // ─────────────────────────────────────────────────────────────────
@@ -67,7 +64,8 @@ const AGENTS: Omit<AgentInfo, "status">[] = [
 // ─────────────────────────────────────────────────────────────────
 
 function getAgentStatuses(pipelineStatus: PipelineStatus): AgentInfo[] {
-  const statusOrder: PipelineStatus[] = ["decomposition", "research", "analysis", "validation", "progress"];
+  // V2 has two stages: analysis → research
+  const statusOrder: PipelineStatus[] = ["analysis", "research"];
 
   return AGENTS.map((agent) => {
     const agentIndex = statusOrder.indexOf(agent.id as PipelineStatus);
@@ -76,6 +74,7 @@ function getAgentStatuses(pipelineStatus: PipelineStatus): AgentInfo[] {
     let status: AgentStatus = "pending";
 
     if (pipelineStatus === "error") {
+      // Mark completed stages, current as error
       if (agentIndex < currentIndex) status = "completed";
       else if (agentIndex === currentIndex) status = "error";
     } else if (pipelineStatus === "complete") {
@@ -83,6 +82,7 @@ function getAgentStatuses(pipelineStatus: PipelineStatus): AgentInfo[] {
     } else if (pipelineStatus === "pending") {
       status = "pending";
     } else {
+      // Running state
       if (agentIndex < currentIndex) status = "completed";
       else if (agentIndex === currentIndex) status = "running";
     }
@@ -209,7 +209,7 @@ function SessionStatus({ sessionId, isExpanded }: { sessionId: string; isExpande
 // Main Toast Component (Multi-session)
 // ─────────────────────────────────────────────────────────────────
 
-export function HorusAnalysisToast({ sessions, onClose, onRemoveSession, className }: HorusAnalysisToastProps) {
+export function HorusAnalysisToast({ sessions, onClose, onRemoveSession, onStopAnalysis, className }: HorusAnalysisToastProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isVisible, setIsVisible] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -343,6 +343,23 @@ export function HorusAnalysisToast({ sessions, onClose, onRemoveSession, classNa
             </div>
           )}
 
+          {/* Stop button - only show when running */}
+          {onStopAnalysis && status !== "complete" && status !== "error" && status !== "pending" && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (currentSession) {
+                  onStopAnalysis(currentSession.sessionId);
+                }
+              }}
+              className="p-1 rounded-md hover:bg-destructive/10 text-[var(--tropx-text-sub)] hover:text-destructive transition-colors"
+              title="Stop analysis"
+            >
+              <Square className="size-3.5 fill-current" />
+            </button>
+          )}
+
           <button
             type="button"
             onClick={(e) => {
@@ -387,7 +404,11 @@ export function HorusAnalysisToast({ sessions, onClose, onRemoveSession, classNa
 // Hook to Manage Toast State
 // ─────────────────────────────────────────────────────────────────
 
-export function useHorusAnalysisToast() {
+interface UseHorusAnalysisToastOptions {
+  onStopAnalysis?: (sessionId: string) => void;
+}
+
+export function useHorusAnalysisToast(options?: UseHorusAnalysisToastOptions) {
   const [sessions, setSessions] = useState<AnalysisSession[]>([]);
 
   const showToast = useCallback((sessionId: string, label?: string) => {
@@ -406,11 +427,17 @@ export function useHorusAnalysisToast() {
     setSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
   }, []);
 
+  const handleStopAnalysis = useCallback((sessionId: string) => {
+    options?.onStopAnalysis?.(sessionId);
+    removeSession(sessionId);
+  }, [options, removeSession]);
+
   const ToastComponent = sessions.length > 0 ? (
     <HorusAnalysisToast
       sessions={sessions}
       onClose={hideToast}
       onRemoveSession={removeSession}
+      onStopAnalysis={options?.onStopAnalysis ? handleStopAnalysis : undefined}
     />
   ) : null;
 

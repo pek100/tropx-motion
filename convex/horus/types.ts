@@ -73,6 +73,14 @@ export interface SessionMetrics {
   opiGrade?: string;
   movementType: "bilateral" | "unilateral";
   recordedAt: number;
+
+  // Session context (optional - included only if data exists)
+  title?: string;
+  notes?: string;
+  tags?: string[];
+  activityProfile?: "power" | "endurance" | "rehabilitation" | "general";
+  sets?: number;
+  reps?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────

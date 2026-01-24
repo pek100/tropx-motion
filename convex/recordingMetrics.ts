@@ -573,6 +573,11 @@ export const recalculatePhaseMetricsInternal = internalAction({
         advancedAsymmetry: result.advancedAsymmetry,
         phaseAlignment: result.phaseAlignment,
       });
+
+      // Trigger Horus V2 re-analysis with updated metrics
+      await ctx.scheduler.runAfter(0, internal.horus.triggers.onPhaseRecalculated, {
+        sessionId: args.sessionId,
+      });
     } catch (error) {
       // Log error but don't update status (partial recalc shouldn't mark as failed)
       console.error(
