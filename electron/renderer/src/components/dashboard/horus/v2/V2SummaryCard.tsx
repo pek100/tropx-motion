@@ -67,6 +67,12 @@ interface V2SummaryCardProps {
 // Using shadcn ChartContainer for proper styling
 // ─────────────────────────────────────────────────────────────────
 
+/** Format number to 1 decimal place, removing trailing .0 */
+function formatNumber(value: number): string {
+  const formatted = value.toFixed(1);
+  return formatted.endsWith('.0') ? formatted.slice(0, -2) : formatted;
+}
+
 /** Get status color based on thresholds */
 function getStatusColor(value: number, thresholds: number[]): string {
   if (value <= thresholds[0]) return "hsl(var(--chart-2))"; // green
@@ -112,7 +118,7 @@ function GaugeViz({ value, max = 100, unit = "", thresholds = [25, 50, 75] }: {
         </RadialBarChart>
       </ChartContainer>
       <span className="absolute inset-0 flex items-center justify-center text-base font-semibold text-[var(--tropx-text-main)]">
-        {value}<span className="text-xs text-[var(--tropx-text-sub)]">{unit}</span>
+        {formatNumber(value)}<span className="text-xs text-[var(--tropx-text-sub)]">{unit}</span>
       </span>
     </div>
   );
@@ -143,8 +149,8 @@ function ComparisonViz({ left, right, unit = "", labels = ["L", "R"] }: {
         </BarChart>
       </ChartContainer>
       <div className="flex justify-between w-full max-w-[120px] text-[11px] mt-1.5">
-        <span className="text-[var(--tropx-text-sub)]">{labels[0]} <span className="font-medium text-[var(--tropx-text-main)]">{left}{unit}</span></span>
-        <span className="text-[var(--tropx-text-sub)]">{labels[1]} <span className="font-medium text-[var(--tropx-text-main)]">{right}{unit}</span></span>
+        <span className="text-[var(--tropx-text-sub)]">{labels[0]} <span className="font-medium text-[var(--tropx-text-main)]">{formatNumber(left)}{unit}</span></span>
+        <span className="text-[var(--tropx-text-sub)]">{labels[1]} <span className="font-medium text-[var(--tropx-text-main)]">{formatNumber(right)}{unit}</span></span>
       </div>
     </div>
   );
