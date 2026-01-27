@@ -29,6 +29,7 @@ import { PerformanceRadar, type RadarScores } from "./PerformanceRadar";
 import { CrossAnalysisCard } from "./CrossAnalysisCard";
 import type { SeverityLevel } from "./SectionCard";
 import type { CrossAnalysisResult } from "../../../../../../../convex/horus/crossAnalysis/types";
+import type { Id } from "../../../../../../../convex/_generated/dataModel";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -68,6 +69,8 @@ interface V2SummaryCardProps {
   recommendations: string[];
   speculativeInsights?: SpeculativeInsight[];
   crossAnalysis?: CrossAnalysisResult;
+  patientId?: Id<"users">;
+  patientName?: string;
   className?: string;
 }
 
@@ -323,6 +326,8 @@ export function V2SummaryCard({
   recommendations,
   speculativeInsights,
   crossAnalysis,
+  patientId,
+  patientName,
   className,
 }: V2SummaryCardProps) {
   // Count critical/severe findings
@@ -477,6 +482,8 @@ export function V2SummaryCard({
         <CrossAnalysisCard
           crossAnalysis={crossAnalysis}
           speculativeInsights={insights}
+          patientId={patientId}
+          patientName={patientName}
           className="mt-4"
         />
       )}

@@ -12,6 +12,7 @@ import { V2SummaryCard, type SpeculativeInsight } from "./V2SummaryCard";
 import { SectionCard, type EnrichedSectionData, type SeverityLevel } from "./SectionCard";
 import type { RadarScores } from "./PerformanceRadar";
 import type { CrossAnalysisResult } from "../../../../../../../convex/horus/crossAnalysis/types";
+import type { Id } from "../../../../../../../convex/_generated/dataModel";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -53,6 +54,8 @@ interface V2SectionsViewProps {
   status: V2PipelineStatus;
   error?: { message: string } | null;
   onRetry?: () => void;
+  patientId?: Id<"users">;
+  patientName?: string;
   className?: string;
 }
 
@@ -70,6 +73,8 @@ export function V2SectionsView({
   status,
   error,
   onRetry,
+  patientId,
+  patientName,
   className,
 }: V2SectionsViewProps) {
   // Pending state
@@ -197,6 +202,8 @@ export function V2SectionsView({
         recommendations={output.recommendations}
         speculativeInsights={output.speculativeInsights}
         crossAnalysis={output.crossAnalysis}
+        patientId={patientId}
+        patientName={patientName}
       />
 
       {/* Divider */}

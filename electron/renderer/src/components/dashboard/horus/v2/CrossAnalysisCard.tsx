@@ -19,7 +19,6 @@ import {
   Activity,
   Calendar,
   Lightbulb,
-  ChevronDown,
   Footprints,
   Scale,
   Zap,
@@ -27,7 +26,10 @@ import {
   Timer,
   Dumbbell,
   Heart,
+  ScatterChart,
 } from "lucide-react";
+import type { Id } from "../../../../../../../convex/_generated/dataModel";
+import { VectorVisualizationModal } from "../../VectorVisualizationModal";
 import type {
   CrossAnalysisResult,
   CrossAnalysisOutput,
@@ -56,6 +58,8 @@ function hasFullAnalysis(
 interface CrossAnalysisCardProps {
   crossAnalysis?: CrossAnalysisResult;
   speculativeInsights?: SpeculativeInsight[];
+  patientId?: Id<"users">;
+  patientName?: string;
   className?: string;
 }
 
@@ -184,54 +188,31 @@ function InsufficientHistoryCard({ data }: { data: MinimalCrossAnalysisOutput })
   );
 }
 
-/** Trend insight row */
-function TrendInsightRow({ insight }: { insight: TrendInsight }) {
+/** Trend insight row - compact bullet style */
+function TrendInsightRow({ insight, color }: { insight: TrendInsight; color: string }) {
   const changeLabel =
     insight.changePercent > 0
       ? `+${insight.changePercent.toFixed(0)}%`
       : `${insight.changePercent.toFixed(0)}%`;
 
   return (
-    <div className="group flex items-start gap-3 p-3 rounded-lg bg-[var(--tropx-surface)]/40 hover:bg-[var(--tropx-surface)]/60 transition-colors">
-      {/* Icon */}
-      <div className="flex-shrink-0 mt-0.5">{getTrendIcon(insight.direction)}</div>
-
-      {/* Content */}
+    <li className="flex items-start gap-2">
+      <div
+        className="h-1.5 w-1.5 rounded-full mt-1.5 flex-shrink-0"
+        style={{ backgroundColor: color }}
+      />
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-sm font-medium text-[var(--tropx-text-main)]">
-            {insight.displayName}
-          </span>
-          <span
-            className="text-xs font-medium px-1.5 py-0.5 rounded"
-            style={{
-              backgroundColor: `color-mix(in srgb, ${getTrendColor(insight.direction)} 15%, transparent)`,
-              color: getTrendColor(insight.direction),
-            }}
-          >
-            {insight.direction === "improving" ? "Improving" : insight.direction === "declining" ? "Declining" : "Stable"}
-          </span>
-        </div>
-        <p className="text-sm text-[var(--tropx-text-sub)] leading-relaxed">
-          {insight.narrative}
-        </p>
-        {/* Stats row */}
-        <div className="flex items-center gap-4 mt-2 text-xs text-[var(--tropx-text-sub)]">
-          <span>
-            Current: <strong className="text-[var(--tropx-text-main)]">{insight.currentValue.toFixed(1)}</strong>
-          </span>
-          <span>
-            Baseline: <strong className="text-[var(--tropx-text-main)]">{insight.baselineValue.toFixed(1)}</strong>
-          </span>
-          <span
-            className="font-medium"
-            style={{ color: getTrendColor(insight.direction) }}
-          >
-            {changeLabel} from baseline
-          </span>
-        </div>
+        <span className="text-sm text-[var(--tropx-text-main)]">
+          <strong>{insight.displayName}</strong>: {insight.narrative}
+        </span>
+        <span
+          className="ml-1.5 text-xs font-medium"
+          style={{ color }}
+        >
+          ({changeLabel})
+        </span>
       </div>
-    </div>
+    </li>
   );
 }
 
@@ -270,93 +251,42 @@ function PatternCard({ pattern }: { pattern: RecurringPattern }) {
   );
 }
 
-/** Collapsible insight card (for refined insights from cross-analysis) */
+/** Visual insight card (gallery-style like Key Findings) */
 function InsightCard({ insight }: { insight: RefinedInsight }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
   return (
-    <div className="rounded-lg border border-[var(--tropx-border)]/30 bg-[var(--tropx-card)]/60 overflow-hidden">
-      {/* Header - always visible, clickable */}
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-start gap-3 p-3 text-left hover:bg-[var(--tropx-surface)]/30 transition-colors"
-      >
-        {/* Icon */}
-        <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--tropx-vibrant)]/10 text-[var(--tropx-vibrant)]">
-          {getInsightIcon(insight.iconHint)}
-        </div>
-        {/* Title and summary */}
-        <div className="flex-1 min-w-0">
-          <h5 className="text-sm font-medium text-[var(--tropx-text-main)]">
-            {insight.title}
-          </h5>
-          <p className="text-sm text-[var(--tropx-text-sub)] leading-relaxed mt-0.5">
-            {insight.summary}
-          </p>
-        </div>
-        {/* Expand indicator */}
-        <ChevronDown
-          className={cn(
-            "flex-shrink-0 h-4 w-4 text-[var(--tropx-text-sub)] transition-transform",
-            isExpanded && "rotate-180"
-          )}
-        />
-      </button>
-
-      {/* Details - expandable */}
-      {isExpanded && (
-        <div className="px-3 pb-3 pt-0">
-          <div className="pl-11 border-l-2 border-[var(--tropx-vibrant)]/20 ml-1">
-            <p className="text-sm text-[var(--tropx-text-sub)] leading-relaxed">
-              {insight.details}
-            </p>
-          </div>
-        </div>
-      )}
+    <div className="flex flex-col items-center p-3 md:p-4 rounded-xl bg-[var(--tropx-surface)]/40 md:flex-1 md:min-w-0">
+      {/* Icon - hero element */}
+      <div className="flex items-center justify-center w-14 h-14 rounded-xl bg-[var(--tropx-vibrant)]/15 text-[var(--tropx-vibrant)] mb-3">
+        {getInsightIcon(insight.iconHint)}
+      </div>
+      {/* Title */}
+      <h5 className="text-sm font-semibold text-[var(--tropx-text-main)] text-center mb-1">
+        {insight.title}
+      </h5>
+      {/* Summary */}
+      <p className="text-xs text-[var(--tropx-text-sub)] text-center leading-relaxed line-clamp-3">
+        {insight.summary}
+      </p>
     </div>
   );
 }
 
-/** Collapsible speculative insight card (for raw insights when no cross-analysis) */
+/** Visual speculative insight card (gallery-style like Key Findings) */
 function SpeculativeInsightCard({ insight }: { insight: SpeculativeInsight }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
   return (
-    <div className="rounded-lg border border-[var(--tropx-border)]/30 bg-[var(--tropx-card)]/60 overflow-hidden">
-      {/* Header - always visible, clickable */}
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-start gap-3 p-3 text-left hover:bg-[var(--tropx-surface)]/30 transition-colors"
-      >
-        {/* Icon */}
-        <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--tropx-vibrant)]/10 text-[var(--tropx-vibrant)]">
-          <Lightbulb className="h-4 w-4" />
-        </div>
-        {/* Title (label) */}
-        <div className="flex-1 min-w-0">
-          <h5 className="text-sm font-medium text-[var(--tropx-text-main)]">
-            {insight.label}
-          </h5>
-        </div>
-        {/* Expand indicator */}
-        <ChevronDown
-          className={cn(
-            "flex-shrink-0 h-4 w-4 text-[var(--tropx-text-sub)] transition-transform",
-            isExpanded && "rotate-180"
-          )}
-        />
-      </button>
-
-      {/* Details - expandable */}
-      {isExpanded && (
-        <div className="px-3 pb-3 pt-0">
-          <div className="pl-11 border-l-2 border-[var(--tropx-vibrant)]/20 ml-1">
-            <p className="text-sm text-[var(--tropx-text-sub)] leading-relaxed">
-              {insight.description}
-            </p>
-          </div>
-        </div>
-      )}
+    <div className="flex flex-col items-center p-3 md:p-4 rounded-xl bg-[var(--tropx-surface)]/40 md:flex-1 md:min-w-0">
+      {/* Icon - hero element */}
+      <div className="flex items-center justify-center w-14 h-14 rounded-xl bg-[var(--tropx-vibrant)]/15 text-[var(--tropx-vibrant)] mb-3">
+        <Lightbulb className="h-6 w-6" />
+      </div>
+      {/* Title */}
+      <h5 className="text-sm font-semibold text-[var(--tropx-text-main)] text-center mb-1">
+        {insight.label}
+      </h5>
+      {/* Description */}
+      <p className="text-xs text-[var(--tropx-text-sub)] text-center leading-relaxed line-clamp-3">
+        {insight.description}
+      </p>
     </div>
   );
 }
@@ -423,7 +353,9 @@ function BaselineSection({ comparison }: { comparison: CrossAnalysisOutput["base
 // Main Component
 // ─────────────────────────────────────────────────────────────────
 
-export function CrossAnalysisCard({ crossAnalysis, speculativeInsights, className }: CrossAnalysisCardProps) {
+export function CrossAnalysisCard({ crossAnalysis, speculativeInsights, patientId, patientName, className }: CrossAnalysisCardProps) {
+  const [showVisualization, setShowVisualization] = useState(false);
+
   const insights = speculativeInsights ?? [];
   const hasInsights = insights.length > 0;
   const hasCrossAnalysis = !!crossAnalysis;
@@ -483,6 +415,23 @@ export function CrossAnalysisCard({ crossAnalysis, speculativeInsights, classNam
             )}
           </div>
         </div>
+
+        {/* Visualize Data Button */}
+        {patientId && (
+          <button
+            onClick={() => setShowVisualization(true)}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium",
+              "bg-[var(--tropx-surface)]/60 hover:bg-[var(--tropx-surface)]",
+              "text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)]",
+              "border border-[var(--tropx-border)]/30 hover:border-[var(--tropx-border)]/50",
+              "transition-all duration-150"
+            )}
+          >
+            <ScatterChart className="h-3.5 w-3.5" />
+            <span>Visualize</span>
+          </button>
+        )}
       </div>
 
       {/* Insufficient History Message (if applicable) */}
@@ -499,13 +448,13 @@ export function CrossAnalysisCard({ crossAnalysis, speculativeInsights, classNam
         </p>
       )}
 
-      {/* Worth Investigating / Refined Insights Section */}
+      {/* Worth Investigating / Refined Insights Section - Gallery Layout */}
       {(hasFullCrossAnalysis ? refinedInsights.length > 0 : hasInsights) && (
         <div className="mb-4">
           <span className="text-xs font-medium text-[var(--tropx-text-sub)] uppercase tracking-wide">
             {hasFullCrossAnalysis ? "Key Insights" : "Worth Investigating"}
           </span>
-          <div className="mt-2 space-y-2">
+          <div className="mt-2 grid grid-cols-2 gap-3 md:flex md:flex-nowrap md:gap-4">
             {hasFullCrossAnalysis
               ? refinedInsights.map((insight: RefinedInsight, i: number) => (
                   <InsightCard key={`insight-${i}`} insight={insight} />
@@ -517,19 +466,62 @@ export function CrossAnalysisCard({ crossAnalysis, speculativeInsights, classNam
         </div>
       )}
 
-      {/* Trend Insights (only for full cross-analysis) */}
-      {hasFullCrossAnalysis && (crossAnalysis as CrossAnalysisOutput).trendInsights.length > 0 && (
-        <div className="mb-4">
-          <span className="text-xs font-medium text-[var(--tropx-text-sub)] uppercase tracking-wide">
-            Trend Insights
-          </span>
-          <div className="mt-2 space-y-2">
-            {(crossAnalysis as CrossAnalysisOutput).trendInsights.slice(0, 3).map((insight) => (
-              <TrendInsightRow key={insight.id} insight={insight} />
-            ))}
+      {/* Trend Insights - Two Column Layout (only for full cross-analysis) */}
+      {hasFullCrossAnalysis && (crossAnalysis as CrossAnalysisOutput).trendInsights.length > 0 && (() => {
+        const allTrends = (crossAnalysis as CrossAnalysisOutput).trendInsights;
+        const improvingTrends = allTrends.filter((t) => t.direction === "improving");
+        const decliningTrends = allTrends.filter((t) => t.direction === "declining" || t.direction === "stable");
+
+        return (
+          <div className="mb-4 border-t border-[var(--tropx-border)]/30 pt-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Improving Trends */}
+              <div>
+                <span className="text-xs font-semibold text-[var(--tropx-success-text)] uppercase tracking-wide">
+                  Improving
+                </span>
+                {improvingTrends.length > 0 ? (
+                  <ul className="mt-1 space-y-1.5">
+                    {improvingTrends.slice(0, 4).map((insight) => (
+                      <TrendInsightRow
+                        key={insight.id}
+                        insight={insight}
+                        color="var(--tropx-success-text)"
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-xs text-[var(--tropx-text-sub)] italic">
+                    No improving trends detected
+                  </p>
+                )}
+              </div>
+
+              {/* Declining/Needs Attention Trends */}
+              <div>
+                <span className="text-xs font-semibold text-[var(--tropx-red)] uppercase tracking-wide">
+                  Needs Attention
+                </span>
+                {decliningTrends.length > 0 ? (
+                  <ul className="mt-1 space-y-1.5">
+                    {decliningTrends.slice(0, 4).map((insight) => (
+                      <TrendInsightRow
+                        key={insight.id}
+                        insight={insight}
+                        color={insight.direction === "declining" ? "var(--tropx-red)" : "var(--tropx-text-sub)"}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-xs text-[var(--tropx-text-sub)] italic">
+                    No concerning trends detected
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Recurring Patterns (only for full cross-analysis) */}
       {hasFullCrossAnalysis && (crossAnalysis as CrossAnalysisOutput).recurringPatterns.length > 0 && (
@@ -556,6 +548,16 @@ export function CrossAnalysisCard({ crossAnalysis, speculativeInsights, classNam
           ? "Analysis based on comparison with patient's personal baseline"
           : "These hypotheses are generated based on pattern analysis and should be validated clinically"}
       </p>
+
+      {/* Visualization Modal */}
+      {patientId && (
+        <VectorVisualizationModal
+          open={showVisualization}
+          onOpenChange={setShowVisualization}
+          patientId={patientId}
+          patientName={patientName}
+        />
+      )}
     </div>
   );
 }

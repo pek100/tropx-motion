@@ -20,7 +20,7 @@ import { PatientNotes, type PatientNote } from "./PatientNotes";
 import { SessionsCarousel } from "./SessionsCarousel";
 import { useNotes } from "@/hooks/useNotes";
 import { ChartPane, type ChartTab } from "./ChartPane";
-import { HorusPane, type AnalysisMode, useHorusAnalysisToast } from "./horus";
+import { HorusPane, useHorusAnalysisToast } from "./horus";
 import { CompactMetricsPane } from "./CompactMetricsPane";
 import { PatientSearchModal } from "../PatientSearchModal";
 import { SessionEditModal } from "./SessionEditModal";
@@ -145,7 +145,6 @@ export function DashboardView({ className }: DashboardViewProps) {
 
   // Sync states for linked tabs (used to trigger sync in the other pane)
   const [syncChartTab, setSyncChartTab] = useState<ChartTab>("progress");
-  const [syncAnalysisMode, setSyncAnalysisMode] = useState<AnalysisMode>("overall");
 
   // Horus analysis toast
   const { showToast: showHorusToast, ToastComponent: HorusToast } = useHorusAnalysisToast();
@@ -153,13 +152,6 @@ export function DashboardView({ className }: DashboardViewProps) {
   // When ChartPane changes, update the sync state for HorusPane
   const handleChartTabChange = useCallback((tab: ChartTab) => {
     setSyncChartTab(tab);
-    setSyncAnalysisMode(tab === "progress" ? "overall" : "session");
-  }, []);
-
-  // When HorusPane changes, update the sync state for ChartPane
-  const handleAnalysisModeChange = useCallback((mode: AnalysisMode) => {
-    setSyncAnalysisMode(mode);
-    setSyncChartTab(mode === "overall" ? "progress" : "session");
   }, []);
 
   // Save state to localStorage whenever it changes
@@ -814,10 +806,6 @@ export function DashboardView({ className }: DashboardViewProps) {
               selectedSessionId={selectedSessionId}
               sessions={horusSessions}
               borderless
-              isLinked={isTabsLinked}
-              onLinkedChange={setIsTabsLinked}
-              onModeChange={handleAnalysisModeChange}
-              syncToMode={syncAnalysisMode}
               userImage={user?.image}
             />
           </>

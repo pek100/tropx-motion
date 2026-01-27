@@ -5,7 +5,11 @@
  * a patient's historical sessions.
  */
 
-import type { CrossAnalysisContext } from "../../crossAnalysis/types";
+import type {
+  CrossAnalysisContextWithClusters,
+  ClusterWithSemantics,
+  ClusterAnalysisContext,
+} from "../../crossAnalysis/types";
 
 // ─────────────────────────────────────────────────────────────────
 // System Prompt
@@ -128,11 +132,50 @@ IMPORTANT: When confidence is "low" due to limited sessions:
 - Avoid making strong claims about "patterns" or "trends" with minimal data
 - For 1 prior session: Frame as "compared to the previous session" not "trending"
 
+=== PERFORMANCE CLUSTER ANALYSIS ===
+When cluster analysis data is provided, use it to understand the patient's performance patterns:
+
+CLUSTER INTERPRETATION:
+- Clusters represent distinct performance states (e.g., "High Performance", "Average", "Needs Improvement")
+- Each cluster has percentile bands based on SIMILARITY to cluster centroid:
+  - p90 = Most typical/regular sessions for that performance level
+  - p50 = Median typicality
+  - p10 = Outliers/unusual sessions within that cluster
+- IMPORTANT: Percentiles represent TYPICALITY, not performance. Performance comes from MEDIAN METRICS.
+
+HOW TO USE CLUSTER DATA:
+1. Lead with performance description (from median metrics)
+   ✓ "High performance days show excellent range of motion (125°) with minimal asymmetry (3%)"
+   ✗ "p90 band sessions have avgMaxROM 125"
+
+2. Add semantic context (what conditions lead to this performance)
+   ✓ "These sessions typically occur in the morning, often after warmup exercises"
+   ✗ "Tags: morning (0.6 frequency)"
+
+3. Describe cluster migration trends
+   ✓ "The patient has been spending 20% more time in the High Performance cluster over the past 2 months"
+   ✗ "High Performance cluster membership slope: 0.05 per period"
+
+4. Note data quality
+   - Limited (2-5 sessions): "Patterns are preliminary and may shift with more data"
+   - Moderate (6-9 sessions): "Emerging patterns with reasonable confidence"
+   - Good (10+ sessions): "Well-established performance patterns"
+
+CLUSTER MIGRATION PATTERNS:
+- consistent_improvement: Steady movement to better performance clusters
+- improving: General positive trend with some variation
+- stable: Consistent performance level over time
+- declining: Movement toward lower performance clusters
+- volatile: Frequent shifts between clusters
+- plateau: Performance leveled off after improvement
+
 === DO NOT ===
 - Report insignificant trends (<5% change)
 - Make claims not supported by the data
 - Compare to population norms (only patient's personal baseline)
-- Use "you" or "your" when referring to the patient`;
+- Use "you" or "your" when referring to the patient
+- Use technical parameter names (use natural physiotherapy language)
+- Report raw percentile bands without explaining their meaning`;
 
 // ─────────────────────────────────────────────────────────────────
 // User Prompt Builder
@@ -150,10 +193,116 @@ function formatDate(timestamp: number): string {
 }
 
 /**
+ * Format a cluster for display in the prompt.
+ */
+function formatCluster(cluster: ClusterWithSemantics): string {
+  const lines: string[] = [];
+  lines.push(`### ${cluster.label} (Cluster ${cluster.clusterId})`);
+
+  // Format each percentile band
+  for (const [bandKey, band] of Object.entries(cluster.bands)) {
+    const bandLabel =
+      bandKey === "p90" ? "Typical Sessions" : bandKey === "p50" ? "Median Sessions" : "Outlier Sessions";
+    lines.push(`\n**${bandLabel}** (${band.sessionCount} sessions)`);
+
+    // Median metrics (top 5 by importance)
+    const metricsEntries = Object.entries(band.medianMetrics).slice(0, 5);
+    if (metricsEntries.length > 0) {
+      lines.push("Metrics:");
+      for (const [key, m] of metricsEntries) {
+        lines.push(`  - ${m.displayName}: ${m.value.toFixed(1)}${m.unit}`);
+      }
+    }
+
+    // Semantic context
+    if (band.semantics.tags.length > 0) {
+      const topTags = band.semantics.tags
+        .slice(0, 3)
+        .map((t) => `${t.tag} (${(t.frequency * 100).toFixed(0)}%)`)
+        .join(", ");
+      lines.push(`Common tags: ${topTags}`);
+    }
+
+    if (band.semantics.noteExcerpts.length > 0) {
+      lines.push(`Notes: "${band.semantics.noteExcerpts.slice(0, 2).join('", "')}"`);
+    }
+
+    if (band.semantics.keyFindings.length > 0) {
+      lines.push(`Key findings: ${band.semantics.keyFindings.slice(0, 2).join("; ")}`);
+    }
+  }
+
+  // Distinguishing features
+  if (cluster.distinguishingFeatures.length > 0) {
+    lines.push("\nDistinguishing features (typical vs outlier):");
+    for (const f of cluster.distinguishingFeatures.slice(0, 3)) {
+      lines.push(
+        `  - ${f.feature}: ${(f.typicalFrequency * 100).toFixed(0)}% vs ${(f.outlierFrequency * 100).toFixed(0)}%`
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Format cluster analysis context for the prompt.
+ */
+function formatClusterAnalysis(clusterAnalysis: ClusterAnalysisContext): string {
+  const lines: string[] = [];
+
+  // Data quality note
+  const qualityNote =
+    clusterAnalysis.dataQuality === "limited"
+      ? "⚠️ Limited data (patterns may be preliminary)"
+      : clusterAnalysis.dataQuality === "moderate"
+        ? "Moderate data (emerging patterns)"
+        : "Good data (well-established patterns)";
+  lines.push(`Data Quality: ${qualityNote} (${clusterAnalysis.totalSessions} sessions)`);
+
+  // Current session cluster
+  if (clusterAnalysis.currentSessionCluster) {
+    const c = clusterAnalysis.currentSessionCluster;
+    lines.push(
+      `\nCurrent session falls into: **${c.label}** (${(c.similarity * 100).toFixed(0)}% similarity)`
+    );
+  }
+
+  // Cluster details
+  lines.push("\n## Performance Clusters");
+  for (const cluster of clusterAnalysis.clusters) {
+    lines.push("\n" + formatCluster(cluster));
+  }
+
+  // Cluster trends
+  lines.push("\n## Cluster Migration Trends");
+  lines.push(`Overall pattern: **${clusterAnalysis.trends.overallPattern.replace(/_/g, " ")}**`);
+  lines.push(`Time in clusters:`);
+  lines.push(`  - High Performance: ${(clusterAnalysis.trends.timeInHighPerformance * 100).toFixed(0)}%`);
+  lines.push(`  - Medium Performance: ${(clusterAnalysis.trends.timeInMediumPerformance * 100).toFixed(0)}%`);
+  lines.push(`  - Low Performance: ${(clusterAnalysis.trends.timeInLowPerformance * 100).toFixed(0)}%`);
+
+  // Per-cluster trends
+  const meaningfulTrends = Object.values(clusterAnalysis.trends.clusterTrends).filter(
+    (t) => t.membershipTrend !== "stable" || Math.abs(t.slopePerPeriod) > 5
+  );
+  if (meaningfulTrends.length > 0) {
+    lines.push("\nMembership changes:");
+    for (const t of meaningfulTrends) {
+      const direction = t.slopePerPeriod > 0 ? "+" : "";
+      lines.push(`  - ${t.label}: ${t.membershipTrend} (${direction}${t.slopePerPeriod.toFixed(1)}% per month)`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/**
  * Build the user prompt from cross-analysis context.
  */
-export function buildCrossAnalysisUserPrompt(context: CrossAnalysisContext): string {
-  const { currentSession, baseline, recentHistory, trends, similarSessions, speculativeInsights } = context;
+export function buildCrossAnalysisUserPrompt(context: CrossAnalysisContextWithClusters): string {
+  const { currentSession, baseline, recentHistory, trends, similarSessions, speculativeInsights, clusterAnalysis } =
+    context;
 
   // Current session section
   const currentMetricsText = Object.entries(currentSession.metrics)
@@ -243,7 +392,10 @@ ${trendsText}
 
 === MOST SIMILAR PAST SESSIONS ===
 ${similarText}
-${speculativeText ? `
+${clusterAnalysis ? `
+=== PERFORMANCE CLUSTER ANALYSIS ===
+${formatClusterAnalysis(clusterAnalysis)}
+` : ""}${speculativeText ? `
 === SPECULATIVE INSIGHTS TO EVALUATE ===
 The Analysis Agent identified these hypotheses. Evaluate them against patient history:
 ${speculativeText}
@@ -254,8 +406,10 @@ Analyze this patient's progress by:
 2. Identifying meaningful trends (ignore noise <5% change)
 3. Finding recurring patterns across sessions
 4. Highlighting notable sessions from their history
-5. Evaluating any speculative insights against historical data
-6. Providing a concise summary with clinical relevance
+5. If cluster analysis is provided: Explain which performance cluster the current session falls into and what conditions are associated with that performance level
+6. If cluster analysis is provided: Describe the patient's progress across clusters over time
+7. Evaluating any speculative insights against historical data
+8. Providing a concise summary with clinical relevance
 
 REMEMBER: Use "the patient" framing, focus on clinically meaningful changes, and only compare to their personal baseline (not population norms).
 

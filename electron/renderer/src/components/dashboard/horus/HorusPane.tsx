@@ -5,20 +5,18 @@
  * Uses the same styling as ChartPane for consistency.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  Plus,
-  Send,
   Loader2,
   Pencil,
   Trash2,
   User,
 } from "lucide-react";
+import { HorusChatInput } from "./HorusChatInput";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { AtomSpin } from "@/components/AtomSpin";
 import { useAction, useQuery, useMutation } from "convex/react";
@@ -77,6 +75,10 @@ export function HorusPane({
 }: HorusPaneProps) {
 
   const [chatInput, setChatInput] = useState("");
+
+  // Sticky chat state - show chat at bottom when scrolled past threshold
+  const [showBottomChat, setShowBottomChat] = useState(false);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   // Chat state
   const [chatLoading, setChatLoading] = useState(false);
@@ -184,14 +186,6 @@ export function HorusPane({
       setChatLoading(false);
     }
   }, [chatInput, selectedSessionId, patientId, chatHistory, askAnalysis, generateId, addMessagesMutation]);
-
-  // Handle Enter key
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey && chatInput.trim() && !chatLoading) {
-      e.preventDefault();
-      handleSendQuestion();
-    }
-  }, [chatInput, chatLoading, handleSendQuestion]);
 
   // Clear chat history (with confirmation)
   const handleClearChat = useCallback(async () => {
@@ -307,6 +301,41 @@ export function HorusPane({
     }
   }, [editingMessageId, editingContent, chatHistory, selectedSessionId, patientId, deleteMessageMutation, generateId, askAnalysis, addMessagesMutation]);
 
+  // Track scroll position to show chat at bottom when scrolled
+  useEffect(() => {
+    const scrollArea = scrollAreaRef.current;
+    if (!scrollArea) return;
+
+    // Find the actual scrollable viewport inside ScrollArea
+    const viewport = scrollArea.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
+    if (!viewport) return;
+
+    const handleScroll = () => {
+      // Show bottom chat when scrolled past 100px
+      setShowBottomChat(viewport.scrollTop > 100);
+    };
+
+    viewport.addEventListener('scroll', handleScroll, { passive: true });
+    return () => viewport.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Previous chats for the header input (user messages only, most recent first)
+  const previousChatsForInput = useMemo(() => {
+    return chatHistory
+      .filter((msg: ChatMessage) => msg.role === "user")
+      .map((msg: ChatMessage) => ({
+        id: msg.id,
+        text: msg.content,
+        timestamp: msg.timestamp,
+      }))
+      .reverse();
+  }, [chatHistory]);
+
+  // Handle selecting a previous chat from pills
+  const handleSelectPreviousChat = useCallback((chat: { id: string; text: string }) => {
+    setChatInput(chat.text);
+  }, []);
+
   // Get visualization data
   const { isLoading, context } =
     useVisualization(patientId, selectedSessionId, sessions);
@@ -373,28 +402,41 @@ export function HorusPane({
         className
       )}
     >
-      {/* Header - Horus branding */}
+      {/* Header - Horus branding with chat input */}
       <div className="flex items-center gap-4 px-4 sm:px-5 py-4 sm:py-5 border-b border-[var(--tropx-border)] shrink-0">
-        <div style={{ color: 'var(--tropx-vibrant)' }}>
-          <AtomSpin className="size-8 sm:size-10" />
+        {/* Left side - Logo */}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <div style={{ color: 'var(--tropx-vibrant)' }}>
+            <AtomSpin className="size-8 sm:size-10" />
+          </div>
+          <div className="flex flex-col">
+            <h2 className="font-bold text-lg sm:text-xl bg-gradient-to-r from-[var(--tropx-vibrant)] to-[rgba(var(--tropx-vibrant-rgb),0.8)] bg-clip-text text-transparent leading-tight">
+              Horus
+            </h2>
+            <span className="font-semibold text-xs sm:text-sm bg-gradient-to-r from-black to-black/80 dark:from-white dark:to-white/80 bg-clip-text text-transparent leading-tight">
+              AI Analysis
+            </span>
+          </div>
         </div>
-        <div className="flex flex-col">
-          <h2 className="font-bold text-xl sm:text-2xl bg-gradient-to-r from-[var(--tropx-vibrant)] to-[rgba(var(--tropx-vibrant-rgb),0.8)] bg-clip-text text-transparent">
-            Horus
-          </h2>
-          <span className="font-semibold text-sm sm:text-base bg-gradient-to-r from-black to-black/80 dark:from-white dark:to-white/80 bg-clip-text text-transparent">
-            AI Analysis
-          </span>
+
+        {/* Right side - Chat input (hidden when showing at bottom) */}
+        <div className={cn("flex-1 max-w-md ml-auto", showBottomChat && "invisible")}>
+          {selectedSessionId && (
+            <HorusChatInput
+              value={chatInput}
+              onChange={setChatInput}
+              onSend={handleSendQuestion}
+              isLoading={chatLoading}
+              disabled={!selectedSessionId}
+              previousChats={previousChatsForInput}
+              onSelectPreviousChat={handleSelectPreviousChat}
+            />
+          )}
         </div>
-        {isLoading && (
-          <Badge variant="outline" className="text-xs ml-auto">
-            Analyzing...
-          </Badge>
-        )}
       </div>
 
       {/* Scrollable content area */}
-      <ScrollArea className="flex-1 min-h-0">
+      <ScrollArea ref={scrollAreaRef} className="flex-1 min-h-0">
         <div className="p-4 sm:p-5">
           {selectedSessionId ? (
             <V2SectionsView
@@ -402,6 +444,7 @@ export function HorusPane({
               status={v2Analysis.status}
               error={v2Analysis.error}
               onRetry={v2Analysis.retryAnalysis}
+              patientId={patientId ?? undefined}
             />
           ) : (
             <div className="flex flex-col items-center justify-center py-16">
@@ -626,47 +669,27 @@ export function HorusPane({
         </div>
       )}
 
-      {/* Chat Input - shrink-0 to prevent compression */}
-      <div className="border-t border-[var(--tropx-border)] px-4 sm:px-5 py-3 shrink-0">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 shrink-0 text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)]"
-            onClick={() => setShowClearConfirm(true)}
-            title="Clear chat"
-            disabled={chatHistory.length === 0}
-          >
-            <Plus className="size-4" />
-          </Button>
-          <Input
+      {/* Chat input at bottom when scrolled past threshold */}
+      {showBottomChat && selectedSessionId && (
+        <div
+          className={cn(
+            "shrink-0",
+            "bg-[var(--tropx-card)]",
+            "border-t border-[var(--tropx-border)]",
+            "px-4 sm:px-5 py-3"
+          )}
+        >
+          <HorusChatInput
             value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask a question about this analysis..."
-            className="h-9 text-sm bg-[var(--tropx-muted)] border-0"
-            disabled={chatLoading || !selectedSessionId}
+            onChange={setChatInput}
+            onSend={handleSendQuestion}
+            isLoading={chatLoading}
+            disabled={!selectedSessionId}
+            previousChats={previousChatsForInput}
+            onSelectPreviousChat={handleSelectPreviousChat}
           />
-          <Button
-            size="icon"
-            variant="ghost"
-            className={cn(
-              "h-9 w-9 shrink-0 transition-colors",
-              chatInput.trim()
-                ? "text-tropx-vibrant hover:text-tropx-vibrant/80 hover:bg-tropx-vibrant/10"
-                : "text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)]"
-            )}
-            disabled={!chatInput.trim() || chatLoading || !selectedSessionId}
-            onClick={handleSendQuestion}
-          >
-            {chatLoading ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Send className="size-4" />
-            )}
-          </Button>
         </div>
-      </div>
+      )}
 
     </div>
   );

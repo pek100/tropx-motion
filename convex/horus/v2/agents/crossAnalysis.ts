@@ -9,7 +9,7 @@ import { internalAction } from "../../../_generated/server";
 import { v } from "convex/values";
 import { internal } from "../../../_generated/api";
 import type {
-  CrossAnalysisContext,
+  CrossAnalysisContextWithClusters,
   CrossAnalysisOutput,
   CrossAnalysisAgentResult,
   TrendInsight,
@@ -38,7 +38,7 @@ export const analyze = internalAction({
   },
   handler: async (ctx, args): Promise<CrossAnalysisAgentResult> => {
     const startTime = Date.now();
-    const context = args.context as CrossAnalysisContext;
+    const context = args.context as CrossAnalysisContextWithClusters;
 
     try {
       // Build prompts
@@ -48,6 +48,13 @@ export const analyze = internalAction({
       console.log("[Cross-Analysis Agent] Starting analysis for session:", context.currentSession.sessionId);
       console.log("[Cross-Analysis Agent] Historical sessions:", context.recentHistory.length);
       console.log("[Cross-Analysis Agent] Baseline sessions:", context.baseline.sessionCount);
+      if (context.clusterAnalysis) {
+        console.log("[Cross-Analysis Agent] Cluster analysis:", {
+          clusters: context.clusterAnalysis.clusters.length,
+          dataQuality: context.clusterAnalysis.dataQuality,
+          currentCluster: context.clusterAnalysis.currentSessionCluster?.label,
+        });
+      }
 
       // Call Vertex AI with structured output
       const llmResponse = await ctx.runAction(internal.horus.llm.vertex.callVertexAI, {

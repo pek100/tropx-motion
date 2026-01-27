@@ -36,6 +36,7 @@ export const RELATIONSHIPS: Record<string, Relationship[]> = {
     { table: "horusPipelineStatus", field: "sessionId", index: "by_session" },
     { table: "horusChatHistory", field: "sessionId", index: "by_session" },
     { table: "horusAnalysisEmbeddings", field: "sessionId", index: "by_session" },
+    { table: "horusMetricsVectors", field: "sessionId", index: "by_session" },
   ],
 
   // When only Horus analysis is deleted (not full session):
@@ -44,6 +45,7 @@ export const RELATIONSHIPS: Record<string, Relationship[]> = {
     { table: "horusPipelineStatus", field: "sessionId", index: "by_session" },
     { table: "horusChatHistory", field: "sessionId", index: "by_session" },
     { table: "horusAnalysisEmbeddings", field: "sessionId", index: "by_session" },
+    { table: "horusMetricsVectors", field: "sessionId", index: "by_session" },
   ],
 
   // When a user is deleted, delete these child records:
@@ -57,6 +59,8 @@ export const RELATIONSHIPS: Record<string, Relationship[]> = {
     { table: "horusAnalyses", field: "patientId", index: "by_patient" },
     { table: "horusAnalysisEmbeddings", field: "patientId", index: "by_patient" },
     { table: "horusChatHistory", field: "patientId", index: "by_patient" },
+    { table: "horusMetricsVectors", field: "patientId", index: "by_patient" },
+    { table: "horusPatientBaselines", field: "patientId", index: "by_patient" },
     // Notes authored by this user
     { table: "notes", field: "userId", index: "by_user" },
     // Notes about this user (as subject via contextId)

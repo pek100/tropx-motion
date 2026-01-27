@@ -298,3 +298,220 @@ export function hasFullCrossAnalysis(
 ): result is CrossAnalysisOutput {
   return !("insufficientHistory" in result);
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 6: Cluster Analysis Types
+// ─────────────────────────────────────────────────────────────────
+
+/** Data quality indicator based on session count */
+export type DataQuality = "limited" | "moderate" | "good";
+
+/** Overall pattern of cluster migration over time */
+export type OverallPattern =
+  | "consistent_improvement"
+  | "improving"
+  | "stable"
+  | "declining"
+  | "volatile"
+  | "plateau";
+
+/** Session with its 32-dim metrics vector */
+export interface SessionVector {
+  sessionId: string;
+  recordedAt: number;
+  vector: number[];
+  tags: string[];
+  notes?: string;
+}
+
+/**
+ * Performance cluster - sessions grouped by 32-dim vector similarity.
+ * Clusters emerge from density-based clustering (DBSCAN-like).
+ */
+export interface PerformanceCluster {
+  clusterId: string;
+  label: string; // "High Performance", "Average Performance", "Needs Improvement"
+
+  /** Cluster centroid (average of member vectors) */
+  centroid: number[]; // 32-dim
+
+  /** Member sessions */
+  sessionIds: string[];
+  sessionCount: number;
+
+  /** Quality score (average of normalized centroid dimensions) */
+  qualityScore: number;
+
+  /** Cluster tightness */
+  intraClusterDistance?: number;
+}
+
+/**
+ * Semantic context for a set of sessions.
+ * Combines 768-dim embeddings, tags, notes, and AI findings.
+ */
+export interface SemanticContext {
+  /** 768-dim centroid of analysis embeddings */
+  semanticCentroid: number[];
+
+  /** Tags with frequency (from recordingSessions.tags) */
+  tags: Array<{ tag: string; frequency: number }>;
+
+  /** Note excerpts (from recordingSessions.notes) */
+  noteExcerpts: string[];
+
+  /** Key findings from previous AI analyses */
+  keyFindings: string[];
+
+  /** Summary excerpts from previous analyses */
+  summaryExcerpts: string[];
+}
+
+/**
+ * Percentile band within a cluster.
+ * Percentiles represent SIMILARITY to cluster centroid (typicality), not performance.
+ * - p90 = most similar to centroid = typical/regular sessions
+ * - p10 = least similar to centroid = outliers/unusual sessions
+ */
+export interface ClusterPercentileBand {
+  percentile: "p10" | "p50" | "p90";
+  similarityToCluster: "outlier" | "median" | "typical";
+
+  /** Sessions in this band */
+  sessionIds: string[];
+  sessionCount: number;
+
+  /** Median metric values for sessions in this band */
+  medianMetrics: Record<
+    string,
+    { value: number; displayName: string; unit: string }
+  >;
+
+  /** Semantic context for sessions in this band */
+  semantics: SemanticContext;
+}
+
+/**
+ * Cluster with full semantic correlation.
+ * Main output structure per performance cluster.
+ */
+export interface ClusterWithSemantics {
+  clusterId: string;
+  label: string;
+  centroid: number[]; // 32-dim
+
+  /** Percentile bands by similarity to centroid */
+  bands: {
+    p90: ClusterPercentileBand; // Most typical sessions
+    p50: ClusterPercentileBand; // Median typicality
+    p10: ClusterPercentileBand; // Outliers within this cluster
+  };
+
+  /** Semantic distance between typical (p90) and outlier (p10) sessions */
+  typicalVsOutlierSemanticDistance: number;
+
+  /** Features that distinguish typical from outlier sessions */
+  distinguishingFeatures: Array<{
+    feature: string;
+    typicalFrequency: number;
+    outlierFrequency: number;
+  }>;
+}
+
+/**
+ * Distribution of sessions across clusters for a time period.
+ */
+export interface ClusterDistribution {
+  clusterId: string;
+  sessionCount: number;
+  percentage: number;
+  sessionIds: string[];
+}
+
+/**
+ * Cluster migration between time periods.
+ */
+export interface ClusterMigration {
+  fromCluster: string;
+  toCluster: string;
+  sessionCount: number;
+  direction: "improved" | "declined" | "lateral";
+}
+
+/**
+ * Cluster membership for a specific time period (monthly bucket).
+ */
+export interface ClusterMembershipOverTime {
+  period: string; // "2024-01", "2024-02", etc.
+  startDate: number;
+  endDate: number;
+
+  /** Distribution across clusters */
+  distribution: Record<string, ClusterDistribution>;
+
+  /** Migration from previous period */
+  migrations?: ClusterMigration[];
+}
+
+/**
+ * Trend for a single cluster's membership over time.
+ */
+export interface ClusterMembershipTrend {
+  clusterId: string;
+  label: string;
+  membershipTrend: TrendDirection;
+  slopePerPeriod: number; // % change per month
+  rSquared: number;
+}
+
+/**
+ * Overall cluster trends - how membership changes over time.
+ * Tracks whether patient is spending more time in "good" clusters.
+ */
+export interface ClusterTrends {
+  /** Per-cluster membership trends */
+  clusterTrends: Record<string, ClusterMembershipTrend>;
+
+  /** Overall trajectory pattern */
+  overallPattern: OverallPattern;
+
+  /** Percentage of time in each performance tier */
+  timeInHighPerformance: number;
+  timeInMediumPerformance: number;
+  timeInLowPerformance: number;
+}
+
+/**
+ * Full cluster analysis context for the Cross-Analysis Agent.
+ */
+export interface ClusterAnalysisContext {
+  /** All clusters with semantic correlation */
+  clusters: ClusterWithSemantics[];
+
+  /** Which cluster the current session falls into */
+  currentSessionCluster?: {
+    clusterId: string;
+    label: string;
+    similarity: number;
+  };
+
+  /** Cluster membership over time (monthly buckets) */
+  membershipHistory: ClusterMembershipOverTime[];
+
+  /** Cluster migration trends */
+  trends: ClusterTrends;
+
+  /** Data quality indicator */
+  dataQuality: DataQuality;
+
+  /** Total sessions analyzed */
+  totalSessions: number;
+}
+
+/**
+ * Extended CrossAnalysisContext with cluster analysis.
+ */
+export interface CrossAnalysisContextWithClusters extends CrossAnalysisContext {
+  /** Cluster analysis (Phase 6) */
+  clusterAnalysis?: ClusterAnalysisContext;
+}

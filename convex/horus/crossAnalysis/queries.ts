@@ -473,3 +473,129 @@ function getUnitForMetric(metricName: string): string {
 
   return units[metricName] ?? "";
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 6: Cluster Analysis Context Building
+// ─────────────────────────────────────────────────────────────────
+
+import type {
+  SessionVector,
+  ClusterAnalysisContext,
+  ClusterWithSemantics,
+  DataQuality,
+} from "./types";
+import {
+  clusterSessionsByDensity,
+  trackClusterMembershipOverTime,
+  calculateClusterTrends,
+  findNearestCluster,
+} from "./clusterAnalysis";
+import { buildClusterWithSemantics } from "./semanticCorrelation";
+
+/**
+ * Build cluster analysis context for the Cross-Analysis Agent.
+ * Performs density-based clustering on historical sessions and
+ * enriches each cluster with semantic context.
+ *
+ * @param patientId - Patient to analyze
+ * @param beforeDate - Only consider sessions recorded before this date (time-blindness)
+ * @param currentSessionVector - Vector of current session to place in a cluster
+ */
+export const buildClusterAnalysisContext = internalQuery({
+  args: {
+    patientId: v.id("users"),
+    beforeDate: v.number(),
+    currentSessionVector: v.optional(v.array(v.float64())),
+  },
+  handler: async (ctx, args): Promise<ClusterAnalysisContext | null> => {
+    // 1. Get all session vectors for patient (before the current session)
+    const allVectorDocs = await ctx.db
+      .query("horusMetricsVectors")
+      .withIndex("by_patient", (q) => q.eq("patientId", args.patientId))
+      .collect();
+
+    // Filter to sessions recorded BEFORE the current recording date
+    const historicalVectorDocs = allVectorDocs.filter(
+      (v) => v.recordedAt < args.beforeDate
+    );
+
+    const sessionCount = historicalVectorDocs.length;
+
+    // Need at least 2 sessions for clustering
+    if (sessionCount < 2) {
+      return null;
+    }
+
+    // Determine data quality
+    const dataQuality: DataQuality =
+      sessionCount < 6 ? "limited" : sessionCount < 10 ? "moderate" : "good";
+
+    // 2. Convert to SessionVector format (with tags and notes from recordingSessions)
+    const sessions: SessionVector[] = [];
+
+    for (const vectorDoc of historicalVectorDocs) {
+      // Get tags and notes from recording session
+      const recordingSession = await ctx.db
+        .query("recordingSessions")
+        .withIndex("by_sessionId", (q) => q.eq("sessionId", vectorDoc.sessionId))
+        .first();
+
+      sessions.push({
+        sessionId: vectorDoc.sessionId,
+        recordedAt: vectorDoc.recordedAt,
+        vector: vectorDoc.metricsVector,
+        tags: recordingSession?.tags ?? [],
+        notes: recordingSession?.notes,
+      });
+    }
+
+    // 3. Run density-based clustering
+    const clusters = clusterSessionsByDensity(sessions);
+
+    if (clusters.length === 0) {
+      return null;
+    }
+
+    // 4. Build semantic context for each cluster
+    const clustersWithSemantics: ClusterWithSemantics[] = [];
+
+    for (const cluster of clusters) {
+      const clusterWithSemantics = await buildClusterWithSemantics(
+        ctx,
+        cluster,
+        sessions,
+        args.patientId
+      );
+      clustersWithSemantics.push(clusterWithSemantics);
+    }
+
+    // 5. Place current session in nearest cluster (if vector provided)
+    let currentSessionCluster: {
+      clusterId: string;
+      label: string;
+      similarity: number;
+    } | undefined;
+
+    if (args.currentSessionVector) {
+      currentSessionCluster = findNearestCluster(
+        args.currentSessionVector,
+        clusters
+      );
+    }
+
+    // 6. Track cluster membership over time
+    const membershipHistory = trackClusterMembershipOverTime(sessions, clusters);
+
+    // 7. Calculate cluster migration trends
+    const trends = calculateClusterTrends(membershipHistory, clusters);
+
+    return {
+      clusters: clustersWithSemantics,
+      currentSessionCluster,
+      membershipHistory,
+      trends,
+      dataQuality,
+      totalSessions: sessionCount,
+    };
+  },
+});

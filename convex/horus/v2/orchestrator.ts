@@ -16,7 +16,11 @@ import type {
   ResearchAgentOutput,
   CrossAnalysisResult,
 } from "./types";
-import type { CrossAnalysisContext } from "../crossAnalysis/types";
+import type {
+  CrossAnalysisContext,
+  CrossAnalysisContextWithClusters,
+  ClusterAnalysisContext,
+} from "../crossAnalysis/types";
 import { aggregateTokenUsage } from "../llm/vertex";
 
 // ─────────────────────────────────────────────────────────────────
@@ -173,9 +177,41 @@ export const runPipeline = internalAction({
               description: si.description,
             })) ?? [];
 
-            const contextWithInsights = {
+            // Build cluster analysis context (Phase 6)
+            let clusterAnalysis: ClusterAnalysisContext | null = null;
+            try {
+              // Get the current session's metrics vector for cluster placement
+              const currentVectorDoc = await ctx.runQuery(
+                internal.horus.crossAnalysis.queries.getSessionVector,
+                { sessionId: args.sessionId }
+              );
+
+              clusterAnalysis = await ctx.runQuery(
+                internal.horus.crossAnalysis.queries.buildClusterAnalysisContext,
+                {
+                  patientId: args.patientId,
+                  beforeDate: currentRecordingDate,
+                  currentSessionVector: currentVectorDoc?.metricsVector,
+                }
+              );
+
+              if (clusterAnalysis) {
+                console.log("[Orchestrator] Cluster analysis built:", {
+                  clusters: clusterAnalysis.clusters.length,
+                  totalSessions: clusterAnalysis.totalSessions,
+                  dataQuality: clusterAnalysis.dataQuality,
+                  currentCluster: clusterAnalysis.currentSessionCluster?.label,
+                });
+              }
+            } catch (clusterError) {
+              console.warn("[Orchestrator] Cluster analysis failed (non-fatal):", clusterError);
+              // Continue without cluster analysis
+            }
+
+            const contextWithInsights: CrossAnalysisContextWithClusters = {
               ...context,
               speculativeInsights,
+              clusterAnalysis: clusterAnalysis ?? undefined,
             };
 
             // Run Cross-Analysis Agent

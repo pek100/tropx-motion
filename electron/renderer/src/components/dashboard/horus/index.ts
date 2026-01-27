@@ -4,7 +4,7 @@
  * AI analysis visualization system.
  */
 
-export { HorusPane, type AnalysisMode } from "./HorusPane";
+export { HorusPane } from "./HorusPane";
 export { BlockRenderer } from "./BlockRenderer";
 export * from "./blocks";
 export { useVisualization } from "./hooks/useVisualization";
