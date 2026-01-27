@@ -151,9 +151,11 @@ REMEMBER: Always use "the patient" - never "you" or "your".
    - analogy: Optional relatable comparison
 
 5. **Evidence Strength**: Assess overall evidence quality
-   - strong: Multiple A/S tier sources agree
-   - moderate: B tier or mixed agreement
-   - limited: Mostly C/D tier or sparse evidence
+   - very-high: Multiple S tier (systematic reviews/meta-analyses) sources agree
+   - high: Multiple A tier sources or S tier with supporting evidence
+   - moderate: B tier sources or mixed A/B tier agreement
+   - minimal: Mostly C/D tier or sparse evidence
+   - none: No relevant evidence found
 
 6. **Recommendation**: ONE unified, actionable recommendation based on evidence
    - Synthesize the key action from all evidence
@@ -186,7 +188,7 @@ REMEMBER: Always use "the patient" - never "you" or "your".
     }
   ],
   "evidenceStrength": {
-    "level": "moderate",
+    "level": "high",
     "notes": "Optional notes about evidence quality"
   },
   "wasContradicted": false,
@@ -254,7 +256,7 @@ export const RESEARCH_RESPONSE_SCHEMA = {
     evidenceStrength: {
       type: "object",
       properties: {
-        level: { type: "string", enum: ["strong", "moderate", "limited"] },
+        level: { type: "string", enum: ["none", "minimal", "moderate", "high", "very-high"] },
         notes: { type: "string" },
       },
       required: ["level"],

@@ -1,7 +1,7 @@
 /**
  * Embedding Generation
  *
- * Vertex AI text-embedding-004 integration for vector search.
+ * Vertex AI text-embedding-005 integration for vector search.
  */
 
 import { action } from "../../_generated/server";
@@ -12,7 +12,7 @@ import { v } from "convex/values";
 // ─────────────────────────────────────────────────────────────────
 
 export const EMBEDDING_CONFIG = {
-  MODEL: "text-embedding-004",
+  MODEL: "text-embedding-005",
   DIMENSIONS: 768,
   LOCATION: "us-central1",
   // Batch size for embedding requests

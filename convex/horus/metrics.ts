@@ -30,6 +30,8 @@ export interface MetricConfig {
   citation: string;
   /** Whether metric is currently active in OPI */
   activeInOpi: boolean;
+  /** Whether metric is meaningful for multi-rep sessions (default: true) */
+  meaningful: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -52,6 +54,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.92,
     citation: "Knee flexion norms",
     activeInOpi: false,
+    meaningful: true,
   },
   averageRom: {
     name: "averageRom",
@@ -65,6 +68,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.90,
     citation: "Knee flexion norms",
     activeInOpi: false,
+    meaningful: true,
   },
   peakFlexion: {
     name: "peakFlexion",
@@ -78,6 +82,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.91,
     citation: "Knee flexion norms",
     activeInOpi: false,
+    meaningful: true,
   },
   peakExtension: {
     name: "peakExtension",
@@ -91,6 +96,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.88,
     citation: "Full extension = 0°",
     activeInOpi: false,
+    meaningful: true,
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -108,6 +114,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.82,
     citation: "Sadeghi et al. Gait Posture 2000",
     activeInOpi: true,
+    meaningful: true,
   },
   velocityAsymmetry: {
     name: "velocityAsymmetry",
@@ -121,6 +128,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.80,
     citation: "Derived from ROM asymmetry principles",
     activeInOpi: true,
+    meaningful: true,
   },
   crossCorrelation: {
     name: "crossCorrelation",
@@ -134,6 +142,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.88,
     citation: "Signal processing; >0.9 = high similarity",
     activeInOpi: true,
+    meaningful: true,
   },
   realAsymmetryAvg: {
     name: "realAsymmetryAvg",
@@ -147,6 +156,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.82,
     citation: "Novel convolution-based separation",
     activeInOpi: true,
+    meaningful: true,
   },
   netGlobalAsymmetry: {
     name: "netGlobalAsymmetry",
@@ -160,6 +170,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.85,
     citation: "Weighted composite across parameters",
     activeInOpi: false,
+    meaningful: true,
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -177,6 +188,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.87,
     citation: "Biomechanics literature; sport-specific",
     activeInOpi: true,
+    meaningful: true,
   },
   explosivenessConcentric: {
     name: "explosivenessConcentric",
@@ -190,6 +202,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.83,
     citation: "Acceleration during concentric phase",
     activeInOpi: true,
+    meaningful: true,
   },
   explosivenessLoading: {
     name: "explosivenessLoading",
@@ -203,6 +216,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.83,
     citation: "Acceleration during eccentric phase",
     activeInOpi: false,
+    meaningful: true,
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -220,6 +234,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.80,
     citation: "Jerk minimization principle; Flash & Hogan 1985",
     activeInOpi: false,
+    meaningful: true,
   },
   romCoV: {
     name: "romCoV",
@@ -233,6 +248,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.80,
     citation: "Movement variability; CV <10% acceptable",
     activeInOpi: false,
+    meaningful: false, // Meaningless for multi-rep sessions - measures variability across reps, not stability
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -250,6 +266,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.85,
     citation: "Bilateral timing synchronization",
     activeInOpi: false,
+    meaningful: true,
   },
   temporalLag: {
     name: "temporalLag",
@@ -263,6 +280,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.85,
     citation: "Interlimb timing",
     activeInOpi: false,
+    meaningful: true,
   },
   maxFlexionTimingDiff: {
     name: "maxFlexionTimingDiff",
@@ -276,6 +294,7 @@ export const METRIC_REGISTRY: Record<string, MetricConfig> = {
     icc: 0.82,
     citation: "Temporal coordination of peak flexion",
     activeInOpi: false,
+    meaningful: true,
   },
 };
 
@@ -303,6 +322,11 @@ export const METRICS_BY_DOMAIN: Record<MetricDomain, string[]> = {
 
 export const OPI_ACTIVE_METRICS = ALL_METRICS.filter(
   (m) => METRIC_REGISTRY[m].activeInOpi
+);
+
+/** Metrics that are meaningful for multi-rep sessions */
+export const MEANINGFUL_METRICS = ALL_METRICS.filter(
+  (m) => METRIC_REGISTRY[m].meaningful
 );
 
 // ─────────────────────────────────────────────────────────────────

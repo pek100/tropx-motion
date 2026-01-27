@@ -127,12 +127,7 @@ export const getPatientMetricsHistory = query({
             rmsJerk: metrics.leftLeg && metrics.rightLeg
               ? (metrics.leftLeg.rmsJerk + metrics.rightLeg.rmsJerk) / 2
               : undefined,
-
-            // Stability
-            romCoV: metrics.leftLeg && metrics.rightLeg
-              ? (metrics.leftLeg.romCoV + metrics.rightLeg.romCoV) / 2
-              : undefined,
-            groundContactTimeMs: metrics.jumpMetrics?.groundContactTimeMs,
+            // Note: romCoV removed - meaningless for multi-rep sessions (measures variability across reps, not stability)
           },
 
           // Nested per-leg metrics for Horus AI visualization

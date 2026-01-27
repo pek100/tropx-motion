@@ -26,7 +26,9 @@ import {
 } from "recharts";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
 import { PerformanceRadar, type RadarScores } from "./PerformanceRadar";
+import { CrossAnalysisCard } from "./CrossAnalysisCard";
 import type { SeverityLevel } from "./SectionCard";
+import type { CrossAnalysisResult } from "../../../../../../../convex/horus/crossAnalysis/types";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -50,6 +52,13 @@ export interface KeyFinding {
   viz?: FindingViz;
 }
 
+export interface SpeculativeInsight {
+  /** Short 2-5 word title for the hypothesis */
+  label: string;
+  /** 1-2 sentence explanation of the hypothesis */
+  description: string;
+}
+
 interface V2SummaryCardProps {
   radarScores: RadarScores;
   keyFindings: KeyFinding[];
@@ -57,6 +66,8 @@ interface V2SummaryCardProps {
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
+  speculativeInsights?: SpeculativeInsight[];
+  crossAnalysis?: CrossAnalysisResult;
   className?: string;
 }
 
@@ -148,7 +159,7 @@ function ComparisonViz({ left, right, unit = "", labels = ["L", "R"] }: {
           <Bar dataKey="value" radius={[5, 5, 0, 0]} />
         </BarChart>
       </ChartContainer>
-      <div className="flex justify-between w-full max-w-[120px] text-[11px] mt-1.5">
+      <div className="flex justify-between w-full max-w-[120px] text-xs mt-1.5">
         <span className="text-[var(--tropx-text-sub)]">{labels[0]} <span className="font-medium text-[var(--tropx-text-main)]">{formatNumber(left)}{unit}</span></span>
         <span className="text-[var(--tropx-text-sub)]">{labels[1]} <span className="font-medium text-[var(--tropx-text-main)]">{formatNumber(right)}{unit}</span></span>
       </div>
@@ -310,12 +321,16 @@ export function V2SummaryCard({
   strengths,
   weaknesses,
   recommendations,
+  speculativeInsights,
+  crossAnalysis,
   className,
 }: V2SummaryCardProps) {
   // Count critical/severe findings
   const criticalCount = keyFindings.filter(
     (f) => f.severity === "critical" || f.severity === "profound" || f.severity === "severe"
   ).length;
+
+  const insights = speculativeInsights ?? [];
 
   return (
     <div
@@ -326,7 +341,7 @@ export function V2SummaryCard({
     >
       {/* Hero: Radar + Quick Stats */}
       <div className="flex flex-col md:flex-row items-center gap-4 mb-4">
-        {/* Radar Chart - subtle accent background */}
+        {/* Radar Chart */}
         <div className="w-full max-w-[280px] flex-shrink-0 p-4 rounded-xl bg-[var(--tropx-surface)]/50">
           <PerformanceRadar scores={radarScores} />
         </div>
@@ -384,28 +399,28 @@ export function V2SummaryCard({
         </div>
       </div>
 
-      {/* Key Findings Gallery - consistent card sizing */}
+      {/* Key Findings Gallery - single row on desktop, 2 cols on mobile */}
       {keyFindings.length > 0 && (
         <div className="mb-4">
-          <span className="text-[10px] font-medium text-[var(--tropx-text-sub)] uppercase tracking-wide">
+          <span className="text-xs font-medium text-[var(--tropx-text-sub)] uppercase tracking-wide">
             Key Findings
           </span>
-          <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          <div className="mt-2 grid grid-cols-2 gap-3 md:flex md:flex-nowrap md:gap-4">
             {keyFindings.map((finding, index) => (
               <div
                 key={index}
-                className="flex flex-col items-center justify-between p-4 rounded-xl bg-[var(--tropx-surface)]/40 min-h-[180px]"
+                className="flex flex-col items-center p-3 md:p-4 rounded-xl bg-[var(--tropx-surface)]/40 md:flex-1 md:min-w-0"
               >
-                {/* Visualization - fixed height container */}
-                <div className="flex-1 flex items-center justify-center w-full">
+                {/* Visualization */}
+                <div className="flex items-center justify-center w-full h-28">
                   {finding.viz ? (
                     <FindingVisualization viz={finding.viz} />
                   ) : (
                     <Circle className="h-8 w-8 text-[var(--tropx-border)]" />
                   )}
                 </div>
-                {/* Label - consistent positioning at bottom */}
-                <span className="text-[11px] text-[var(--tropx-text-sub)] leading-tight text-center mt-2 line-clamp-2">
+                {/* Label - full text display */}
+                <span className="text-sm text-[var(--tropx-text-sub)] leading-snug text-center mt-2">
                   {finding.text}
                 </span>
               </div>
@@ -415,44 +430,55 @@ export function V2SummaryCard({
       )}
 
       {/* Strengths & Weaknesses - always visible */}
-      {(strengths.length > 0 || weaknesses.length > 0) && (
-        <div className="border-t border-[var(--tropx-border)]/30 pt-3">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Strengths */}
-            {strengths.length > 0 && (
-              <div>
-                <span className="text-[10px] font-semibold text-[var(--tropx-success-text)] uppercase tracking-wide">
-                  Strengths
-                </span>
-                <ul className="mt-1 space-y-1">
-                  {strengths.map((s, i) => (
-                    <li key={i} className="flex items-start gap-2">
-                      <Circle className="h-1.5 w-1.5 fill-current text-[var(--tropx-success-text)] mt-1.5 flex-shrink-0" />
-                      <span className="text-xs text-[var(--tropx-text-main)]">{s}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+      <div className="border-t border-[var(--tropx-border)]/30 pt-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Strengths */}
+          <div>
+            <span className="text-xs font-semibold text-[var(--tropx-success-text)] uppercase tracking-wide">
+              Strengths
+            </span>
+            {strengths.length > 0 ? (
+              <ul className="mt-1 space-y-1">
+                {strengths.map((s, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <Circle className="h-1.5 w-1.5 fill-current text-[var(--tropx-success-text)] mt-1.5 flex-shrink-0" />
+                    <span className="text-sm text-[var(--tropx-text-main)]">{s}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-xs text-[var(--tropx-text-sub)] italic">No strengths identified</p>
             )}
+          </div>
 
-            {/* Weaknesses */}
-            {weaknesses.length > 0 && (
-              <div>
-                <span className="text-[10px] font-semibold text-[var(--tropx-red)] uppercase tracking-wide">
-                  To Improve
-                </span>
-                <ul className="mt-1 space-y-1">
-                  {weaknesses.map((w, i) => (
-                    <li key={i} className="flex items-start gap-2">
-                      <Circle className="h-1.5 w-1.5 fill-current text-[var(--tropx-red)] mt-1.5 flex-shrink-0" />
-                      <span className="text-xs text-[var(--tropx-text-main)]">{w}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+          {/* Weaknesses */}
+          <div>
+            <span className="text-xs font-semibold text-[var(--tropx-red)] uppercase tracking-wide">
+              To Improve
+            </span>
+            {weaknesses.length > 0 ? (
+              <ul className="mt-1 space-y-1">
+                {weaknesses.map((w, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <Circle className="h-1.5 w-1.5 fill-current text-[var(--tropx-red)] mt-1.5 flex-shrink-0" />
+                    <span className="text-sm text-[var(--tropx-text-main)]">{w}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-xs text-[var(--tropx-text-sub)] italic">No areas for improvement identified</p>
             )}
           </div>
         </div>
+      </div>
+
+      {/* Cross-Analysis Insights (Stage 3) - Combined with Worth Investigating */}
+      {(insights.length > 0 || crossAnalysis) && (
+        <CrossAnalysisCard
+          crossAnalysis={crossAnalysis}
+          speculativeInsights={insights}
+          className="mt-4"
+        />
       )}
     </div>
   );

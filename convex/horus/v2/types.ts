@@ -1,33 +1,44 @@
 /**
  * Horus v2 Type Definitions
  *
- * Flexible TypeScript interfaces for the two-stage agentic pipeline.
+ * Flexible TypeScript interfaces for the three-stage agentic pipeline.
  * Stage 1: Analysis Agent → N Sections
  * Stage 2: N Parallel Research Agents → Enriched Sections
+ * Stage 3: Cross-Analysis Agent → Historical Trends & Patterns
  */
 
 import type { Id } from "../../_generated/dataModel";
 import type { QualityTier } from "../metrics";
+import type { CrossAnalysisResult } from "../crossAnalysis/types";
 
 // ─────────────────────────────────────────────────────────────────
 // Common Types
 // ─────────────────────────────────────────────────────────────────
 
-export type V2AgentName = "analysis" | "research";
+export type V2AgentName = "analysis" | "research" | "cross_analysis";
 
 export type V2PipelineStatus =
   | "pending"
   | "analyzing"
   | "researching"
+  | "cross_analyzing"
   | "complete"
   | "error";
 
 export type EvidenceTier = "S" | "A" | "B" | "C" | "D";
 
-export type EvidenceStrengthLevel = "strong" | "moderate" | "limited";
+export type EvidenceStrengthLevel = "none" | "minimal" | "moderate" | "high" | "very-high";
 
 /** Severity level for clinical findings */
 export type SeverityLevel = "critical" | "severe" | "moderate" | "mild" | "profound";
+
+/** Speculative insight with label for easy scanning */
+export interface SpeculativeInsight {
+  /** Short 2-5 word title */
+  label: string;
+  /** 1-2 sentence explanation */
+  description: string;
+}
 
 /** Key finding with severity level for display */
 export interface KeyFinding {
@@ -121,6 +132,8 @@ export interface Section {
  */
 export interface AnalysisAgentOutput {
   sessionId: string;
+  /** Overall letter grade (A-F) assigned by AI */
+  overallGrade: "A" | "B" | "C" | "D" | "F";
   /** Radar chart scores for visual summary */
   radarScores: RadarScores;
   /** Key clinical findings with severity */
@@ -137,6 +150,8 @@ export interface AnalysisAgentOutput {
   weaknesses: string[];
   /** Unified recommendations (prioritized) */
   recommendations: string[];
+  /** Speculative insights - creative hypotheses about non-obvious patterns */
+  speculativeInsights: SpeculativeInsight[];
   /** Timestamp of analysis */
   analyzedAt: number;
 }
@@ -173,6 +188,8 @@ export interface QualityLink {
   domain: string;
   /** How this link is relevant to the section */
   relevance: string;
+  /** Whether this is a primary/most-cited source */
+  featured?: boolean;
   /** Allow custom fields */
   [key: string]: unknown;
 }
@@ -298,6 +315,8 @@ export interface AgentResult<T> {
 export interface V2PipelineOutput {
   sessionId: string;
   patientId?: Id<"users">;
+  /** Overall letter grade (A-F) assigned by AI */
+  overallGrade: "A" | "B" | "C" | "D" | "F";
   /** Radar chart scores for visual summary */
   radarScores: RadarScores;
   /** Key clinical findings with severity */
@@ -316,12 +335,17 @@ export interface V2PipelineOutput {
   weaknesses: string[];
   /** Unified recommendations (prioritized) */
   recommendations: string[];
+  /** Speculative insights - creative hypotheses about non-obvious patterns */
+  speculativeInsights: SpeculativeInsight[];
   /** Sections that failed enrichment (returned original) */
   failedEnrichments: string[];
+  /** Cross-Analysis output (Stage 3) - may be undefined if skipped or insufficient history */
+  crossAnalysis?: CrossAnalysisResult;
   /** Token usage breakdown */
   tokenUsage: {
     analysis: TokenUsage;
     research: TokenUsage[];
+    crossAnalysis?: TokenUsage;
     total: TokenUsage;
   };
   /** Total pipeline duration */
@@ -357,5 +381,17 @@ export interface V2PipelineState {
 // ─────────────────────────────────────────────────────────────────
 
 // Re-export SessionMetrics from v1 types
-export type { SessionMetrics, PerLegMetricValues, BilateralMetricValues } from "../types";
+export type { SessionMetrics, PerLegMetricValues, BilateralMetricValues, SmoothnessMetricValues } from "../types";
+
+// Re-export Cross-Analysis types
+export type {
+  CrossAnalysisResult,
+  CrossAnalysisOutput,
+  MinimalCrossAnalysisOutput,
+  TrendInsight,
+  RecurringPattern,
+  BaselineComparison,
+  NotableSession,
+} from "../crossAnalysis/types";
+export { hasFullCrossAnalysis } from "../crossAnalysis/types";
 

@@ -909,7 +909,7 @@ export default defineSchema({
 
   // ─── Horus Research Cache (Vector Search) ───
   horusResearchCache: defineTable({
-    // Embedding vector for semantic search (768 dimensions for text-embedding-004)
+    // Embedding vector for semantic search (768 dimensions for text-embedding-005)
     embedding: v.array(v.float64()),
 
     // Search metadata
@@ -963,7 +963,7 @@ export default defineSchema({
     // Type: "session" for Phase 1 analysis, "progress" for Phase 2 progress report
     type: v.union(v.literal("session"), v.literal("progress")),
 
-    // Embedding vector for semantic search (768 dimensions for text-embedding-004)
+    // Embedding vector for semantic search (768 dimensions for text-embedding-005)
     embedding: v.array(v.float64()),
 
     // Searchable summary text (used to generate embedding)
@@ -1034,4 +1034,81 @@ export default defineSchema({
   })
     .index("by_session", ["sessionId"])
     .index("by_patient", ["patientId"]),
+
+  // ─── Horus Metrics Vectors (32-dim vector per session for Cross-Analysis) ───
+  horusMetricsVectors: defineTable({
+    sessionId: v.string(),
+    patientId: v.id("users"),
+    metricsVector: v.array(v.float64()), // 32 dimensions (19 accurate metrics + per-leg variants)
+    tagGroup: v.string(), // Canonical tag key for baseline grouping
+    rawMetrics: v.object({
+      // Accurate metrics (19 + opiScore)
+      opiScore: v.optional(v.float64()),
+      // Range (per-leg averaged)
+      avgMaxROM: v.optional(v.float64()),
+      avgPeakFlexion: v.optional(v.float64()),
+      avgPeakExtension: v.optional(v.float64()),
+      // Symmetry (bilateral)
+      romAsymmetry: v.optional(v.float64()),
+      velocityAsymmetry: v.optional(v.float64()),
+      crossCorrelation: v.optional(v.float64()),
+      realAsymmetryAvg: v.optional(v.float64()),
+      netGlobalAsymmetry: v.optional(v.float64()),
+      phaseShift: v.optional(v.float64()),
+      temporalLag: v.optional(v.float64()),
+      maxFlexionTimingDiff: v.optional(v.float64()),
+      // Power (per-leg averaged)
+      peakAngularVelocity: v.optional(v.float64()),
+      explosivenessConcentric: v.optional(v.float64()),
+      explosivenessLoading: v.optional(v.float64()),
+      // Per-leg values for context
+      leftMaxROM: v.optional(v.float64()),
+      rightMaxROM: v.optional(v.float64()),
+      leftPeakVelocity: v.optional(v.float64()),
+      rightPeakVelocity: v.optional(v.float64()),
+      // Smoothness (raw values - OPI thresholds not calibrated, but useful for trends)
+      sparc: v.optional(v.float64()),
+      ldlj: v.optional(v.float64()),
+      nVelocityPeaks: v.optional(v.float64()),
+      rmsJerk: v.optional(v.float64()),
+    }),
+    recordedAt: v.number(),
+    embeddedAt: v.number(),
+    // Auto-updated timestamp
+    ...timestampField,
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_patient", ["patientId"])
+    .index("by_patient_tag", ["patientId", "tagGroup"])
+    .vectorIndex("by_metrics_vector", {
+      vectorField: "metricsVector",
+      dimensions: 32,
+      filterFields: ["patientId"],
+    }),
+
+  // ─── Horus Patient Baselines (Median/Std per tag group for Cross-Analysis) ───
+  horusPatientBaselines: defineTable({
+    patientId: v.id("users"),
+    tagGroup: v.string(),
+    medianVector: v.array(v.float64()),
+    stdVector: v.array(v.float64()),
+    sessionCount: v.number(),
+    trends: v.array(
+      v.object({
+        metricIndex: v.number(),
+        metricName: v.string(),
+        direction: v.union(
+          v.literal("improving"),
+          v.literal("stable"),
+          v.literal("declining")
+        ),
+        slopePerSession: v.float64(),
+      })
+    ),
+    updatedAt: v.number(),
+    // Auto-updated timestamp
+    ...timestampField,
+  })
+    .index("by_patient", ["patientId"])
+    .index("by_patient_tag", ["patientId", "tagGroup"]),
 });

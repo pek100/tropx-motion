@@ -1,10 +1,10 @@
 /**
- * Horus - Multi-Agent Analysis System
+ * Horus - AI Analysis System
  *
  * Central export for the Horus AI analysis pipeline.
  * Named after the Egyptian god of the sky and kingship, known for his all-seeing eye.
  *
- * Pipeline: Decomposition → Research → Analysis → Validator → Progress
+ * v2 Pipeline: Analysis Agent → Parallel Research Agents
  *
  * @module convex/horus
  */
@@ -202,13 +202,21 @@ export type {
   V2PipelineState,
   V2PipelineStatus,
   V2AgentName,
+
+  // Cross-Analysis types
+  CrossAnalysisResult,
+  CrossAnalysisOutput,
+  MinimalCrossAnalysisOutput,
+  TrendInsight,
+  RecurringPattern,
+  BaselineComparison,
+  NotableSession,
 } from "./v2";
 
+export { hasFullCrossAnalysis } from "./v2";
+
 export {
-  // Validation utilities
-  validateSection,
-  validateEnrichedSection,
-  validateAnalysisOutput,
+  // JSON utilities
   safeJSONParse,
   extractJSON,
 
@@ -225,43 +233,30 @@ export {
 /**
  * Horus API Usage Examples:
  *
- * === v2 Pipeline (Recommended) ===
+ * === Analysis Pipeline ===
  *
- * 1. Trigger v2 analysis for a session:
+ * 1. Trigger analysis for a session:
  *    const result = await ctx.runAction(api.horus.v2.actions.analyzeSession, { sessionId });
  *
- * 2. Get v2 analysis results:
+ * 2. Get analysis results:
  *    const analysis = await ctx.runQuery(api.horus.v2.queries.getAnalysisV2, { sessionId });
  *
  * 3. Get enriched sections only:
  *    const sections = await ctx.runQuery(api.horus.v2.queries.getEnrichedSections, { sessionId });
  *
- * 4. Test v2 pipeline with mock data:
- *    const test = await ctx.runAction(api.horus.v2.actions.testPipeline, {});
+ * 4. Retry failed analysis:
+ *    await ctx.runAction(api.horus.actions.retryAnalysis, { sessionId });
  *
- * === v1 Pipeline (Legacy) ===
- *
- * 1. Trigger v1 analysis for a session:
- *    await ctx.runAction(api.horus.actions.analyzeSession, { sessionId });
- *
- * 2. Get v1 analysis results:
- *    const analysis = await ctx.runQuery(api.horus.queries.getAnalysis, { sessionId });
- *
- * 3. Get progress report:
+ * 5. Get progress report:
  *    const progress = await ctx.runQuery(api.horus.queries.getProgressReport, { patientId });
  *
- * === Common ===
- *
- * - Retry failed analysis (v2):
- *   await ctx.runAction(api.horus.v2.actions.retryAnalysis, { sessionId });
- *
- * - Check system health:
- *   const health = await ctx.runAction(api.horus.actions.getSystemHealth, {});
+ * 6. Check system health:
+ *    const health = await ctx.runAction(api.horus.actions.getSystemHealth, {});
  *
  * Environment Variables Required:
  * - VERTEX_AI_PROJECT_ID: Google Cloud project ID
  * - VERTEX_AI_LOCATION: GCP region (default: us-central1)
  * - GOOGLE_APPLICATION_CREDENTIALS_JSON: Service account JSON (or run on GCP)
  *
- * Note: v2 uses Gemini's built-in Google Search grounding - no external search API needed.
+ * Note: Uses Gemini's built-in Google Search grounding - no external search API needed.
  */

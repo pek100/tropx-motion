@@ -489,6 +489,77 @@ export const storeMetricsResult = internalMutation({
         ...update,
       });
     }
+
+    // Schedule metrics vector save for Cross-Analysis (fire-and-forget)
+    // Only if session has a patient (subjectId)
+    const session = await ctx.db
+      .query("recordingSessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+
+    if (session?.subjectId) {
+      // Build minimal SessionMetrics for vectorization
+      const bilateral = m.bilateralAnalysis || {};
+      const asymmetries = bilateral.asymmetryIndices || {};
+      const temporal = bilateral.temporalAsymmetry || {};
+      const advanced = m.advancedAsymmetry || {};
+      const classification = m.movementClassification || {};
+      const opiResult = m.opiResult || {};
+      const smoothnessDoc = m.smoothnessMetrics || {};
+
+      const sessionMetrics = {
+        sessionId: args.sessionId,
+        leftLeg: {
+          overallMaxRom: m.leftLeg?.overallMaxROM || 0,
+          averageRom: m.leftLeg?.averageROM || 0,
+          peakFlexion: m.leftLeg?.peakFlexion || 0,
+          peakExtension: m.leftLeg?.peakExtension || 0,
+          peakAngularVelocity: m.leftLeg?.peakAngularVelocity || 0,
+          explosivenessConcentric: m.leftLeg?.explosivenessConcentric || 0,
+          explosivenessLoading: m.leftLeg?.explosivenessLoading || 0,
+          rmsJerk: m.leftLeg?.rmsJerk || 0,
+          romCoV: m.leftLeg?.romCoV || 0,
+        },
+        rightLeg: {
+          overallMaxRom: m.rightLeg?.overallMaxROM || 0,
+          averageRom: m.rightLeg?.averageROM || 0,
+          peakFlexion: m.rightLeg?.peakFlexion || 0,
+          peakExtension: m.rightLeg?.peakExtension || 0,
+          peakAngularVelocity: m.rightLeg?.peakAngularVelocity || 0,
+          explosivenessConcentric: m.rightLeg?.explosivenessConcentric || 0,
+          explosivenessLoading: m.rightLeg?.explosivenessLoading || 0,
+          rmsJerk: m.rightLeg?.rmsJerk || 0,
+          romCoV: m.rightLeg?.romCoV || 0,
+        },
+        bilateral: {
+          romAsymmetry: asymmetries.overallMaxROM || 0,
+          velocityAsymmetry: asymmetries.peakAngularVelocity || 0,
+          crossCorrelation: temporal.crossCorrelation || 0,
+          realAsymmetryAvg: advanced.avgRealAsymmetry || 0,
+          netGlobalAsymmetry: bilateral.netGlobalAsymmetry || 0,
+          phaseShift: temporal.phaseShift || 0,
+          temporalLag: temporal.temporalLag || 0,
+          maxFlexionTimingDiff: m.temporalCoordination?.maxFlexionTimingDiff || 0,
+        },
+        smoothness: smoothnessDoc.sparc !== undefined ? {
+          sparc: smoothnessDoc.sparc || 0,
+          ldlj: smoothnessDoc.ldlj || 0,
+          nVelocityPeaks: smoothnessDoc.nVelocityPeaks || 0,
+        } : undefined,
+        opiScore: opiResult.overallScore,
+        opiGrade: opiResult.grade,
+        movementType: classification.type === "unilateral" ? "unilateral" : "bilateral",
+        recordedAt: session.startTime || args.computedAt,
+        tags: session.tags,
+      };
+
+      await ctx.scheduler.runAfter(0, internal.horus.crossAnalysis.mutations.saveMetricsVector, {
+        sessionId: args.sessionId,
+        patientId: session.subjectId,
+        metrics: sessionMetrics,
+        recordedAt: session.startTime || args.computedAt,
+      });
+    }
   },
 });
 

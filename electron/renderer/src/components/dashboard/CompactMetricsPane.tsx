@@ -47,11 +47,11 @@ const DOMAIN_CONFIG: Record<MetricDomain, { label: string; color: string }> = {
 // Priority metrics to show in compact view
 const PRIORITY_METRICS = [
   "opiScore",
-  "avgMaxROM",
+  "overallMaxROM",
   "peakAngularVelocity",
   "romAsymmetry",
   "realAsymmetryAvg",
-  "romCoV",
+  "crossCorrelation",
   "explosivenessConcentric",
 ];
 

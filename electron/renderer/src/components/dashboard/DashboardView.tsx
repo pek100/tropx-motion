@@ -383,15 +383,27 @@ export function DashboardView({ className }: DashboardViewProps) {
   const metricsTableData = useMemo<MetricRow[]>(() => {
     if (!selectedSession) return [];
 
-    // Get historical average for reference (defensive: ensure array)
-    const sessions = Array.isArray(metricsHistory?.sessions) ? metricsHistory.sessions : [];
-    const getAverage = (metricId: string): number | undefined => {
-      const values = sessions
-        .map((s: Session) => (metricId === "opiScore" ? s.opiScore : (s.metrics as Record<string, number | undefined>)[metricId]))
-        .filter((v: number | undefined): v is number => v !== undefined);
-      if (values.length === 0) return undefined;
-      return values.reduce((a: number, b: number) => a + b, 0) / values.length;
+    // Access per-leg data from session (keys use camelCase from backend)
+    const sessionAny = selectedSession as Session & {
+      leftLeg?: Record<string, number>;
+      rightLeg?: Record<string, number>;
+      bilateral?: Record<string, number>;
     };
+
+    // Key mapping: METRIC_DEFINITIONS uses keys like "overallMaxROM" but backend uses "overallMaxRom"
+    const perLegKeyMap: Record<string, string> = {
+      overallMaxROM: "overallMaxRom",
+      averageROM: "averageRom",
+      peakFlexion: "peakFlexion",
+      peakExtension: "peakExtension",
+      peakAngularVelocity: "peakAngularVelocity",
+      explosivenessConcentric: "explosivenessConcentric",
+      explosivenessLoading: "explosivenessLoading",
+      rmsJerk: "rmsJerk",
+    };
+
+    // Get historical average (defensive: ensure array)
+    const sessions = Array.isArray(metricsHistory?.sessions) ? metricsHistory.sessions : [];
 
     // Get trend by comparing to average of previous sessions
     const getTrend = (metricId: string, currentValue: number | undefined): { trend: "up" | "down" | "stable" | undefined; trendPercent: number | undefined } => {
@@ -422,8 +434,29 @@ export function DashboardView({ className }: DashboardViewProps) {
 
     return METRIC_DEFINITIONS
       .map((def) => {
-        const value = def.id === "opiScore" ? selectedSession.opiScore : (selectedSession.metrics as Record<string, number | undefined>)[def.id];
-        const reference = getAverage(def.id);
+        // Get per-leg values first (if this metric has them)
+        let leftValue: number | undefined;
+        let rightValue: number | undefined;
+
+        if (def.perLeg && def.leftKey) {
+          const backendKey = perLegKeyMap[def.leftKey] ?? def.leftKey;
+          leftValue = sessionAny.leftLeg?.[backendKey];
+          rightValue = sessionAny.rightLeg?.[backendKey];
+        }
+
+        // Get combined/averaged value from flat metrics, or calculate from per-leg values
+        let value: number | undefined;
+        if (def.id === "opiScore") {
+          value = selectedSession.opiScore;
+        } else {
+          // Try flat metrics first
+          value = (selectedSession.metrics as Record<string, number | undefined>)[def.id];
+          // If not in flat metrics but we have per-leg values, calculate average
+          if (value === undefined && leftValue !== undefined && rightValue !== undefined) {
+            value = (leftValue + rightValue) / 2;
+          }
+        }
+
         const { trend, trendPercent } = getTrend(def.id, value);
 
         return {
@@ -432,15 +465,17 @@ export function DashboardView({ className }: DashboardViewProps) {
           domain: def.domain as MetricDomain,
           unit: def.unit,
           value,
-          reference,
+          leftValue,
+          rightValue,
+          perLeg: def.perLeg,
           trend,
           trendPercent,
           direction: def.direction,
           format: def.format,
         };
       })
-      // Filter out metrics with no data (no current value AND no historical reference)
-      .filter((row) => row.value !== undefined || row.reference !== undefined);
+      // Filter out metrics with no data
+      .filter((row) => row.value !== undefined || row.leftValue !== undefined || row.rightValue !== undefined);
   }, [selectedSession, metricsHistory]);
 
   // Transform sessions for Horus AI pane (needs nested per-leg structure)

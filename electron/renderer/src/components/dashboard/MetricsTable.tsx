@@ -1,6 +1,6 @@
 /**
- * MetricsTable - Selectable metrics table for dashboard.
- * Selected rows are displayed in the chart above.
+ * MetricsTable - Displays all calculated metrics with per-leg breakdown.
+ * Shows Left Leg / Right Leg columns for per-leg metrics, combined value for bilateral metrics.
  */
 
 import { useMemo } from "react";
@@ -31,28 +31,66 @@ export interface MetricDefinition {
   unit: string;
   format: (value: number) => string;
   direction: "higher_better" | "lower_better" | "optimal_range";
-  /** Metric is relevant for bilateral movements (squats, jumps) */
+  /** Metric is relevant for bilateral movements */
   bilateral: boolean;
-  /** Metric is relevant for unilateral movements (walking, running) */
+  /** Metric is relevant for unilateral movements */
   unilateral: boolean;
-  /** Whether this metric is included in the OPI score calculation */
-  inOPI: boolean;
+  /** Whether this metric has separate left/right leg values */
+  perLeg: boolean;
+  /** Source keys for per-leg metrics */
+  leftKey?: string;
+  rightKey?: string;
+}
+
+export interface PerLegMetrics {
+  overallMaxROM?: number;
+  averageROM?: number;
+  peakFlexion?: number;
+  peakExtension?: number;
+  peakAngularVelocity?: number;
+  explosivenessLoading?: number;
+  explosivenessConcentric?: number;
+  rmsJerk?: number;
+}
+
+export interface BilateralMetrics {
+  romAsymmetry?: number;
+  velocityAsymmetry?: number;
+  crossCorrelation?: number;
+  realAsymmetryAvg?: number;
+  netGlobalAsymmetry?: number;
+  phaseShift?: number;
+  temporalLag?: number;
+  maxFlexionTimingDiff?: number;
+}
+
+export interface SmoothnessMetrics {
+  sparc?: number;
+  ldlj?: number;
+  nVelocityPeaks?: number;
+}
+
+export interface MetricsData {
+  opiScore?: number;
+  leftLeg?: PerLegMetrics;
+  rightLeg?: PerLegMetrics;
+  bilateral?: BilateralMetrics;
+  smoothness?: SmoothnessMetrics;
 }
 
 export interface MetricValue {
-  latest: number | undefined;
-  average: number | undefined;
-  trend: "up" | "down" | "stable" | undefined;
-  trendPercent: number | undefined;
+  left?: number;
+  right?: number;
+  combined?: number;
+  trend?: "up" | "down" | "stable";
+  trendPercent?: number;
 }
 
 export interface MetricsTableProps {
-  metricsData: Record<string, MetricValue>;
+  metricsData: MetricsData | null;
   selectedMetrics: Set<string>;
   onSelectionChange: (selected: Set<string>) => void;
-  /** Filter metrics by movement type. If undefined, shows all metrics. */
   movementType?: MovementType;
-  /** Show irrelevant metrics (dimmed) instead of hiding them */
   showIrrelevant?: boolean;
   className?: string;
 }
@@ -64,80 +102,66 @@ export interface MetricsTableProps {
 const formatPercent = (v: number) => `${v.toFixed(1)}%`;
 const formatDecimal = (v: number) => v.toFixed(2);
 const formatInt = (v: number) => Math.round(v).toString();
-const formatDegrees = (v: number) => `${v.toFixed(1)}`;
-const formatDegPerSec = (v: number) => `${Math.round(v)}`;
-const formatMs = (v: number) => `${Math.round(v)}`;
+const formatDegrees = (v: number) => `${v.toFixed(1)}°`;
+const formatDegPerSec = (v: number) => `${Math.round(v)}°/s`;
+const formatMs = (v: number) => `${Math.round(v)}ms`;
 
 /**
- * METRIC_DEFINITIONS - Sorted by understandability (easiest first)
- *
- * TIER 1: Very Easy - Physical meaning immediately clear
- * TIER 2: Easy - Simple comparison concepts
- * TIER 3: Moderate - Requires brief explanation
- * TIER 4: Technical - Needs biomechanics background
+ * METRIC_DEFINITIONS - All calculated metrics organized by domain
  */
 export const METRIC_DEFINITIONS: MetricDefinition[] = [
   // ═══════════════════════════════════════════════════════════════════
-  // TIER 1: VERY EASY - Physical meaning immediately clear
+  // OPI Score
   // ═══════════════════════════════════════════════════════════════════
-
-  // OPI Score (always first)
-  { id: "opiScore", name: "Performance Score", domain: "opi", unit: "/100", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true, inOPI: true },
-
-  // Range of Motion - most intuitive metrics
-  { id: "avgMaxROM", name: "Range of Motion", domain: "range", unit: "°", format: formatDegrees, direction: "higher_better", bilateral: true, unilateral: true, inOPI: false },
-  { id: "avgPeakFlexion", name: "Peak Flexion", domain: "range", unit: "°", format: formatDegrees, direction: "higher_better", bilateral: true, unilateral: true, inOPI: false },
-  { id: "avgPeakExtension", name: "Peak Extension", domain: "range", unit: "°", format: formatDegrees, direction: "lower_better", bilateral: true, unilateral: true, inOPI: false },
+  { id: "opiScore", name: "Performance Score", domain: "opi", unit: "/100", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true, perLeg: false },
 
   // ═══════════════════════════════════════════════════════════════════
-  // TIER 2: EASY - Simple comparison concepts
+  // RANGE OF MOTION - Per-leg metrics
   // ═══════════════════════════════════════════════════════════════════
-
-  // Symmetry - easy to understand as "balance between legs"
-  { id: "romAsymmetry", name: "ROM Difference", domain: "symmetry", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: false, inOPI: true },
-  { id: "realAsymmetryAvg", name: "Movement Imbalance", domain: "symmetry", unit: "°", format: formatDegrees, direction: "lower_better", bilateral: true, unilateral: true, inOPI: true },
-  { id: "romCoV", name: "Consistency", domain: "control", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: true, inOPI: true },
-
-  // ═══════════════════════════════════════════════════════════════════
-  // TIER 3: MODERATE - Requires brief explanation
-  // ═══════════════════════════════════════════════════════════════════
-
-  // Speed and Power
-  { id: "peakAngularVelocity", name: "Peak Speed", domain: "power", unit: "°/s", format: formatDegPerSec, direction: "higher_better", bilateral: true, unilateral: true, inOPI: true },
-  { id: "explosivenessConcentric", name: "Explosiveness", domain: "power", unit: "°/s²", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true, inOPI: true },
-  { id: "explosivenessLoading", name: "Loading Power", domain: "power", unit: "°/s²", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true, inOPI: false },
-
-  // Symmetry (more detailed)
-  { id: "velocityAsymmetry", name: "Speed Difference", domain: "symmetry", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: false, inOPI: true },
-  { id: "crossCorrelation", name: "Movement Similarity", domain: "symmetry", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: false, inOPI: true },
-  { id: "netGlobalAsymmetry", name: "Overall Asymmetry", domain: "symmetry", unit: "%", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: false, inOPI: false },
-
-  // Timing
-  { id: "maxFlexionTimingDiff", name: "Timing Difference", domain: "timing", unit: "ms", format: formatMs, direction: "lower_better", bilateral: true, unilateral: false, inOPI: false },
+  { id: "overallMaxROM", name: "Max Range of Motion", domain: "range", unit: "", format: formatDegrees, direction: "higher_better", bilateral: true, unilateral: true, perLeg: true, leftKey: "overallMaxROM", rightKey: "overallMaxROM" },
+  { id: "averageROM", name: "Average ROM", domain: "range", unit: "", format: formatDegrees, direction: "higher_better", bilateral: true, unilateral: true, perLeg: true, leftKey: "averageROM", rightKey: "averageROM" },
+  { id: "peakFlexion", name: "Peak Flexion", domain: "range", unit: "", format: formatDegrees, direction: "higher_better", bilateral: true, unilateral: true, perLeg: true, leftKey: "peakFlexion", rightKey: "peakFlexion" },
+  { id: "peakExtension", name: "Peak Extension", domain: "range", unit: "", format: formatDegrees, direction: "lower_better", bilateral: true, unilateral: true, perLeg: true, leftKey: "peakExtension", rightKey: "peakExtension" },
 
   // ═══════════════════════════════════════════════════════════════════
-  // TIER 4: TECHNICAL - Needs biomechanics background
+  // POWER - Per-leg metrics
   // ═══════════════════════════════════════════════════════════════════
+  { id: "peakAngularVelocity", name: "Peak Speed", domain: "power", unit: "", format: formatDegPerSec, direction: "higher_better", bilateral: true, unilateral: true, perLeg: true, leftKey: "peakAngularVelocity", rightKey: "peakAngularVelocity" },
+  { id: "explosivenessConcentric", name: "Explosiveness", domain: "power", unit: "°/s²", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true, perLeg: true, leftKey: "explosivenessConcentric", rightKey: "explosivenessConcentric" },
+  { id: "explosivenessLoading", name: "Loading Power", domain: "power", unit: "°/s²", format: formatInt, direction: "higher_better", bilateral: true, unilateral: true, perLeg: true, leftKey: "explosivenessLoading", rightKey: "explosivenessLoading" },
 
-  // Smoothness metrics
-  { id: "sparc", name: "SPARC (Smoothness)", domain: "control", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: true, inOPI: true },
-  { id: "ldlj", name: "LDLJ (Smoothness)", domain: "control", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: true, inOPI: true },
-  { id: "nVelocityPeaks", name: "Velocity Peaks", domain: "control", unit: "", format: formatInt, direction: "lower_better", bilateral: true, unilateral: true, inOPI: true },
-  { id: "rmsJerk", name: "Jerkiness", domain: "control", unit: "°/s³", format: formatInt, direction: "lower_better", bilateral: true, unilateral: true, inOPI: true },
+  // ═══════════════════════════════════════════════════════════════════
+  // SYMMETRY - Bilateral comparison metrics
+  // ═══════════════════════════════════════════════════════════════════
+  { id: "romAsymmetry", name: "ROM Asymmetry", domain: "symmetry", unit: "", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: false, perLeg: false },
+  { id: "velocityAsymmetry", name: "Speed Asymmetry", domain: "symmetry", unit: "", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: false, perLeg: false },
+  { id: "crossCorrelation", name: "Movement Sync", domain: "symmetry", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: false, perLeg: false },
+  { id: "realAsymmetryAvg", name: "True Asymmetry", domain: "symmetry", unit: "", format: formatDegrees, direction: "lower_better", bilateral: true, unilateral: true, perLeg: false },
+  { id: "netGlobalAsymmetry", name: "Global Asymmetry", domain: "symmetry", unit: "", format: formatPercent, direction: "lower_better", bilateral: true, unilateral: false, perLeg: false },
 
-  // Phase/Timing (technical)
-  { id: "phaseShift", name: "Phase Shift", domain: "timing", unit: "°", format: formatDegrees, direction: "lower_better", bilateral: true, unilateral: false, inOPI: false },
-  { id: "temporalLag", name: "Temporal Lag", domain: "timing", unit: "ms", format: formatMs, direction: "lower_better", bilateral: true, unilateral: false, inOPI: false },
-  { id: "zeroVelocityPhaseMs", name: "Pause Duration", domain: "timing", unit: "ms", format: formatMs, direction: "lower_better", bilateral: true, unilateral: true, inOPI: false },
+  // ═══════════════════════════════════════════════════════════════════
+  // TIMING - Bilateral comparison metrics
+  // ═══════════════════════════════════════════════════════════════════
+  { id: "phaseShift", name: "Phase Shift", domain: "timing", unit: "", format: formatDegrees, direction: "lower_better", bilateral: true, unilateral: false, perLeg: false },
+  { id: "temporalLag", name: "Temporal Lag", domain: "timing", unit: "", format: formatMs, direction: "lower_better", bilateral: true, unilateral: false, perLeg: false },
+  { id: "maxFlexionTimingDiff", name: "Peak Timing Diff", domain: "timing", unit: "", format: formatMs, direction: "lower_better", bilateral: true, unilateral: false, perLeg: false },
+
+  // ═══════════════════════════════════════════════════════════════════
+  // CONTROL - Smoothness metrics (session-wide)
+  // ═══════════════════════════════════════════════════════════════════
+  { id: "sparc", name: "SPARC Smoothness", domain: "control", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: true, perLeg: false },
+  { id: "ldlj", name: "LDLJ Smoothness", domain: "control", unit: "", format: formatDecimal, direction: "higher_better", bilateral: true, unilateral: true, perLeg: false },
+  { id: "nVelocityPeaks", name: "Velocity Peaks", domain: "control", unit: "", format: formatInt, direction: "lower_better", bilateral: true, unilateral: true, perLeg: false },
+  { id: "rmsJerk", name: "Jerkiness", domain: "control", unit: "°/s³", format: formatInt, direction: "lower_better", bilateral: true, unilateral: true, perLeg: true, leftKey: "rmsJerk", rightKey: "rmsJerk" },
 ];
 
 const DOMAIN_COLORS: Record<MetricDomain, string> = {
   opi: "var(--tropx-vibrant)",
-  range: "var(--domain-range)",      // emerald - most intuitive
-  symmetry: "var(--domain-symmetry)", // violet
-  power: "var(--domain-power)",       // orange
-  control: "var(--domain-control)",   // cyan
-  timing: "var(--domain-timing)",     // pink
+  range: "var(--domain-range)",
+  symmetry: "var(--domain-symmetry)",
+  power: "var(--domain-power)",
+  control: "var(--domain-control)",
+  timing: "var(--domain-timing)",
 };
 
 const DOMAIN_LABELS: Record<MetricDomain, string> = {
@@ -150,13 +174,12 @@ const DOMAIN_LABELS: Record<MetricDomain, string> = {
 };
 
 // ─────────────────────────────────────────────────────────────────
-// Component
+// Helpers
 // ─────────────────────────────────────────────────────────────────
 
-/** Check if a metric is relevant for the given movement type */
 function isMetricRelevant(metric: MetricDefinition, movementType?: MovementType): boolean {
   if (!movementType || movementType === "unknown" || movementType === "mixed") {
-    return true; // Show all metrics if unknown/mixed
+    return true;
   }
   if (movementType === "bilateral") {
     return metric.bilateral;
@@ -167,6 +190,43 @@ function isMetricRelevant(metric: MetricDefinition, movementType?: MovementType)
   return true;
 }
 
+function getMetricValue(
+  metric: MetricDefinition,
+  data: MetricsData | null
+): MetricValue {
+  if (!data) return {};
+
+  // OPI Score
+  if (metric.id === "opiScore") {
+    return { combined: data.opiScore };
+  }
+
+  // Per-leg metrics
+  if (metric.perLeg && metric.leftKey && metric.rightKey) {
+    const left = data.leftLeg?.[metric.leftKey as keyof PerLegMetrics];
+    const right = data.rightLeg?.[metric.rightKey as keyof PerLegMetrics];
+    return { left, right };
+  }
+
+  // Bilateral metrics
+  if (metric.domain === "symmetry" || metric.domain === "timing") {
+    const value = data.bilateral?.[metric.id as keyof BilateralMetrics];
+    return { combined: value };
+  }
+
+  // Smoothness metrics
+  if (metric.domain === "control" && !metric.perLeg) {
+    const value = data.smoothness?.[metric.id as keyof SmoothnessMetrics];
+    return { combined: value };
+  }
+
+  return {};
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────────
+
 export function MetricsTable({
   metricsData,
   selectedMetrics,
@@ -175,24 +235,7 @@ export function MetricsTable({
   showIrrelevant = true,
   className,
 }: MetricsTableProps) {
-  // Group metrics by domain for visual separation
-  const groupedMetrics = useMemo(() => {
-    const groups: Record<MetricDomain, MetricDefinition[]> = {
-      opi: [],
-      range: [],
-      symmetry: [],
-      power: [],
-      control: [],
-      timing: [],
-    };
-    for (const metric of METRIC_DEFINITIONS) {
-      groups[metric.domain].push(metric);
-    }
-    return groups;
-  }, []);
-
   const handleToggle = (metricId: string) => {
-    // OPI is always selected (can't deselect)
     if (metricId === "opiScore") return;
 
     const newSelected = new Set(selectedMetrics);
@@ -204,56 +247,23 @@ export function MetricsTable({
     onSelectionChange(newSelected);
   };
 
-  const handleSelectAll = (domain: MetricDomain, checked: boolean) => {
-    if (domain === "opi") return;
-
-    const domainMetrics = groupedMetrics[domain].map((m) => m.id);
-    const newSelected = new Set(selectedMetrics);
-
-    for (const id of domainMetrics) {
-      if (checked) {
-        newSelected.add(id);
-      } else {
-        newSelected.delete(id);
-      }
+  const renderValue = (value: number | undefined, metric: MetricDefinition, isRelevant: boolean) => {
+    if (value === undefined || value === null || isNaN(value)) {
+      return <span className="text-gray-300">—</span>;
     }
-    onSelectionChange(newSelected);
-  };
-
-  const handleToggleStar = (e: React.MouseEvent, userId: string) => {
-    e.stopPropagation();
-    // Star functionality not implemented for metrics table
-  };
-
-  const renderTrend = (trend: MetricValue["trend"], trendPercent: number | undefined, direction: MetricDefinition["direction"]) => {
-    if (!trend || trend === "stable") {
-      return <Minus className="size-4 text-gray-400" />;
-    }
-
-    const isGood =
-      (direction === "higher_better" && trend === "up") ||
-      (direction === "lower_better" && trend === "down");
-
-    const Icon = trend === "up" ? TrendingUp : TrendingDown;
-    const color = isGood ? "text-green-500" : "text-red-500";
-
     return (
-      <div className={cn("flex items-center gap-1", color)}>
-        <Icon className="size-4" />
-        {trendPercent !== undefined && (
-          <span className="text-xs">{Math.abs(trendPercent).toFixed(0)}%</span>
-        )}
-      </div>
+      <span className={isRelevant ? "text-[var(--tropx-dark)]" : "text-gray-400"}>
+        {metric.format(value)}
+      </span>
     );
   };
 
   const renderMetricRow = (metric: MetricDefinition) => {
-    const data = metricsData[metric.id];
+    const values = getMetricValue(metric, metricsData);
     const isSelected = selectedMetrics.has(metric.id);
     const isOpi = metric.id === "opiScore";
     const isRelevant = isMetricRelevant(metric, movementType);
 
-    // Skip irrelevant metrics if not showing them
     if (!isRelevant && !showIrrelevant) {
       return null;
     }
@@ -265,12 +275,13 @@ export function MetricsTable({
         className={cn(
           "cursor-pointer transition-colors",
           isOpi && "bg-[var(--tropx-hover)]/50",
-          isSelected && !isOpi && "bg-blue-50",
+          isSelected && !isOpi && "bg-blue-50/50",
           !isRelevant && "opacity-40"
         )}
         onClick={() => handleToggle(metric.id)}
         title={!isRelevant ? `Not typically relevant for ${movementType} movements` : undefined}
       >
+        {/* Checkbox */}
         <TableCell className="w-10">
           <Checkbox
             checked={isSelected}
@@ -280,7 +291,9 @@ export function MetricsTable({
             className={cn(isOpi && "opacity-50")}
           />
         </TableCell>
-        <TableCell className="w-24">
+
+        {/* Domain Badge */}
+        <TableCell className="w-20">
           <span
             className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
             style={{
@@ -291,40 +304,49 @@ export function MetricsTable({
             {DOMAIN_LABELS[metric.domain]}
           </span>
         </TableCell>
+
+        {/* Metric Name */}
         <TableCell className={cn("font-medium", isRelevant ? "text-[var(--tropx-dark)]" : "text-gray-400")}>
           {metric.name}
-          {!isRelevant && (
-            <span className="ml-2 text-xs text-gray-400 font-normal">(N/A)</span>
-          )}
+          {metric.unit && <span className="text-[var(--tropx-shadow)] ml-1 text-xs font-normal">{metric.unit}</span>}
         </TableCell>
-        <TableCell className="text-right font-mono">
-          {data?.latest !== undefined ? (
-            <span className={isRelevant ? "text-[var(--tropx-dark)]" : "text-gray-400"}>
-              {metric.format(data.latest)}
-              {metric.unit && <span className="text-[var(--tropx-shadow)] ml-1">{metric.unit}</span>}
-            </span>
+
+        {/* Left Leg Value */}
+        <TableCell className="text-right font-mono w-24">
+          {metric.perLeg ? (
+            renderValue(values.left, metric, isRelevant)
           ) : (
             <span className="text-gray-300">—</span>
           )}
         </TableCell>
-        <TableCell className="text-right font-mono">
-          {data?.average !== undefined ? (
-            <span className={isRelevant ? "text-[var(--tropx-shadow)]" : "text-gray-400"}>
-              {metric.format(data.average)}
-            </span>
+
+        {/* Right Leg Value */}
+        <TableCell className="text-right font-mono w-24">
+          {metric.perLeg ? (
+            renderValue(values.right, metric, isRelevant)
           ) : (
             <span className="text-gray-300">—</span>
           )}
         </TableCell>
-        <TableCell className="w-20">
-          {data ? renderTrend(data.trend, data.trendPercent, metric.direction) : null}
+
+        {/* Combined/Bilateral Value */}
+        <TableCell className="text-right font-mono w-24">
+          {!metric.perLeg ? (
+            renderValue(values.combined, metric, isRelevant)
+          ) : (
+            // Show average for per-leg metrics
+            values.left !== undefined && values.right !== undefined ? (
+              <span className={cn("text-xs", isRelevant ? "text-[var(--tropx-shadow)]" : "text-gray-400")}>
+                avg: {metric.format((values.left + values.right) / 2)}
+              </span>
+            ) : (
+              <span className="text-gray-300">—</span>
+            )
+          )}
         </TableCell>
       </TableRow>
     );
   };
-
-  // Use metrics in their defined order (sorted by understandability)
-  const allMetrics = METRIC_DEFINITIONS;
 
   return (
     <div className={cn("rounded-xl border border-gray-200 overflow-hidden", className)}>
@@ -332,15 +354,15 @@ export function MetricsTable({
         <TableHeader>
           <TableRow className="bg-gray-50">
             <TableHead className="w-10"></TableHead>
-            <TableHead className="w-24">Domain</TableHead>
+            <TableHead className="w-20">Domain</TableHead>
             <TableHead>Metric</TableHead>
-            <TableHead className="text-right">Latest</TableHead>
-            <TableHead className="text-right">Avg</TableHead>
-            <TableHead className="w-20">Trend</TableHead>
+            <TableHead className="text-right w-24">Left</TableHead>
+            <TableHead className="text-right w-24">Right</TableHead>
+            <TableHead className="text-right w-24">Value</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {allMetrics.map((metric) => renderMetricRow(metric))}
+          {METRIC_DEFINITIONS.map((metric) => renderMetricRow(metric))}
         </TableBody>
       </Table>
     </div>

@@ -9,6 +9,7 @@ export { V2SectionsView } from "./V2SectionsView";
 export { V2SummaryCard } from "./V2SummaryCard";
 export { SectionCard } from "./SectionCard";
 export { PerformanceRadar } from "./PerformanceRadar";
+export { CrossAnalysisCard } from "./CrossAnalysisCard";
 
 // Types
 export type {
@@ -26,3 +27,5 @@ export type {
   QualityLink,
   QAReasoning,
 } from "./SectionCard";
+
+export type { SpeculativeInsight, KeyFinding, FindingViz } from "./V2SummaryCard";

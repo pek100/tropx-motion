@@ -77,6 +77,10 @@ export interface ElectronAPI {
         importCSV: () => Promise<{ success: boolean; content?: string; filePath?: string; fileName?: string; canceled?: boolean; error?: string }>;
     };
 
+    shell: {
+        openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+    };
+
     recording: {
         start: () => Promise<{ success: boolean; error?: string }>;
         stop: () => Promise<{ success: boolean; error?: string }>;
@@ -163,6 +167,10 @@ const electronAPI: ElectronAPI = {
         openFolder: (filePath: string) => ipcRenderer.invoke('file:openFolder', filePath),
         selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
         importCSV: () => ipcRenderer.invoke('file:importCSV'),
+    },
+
+    shell: {
+        openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
     },
 
     recording: {

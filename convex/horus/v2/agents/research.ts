@@ -94,7 +94,11 @@ export const enrichSection = internalAction({
         durationMs: Date.now() - startTime,
       };
     } catch (error) {
-      console.error("[Research Agent] Error enriching section:", section.id, error);
+      console.error("[Research Agent] Error enriching section:", section.id, {
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined,
+        sectionTitle: section.title,
+      });
 
       // Return section with failed enrichment flag
       const failedSection: EnrichedSection = {
@@ -107,7 +111,7 @@ export const enrichSection = internalAction({
         },
         citations: [],
         links: [],
-        evidenceStrength: { level: "limited", notes: "Enrichment failed" },
+        evidenceStrength: { level: "none", notes: "Enrichment failed" },
         wasContradicted: false,
         recommendation: section.recommendations?.[0] || "Consult a healthcare professional for personalized guidance.",
         enrichmentFailed: true,
@@ -235,26 +239,45 @@ Be factual and cite specific sources.`;
   console.log("[Research Agent] Step 1 - Grounded search:", {
     groundingSources: searchResponse.groundingMetadata?.groundingChunks?.length || 0,
     responseLength: searchResponse.text.length,
+    searchQueries: searchResponse.groundingMetadata?.webSearchQueries || [],
+    hasGroundingSupports: (searchResponse.groundingMetadata?.groundingSupports?.length || 0) > 0,
   });
 
-  // Extract links from grounding metadata
-  const groundedLinks = extractLinksFromGrounding(searchResponse.groundingMetadata);
+  // Log the actual grounding chunks for debugging
+  if (searchResponse.groundingMetadata?.groundingChunks) {
+    console.log("[Research Agent] Grounding chunks:", searchResponse.groundingMetadata.groundingChunks.map(c => ({
+      uri: c.web?.uri?.substring(0, 100),
+      title: c.web?.title?.substring(0, 50),
+    })));
+  }
+
+  // Extract links from grounding metadata with citation counts (resolves redirect URLs)
+  const { links: groundedLinks, citationCounts } = await extractLinksFromGrounding(searchResponse.groundingMetadata);
+
+  console.log("[Research Agent] Grounded links extracted:", {
+    count: groundedLinks.length,
+    domains: groundedLinks.map(l => l.domain),
+    featuredCount: groundedLinks.filter(l => l.featured).length,
+  });
+
+  // Clean citation markers from the grounded text (e.g., [1], [2,3], [websearch])
+  const cleanedSearchText = cleanCitationMarkers(searchResponse.text);
 
   // Step 2: Structured call to format the enrichment
   const formatPrompt = buildResearchUserPrompt(section, cacheResults, webResults);
 
-  // Add search results to the prompt
+  // Add search results to the prompt (using cleaned text without citation markers)
   const enrichedPrompt = `${formatPrompt}
 
 ## Web Search Results
 The following research was found via web search:
 
-${searchResponse.text}
+${cleanedSearchText}
 
 ### Source Links Found:
-${groundedLinks.map((l) => `- [${l.tier}] ${l.title}: ${l.url}`).join("\n") || "No links found"}
+${groundedLinks.map((l) => `- [${l.tier}]${l.featured ? " ⭐" : ""} ${l.title}: ${l.url}`).join("\n") || "No links found"}
 
-Use these search results to enrich your response with citations and evidence.`;
+Use these search results to enrich your response with citations and evidence. Do NOT include citation markers like [1], [2,3] in your output.`;
 
   const formatResponse = await ctx.runAction(internal.horus.llm.vertex.callVertexAI, {
     systemPrompt: RESEARCH_SYSTEM_PROMPT,
@@ -287,6 +310,13 @@ Use these search results to enrich your response with citations and evidence.`;
   // Merge LLM-generated links with grounding links (deduplicated)
   const allLinks = mergeLinks(enrichmentData.links || [], groundedLinks);
 
+  console.log("[Research Agent] Links merged:", {
+    llmLinksCount: enrichmentData.links?.length || 0,
+    groundedLinksCount: groundedLinks.length,
+    totalLinksCount: allLinks.length,
+    featuredCount: allLinks.filter(l => l.featured).length,
+  });
+
   // Combine token usage from both calls
   const totalTokenUsage: TokenUsage = {
     inputTokens: searchResponse.tokenUsage.inputTokens + formatResponse.tokenUsage.inputTokens,
@@ -297,48 +327,200 @@ Use these search results to enrich your response with citations and evidence.`;
 
   return {
     enrichment: {
-      enrichedNarrative: enrichmentData.enrichedNarrative,
-      userExplanation: enrichmentData.userExplanation,
+      // Clean any remaining citation markers from narratives
+      enrichedNarrative: cleanCitationMarkers(enrichmentData.enrichedNarrative),
+      userExplanation: {
+        ...enrichmentData.userExplanation,
+        summary: cleanCitationMarkers(enrichmentData.userExplanation.summary),
+        whatItMeans: cleanCitationMarkers(enrichmentData.userExplanation.whatItMeans),
+        whyItMatters: cleanCitationMarkers(enrichmentData.userExplanation.whyItMatters),
+        analogy: enrichmentData.userExplanation.analogy
+          ? cleanCitationMarkers(enrichmentData.userExplanation.analogy)
+          : undefined,
+      },
       citations: enrichmentData.citations || [],
       links: allLinks,
-      evidenceStrength: enrichmentData.evidenceStrength || { level: "limited" },
+      evidenceStrength: enrichmentData.evidenceStrength || { level: "minimal" },
       wasContradicted: enrichmentData.wasContradicted || false,
-      recommendation: enrichmentData.recommendation || section.recommendations[0] || "",
+      recommendation: cleanCitationMarkers(enrichmentData.recommendation || section.recommendations[0] || ""),
     },
     tokenUsage: totalTokenUsage,
   };
 }
 
 /**
- * Extract quality links from Gemini grounding metadata.
+ * Clean citation markers from grounded text (e.g., [1], [2,3], [websearch]).
  */
-function extractLinksFromGrounding(grounding?: GroundingMetadata): Array<{
-  url: string;
-  title: string;
-  tier: EvidenceTier;
-  domain: string;
-  relevance: string;
+function cleanCitationMarkers(text: string): string {
+  // Remove patterns like [1], [2,3], [1, 2], [websearch], etc.
+  return text
+    .replace(/\s*\[\d+(?:,\s*\d+)*\]/g, "") // [1], [2,3], [1, 2, 3]
+    .replace(/\s*\[websearch\]/gi, "") // [websearch]
+    .replace(/\s*\[\d+,\s*websearch\]/gi, "") // [1, websearch]
+    .replace(/\s+([.,;:])/g, "$1") // Clean up spaces before punctuation
+    .replace(/\s{2,}/g, " ") // Clean up double spaces
+    .trim();
+}
+
+/**
+ * Extract quality links from Gemini grounding metadata with citation counts.
+ * Resolves Vertex AI redirect URLs to get actual destination URLs.
+ */
+async function extractLinksFromGrounding(grounding?: GroundingMetadata): Promise<{
+  links: Array<{
+    url: string;
+    title: string;
+    tier: EvidenceTier;
+    domain: string;
+    relevance: string;
+    featured: boolean;
+  }>;
+  citationCounts: Map<number, number>;
 }> {
   if (!grounding?.groundingChunks) {
-    return [];
+    return { links: [], citationCounts: new Map() };
   }
 
-  return grounding.groundingChunks
-    .filter((chunk) => chunk.web?.uri)
-    .map((chunk) => {
-      const url = chunk.web!.uri;
-      const title = chunk.web!.title || "Unknown";
-      const domain = extractDomain(url);
-      const tier = getTierForUrl(url);
+  // Count how many times each source index is cited in groundingSupports
+  const citationCounts = new Map<number, number>();
+  if (grounding.groundingSupports) {
+    for (const support of grounding.groundingSupports) {
+      if (support.groundingChunkIndices) {
+        for (const idx of support.groundingChunkIndices) {
+          citationCounts.set(idx, (citationCounts.get(idx) || 0) + 1);
+        }
+      }
+    }
+  }
 
-      return {
-        url,
-        title,
-        tier,
-        domain,
-        relevance: "Google Search grounding result",
-      };
-    });
+  // Find the max citation count to determine "featured" threshold
+  const maxCitations = Math.max(...Array.from(citationCounts.values()), 0);
+  const featuredThreshold = Math.max(2, Math.floor(maxCitations * 0.5)); // At least 2 citations or 50% of max
+
+  // Extract raw link data first
+  const rawLinks = grounding.groundingChunks
+    .filter((chunk) => chunk.web?.uri)
+    .map((chunk, index) => ({
+      rawUrl: chunk.web!.uri,
+      title: chunk.web!.title || "Unknown",
+      index,
+      citations: citationCounts.get(index) || 0,
+    }));
+
+  // Resolve all Vertex AI redirect URLs in parallel
+  let resolvedUrls: Array<{ rawUrl: string; title: string; index: number; citations: number; url: string }>;
+  try {
+    resolvedUrls = await Promise.all(
+      rawLinks.map(async (link) => {
+        const url = await resolveRedirectUrl(link.rawUrl);
+        return { ...link, url };
+      })
+    );
+  } catch (resolveError) {
+    console.warn("[Research Agent] Error resolving redirect URLs, using original URLs:", resolveError);
+    // Fall back to using original URLs if resolution fails
+    resolvedUrls = rawLinks.map((link) => ({ ...link, url: link.rawUrl }));
+  }
+
+  // Build final link objects
+  const links = resolvedUrls.map((link) => {
+    const domain = extractDomain(link.url);
+    const tier = getTierForUrl(link.url);
+    const featured = link.citations >= featuredThreshold;
+
+    return {
+      url: link.url,
+      title: link.title,
+      tier,
+      domain,
+      relevance: featured ? `Primary source (cited ${link.citations}x)` : "Google Search grounding result",
+      featured,
+    };
+  });
+
+  // Sort by featured first, then by tier
+  const tierOrder: EvidenceTier[] = ["S", "A", "B", "C", "D"];
+  links.sort((a, b) => {
+    if (a.featured !== b.featured) return a.featured ? -1 : 1;
+    return tierOrder.indexOf(a.tier) - tierOrder.indexOf(b.tier);
+  });
+
+  return { links, citationCounts };
+}
+
+/**
+ * Resolve Vertex AI grounding redirect URLs to get actual destination URLs.
+ * Makes HTTP HEAD request to follow the redirect chain.
+ * Falls back to original URL if resolution fails.
+ */
+async function resolveRedirectUrl(url: string): Promise<string> {
+  try {
+    const parsed = new URL(url);
+
+    // Only resolve if it's a Vertex AI redirect URL
+    if (!parsed.hostname.includes("vertexaisearch.cloud.google.com") &&
+        !parsed.hostname.includes("vertexai")) {
+      return url;
+    }
+
+    // Make HEAD request with redirect: "manual" to capture redirect location
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+    try {
+      const response = await fetch(url, {
+        method: "HEAD",
+        redirect: "manual", // Don't follow redirects automatically
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "TropX-Research-Agent/1.0",
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      // Check for redirect (3xx status codes)
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (location) {
+          // Location might be relative, resolve against original URL
+          const resolvedUrl = new URL(location, url).href;
+          console.log(`[Research Agent] Resolved redirect: ${parsed.hostname} → ${new URL(resolvedUrl).hostname}`);
+          return resolvedUrl;
+        }
+      }
+
+      // If no redirect, try GET request as some servers don't redirect HEAD
+      if (response.status === 200 || response.status === 405) {
+        const getResponse = await fetch(url, {
+          method: "GET",
+          redirect: "manual",
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "TropX-Research-Agent/1.0",
+          },
+        });
+
+        if (getResponse.status >= 300 && getResponse.status < 400) {
+          const location = getResponse.headers.get("location");
+          if (location) {
+            const resolvedUrl = new URL(location, url).href;
+            console.log(`[Research Agent] Resolved redirect (GET): ${parsed.hostname} → ${new URL(resolvedUrl).hostname}`);
+            return resolvedUrl;
+          }
+        }
+      }
+
+      return url;
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      // Fetch failed (timeout, network error, etc.)
+      console.warn(`Failed to resolve redirect URL: ${url}`, fetchError);
+      return url;
+    }
+  } catch {
+    return url;
+  }
 }
 
 /**
@@ -354,23 +536,16 @@ function extractDomain(url: string): string {
 
 /**
  * Merge links, removing duplicates by URL.
+ * Featured (most-cited) links are sorted first.
  */
 function mergeLinks(
-  llmLinks: Array<{ url: string; title: string; tier: EvidenceTier; domain: string; relevance: string }>,
-  groundedLinks: Array<{ url: string; title: string; tier: EvidenceTier; domain: string; relevance: string }>
-): Array<{ url: string; title: string; tier: EvidenceTier; domain: string; relevance: string }> {
+  llmLinks: Array<{ url: string; title: string; tier: EvidenceTier; domain: string; relevance: string; featured?: boolean }>,
+  groundedLinks: Array<{ url: string; title: string; tier: EvidenceTier; domain: string; relevance: string; featured?: boolean }>
+): Array<{ url: string; title: string; tier: EvidenceTier; domain: string; relevance: string; featured?: boolean }> {
   const seen = new Set<string>();
-  const merged: Array<{ url: string; title: string; tier: EvidenceTier; domain: string; relevance: string }> = [];
+  const merged: Array<{ url: string; title: string; tier: EvidenceTier; domain: string; relevance: string; featured?: boolean }> = [];
 
-  // Add LLM links first (usually more relevant)
-  for (const link of llmLinks) {
-    if (!seen.has(link.url)) {
-      seen.add(link.url);
-      merged.push(link);
-    }
-  }
-
-  // Add grounded links
+  // Add grounded links first (they have featured flag from citation counts)
   for (const link of groundedLinks) {
     if (!seen.has(link.url)) {
       seen.add(link.url);
@@ -378,9 +553,20 @@ function mergeLinks(
     }
   }
 
-  // Sort by tier
+  // Add LLM links (without featured flag)
+  for (const link of llmLinks) {
+    if (!seen.has(link.url)) {
+      seen.add(link.url);
+      merged.push({ ...link, featured: false });
+    }
+  }
+
+  // Sort: featured first, then by tier
   const tierOrder: EvidenceTier[] = ["S", "A", "B", "C", "D"];
-  merged.sort((a, b) => tierOrder.indexOf(a.tier) - tierOrder.indexOf(b.tier));
+  merged.sort((a, b) => {
+    if (a.featured !== b.featured) return a.featured ? -1 : 1;
+    return tierOrder.indexOf(a.tier) - tierOrder.indexOf(b.tier);
+  });
 
   return merged;
 }

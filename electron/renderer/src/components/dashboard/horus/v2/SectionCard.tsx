@@ -5,8 +5,9 @@
  * Prioritizes visual indicators over text for quick scanning.
  */
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
+import { isElectron } from "@/lib/platform";
 import {
   ChevronDown,
   Lightbulb,
@@ -20,6 +21,7 @@ import {
   Timer,
   Shield,
   BookOpen,
+  Star,
 } from "lucide-react";
 import type { EvidenceTier } from "../primitives";
 
@@ -55,6 +57,7 @@ export interface QualityLink {
   tier: EvidenceTier;
   domain: string;
   relevance: string;
+  featured?: boolean;
 }
 
 export interface QAReasoning {
@@ -130,7 +133,7 @@ function SeverityDot({ severity }: { severity: SeverityLevel }) {
         className="h-2 w-2 rounded-full"
         style={{ backgroundColor: color }}
       />
-      <span className="text-[10px] capitalize" style={{ color }}>
+      <span className="text-sm capitalize" style={{ color }}>
         {severity}
       </span>
     </div>
@@ -171,7 +174,7 @@ function EvidenceStrengthIndicator({ level }: { level: EvidenceLevel }) {
           />
         ))}
       </div>
-      <span className="text-[10px] text-[var(--tropx-text-sub)]">
+      <span className="text-sm text-[var(--tropx-text-sub)]">
         {EVIDENCE_DESCRIPTIONS[level]}
       </span>
     </div>
@@ -217,7 +220,7 @@ function CollapsibleSection({
         />
       </button>
       {isOpen && (
-        <div className="px-3 pb-3 text-xs leading-relaxed text-[var(--tropx-text-sub)]">
+        <div className="px-3 pb-3 text-sm leading-relaxed text-[var(--tropx-text-sub)]">
           {children}
         </div>
       )}
@@ -249,7 +252,10 @@ const PRIORITY_DOMAINS = [
 
 function sortLinksByQuality(links: QualityLink[]): QualityLink[] {
   return [...links].sort((a, b) => {
-    // First sort by tier (S > A > B > C > D)
+    // Featured links always come first
+    if (a.featured !== b.featured) return a.featured ? -1 : 1;
+
+    // Then sort by tier (S > A > B > C > D)
     const tierA = TIER_PRIORITY[a.tier] ?? 4;
     const tierB = TIER_PRIORITY[b.tier] ?? 4;
     if (tierA !== tierB) return tierA - tierB;
@@ -270,9 +276,18 @@ function SourceLinks({ links }: { links: QualityLink[] }) {
   const visibleLinks = isExpanded ? sortedLinks : sortedLinks.slice(0, VISIBLE_LINKS_COUNT);
   const hiddenCount = sortedLinks.length - VISIBLE_LINKS_COUNT;
 
+  // Open links in system browser when in Electron
+  const handleLinkClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+    if (isElectron() && window.electronAPI?.shell?.openExternal) {
+      e.preventDefault();
+      window.electronAPI.shell.openExternal(url);
+    }
+    // In web, let the default anchor behavior handle it
+  }, []);
+
   return (
     <div className="space-y-2">
-      <span className="text-[10px] font-semibold text-[var(--tropx-text-sub)] uppercase tracking-wide">
+      <span className="text-xs font-semibold text-[var(--tropx-text-sub)] uppercase tracking-wide">
         Sources
       </span>
       <div className="flex flex-wrap gap-1.5">
@@ -282,13 +297,15 @@ function SourceLinks({ links }: { links: QualityLink[] }) {
             href={link.url}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={(e) => handleLinkClick(e, link.url)}
             className={cn(
-              "inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-full",
+              "inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-full",
               "gradient-blue-card text-[var(--tropx-text-main)]",
-              "hover:opacity-80 transition-opacity truncate max-w-[180px]"
+              "hover:opacity-80 transition-opacity truncate max-w-[200px]"
             )}
-            title={link.title}
+            title={link.featured ? `⭐ Primary source: ${link.title}` : link.title}
           >
+            {link.featured && <Star className="h-3 w-3 flex-shrink-0 fill-amber-400 text-amber-400" />}
             <span className="truncate">{link.domain}</span>
             <ExternalLink className="h-2.5 w-2.5 flex-shrink-0" />
           </a>
@@ -297,7 +314,7 @@ function SourceLinks({ links }: { links: QualityLink[] }) {
           <button
             type="button"
             onClick={() => setIsExpanded(true)}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-full bg-[var(--tropx-surface)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] transition-colors"
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-full bg-[var(--tropx-surface)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] transition-colors"
           >
             +{hiddenCount} more
           </button>
@@ -306,7 +323,7 @@ function SourceLinks({ links }: { links: QualityLink[] }) {
           <button
             type="button"
             onClick={() => setIsExpanded(false)}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-full bg-[var(--tropx-surface)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] transition-colors"
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-full bg-[var(--tropx-surface)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] transition-colors"
           >
             Show less
           </button>
@@ -388,7 +405,7 @@ export function SectionCard({
           {section.recommendation && (
             <div className="flex items-start gap-2 p-2 rounded-lg bg-[var(--tropx-surface)]/30">
               <Lightbulb className="h-3.5 w-3.5 text-[var(--tropx-success-text)] mt-0.5 flex-shrink-0" />
-              <p className="text-xs text-[var(--tropx-text-main)]">
+              <p className="text-sm text-[var(--tropx-text-main)]">
                 {section.recommendation}
               </p>
             </div>
@@ -402,7 +419,7 @@ export function SectionCard({
             <div className="space-y-3">
               {/* What it means */}
               <div>
-                <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[#3b82f6]">
+                <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-[#3b82f6]">
                   <HelpCircle className="h-3 w-3" />
                   What it means
                 </span>
@@ -411,7 +428,7 @@ export function SectionCard({
 
               {/* Why it matters */}
               <div>
-                <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[#f59e0b]">
+                <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-[#f59e0b]">
                   <AlertCircle className="h-3 w-3" />
                   Why it matters
                 </span>
@@ -421,7 +438,7 @@ export function SectionCard({
               {/* Analogy if present */}
               {section.userExplanation.analogy && (
                 <div>
-                  <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[#8b5cf6]">
+                  <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-[#8b5cf6]">
                     <Lightbulb className="h-3 w-3" />
                     Simple explanation
                   </span>

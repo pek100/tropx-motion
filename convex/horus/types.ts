@@ -64,11 +64,19 @@ export interface BilateralMetricValues {
   maxFlexionTimingDiff: number;
 }
 
+export interface SmoothnessMetricValues {
+  sparc: number;
+  ldlj: number;
+  nVelocityPeaks: number;
+}
+
 export interface SessionMetrics {
   sessionId: string;
   leftLeg: PerLegMetricValues;
   rightLeg: PerLegMetricValues;
   bilateral: BilateralMetricValues;
+  /** Smoothness metrics - useful for trend tracking (optional) */
+  smoothness?: SmoothnessMetricValues;
   opiScore?: number;
   opiGrade?: string;
   movementType: "bilateral" | "unilateral";

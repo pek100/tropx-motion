@@ -5,6 +5,49 @@
  */
 
 import type { SessionMetrics } from "../../types";
+import { METRIC_REGISTRY, METRICS_BY_DOMAIN, type MetricDomain } from "../../metrics";
+
+// ─────────────────────────────────────────────────────────────────
+// Dynamic Metric Reference Generation
+// ─────────────────────────────────────────────────────────────────
+
+const DOMAIN_LABELS: Record<MetricDomain, string> = {
+  range: "RANGE METRICS",
+  symmetry: "SYMMETRY METRICS",
+  power: "POWER METRICS",
+  control: "CONTROL METRICS",
+  timing: "TIMING METRICS",
+};
+
+/**
+ * Generate metric reference section from METRIC_REGISTRY.
+ * Single source of truth for all threshold values.
+ */
+function generateMetricReferences(): string {
+  const sections: string[] = [];
+
+  for (const domain of Object.keys(METRICS_BY_DOMAIN) as MetricDomain[]) {
+    const metrics = METRICS_BY_DOMAIN[domain];
+    const lines: string[] = [`${DOMAIN_LABELS[domain]} (${domain === "symmetry" || domain === "timing" ? "bilateral" : "per leg"}):`];
+
+    for (const metricName of metrics) {
+      const config = METRIC_REGISTRY[metricName];
+      const dirLabel = config.direction === "higherBetter" ? "higherBetter" : "lowerBetter";
+      const goodOp = config.direction === "higherBetter" ? "≥" : "≤";
+      const poorOp = config.direction === "higherBetter" ? "≤" : "≥";
+
+      lines.push(
+        `- ${metricName}: GOOD ${goodOp}${config.goodThreshold}${config.unit}, POOR ${poorOp}${config.poorThreshold}${config.unit} (${dirLabel})`
+      );
+    }
+
+    sections.push(lines.join("\n"));
+  }
+
+  return sections.join("\n\n");
+}
+
+const METRIC_REFERENCE_SECTION = generateMetricReferences();
 
 // ─────────────────────────────────────────────────────────────────
 // System Prompt
@@ -32,6 +75,18 @@ You think like a seasoned clinician:
 4. You prioritize findings by clinical relevance and assign priority scores
 5. You explain how different joints contribute to patterns
 
+=== SESSION CONTEXT (Tags, Notes, Exercise Type) ===
+Pay close attention to the session metadata when provided:
+- **Tags**: May describe the exercise type (e.g., "squat", "lunge", "rehab"), patient condition (e.g., "ACL", "post-op"), or training phase (e.g., "warmup", "max effort"). Use these to contextualize your analysis - a post-op patient has different expectations than an athlete.
+- **Notes**: May contain clinician observations, patient complaints, or session goals. Look for correlations between noted issues and the metric findings.
+- **Activity Profile**: Indicates the movement pattern being assessed. Tailor your interpretation to what's expected for that movement.
+- **Sets/Reps**: Higher rep counts may explain fatigue-related findings (declining consistency, increased asymmetry toward end of session).
+
+When analyzing, consider:
+- Does the exercise type explain certain metric patterns? (e.g., single-leg exercises naturally show some asymmetry)
+- Do the tags suggest injury history that correlates with the deficits found?
+- Do the notes mention anything that explains or contradicts the metrics?
+
 === PRIORITY SCORING (1-10) ===
 Assign a priority score to each section based on clinical importance:
 - 10: Life/limb threatening, requires immediate action
@@ -46,27 +101,23 @@ Priority considers: severity, functional impact, injury risk, and treatability.
 === CLINICAL THRESHOLDS & SEVERITY ===
 
 Severity Levels (for each finding):
+- profound: Most severe, life-altering or requires immediate medical attention, >35% asymmetry
 - critical: Requires immediate attention, high injury risk, >25% asymmetry or severe deficits
 - severe: Significant concern, active intervention needed, 15-25% asymmetry
 - moderate: Notable finding, should be addressed, 10-15% asymmetry
 - mild: Minor concern, monitor over time, <10% asymmetry
 
-Symmetry Assessment:
-- Excellent: <10% bilateral asymmetry (mild)
-- Acceptable: 10-15% asymmetry (moderate)
-- Concerning: 15-25% asymmetry (severe)
-- Critical: >25% asymmetry (critical)
+=== METRIC REFERENCE RANGES (Evidence-Based) ===
 
-Movement Quality (ROM CoV):
-- Excellent: <5% coefficient of variation (mild)
-- Good: 5-10% variation (moderate)
-- Moderate: 10-15% variation (severe)
-- Concerning: >15% variation (critical)
+Use these thresholds to interpret each metric's clinical significance:
 
-Velocity Metrics:
-- Peak angular velocity indicates power generation capacity
-- Explosiveness metrics reflect neuromuscular drive
-- Jerk (smoothness) reflects motor control quality
+${METRIC_REFERENCE_SECTION}
+
+INTERPRETING VALUES:
+- Values beyond POOR threshold = critical/severe finding
+- Values between GOOD and POOR = moderate finding
+- Values at/beyond GOOD threshold = strength (mild if slightly off)
+- Always check DIRECTION: some metrics are "lowerBetter" (closer to 0 = better)
 
 === RADAR SCORES (1-10 scale) ===
 You MUST calculate each dimension based on the actual metrics provided:
@@ -88,6 +139,23 @@ You MUST calculate each dimension based on the actual metrics provided:
 
 IMPORTANT: Calculate these scores from the ACTUAL metric values - do NOT use default values like 5.
 
+=== SPECULATIVE INSIGHTS (REQUIRED) ===
+After your clinical analysis, you MUST step back and identify 1-3 interesting, non-obvious patterns.
+This section is MANDATORY - do not skip it. Think creatively about:
+- Unusual metric combinations that might indicate something unexpected
+- Correlations between session context (tags, notes) and findings that suggest deeper issues
+- Patterns that don't fit typical presentations - what could explain them?
+- Hypotheses about underlying causes that warrant further investigation
+- Connections to broader movement patterns or compensatory strategies
+
+These insights are explicitly SPECULATIVE - they go beyond standard clinical interpretation.
+Be creative but grounded in the data. Frame as hypotheses, not conclusions.
+
+EXAMPLE SPECULATIVE INSIGHTS:
+- "The combination of high velocity asymmetry (18%) with good ROM symmetry (4%) could suggest a neuromuscular timing issue rather than a structural limitation - the patient may have full range but impaired rate of force development on the left side."
+- "The patient's high jerk values despite good ROM could indicate protective guarding behavior - possibly compensating for instability or pain not captured in the primary metrics."
+- "Given the tags mention 'post-ACL', the disproportionate loading phase deficit compared to concentric phase might reflect lingering quadriceps inhibition typical of ACL reconstruction patients."
+
 === OUTPUT FORMAT ===
 You MUST respond with valid JSON containing:
 1. Radar scores for visual summary
@@ -95,7 +163,17 @@ You MUST respond with valid JSON containing:
 3. Clinical implications summary
 4. Clinical sections with severity ratings
 5. Unified recommendations (not per-section)
-6. Strengths and weaknesses`;
+6. Strengths and weaknesses
+7. Speculative insights (interesting patterns and hypotheses)
+
+=== CONCISENESS REQUIREMENTS ===
+Keep responses focused and concise to avoid truncation:
+- clinicalNarrative: 2-4 sentences max per section
+- recommendations: 1 sentence each, max 5 total
+- keyFindings: 3-5 findings, 1-2 sentences each
+- speculativeInsights: 2-3 insights, 2-3 sentences each
+- Avoid repetition - each section should add NEW information
+- Focus on SIGNIFICANT findings only - skip minor observations`;
 
 // ─────────────────────────────────────────────────────────────────
 // User Prompt Builder
@@ -141,7 +219,7 @@ ${parts.join("\n")}
  * Format metrics for LLM consumption.
  */
 function formatMetricsForPrompt(metrics: SessionMetrics): string {
-  const { leftLeg, rightLeg, bilateral, movementType, opiScore, opiGrade } = metrics;
+  const { leftLeg, rightLeg, bilateral, movementType } = metrics;
 
   // Build session context section (only if data exists)
   const contextSection = formatSessionContext(metrics);
@@ -149,7 +227,6 @@ function formatMetricsForPrompt(metrics: SessionMetrics): string {
   return `
 === SESSION METRICS ===
 Movement Type: ${movementType}
-${opiScore !== undefined ? `OPI Score: ${opiScore.toFixed(1)} (Grade: ${opiGrade || "N/A"})` : ""}
 ${contextSection}
 === LEFT LEG METRICS ===
 - Overall Max ROM: ${leftLeg.overallMaxRom.toFixed(1)}°
@@ -215,6 +292,7 @@ DOMAINS to consider (use standard or create custom as needed):
 
 === OUTPUT JSON SCHEMA ===
 {
+  "overallGrade": "C",
   "radarScores": {
     "flexibility": 7,
     "consistency": 4,
@@ -224,9 +302,9 @@ DOMAINS to consider (use standard or create custom as needed):
   },
   "keyFindings": [
     {
-      "text": "Overall Grade: OPI Grade F",
+      "text": "Overall Grade",
       "severity": "severe",
-      "viz": { "type": "grade", "value": "F", "scale": ["A", "B", "C", "D", "F"] }
+      "viz": { "type": "grade", "value": "C", "scale": ["A", "B", "C", "D", "F"] }
     },
     {
       "text": "Global Asymmetry: 33.3%",
@@ -255,7 +333,7 @@ DOMAINS to consider (use standard or create custom as needed):
       "id": "section-1",
       "title": "Concise title for the finding",
       "domain": "symmetry | power | control | range | timing | <custom>",
-      "severity": "critical | severe | moderate | mild",
+      "severity": "profound | critical | severe | moderate | mild",
       "priority": 8,
       "clinicalNarrative": "The patient shows [finding]. This indicates...",
       "jointContributions": {
@@ -298,24 +376,42 @@ DOMAINS to consider (use standard or create custom as needed):
     "Prioritized recommendation 1 for the patient",
     "Prioritized recommendation 2 for the patient",
     "Prioritized recommendation 3 for the patient"
+  ],
+  "speculativeInsights": [
+    {
+      "label": "Neuromuscular Timing Hypothesis",
+      "description": "The high velocity asymmetry with good ROM symmetry suggests a neuromuscular timing issue rather than structural limitation."
+    },
+    {
+      "label": "Compensatory Pattern",
+      "description": "Given the session tags indicate post-op status, the asymmetry pattern could reflect a learned compensatory movement strategy."
+    }
   ]
 }
 
 IMPORTANT:
 - ALWAYS use "the patient" framing, NEVER "you" or "your"
+- overallGrade: Assign a letter grade (A/B/C/D/F) based on overall movement quality:
+  * A: Excellent - all metrics in good range, minimal asymmetry (<5%), strong performance
+  * B: Good - most metrics acceptable, minor issues, asymmetry <10%
+  * C: Fair - moderate deficits, some metrics in poor range, asymmetry 10-15%
+  * D: Poor - significant deficits, multiple metrics in poor range, asymmetry 15-25%
+  * F: Failing - severe deficits, critical findings, asymmetry >25% or safety concerns
 - Generate 3-6 sections covering the most clinically relevant findings
 - Assign appropriate severity to each section based on clinical thresholds
 - Assign priority score (1-10) to each section based on clinical importance
 - Score radar dimensions 1-10 based on the actual metrics
-- keyFindings should be 3-5 concise findings, each with a visualization:
+- keyFindings should be 4-6 concise findings, each with a visualization:
+  - FIRST finding MUST be "Overall Grade" with type "grade" showing the letter grade (A/B/C/D/F)
   - "gauge": for percentages/scores (value, max, unit, thresholds array for color bands)
   - "comparison": for left vs right comparisons (left, right, unit, labels)
   - "grade": for letter grades (value like "F", scale like ["A","B","C","D","F"])
   - "level": for categorical levels (value like "high", scale like ["low","moderate","high","critical"])
 - clinicalImplications should be 1-2 sentences
 - recommendations at root level should be 3-5 prioritized action items
-- Set needsResearch: true for sections needing evidence validation
+- IMPORTANT: Set needsResearch: true for ALL sections - every clinical finding benefits from research-backed evidence validation
 - Use actual values from the provided metrics
+- speculativeInsights: MUST include 1-3 creative hypotheses as objects with "label" (short 2-5 word title) and "description" (1-2 sentence explanation). Look for unusual metric combinations, patterns that don't fit typical presentations, or connections between session context and findings.
 
 Respond with ONLY the JSON object, no additional text.`;
 }
@@ -330,6 +426,7 @@ Respond with ONLY the JSON object, no additional text.`;
 export const ANALYSIS_RESPONSE_SCHEMA = {
   type: "object",
   properties: {
+    overallGrade: { type: "string", enum: ["A", "B", "C", "D", "F"] },
     radarScores: {
       type: "object",
       properties: {
@@ -376,7 +473,7 @@ export const ANALYSIS_RESPONSE_SCHEMA = {
           id: { type: "string" },
           title: { type: "string" },
           domain: { type: "string" },
-          severity: { type: "string", enum: ["critical", "severe", "moderate", "mild"] },
+          severity: { type: "string", enum: ["profound", "critical", "severe", "moderate", "mild"] },
           priority: { type: "number" },
           clinicalNarrative: { type: "string" },
           jointContributions: {
@@ -449,6 +546,19 @@ export const ANALYSIS_RESPONSE_SCHEMA = {
       type: "array",
       items: { type: "string" },
     },
+    speculativeInsights: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          label: { type: "string", description: "Short 2-5 word title for the hypothesis" },
+          description: { type: "string", description: "1-2 sentence explanation of the hypothesis" },
+        },
+        required: ["label", "description"],
+      },
+      minItems: 1,
+      description: "REQUIRED: 1-3 creative hypotheses about non-obvious patterns with label and description.",
+    },
   },
-  required: ["radarScores", "keyFindings", "clinicalImplications", "sections", "summary", "strengths", "weaknesses", "recommendations"],
+  required: ["overallGrade", "radarScores", "keyFindings", "clinicalImplications", "sections", "summary", "strengths", "weaknesses", "recommendations", "speculativeInsights"],
 };

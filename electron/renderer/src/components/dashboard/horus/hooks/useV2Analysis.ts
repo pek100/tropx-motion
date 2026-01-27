@@ -10,6 +10,7 @@ import { useQuery } from "convex/react";
 import { useAction } from "convex/react";
 import { api } from "../../../../../../../convex/_generated/api";
 import type { V2PipelineOutput, V2PipelineStatus, EnrichedSectionData } from "../v2";
+import type { CrossAnalysisResult } from "../../../../../../../convex/horus/crossAnalysis/types";
 
 interface V2AnalysisError {
   agent?: string;
@@ -31,6 +32,7 @@ interface UseV2AnalysisResult {
   isLoading: boolean;
   isAnalyzing: boolean;
   isResearching: boolean;
+  isCrossAnalyzing: boolean;
   isComplete: boolean;
   hasError: boolean;
 }
@@ -89,6 +91,7 @@ export function useV2Analysis(sessionId: string | undefined): UseV2AnalysisResul
 
     return {
       sessionId: analysisData.sessionId,
+      overallGrade: rawOutput.overallGrade,
       radarScores: rawOutput.radarScores || defaultRadarScores,
       keyFindings: rawOutput.keyFindings || [],
       clinicalImplications: rawOutput.clinicalImplications || "",
@@ -97,7 +100,9 @@ export function useV2Analysis(sessionId: string | undefined): UseV2AnalysisResul
       strengths: rawOutput.strengths || [],
       weaknesses: rawOutput.weaknesses || [],
       recommendations: rawOutput.recommendations || [],
+      speculativeInsights: rawOutput.speculativeInsights || [],
       failedEnrichments: rawOutput.failedEnrichments || [],
+      crossAnalysis: rawOutput.crossAnalysis as CrossAnalysisResult | undefined,
       totalDurationMs: rawOutput.totalDurationMs || 0,
     };
   }, [analysisData]);
@@ -113,10 +118,11 @@ export function useV2Analysis(sessionId: string | undefined): UseV2AnalysisResul
     await retryAction({ sessionId });
   }, [sessionId, retryAction]);
 
-  // Derived state (DB stores "analysis"/"research", not "analyzing"/"researching")
+  // Derived state (DB stores "analysis"/"research"/"progress", not "analyzing"/"researching"/"cross_analyzing")
   const isLoading = analysisData === undefined || statusData === undefined;
   const isAnalyzing = status === "analysis";
   const isResearching = status === "research";
+  const isCrossAnalyzing = status === "progress"; // Cross-analysis maps to "progress" status
   const isComplete = status === "complete";
   const hasError = status === "error";
 
@@ -129,6 +135,7 @@ export function useV2Analysis(sessionId: string | undefined): UseV2AnalysisResul
     isLoading,
     isAnalyzing,
     isResearching,
+    isCrossAnalyzing,
     isComplete,
     hasError,
   };

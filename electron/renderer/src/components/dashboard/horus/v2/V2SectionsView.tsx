@@ -8,9 +8,10 @@
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { Loader2, AlertTriangle, RefreshCw, AlertCircle } from "lucide-react";
-import { V2SummaryCard } from "./V2SummaryCard";
+import { V2SummaryCard, type SpeculativeInsight } from "./V2SummaryCard";
 import { SectionCard, type EnrichedSectionData, type SeverityLevel } from "./SectionCard";
 import type { RadarScores } from "./PerformanceRadar";
+import type { CrossAnalysisResult } from "../../../../../../../convex/horus/crossAnalysis/types";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -23,6 +24,7 @@ export interface KeyFinding {
 
 export interface V2PipelineOutput {
   sessionId: string;
+  overallGrade?: "A" | "B" | "C" | "D" | "F";
   radarScores: RadarScores;
   keyFindings: KeyFinding[];
   clinicalImplications: string;
@@ -31,15 +33,18 @@ export interface V2PipelineOutput {
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
+  speculativeInsights?: SpeculativeInsight[];
   failedEnrichments: string[];
+  crossAnalysis?: CrossAnalysisResult;
   totalDurationMs: number;
 }
 
-// Note: DB stores "analysis"/"research", not "analyzing"/"researching"
+// Note: DB stores "analysis"/"research"/"progress", not "analyzing"/"researching"/"cross_analyzing"
 export type V2PipelineStatus =
   | "pending"
   | "analysis"
   | "research"
+  | "progress" // Cross-analysis stage
   | "complete"
   | "error";
 
@@ -54,6 +59,7 @@ interface V2SectionsViewProps {
 // Re-export types for convenience
 export type { EnrichedSectionData, SeverityLevel } from "./SectionCard";
 export type { RadarScores } from "./PerformanceRadar";
+export type { SpeculativeInsight } from "./V2SummaryCard";
 
 // ─────────────────────────────────────────────────────────────────
 // Main Component
@@ -81,15 +87,31 @@ export function V2SectionsView({
         <p className="text-sm font-medium text-[var(--tropx-text-main)]">
           Waiting for metrics...
         </p>
-        <p className="text-xs text-[var(--tropx-text-sub)] mt-1">
+        <p className="text-sm text-[var(--tropx-text-sub)] mt-1">
           Analysis will start automatically
         </p>
       </section>
     );
   }
 
-  // Loading states (DB stores "analysis"/"research")
-  if (status === "analysis" || status === "research") {
+  // Loading states (DB stores "analysis"/"research"/"progress")
+  if (status === "analysis" || status === "research" || status === "progress") {
+    const stageMessages = {
+      analysis: {
+        title: "Analyzing session data...",
+        subtitle: "Identifying clinical findings",
+      },
+      research: {
+        title: "Researching findings...",
+        subtitle: "Validating with research evidence",
+      },
+      progress: {
+        title: "Analyzing patient history...",
+        subtitle: "Comparing to previous sessions",
+      },
+    };
+    const message = stageMessages[status];
+
     return (
       <section
         className={cn("flex flex-col items-center justify-center py-12", className)}
@@ -101,17 +123,13 @@ export function V2SectionsView({
           aria-hidden="true"
         />
         <p className="text-sm font-medium text-[var(--tropx-text-main)]">
-          {status === "analysis" ? "Analyzing session data..." : "Researching findings..."}
+          {message.title}
         </p>
-        <p className="text-xs text-[var(--tropx-text-sub)] mt-1">
-          {status === "analysis"
-            ? "Identifying clinical findings"
-            : "Validating with research evidence"}
+        <p className="text-sm text-[var(--tropx-text-sub)] mt-1">
+          {message.subtitle}
         </p>
         <span className="sr-only">
-          {status === "analysis"
-            ? "Analysis in progress, please wait"
-            : "Research validation in progress, please wait"}
+          {message.title} {message.subtitle}, please wait
         </span>
       </section>
     );
@@ -132,7 +150,7 @@ export function V2SectionsView({
         <p className="text-sm font-medium text-[var(--tropx-text-main)] mb-2">
           Analysis Failed
         </p>
-        <p className="text-xs text-[var(--tropx-text-sub)] mb-4 text-center max-w-xs">
+        <p className="text-sm text-[var(--tropx-text-sub)] mb-4 text-center max-w-xs">
           {error?.message || "An unexpected error occurred during analysis."}
         </p>
         {onRetry && (
@@ -177,6 +195,8 @@ export function V2SectionsView({
         strengths={output.strengths}
         weaknesses={output.weaknesses}
         recommendations={output.recommendations}
+        speculativeInsights={output.speculativeInsights}
+        crossAnalysis={output.crossAnalysis}
       />
 
       {/* Divider */}

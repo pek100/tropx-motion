@@ -8,7 +8,7 @@ import { action } from "../../../_generated/server";
 import { v } from "convex/values";
 import { internal } from "../../../_generated/api";
 import type { SessionMetrics } from "../../types";
-import type { AnalysisAgentOutput, AgentResult, Section, KeyFinding } from "../types";
+import type { AnalysisAgentOutput, AgentResult, Section, KeyFinding, SpeculativeInsight } from "../types";
 import {
   ANALYSIS_SYSTEM_PROMPT,
   buildAnalysisUserPrompt,
@@ -45,7 +45,7 @@ export const runAnalysis = action({
         systemPrompt,
         userPrompt,
         temperature: 0.3, // Slightly creative for clinical reasoning
-        maxTokens: 16384, // Enough for detailed sections
+        maxTokens: 65535, // Gemini 2.5 Flash max - no truncation risk
         responseSchema: ANALYSIS_RESPONSE_SCHEMA,
       });
 
@@ -58,6 +58,7 @@ export const runAnalysis = action({
       // Parse JSON response (Gemini's structured output already validates schema)
       const jsonText = extractJSON(llmResponse.text);
       const parseResult = safeJSONParse<{
+        overallGrade: "A" | "B" | "C" | "D" | "F";
         radarScores: {
           flexibility: number;
           consistency: number;
@@ -72,6 +73,7 @@ export const runAnalysis = action({
         strengths: string[];
         weaknesses: string[];
         recommendations: string[];
+        speculativeInsights: SpeculativeInsight[];
       }>(jsonText);
 
       if (!parseResult.success) {
@@ -80,6 +82,7 @@ export const runAnalysis = action({
 
       const output: AnalysisAgentOutput = {
         sessionId: args.sessionId,
+        overallGrade: parseResult.data!.overallGrade,
         radarScores: parseResult.data!.radarScores,
         keyFindings: parseResult.data!.keyFindings,
         clinicalImplications: parseResult.data!.clinicalImplications,
@@ -88,6 +91,7 @@ export const runAnalysis = action({
         strengths: parseResult.data!.strengths,
         weaknesses: parseResult.data!.weaknesses,
         recommendations: parseResult.data!.recommendations,
+        speculativeInsights: parseResult.data!.speculativeInsights,
         analyzedAt: Date.now(),
       };
 
@@ -96,6 +100,8 @@ export const runAnalysis = action({
         needsResearchCount: output.sections.filter((s) => s.needsResearch).length,
         strengthsCount: output.strengths.length,
         weaknessesCount: output.weaknesses.length,
+        speculativeInsightsCount: output.speculativeInsights.length,
+        speculativeInsights: output.speculativeInsights,
       });
 
       return {

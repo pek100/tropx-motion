@@ -71,7 +71,7 @@ export function QAAccordion({
                 className="h-4 w-4 flex-shrink-0 mt-0.5 text-[var(--tropx-info-text)]"
                 aria-hidden="true"
               />
-              <span className="flex-1 text-xs font-medium text-[var(--tropx-text-main)] leading-relaxed">
+              <span className="flex-1 text-sm font-medium text-[var(--tropx-text-main)] leading-relaxed">
                 {item.question}
               </span>
             </button>
@@ -84,7 +84,7 @@ export function QAAccordion({
                 className="px-2 pb-2"
               >
                 <div className="pl-10 pt-1">
-                  <p className="text-xs leading-relaxed text-[var(--tropx-text-sub)]">
+                  <p className="text-sm leading-relaxed text-[var(--tropx-text-sub)]">
                     {item.answer}
                   </p>
                 </div>

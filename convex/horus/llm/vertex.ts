@@ -288,7 +288,12 @@ export const callVertexAIGrounded = action({
       ],
     };
 
-    console.log("[Vertex AI Grounded] Calling API with Google Search enabled");
+    console.log("[Vertex AI Grounded] Calling API with Google Search enabled:", {
+      model: VERTEX_CONFIG.MODEL,
+      location,
+      promptLength: args.userPrompt.length,
+      hasResponseSchema: !!args.responseSchema,
+    });
 
     const response = await fetch(endpoint, {
       method: "POST",
@@ -321,6 +326,18 @@ export const callVertexAIGrounded = action({
     if (groundingMetadata) {
       console.log("[Vertex AI Grounded] Search queries:", groundingMetadata.webSearchQueries);
       console.log("[Vertex AI Grounded] Sources found:", groundingMetadata.groundingChunks?.length || 0);
+      console.log("[Vertex AI Grounded] Supports found:", groundingMetadata.groundingSupports?.length || 0);
+      // Log first few chunks for debugging
+      if (groundingMetadata.groundingChunks?.length) {
+        console.log("[Vertex AI Grounded] First 3 chunks:",
+          groundingMetadata.groundingChunks.slice(0, 3).map(c => ({
+            uri: c.web?.uri?.substring(0, 80),
+            title: c.web?.title?.substring(0, 40),
+          }))
+        );
+      }
+    } else {
+      console.log("[Vertex AI Grounded] No grounding metadata in response - API may not have performed search");
     }
 
     // Extract token usage

@@ -6,7 +6,7 @@
 
 import { query, internalQuery } from "../../_generated/server";
 import { v } from "convex/values";
-import type { V2PipelineOutput, EnrichedSection } from "./types";
+import type { V2PipelineOutput, EnrichedSection, CrossAnalysisResult } from "./types";
 
 // ─────────────────────────────────────────────────────────────────
 // Public Queries
@@ -34,6 +34,7 @@ export const getAnalysisV2 = query({
       status: analysis.status,
       output: analysis.analysis as {
         version: number;
+        overallGrade: "A" | "B" | "C" | "D" | "F";
         radarScores: {
           flexibility: number;
           consistency: number;
@@ -49,7 +50,9 @@ export const getAnalysisV2 = query({
         strengths: string[];
         weaknesses: string[];
         recommendations: string[];
+        speculativeInsights: string[];
         failedEnrichments: string[];
+        crossAnalysis?: CrossAnalysisResult;
       },
       tokenUsage: analysis.tokenUsage,
       totalCost: analysis.totalCost,

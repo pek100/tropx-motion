@@ -561,6 +561,20 @@ export class MainProcess {
       }
     });
 
+    ipcMain.handle('shell:openExternal', async (_e, url: string) => {
+      try {
+        // Validate URL to prevent security issues
+        const parsed = new URL(url);
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          return { success: false, error: 'Invalid URL protocol' };
+        }
+        await shell.openExternal(url);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
+    });
+
     ipcMain.handle('dialog:selectFolder', async () => {
       if (!this.mainWindow) return { success: false, error: 'No window' };
 

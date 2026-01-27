@@ -22,6 +22,7 @@ export function buildSessionMetrics(
   const advanced = metricsDoc.advancedAsymmetry || {};
   const classification = metricsDoc.movementClassification || {};
   const opiResult = metricsDoc.opiResult || {};
+  const smoothnessDoc = metricsDoc.smoothnessMetrics || {};
 
   // Base metrics
   const metrics: SessionMetrics = {
@@ -61,8 +62,19 @@ export function buildSessionMetrics(
     opiScore: opiResult.overallScore,
     opiGrade: opiResult.grade,
     movementType: classification.type === "unilateral" ? "unilateral" : "bilateral",
-    recordedAt: Date.now(),
+    // CRITICAL: Use actual session recording date, NOT current time
+    // This ensures cross-analysis is "blind" to future sessions
+    recordedAt: sessionDoc?.recordedAt ?? sessionDoc?.startTime ?? Date.now(),
   };
+
+  // Add smoothness metrics if available (useful for trend tracking)
+  if (smoothnessDoc.sparc !== undefined || smoothnessDoc.ldlj !== undefined) {
+    metrics.smoothness = {
+      sparc: smoothnessDoc.sparc || 0,
+      ldlj: smoothnessDoc.ldlj || 0,
+      nVelocityPeaks: smoothnessDoc.nVelocityPeaks || 0,
+    };
+  }
 
   // Add session context if available (only include fields with data)
   if (sessionDoc) {

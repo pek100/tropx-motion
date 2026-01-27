@@ -7,7 +7,6 @@
 import { action } from "../_generated/server";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import type { SessionMetrics } from "./types";
 
 // ─────────────────────────────────────────────────────────────────
 // Analysis Actions
@@ -32,47 +31,13 @@ export const analyzeSession = action({
 export const retryAnalysis = action({
   args: {
     sessionId: v.string(),
-    agent: v.optional(
-      v.union(
-        v.literal("decomposition"),
-        v.literal("research"),
-        v.literal("analysis"),
-        v.literal("validator")
-      )
-    ),
   },
-  handler: async (ctx, { sessionId, agent }) => {
+  handler: async (ctx, { sessionId }) => {
     // Clear error first
     await ctx.runMutation(internal.horus.mutations.clearError, { sessionId });
 
-    // If specific agent specified, retry that agent
-    if (agent) {
-      return ctx.runAction(internal.horus.orchestrator.retryAgent, {
-        sessionId,
-        agent,
-      });
-    }
-
-    // Otherwise, re-run full pipeline
+    // Re-run full v2 pipeline
     return ctx.runAction(internal.horus.triggers.triggerAnalysis, { sessionId });
-  },
-});
-
-// ─────────────────────────────────────────────────────────────────
-// Progress Actions
-// ─────────────────────────────────────────────────────────────────
-
-/**
- * Generate progress report for a patient.
- */
-export const generateProgressReport = action({
-  args: {
-    patientId: v.id("users"),
-  },
-  handler: async (ctx, { patientId }) => {
-    return ctx.runAction(internal.horus.triggers.triggerProgressAnalysis, {
-      patientId,
-    });
   },
 });
 

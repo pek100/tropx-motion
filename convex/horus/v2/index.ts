@@ -50,9 +50,6 @@ export type {
 // ─────────────────────────────────────────────────────────────────
 
 export {
-  validateSection,
-  validateEnrichedSection,
-  validateAnalysisOutput,
   safeJSONParse,
   extractJSON,
 } from "./validation";
@@ -88,3 +85,21 @@ export {
 // ─────────────────────────────────────────────────────────────────
 
 export { buildSessionMetrics } from "./utils";
+
+// ─────────────────────────────────────────────────────────────────
+// Cross-Analysis Types (re-exported for convenience)
+// ─────────────────────────────────────────────────────────────────
+
+export type {
+  CrossAnalysisResult,
+  CrossAnalysisOutput,
+  MinimalCrossAnalysisOutput,
+  TrendInsight,
+  RecurringPattern,
+  BaselineComparison,
+  NotableSession,
+  RefinedInsight,
+  InsightIconHint,
+} from "../crossAnalysis/types";
+
+export { hasFullCrossAnalysis } from "../crossAnalysis/types";

@@ -1,6 +1,6 @@
 /**
  * columns.tsx - TanStack Table column definitions for MetricsDataTable.
- * Includes checkbox for chart selection and sortable headers.
+ * Shows per-leg values (Left/Right) and combined value for bilateral metrics.
  */
 
 import { ColumnDef } from "@tanstack/react-table";
@@ -26,8 +26,14 @@ export interface MetricRow {
   name: string;
   domain: MetricDomain;
   unit: string;
+  /** Combined/bilateral value (for non per-leg metrics) */
   value: number | undefined;
-  reference: number | undefined;
+  /** Left leg value (for per-leg metrics) */
+  leftValue: number | undefined;
+  /** Right leg value (for per-leg metrics) */
+  rightValue: number | undefined;
+  /** Whether this metric has per-leg values */
+  perLeg: boolean;
   trend: "up" | "down" | "stable" | undefined;
   trendPercent: number | undefined;
   direction: "higher_better" | "lower_better" | "optimal_range";
@@ -142,9 +148,16 @@ export const columns: ColumnDef<MetricRow>[] = [
     accessorKey: "name",
     header: ({ column }) => <SortableHeader column={column}>Metric</SortableHeader>,
     cell: ({ row }) => (
-      <span className="font-medium text-[var(--tropx-text-main)]">
-        {row.original.name}
-      </span>
+      <div>
+        <span className="font-medium text-[var(--tropx-text-main)]">
+          {row.original.name}
+        </span>
+        {row.original.unit && (
+          <span className="ml-1 text-xs text-[var(--tropx-text-sub)]">
+            {row.original.unit}
+          </span>
+        )}
+      </div>
     ),
   },
 
@@ -178,7 +191,55 @@ export const columns: ColumnDef<MetricRow>[] = [
     },
   },
 
-  // Value
+  // Left Leg Value
+  {
+    accessorKey: "leftValue",
+    header: ({ column }) => (
+      <SortableHeader column={column} className="justify-end">
+        Left
+      </SortableHeader>
+    ),
+    cell: ({ row }) => {
+      const { leftValue, perLeg, format } = row.original;
+      if (!perLeg) {
+        return <span className="text-[var(--tropx-text-sub)] opacity-30 text-right block">—</span>;
+      }
+      if (leftValue === undefined) {
+        return <span className="text-[var(--tropx-text-sub)] opacity-50 text-right block">—</span>;
+      }
+      return (
+        <span className="font-mono text-[var(--tropx-text-main)] text-right block">
+          {format(leftValue)}
+        </span>
+      );
+    },
+  },
+
+  // Right Leg Value
+  {
+    accessorKey: "rightValue",
+    header: ({ column }) => (
+      <SortableHeader column={column} className="justify-end">
+        Right
+      </SortableHeader>
+    ),
+    cell: ({ row }) => {
+      const { rightValue, perLeg, format } = row.original;
+      if (!perLeg) {
+        return <span className="text-[var(--tropx-text-sub)] opacity-30 text-right block">—</span>;
+      }
+      if (rightValue === undefined) {
+        return <span className="text-[var(--tropx-text-sub)] opacity-50 text-right block">—</span>;
+      }
+      return (
+        <span className="font-mono text-[var(--tropx-text-main)] text-right block">
+          {format(rightValue)}
+        </span>
+      );
+    },
+  },
+
+  // Combined Value (for bilateral metrics) or Average (for per-leg metrics)
   {
     accessorKey: "value",
     header: ({ column }) => (
@@ -187,34 +248,28 @@ export const columns: ColumnDef<MetricRow>[] = [
       </SortableHeader>
     ),
     cell: ({ row }) => {
-      const { value, format, unit } = row.original;
+      const { value, leftValue, rightValue, perLeg, format } = row.original;
+
+      // For per-leg metrics, show average
+      if (perLeg) {
+        if (leftValue !== undefined && rightValue !== undefined) {
+          const avg = (leftValue + rightValue) / 2;
+          return (
+            <span className="font-mono text-[var(--tropx-text-sub)] text-right block text-xs">
+              avg: {format(avg)}
+            </span>
+          );
+        }
+        return <span className="text-[var(--tropx-text-sub)] opacity-50 text-right block">—</span>;
+      }
+
+      // For bilateral metrics, show combined value
       if (value === undefined) {
         return <span className="text-[var(--tropx-text-sub)] opacity-50 text-right block">—</span>;
       }
       return (
         <span className="font-mono text-[var(--tropx-text-main)] text-right block">
           {format(value)}
-        </span>
-      );
-    },
-  },
-
-  // Reference (Average)
-  {
-    accessorKey: "reference",
-    header: ({ column }) => (
-      <SortableHeader column={column} className="justify-end">
-        Reference
-      </SortableHeader>
-    ),
-    cell: ({ row }) => {
-      const { reference, format } = row.original;
-      if (reference === undefined) {
-        return <span className="text-[var(--tropx-text-sub)] opacity-50 text-right block">—</span>;
-      }
-      return (
-        <span className="font-mono text-[var(--tropx-text-sub)] text-right block">
-          {format(reference)}
         </span>
       );
     },

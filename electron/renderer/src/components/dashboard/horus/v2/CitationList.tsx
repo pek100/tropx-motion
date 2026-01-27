@@ -5,9 +5,10 @@
  * Supports expandable list with quality links.
  */
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ExternalLink, Quote } from "lucide-react";
+import { isElectron } from "@/lib/platform";
 import { EvidenceTierBadge, type EvidenceTier } from "../primitives";
 
 export interface Citation {
@@ -47,6 +48,14 @@ export function CitationList({
   const hasMore = citations.length > maxVisible || links.length > 0;
   const hiddenCount = citations.length - maxVisible + links.length;
 
+  // Open links in system browser when in Electron
+  const handleLinkClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+    if (isElectron() && window.electronAPI?.shell?.openExternal) {
+      e.preventDefault();
+      window.electronAPI.shell.openExternal(url);
+    }
+  }, []);
+
   return (
     <div className={cn("space-y-2", className)}>
       {/* Citations */}
@@ -59,11 +68,11 @@ export function CitationList({
                 aria-hidden="true"
               />
               <div className="flex-1 min-w-0">
-                <p className="text-xs leading-relaxed text-[var(--tropx-text-main)]">
+                <p className="text-sm leading-relaxed text-[var(--tropx-text-main)]">
                   {citation.text}
                 </p>
                 <div className="flex items-center gap-2 mt-1">
-                  <cite className="text-[10px] text-[var(--tropx-text-sub)] not-italic truncate">
+                  <cite className="text-xs text-[var(--tropx-text-sub)] not-italic truncate">
                     {citation.source}
                   </cite>
                   <EvidenceTierBadge tier={citation.tier} size="sm" />
@@ -77,7 +86,7 @@ export function CitationList({
       {/* Expanded links section */}
       {isExpanded && links.length > 0 && (
         <div className="pt-2 border-t border-[var(--tropx-border)]">
-          <p className="text-[10px] font-medium text-[var(--tropx-text-sub)] mb-1.5">
+          <p className="text-xs font-medium text-[var(--tropx-text-sub)] mb-1.5">
             Related Sources
           </p>
           <ul role="list" className="space-y-1">
@@ -87,6 +96,7 @@ export function CitationList({
                   href={link.url}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={(e) => handleLinkClick(e, link.url)}
                   className="flex items-center gap-2 p-1.5 rounded text-xs hover:bg-[var(--tropx-muted)] transition-colors group"
                 >
                   <EvidenceTierBadge tier={link.tier} size="sm" showIcon={false} />
@@ -110,7 +120,7 @@ export function CitationList({
         <button
           type="button"
           onClick={() => setIsExpanded(!isExpanded)}
-          className="flex items-center gap-1 text-[10px] font-medium text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] transition-colors"
+          className="flex items-center gap-1 text-xs font-medium text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] transition-colors"
           aria-expanded={isExpanded}
         >
           <ChevronDown

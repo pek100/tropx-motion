@@ -37,6 +37,7 @@ export const saveAnalysisResult = internalMutation({
       // Store v2 output in analysis field
       analysis: {
         version: 2,
+        overallGrade: pipelineOutput.overallGrade,
         radarScores: pipelineOutput.radarScores,
         keyFindings: pipelineOutput.keyFindings,
         clinicalImplications: pipelineOutput.clinicalImplications,
@@ -46,7 +47,10 @@ export const saveAnalysisResult = internalMutation({
         strengths: pipelineOutput.strengths,
         weaknesses: pipelineOutput.weaknesses,
         recommendations: pipelineOutput.recommendations,
+        speculativeInsights: pipelineOutput.speculativeInsights,
         failedEnrichments: pipelineOutput.failedEnrichments,
+        // Cross-Analysis output (Stage 3)
+        crossAnalysis: pipelineOutput.crossAnalysis,
       },
       tokenUsage: {
         analysis: pipelineOutput.tokenUsage.analysis,
@@ -78,6 +82,7 @@ export const updatePipelineStatus = internalMutation({
       v.literal("pending"),
       v.literal("analyzing"),
       v.literal("researching"),
+      v.literal("cross_analyzing"),
       v.literal("complete"),
       v.literal("error")
     ),
@@ -98,6 +103,7 @@ export const updatePipelineStatus = internalMutation({
     // Map v2 status values to pipeline status values
     const mappedStatus = status === "analyzing" ? "analysis" :
                         status === "researching" ? "research" :
+                        status === "cross_analyzing" ? "progress" : // Use "progress" status for cross-analysis stage
                         status;
 
     // Build error object if present
