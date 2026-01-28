@@ -80,12 +80,16 @@ export function HorusPane({
 }: HorusPaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
+  const chatInnerRef = useRef<HTMLDivElement>(null);
   const draggableRef = useRef<Draggable | null>(null);
+  const animationRef = useRef<gsap.core.Tween | null>(null);
 
   const [chatInput, setChatInput] = useState("");
-  const [chatMinimized, setChatMinimized] = useState(true);
+  const [chatMinimized, setChatMinimized] = useState(true); // Actual state (controls content)
+  const [targetMinimized, setTargetMinimized] = useState(true); // Target state (triggers animation)
   const [userExpanded, setUserExpanded] = useState(false); // Track if user manually expanded
   const wasInZoneRef = useRef(false); // Persist trigger zone state across effect re-runs
+  const isAnimatingRef = useRef(false);
 
   // GSAP Draggable for chat input - fixed to viewport, trapped in pane
   useLayoutEffect(() => {
@@ -173,7 +177,12 @@ export function HorusPane({
 
     // Initialize position (with frame delay to ensure element has rendered)
     chat.style.position = "fixed";
+    const chatInner = chatInnerRef.current;
     requestAnimationFrame(() => {
+      // Ensure inner wrapper starts at scale 1
+      if (chatInner) {
+        gsap.set(chatInner, { scale: 1, transformOrigin: "100% 100%" });
+      }
       if (isPaneVisible()) {
         setInitialPosition();
         gsap.set(chat, { autoAlpha: 1 });
@@ -244,18 +253,27 @@ export function HorusPane({
       draggable.kill();
       draggableRef.current = null;
       gsap.set(chat, { clearProps: "all" });
+      if (chatInner) {
+        gsap.set(chatInner, { clearProps: "all" });
+      }
     };
   }, [selectedSessionId]);
 
-  // Enable/disable draggable and reset position on state change
+  // Animate scale and reset position on state change
   useEffect(() => {
     const chat = chatRef.current;
+    const chatInner = chatInnerRef.current;
     const pane = paneRef.current;
-    if (!chat || !pane) return;
+    if (!chat || !chatInner || !pane) return;
+
+    // Skip if already animating or already at target state
+    if (isAnimatingRef.current || chatMinimized === targetMinimized) {
+      return;
+    }
 
     const padding = 16;
 
-    // Reset position to bottom-right (works for both minimized and expanded)
+    // Reset position to bottom-right
     const resetPosition = () => {
       const paneRect = pane.getBoundingClientRect();
       const vh = window.innerHeight;
@@ -268,11 +286,8 @@ export function HorusPane({
       const visibleLeft = Math.max(paneRect.left, 0) + padding;
       const visibleTop = Math.max(paneRect.top, 0) + padding;
 
-      // Clamp position to stay within visible pane
       let left = visibleRight - chatW;
       let top = visibleBottom - chatH;
-
-      // Ensure it doesn't go past left/top edges
       left = Math.max(left, visibleLeft);
       top = Math.max(top, visibleTop);
 
@@ -281,15 +296,58 @@ export function HorusPane({
       gsap.set(chat, { x: 0, y: 0 });
     };
 
-    if (chatMinimized) {
-      draggableRef.current?.disable();
-    } else {
-      draggableRef.current?.enable();
+    // Kill any ongoing animation
+    if (animationRef.current) {
+      animationRef.current.kill();
     }
 
-    // Wait for size change to take effect, then reset position
-    requestAnimationFrame(resetPosition);
-  }, [chatMinimized]);
+    isAnimatingRef.current = true;
+
+    // Animate: scale down -> swap content -> scale up
+    animationRef.current = gsap.to(chatInner, {
+      scale: 0,
+      duration: 0.1,
+      ease: "power2.in",
+      transformOrigin: "100% 100%", // bottom-right
+      onComplete: () => {
+        // Swap content
+        setChatMinimized(targetMinimized);
+
+        // Enable/disable draggable
+        if (targetMinimized) {
+          draggableRef.current?.disable();
+        } else {
+          draggableRef.current?.enable();
+        }
+
+        // Wait for new content to render, then animate in
+        requestAnimationFrame(() => {
+          // Ensure new content starts at scale 0
+          gsap.set(chatInner, { scale: 0, transformOrigin: "100% 100%" });
+
+          resetPosition();
+
+          animationRef.current = gsap.to(chatInner, {
+            scale: 1,
+            duration: 0.12,
+            ease: "back.out(1.4)",
+            transformOrigin: "100% 100%",
+            onComplete: () => {
+              isAnimatingRef.current = false;
+              animationRef.current = null;
+            },
+          });
+        });
+      },
+    });
+
+    return () => {
+      if (animationRef.current) {
+        animationRef.current.kill();
+        animationRef.current = null;
+      }
+    };
+  }, [targetMinimized, chatMinimized]);
 
   // Auto-expand/collapse chat based on trigger zone at bottom of pane
   useEffect(() => {
@@ -310,12 +368,12 @@ export function HorusPane({
       // Only auto-expand when ENTERING the zone (and not already manually expanded)
       // Skip on initial load - only trigger after user has scrolled
       if (inTriggerZone && !wasInZoneRef.current && !userExpanded && hasScrolled) {
-        setChatMinimized(false);
+        setTargetMinimized(false);
       }
 
       // Only auto-collapse when LEAVING the zone (and not manually expanded)
       if (!inTriggerZone && wasInZoneRef.current && !userExpanded) {
-        setChatMinimized(true);
+        setTargetMinimized(true);
       }
 
       wasInZoneRef.current = inTriggerZone;
@@ -690,24 +748,27 @@ export function HorusPane({
           ref={chatRef}
           className={cn("z-30", chatMinimized ? "w-auto" : "w-[400px]")}
         >
-          <HorusChatInput
-            value={chatInput}
-            onChange={setChatInput}
-            onSend={handleSendQuestion}
-            minimized={chatMinimized}
-            onMinimize={() => {
-              setChatMinimized(true);
-              setUserExpanded(false);
-            }}
-            onExpand={() => {
-              setChatMinimized(false);
-              setUserExpanded(true);
-            }}
-            isLoading={chatLoading}
-            disabled={!selectedSessionId}
-            previousChats={previousChatsForInput}
-            onSelectPreviousChat={handleSelectPreviousChat}
-          />
+          {/* Inner wrapper for scale animation - separate from position transforms */}
+          <div ref={chatInnerRef} className="origin-bottom-right">
+            <HorusChatInput
+              value={chatInput}
+              onChange={setChatInput}
+              onSend={handleSendQuestion}
+              minimized={chatMinimized}
+              onMinimize={() => {
+                setTargetMinimized(true);
+                setUserExpanded(false);
+              }}
+              onExpand={() => {
+                setTargetMinimized(false);
+                setUserExpanded(true);
+              }}
+              isLoading={chatLoading}
+              disabled={!selectedSessionId}
+              previousChats={previousChatsForInput}
+              onSelectPreviousChat={handleSelectPreviousChat}
+            />
+          </div>
         </div>
       )}
     </div>
