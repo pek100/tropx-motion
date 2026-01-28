@@ -8,12 +8,13 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
-import { X, Clock, TrendingUp, RotateCcw } from "lucide-react";
+import { X, Clock, TrendingUp, RotateCcw, ZoomIn, ZoomOut, Home, Move } from "lucide-react";
 import {
-  ComposedChart,
+  ScatterChart,
   Scatter,
   XAxis,
   YAxis,
+  ZAxis,
   Tooltip,
   ResponsiveContainer,
   Cell,
@@ -191,13 +192,54 @@ function MiniRadar({ metrics, color, size = 80 }: MiniRadarProps) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Custom Tooltip with SVG Preview
+// Custom Tooltip with SVG Preview (Viewport Aware)
 // ─────────────────────────────────────────────────────────────────
 
-function CustomTooltip({ active, payload }: any) {
+function CustomTooltip({ active, payload, coordinate }: any) {
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Calculate optimal position based on viewport
+  useEffect(() => {
+    if (!active || !tooltipRef.current || !coordinate) return;
+
+    const tooltip = tooltipRef.current;
+    const rect = tooltip.getBoundingClientRect();
+    const padding = 16;
+
+    let offsetX = 10; // Default offset from cursor
+    let offsetY = 10;
+
+    // Check right edge
+    if (coordinate.x + rect.width + offsetX + padding > window.innerWidth) {
+      offsetX = -rect.width - 10; // Flip to left
+    }
+
+    // Check bottom edge
+    if (coordinate.y + rect.height + offsetY + padding > window.innerHeight) {
+      offsetY = -rect.height - 10; // Flip to top
+    }
+
+    // Check left edge (if flipped)
+    if (coordinate.x + offsetX < padding) {
+      offsetX = padding - coordinate.x;
+    }
+
+    // Check top edge (if flipped)
+    if (coordinate.y + offsetY < padding) {
+      offsetY = padding - coordinate.y;
+    }
+
+    setPosition({ x: offsetX, y: offsetY });
+  }, [active, coordinate]);
+
   if (!active || !payload?.[0]) return null;
 
   const data = payload[0].payload as SessionPoint;
+
+  // Skip tooltip for cluster centroids (they don't have sessionId)
+  if (!data.sessionId) return null;
+
   const date = new Date(data.recordedAt).toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
@@ -208,7 +250,14 @@ function CustomTooltip({ active, payload }: any) {
   const hasMetrics = data.metrics && Object.keys(data.metrics).length > 0;
 
   return (
-    <div className="bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-xl p-4 shadow-xl max-w-sm backdrop-blur-sm">
+    <div
+      ref={tooltipRef}
+      className="bg-[var(--tropx-card)] border border-[var(--tropx-border)] rounded-xl p-4 shadow-xl max-w-sm backdrop-blur-sm"
+      style={{
+        transform: `translate(${position.x}px, ${position.y}px)`,
+        transition: 'transform 0.1s ease-out',
+      }}
+    >
       {/* Header */}
       <div className="flex items-start gap-3 mb-3">
         {/* Mini radar preview */}
@@ -551,14 +600,22 @@ function TimelineSlider({ sessions, range, onChange, onReset }: TimelineSliderPr
 // Gradient Legend
 // ─────────────────────────────────────────────────────────────────
 
-function GradientLegend() {
+function GradientLegend({ clusters }: { clusters?: Array<{ color: string }> }) {
+  // Use first cluster's color as base, or default to vibrant orange
+  const baseColor = clusters?.[0]?.color ?? "#ff4d35";
+  const { h } = hexToHSL(baseColor);
+
+  // Match the getGradientColor logic: older = light/desaturated, newer = dark/saturated
+  const olderColor = hslToString(h, 40, 75);
+  const newerColor = hslToString(h, 85, 40);
+
   return (
     <div className="flex items-center gap-2 text-xs text-[var(--tropx-text-sub)]">
       <span>Older</span>
       <div
         className="w-16 h-2 rounded-full"
         style={{
-          background: "linear-gradient(to right, hsl(14, 40%, 75%), hsl(14, 85%, 40%))"
+          background: `linear-gradient(to right, ${olderColor}, ${newerColor})`
         }}
       />
       <span>Newer</span>
@@ -566,6 +623,94 @@ function GradientLegend() {
   );
 }
 
+
+// ─────────────────────────────────────────────────────────────────
+// Chart Controls (Zoom/Pan)
+// ─────────────────────────────────────────────────────────────────
+
+interface ChartControlsProps {
+  zoom: number;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onReset: () => void;
+  onPan: (dx: number, dy: number) => void;
+}
+
+function ChartControls({ zoom, onZoomIn, onZoomOut, onReset, onPan }: ChartControlsProps) {
+  const panStep = 0.1;
+
+  return (
+    <div className="absolute top-3 right-3 z-10 flex flex-col gap-1 bg-[var(--tropx-card)]/90 backdrop-blur-sm rounded-lg border border-[var(--tropx-border)] p-1.5 shadow-lg">
+      {/* Zoom controls */}
+      <button
+        onClick={onZoomIn}
+        disabled={zoom >= 4}
+        className="p-1.5 rounded hover:bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        title="Zoom in"
+      >
+        <ZoomIn className="w-4 h-4" />
+      </button>
+      <button
+        onClick={onZoomOut}
+        disabled={zoom <= 0.5}
+        className="p-1.5 rounded hover:bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        title="Zoom out"
+      >
+        <ZoomOut className="w-4 h-4" />
+      </button>
+
+      <div className="h-px bg-[var(--tropx-border)] my-0.5" />
+
+      {/* Pan controls */}
+      <div className="grid grid-cols-3 gap-0.5">
+        <div />
+        <button
+          onClick={() => onPan(0, panStep)}
+          className="p-1 rounded hover:bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text)] transition-colors"
+          title="Pan up"
+        >
+          <Move className="w-3 h-3 rotate-[-90deg]" />
+        </button>
+        <div />
+        <button
+          onClick={() => onPan(panStep, 0)}
+          className="p-1 rounded hover:bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text)] transition-colors"
+          title="Pan left"
+        >
+          <Move className="w-3 h-3 rotate-180" />
+        </button>
+        <button
+          onClick={onReset}
+          className="p-1 rounded hover:bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text)] transition-colors"
+          title="Reset view"
+        >
+          <Home className="w-3 h-3" />
+        </button>
+        <button
+          onClick={() => onPan(-panStep, 0)}
+          className="p-1 rounded hover:bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text)] transition-colors"
+          title="Pan right"
+        >
+          <Move className="w-3 h-3" />
+        </button>
+        <div />
+        <button
+          onClick={() => onPan(0, -panStep)}
+          className="p-1 rounded hover:bg-[var(--tropx-muted)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text)] transition-colors"
+          title="Pan down"
+        >
+          <Move className="w-3 h-3 rotate-90" />
+        </button>
+        <div />
+      </div>
+
+      {/* Zoom level indicator */}
+      <div className="text-[10px] text-center text-[var(--tropx-text-sub)] mt-0.5">
+        {Math.round(zoom * 100)}%
+      </div>
+    </div>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────
 // Main Component
@@ -578,7 +723,31 @@ export function VectorVisualizationModal({
   patientName,
 }: VectorVisualizationModalProps) {
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
-  const [showTrails, setShowTrails] = useState(false);
+  const [showTrails, setShowTrails] = useState(true);
+
+  // Zoom and pan state
+  const [zoom, setZoom] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+
+  const handleZoomIn = useCallback(() => {
+    setZoom((z) => Math.min(z * 1.25, 4));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoom((z) => Math.max(z / 1.25, 0.5));
+  }, []);
+
+  const handleResetView = useCallback(() => {
+    setZoom(1);
+    setPanOffset({ x: 0, y: 0 });
+  }, []);
+
+  const handlePan = useCallback((dx: number, dy: number) => {
+    setPanOffset((prev) => ({
+      x: prev.x + dx,
+      y: prev.y + dy,
+    }));
+  }, []);
 
   // Fetch visualization data
   const vizData = useQuery(
@@ -600,10 +769,12 @@ export function VectorVisualizationModal({
   // Effective range (default to all sessions)
   const effectiveRange: [number, number] = sessionRange ?? [0, sortedSessions.length - 1];
 
-  // Reset range when modal opens with new data
+  // Reset state when modal opens with new data
   useEffect(() => {
     if (open && vizData) {
       setSessionRange(null);
+      setZoom(1);
+      setPanOffset({ x: 0, y: 0 });
     }
   }, [open, vizData?.totalSessions]);
 
@@ -671,6 +842,45 @@ export function VectorVisualizationModal({
     }));
   }, [vizData, sortedSessions, showTrails, effectiveRange]);
 
+  // Calculate zoomed/panned domain
+  const chartDomain = useMemo(() => {
+    if (!chartData.length) return null;
+
+    // Get data bounds
+    const xs = chartData.map((d) => d.x);
+    const ys = chartData.map((d) => d.y);
+    const dataMinX = Math.min(...xs);
+    const dataMaxX = Math.max(...xs);
+    const dataMinY = Math.min(...ys);
+    const dataMaxY = Math.max(...ys);
+
+    // Add base padding (10%)
+    const padX = Math.abs(dataMaxX - dataMinX) * 0.1 || 1;
+    const padY = Math.abs(dataMaxY - dataMinY) * 0.1 || 1;
+
+    const baseMinX = dataMinX - padX;
+    const baseMaxX = dataMaxX + padX;
+    const baseMinY = dataMinY - padY;
+    const baseMaxY = dataMaxY + padY;
+
+    // Calculate center and range
+    const centerX = (baseMinX + baseMaxX) / 2;
+    const centerY = (baseMinY + baseMaxY) / 2;
+    const rangeX = (baseMaxX - baseMinX) / zoom;
+    const rangeY = (baseMaxY - baseMinY) / zoom;
+
+    // Apply pan offset (scaled by range)
+    const offsetX = panOffset.x * (baseMaxX - baseMinX);
+    const offsetY = panOffset.y * (baseMaxY - baseMinY);
+
+    return {
+      minX: centerX - rangeX / 2 + offsetX,
+      maxX: centerX + rangeX / 2 + offsetX,
+      minY: centerY - rangeY / 2 + offsetY,
+      maxY: centerY + rangeY / 2 + offsetY,
+    };
+  }, [chartData, zoom, panOffset]);
+
   const handleClose = useCallback(() => onOpenChange(false), [onOpenChange]);
 
   const handleResetRange = useCallback(() => {
@@ -701,7 +911,7 @@ export function VectorVisualizationModal({
             "bg-[var(--tropx-card)] rounded-2xl shadow-2xl border border-[var(--tropx-border)]",
             "data-[state=open]:animate-[modal-bubble-in_0.2s_var(--spring-bounce)_forwards]",
             "data-[state=closed]:animate-[modal-bubble-out_0.12s_var(--spring-smooth)_forwards]",
-            "pointer-events-auto overflow-hidden"
+            "pointer-events-auto"
           )}
           onPointerDownOutside={handleClose}
         >
@@ -745,7 +955,7 @@ export function VectorVisualizationModal({
           </div>
 
           {/* Main content */}
-          <div className="flex-1 flex flex-col p-4 gap-3 overflow-hidden">
+          <div className="flex-1 flex flex-col p-4 gap-3 min-h-0">
             {!vizData ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
@@ -769,7 +979,7 @@ export function VectorVisualizationModal({
                   />
 
                   {/* Gradient legend */}
-                  <GradientLegend />
+                  <GradientLegend clusters={vizData.clusters} />
                 </div>
 
                 {/* Timeline slider */}
@@ -783,21 +993,31 @@ export function VectorVisualizationModal({
                 </div>
 
                 {/* Chart */}
-                <div className="flex-1 min-h-0 bg-[var(--tropx-muted)]/20 rounded-xl p-2 relative">
+                <div className="flex-1 min-h-0 bg-[var(--tropx-muted)]/20 rounded-xl p-2 relative overflow-visible">
+                  {/* Zoom/Pan Controls */}
+                  <ChartControls
+                    zoom={zoom}
+                    onZoomIn={handleZoomIn}
+                    onZoomOut={handleZoomOut}
+                    onReset={handleResetView}
+                    onPan={handlePan}
+                  />
+
                   <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart
+                    <ScatterChart
                       margin={{ top: 16, right: 16, bottom: 32, left: 32 }}
                     >
                       <XAxis
                         type="number"
                         dataKey="x"
-                        domain={[vizData.bounds.minX, vizData.bounds.maxX]}
+                        domain={chartDomain ? [chartDomain.minX, chartDomain.maxX] : ['auto', 'auto']}
                         name="PC1"
                         tickFormatter={tickFormatter}
                         tick={{ fill: "var(--tropx-text-sub)", fontSize: 10 }}
                         axisLine={{ stroke: "var(--tropx-border)", strokeOpacity: 0.5 }}
                         tickLine={false}
                         tickCount={7}
+                        allowDataOverflow
                         label={{
                           value: "Component 1",
                           position: "bottom",
@@ -809,13 +1029,14 @@ export function VectorVisualizationModal({
                       <YAxis
                         type="number"
                         dataKey="y"
-                        domain={[vizData.bounds.minY, vizData.bounds.maxY]}
+                        domain={chartDomain ? [chartDomain.minY, chartDomain.maxY] : ['auto', 'auto']}
                         name="PC2"
                         tickFormatter={tickFormatter}
                         tick={{ fill: "var(--tropx-text-sub)", fontSize: 10 }}
                         axisLine={{ stroke: "var(--tropx-border)", strokeOpacity: 0.5 }}
                         tickLine={false}
                         tickCount={7}
+                        allowDataOverflow
                         label={{
                           value: "Component 2",
                           angle: -90,
@@ -888,26 +1109,29 @@ export function VectorVisualizationModal({
                         />
                       )}
 
+                      {/* Z-axis for point sizing */}
+                      <ZAxis type="number" range={[200, 200]} />
+
                       {/* Session points */}
                       <Scatter
+                        name="sessions"
                         data={chartData}
-                        shape="circle"
                         fill="#888"
+                        isAnimationActive={false}
                       >
                         {chartData.map((entry: SessionPoint) => (
                           <Cell
                             key={entry.sessionId}
                             fill={entry.displayColor}
-                            fillOpacity={0.9}
                             stroke={entry.baseColor}
                             strokeWidth={1.5}
-                            style={{ cursor: 'pointer' }}
                           />
                         ))}
                       </Scatter>
 
                       {/* Cluster centroids */}
                       <Scatter
+                        name="centroids"
                         data={vizData.clusters.map((c: any) => ({
                           x: c.centroid2D.x,
                           y: c.centroid2D.y,
@@ -916,6 +1140,7 @@ export function VectorVisualizationModal({
                         }))}
                         shape="diamond"
                         fill="#fff"
+                        isAnimationActive={false}
                       >
                         {vizData.clusters.map((c: any) => (
                           <Cell
@@ -930,8 +1155,11 @@ export function VectorVisualizationModal({
                       <Tooltip
                         content={<CustomTooltip />}
                         cursor={{ strokeDasharray: '3 3', stroke: 'var(--tropx-vibrant)', strokeOpacity: 0.5 }}
+                        wrapperStyle={{ zIndex: 9999 }}
+                        allowEscapeViewBox={{ x: true, y: true }}
+                        trigger="hover"
                       />
-                    </ComposedChart>
+                    </ScatterChart>
                   </ResponsiveContainer>
                 </div>
 

@@ -102,7 +102,8 @@
       "WebFetch(domain:paulwallas.medium.com)",
       "WebFetch(domain:www.freshconsulting.com)",
       "WebFetch(domain:ui.shadcn.com)",
-      "WebFetch(domain:www.tremor.so)"
+      "WebFetch(domain:www.tremor.so)",
+      "WebFetch(domain:gsap.com)"
     ],
     "deny": [],
     "ask": [],

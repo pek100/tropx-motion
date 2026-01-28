@@ -1,6 +1,6 @@
 {
   "name": "tropx-motion",
-  "version": "1.6.65",
+  "version": "1.6.7",
   "description": "Motion Capture Application with Real-time WebSocket Streaming",
   "main": "dist/main/electron/main/main.js",
   "scripts": {
@@ -132,6 +132,7 @@
     "embla-carousel-react": "^8.6.0",
     "fflate": "^0.8.2",
     "framer-motion": "^11.13.1",
+    "gsap": "^3.14.2",
     "lexical": "^0.39.0",
     "lodash": "^4.17.21",
     "lucide-react": "^0.468.0",
