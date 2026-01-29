@@ -667,7 +667,13 @@ export function HorusPane({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={handleCloseFullscreen}
+            onClick={() => {
+              handleCloseFullscreen();
+              if (!activeChatId) {
+                setIsMinimized(true);
+                userExpandedRef.current = false;
+              }
+            }}
           />
         )}
       </AnimatePresence>
