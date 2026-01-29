@@ -7,7 +7,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import { Send, History, Minus, Pencil, Trash2, RotateCcw, Copy, Check, User, GitBranch, Maximize2, X, Plus, ArrowLeft, MessageSquare } from "lucide-react";
+import { Send, History, Minus, Pencil, Trash2, RotateCcw, Copy, Check, User, GitBranch, Maximize2, Minimize2, X, Plus, ArrowLeft, MessageSquare } from "lucide-react";
 import { AtomSpin } from "@/components/AtomSpin";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -313,6 +313,56 @@ export function HorusChatInput({
         background: `linear-gradient(135deg, transparent 0%, rgba(var(--tropx-vibrant-rgb), 0.08) 100%), var(--tropx-bg)`,
       }}
     >
+      {/* Window controls - top right when expanded */}
+      {isExpanded && (
+        <div className="absolute top-3 right-4 z-10 flex items-center gap-0.5">
+          {/* Minimize */}
+          {onMinimize && !isFullscreen && (
+            <button
+              type="button"
+              onClick={onMinimize}
+              className="p-1 rounded-full text-[var(--tropx-text-sub)]/60 hover:text-[var(--tropx-text-main)] hover:bg-[var(--tropx-card)] transition-colors"
+              title="Minimize"
+            >
+              <Minus className="size-3.5" />
+            </button>
+          )}
+          {/* Scale: maximize when normal, scale-down when fullscreen */}
+          {isFullscreen ? (
+            onCloseFullscreen && (
+              <button
+                type="button"
+                onClick={onCloseFullscreen}
+                className="p-1 rounded-full text-[var(--tropx-text-sub)]/60 hover:text-[var(--tropx-text-main)] hover:bg-[var(--tropx-card)] transition-colors"
+                title="Exit fullscreen"
+              >
+                <Minimize2 className="size-3.5" />
+              </button>
+            )
+          ) : (
+            onOpenModal && (
+              <button
+                type="button"
+                onClick={onOpenModal}
+                className="p-1 rounded-full text-[var(--tropx-text-sub)]/60 hover:text-[var(--tropx-text-main)] hover:bg-[var(--tropx-card)] transition-colors"
+                title="Fullscreen"
+              >
+                <Maximize2 className="size-3.5" />
+              </button>
+            )
+          )}
+          {/* Close chat (clear + minimize) */}
+          <button
+            type="button"
+            onClick={() => { onNewChat?.(); onMinimize?.(); }}
+            className="p-1 rounded-full text-[var(--tropx-text-sub)]/60 hover:text-[var(--tropx-text-main)] hover:bg-[var(--tropx-card)] transition-colors"
+            title="Close chat"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* History row at top when expanded */}
       {isExpanded && (recentChats.length > 0 || chatHistory.length > 0) && (
         <div className="flex items-center gap-1.5 pt-3 pb-2 overflow-x-auto scrollbar-none shrink-0">
@@ -394,8 +444,8 @@ export function HorusChatInput({
           </div>
 
           {/* Chat rows */}
-          <ScrollArea className={cn(isFullscreen ? "flex-1 min-h-0" : "h-[400px]")}>
-            <div className="flex flex-col gap-1 pr-4 pb-2">
+          <ScrollArea className={cn(isFullscreen ? "flex-1 min-h-0" : "h-[400px]")} onPointerDownCapture={(e) => e.stopPropagation()}>
+            <div className="flex flex-col gap-1 pr-4 pb-2 select-text">
               {allChats.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-8 text-[var(--tropx-text-sub)]/60">
                   <MessageSquare className="size-6 mb-2 opacity-40" />
@@ -416,25 +466,48 @@ export function HorusChatInput({
                       {/* Chat info */}
                       <div className="flex-1 min-w-0">
                         {renamingChatId === chat.sessionId ? (
-                          <input
-                            type="text"
-                            value={renameValue}
-                            onChange={(e) => setRenameValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && renameValue.trim()) {
-                                onRenameChat?.(chat.sessionId, renameValue.trim());
+                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()} onPointerDownCapture={(e) => e.stopPropagation()}>
+                            <input
+                              type="text"
+                              value={renameValue}
+                              onChange={(e) => setRenameValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && renameValue.trim()) {
+                                  onRenameChat?.(chat.sessionId, renameValue.trim());
+                                  setRenamingChatId(null);
+                                  setRenameValue("");
+                                }
+                                if (e.key === "Escape") {
+                                  setRenamingChatId(null);
+                                  setRenameValue("");
+                                }
+                              }}
+                              className="flex-1 min-w-0 px-2 py-0.5 text-sm bg-[var(--tropx-bg)] border border-[var(--tropx-border)] rounded-md text-[var(--tropx-text-main)] focus:outline-none focus:ring-1 focus:ring-[var(--tropx-vibrant)]"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (renameValue.trim()) {
+                                  onRenameChat?.(chat.sessionId, renameValue.trim());
+                                }
                                 setRenamingChatId(null);
                                 setRenameValue("");
-                              }
-                              if (e.key === "Escape") {
-                                setRenamingChatId(null);
-                                setRenameValue("");
-                              }
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-full px-2 py-0.5 text-sm bg-[var(--tropx-bg)] border border-[var(--tropx-border)] rounded-md text-[var(--tropx-text-main)] focus:outline-none focus:ring-1 focus:ring-[var(--tropx-vibrant)]"
-                            autoFocus
-                          />
+                              }}
+                              className="p-1 rounded-md text-green-500 hover:bg-green-500/10 transition-colors"
+                              title="Save"
+                            >
+                              <Check className="size-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setRenamingChatId(null); setRenameValue(""); }}
+                              className="p-1 rounded-md text-[var(--tropx-text-sub)]/60 hover:text-[var(--tropx-text-main)] hover:bg-[var(--tropx-border)] transition-colors"
+                              title="Cancel"
+                            >
+                              <X className="size-3.5" />
+                            </button>
+                          </div>
                         ) : (
                           <div className="text-sm font-medium text-[var(--tropx-text-main)] truncate">
                             {chat.name || chat.preview}
@@ -486,8 +559,8 @@ export function HorusChatInput({
 
       {/* Message area - scrollable container with all messages (hidden when chat list is open) */}
       {isExpanded && !showChatList && (
-        <ScrollArea className={cn(isFullscreen ? "flex-1 min-h-0" : "h-[400px]", "pb-2")}>
-          <div className="flex flex-col gap-3 pt-3 pr-4">
+        <ScrollArea className={cn(isFullscreen ? "flex-1 min-h-0" : "h-[400px]", "pb-2")} onPointerDownCapture={(e) => e.stopPropagation()}>
+          <div className="flex flex-col gap-3 pt-3 pr-4 select-text">
           {/* Render all messages from history */}
           {chatHistory.map((msg) => (
             <div
@@ -778,6 +851,7 @@ export function HorusChatInput({
           "transition-all duration-200",
           "focus-within:shadow-[0_0_0_1px_rgba(var(--tropx-vibrant-rgb),0.4)]"
         )}
+        onPointerDownCapture={(e) => e.stopPropagation()}
       >
         {/* Atom icon - only show when no chat */}
         {!isExpanded && (
@@ -818,38 +892,8 @@ export function HorusChatInput({
           <Send className="size-4" />
         </button>
 
-        {/* Expand to fullscreen button (only when not fullscreen) */}
-        {onOpenModal && !isFullscreen && (
-          <button
-            type="button"
-            onClick={onOpenModal}
-            className={cn(
-              "flex-shrink-0 p-1 rounded-full transition-all duration-150",
-              "text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] cursor-pointer"
-            )}
-            title="Open full chat"
-          >
-            <Maximize2 className="size-4" />
-          </button>
-        )}
-
-        {/* Close fullscreen button (only when fullscreen) */}
-        {isFullscreen && onCloseFullscreen && (
-          <button
-            type="button"
-            onClick={onCloseFullscreen}
-            className={cn(
-              "flex-shrink-0 p-1 rounded-full transition-all duration-150",
-              "text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] cursor-pointer"
-            )}
-            title="Close"
-          >
-            <X className="size-4" />
-          </button>
-        )}
-
-        {/* Minimize button (only when not fullscreen) */}
-        {onMinimize && !isFullscreen && (
+        {/* Minimize button - only in collapsed (non-expanded) input */}
+        {!isExpanded && onMinimize && (
           <button
             type="button"
             onClick={onMinimize}

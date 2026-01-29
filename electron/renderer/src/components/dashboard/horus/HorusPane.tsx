@@ -158,6 +158,7 @@ export function HorusPane({
   const wasInZoneRef = useRef(false);
   const isInitializedRef = useRef(false);
   const userExpandedRef = useRef(false); // Use ref for immediate access in scroll handler
+  const hasAnalysisRef = useRef(false);
 
   // Position state for fixed positioning
   const [chatPosition, setChatPosition] = useState<{ bottom: number; left: number } | null>(null);
@@ -192,6 +193,7 @@ export function HorusPane({
   const deleteChatMutation = useMutation(api.horus.chat.deleteChat);
   const askAnalysis = useAction(api.horus.userQuery.askAnalysis);
   const v2Analysis = useV2Analysis(selectedSessionId ?? undefined);
+  hasAnalysisRef.current = !!v2Analysis.output;
 
   // ─────────────────────────────────────────────────────────────────
   // Chat Message Handler (DRY: single function for all send operations)
@@ -544,7 +546,7 @@ export function HorusPane({
     const checkTriggerZone = () => {
       // Skip if user manually expanded or pane has no analysis content
       if (userExpandedRef.current) return;
-      if (!v2Analysis.output) return;
+      if (!hasAnalysisRef.current) return;
 
       const paneRect = pane.getBoundingClientRect();
       const vh = window.innerHeight;
