@@ -363,8 +363,8 @@ export function HorusChatInput({
         </div>
       )}
 
-      {/* History row at top when expanded */}
-      {isExpanded && (recentChats.length > 0 || chatHistory.length > 0) && (
+      {/* History row at top when expanded (hidden when chat list is open) */}
+      {isExpanded && !showChatList && (recentChats.length > 0 || chatHistory.length > 0) && (
         <div className="flex items-center gap-1.5 pt-3 pb-2 overflow-x-auto scrollbar-none shrink-0">
           {/* New chat button - shown when there's an active chat */}
           {chatHistory.length > 0 && onNewChat && (
@@ -430,7 +430,7 @@ export function HorusChatInput({
           {/* Header */}
           <div className="flex items-center gap-2 py-2 shrink-0">
             <button
-              onClick={() => setShowChatList(false)}
+              onClick={() => { setShowChatList(false); if (isFullscreen) onCloseFullscreen?.(); }}
               className="p-1 rounded-full hover:bg-[var(--tropx-card)] text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] transition-colors"
             >
               <ArrowLeft className="size-4" />
@@ -841,8 +841,8 @@ export function HorusChatInput({
         </ScrollArea>
       )}
 
-      {/* Input row - pill shaped (hidden when chat list is open) */}
-      {!showChatList && <div
+      {/* Input row - pill shaped */}
+      {<div
         className={cn(
           isExpanded ? "relative mt-2 mb-2" : "absolute inset-x-0 top-0",
           "flex items-center gap-2 px-3 py-1.5",
@@ -892,7 +892,21 @@ export function HorusChatInput({
           <Send className="size-4" />
         </button>
 
-        {/* Minimize button - only in collapsed (non-expanded) input */}
+        {/* Scale up button - only in collapsed input */}
+        {!isExpanded && onOpenModal && (
+          <button
+            type="button"
+            onClick={() => { setShowChatList(true); onOpenModal?.(); }}
+            className={cn(
+              "flex-shrink-0 p-1 rounded-full transition-all duration-150",
+              "text-[var(--tropx-text-sub)] hover:text-[var(--tropx-text-main)] cursor-pointer"
+            )}
+            title="Open full chat"
+          >
+            <Maximize2 className="size-4" />
+          </button>
+        )}
+        {/* Minimize button - only in collapsed input */}
         {!isExpanded && onMinimize && (
           <button
             type="button"

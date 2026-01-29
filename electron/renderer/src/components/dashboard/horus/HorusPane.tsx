@@ -676,7 +676,7 @@ export function HorusPane({
       <AnimatePresence>
         {selectedSessionId && (chatPosition || isFullscreen) && (
           <motion.div
-            key={isFullscreen ? "fullscreen" : isMinimized ? "minimized" : "expanded"}
+            key={isMinimized ? "minimized" : "active"}
             className={cn(
               "fixed origin-bottom-right",
               isFullscreen
