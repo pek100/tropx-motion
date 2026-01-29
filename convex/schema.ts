@@ -1017,6 +1017,8 @@ export default defineSchema({
   horusChatHistory: defineTable({
     sessionId: v.string(),
     patientId: v.optional(v.id("users")),
+    ownerId: v.optional(v.id("users")), // User who created this chat
+    name: v.optional(v.string()), // AI-generated or user-set chat name
 
     // Array of chat messages
     messages: v.array(
@@ -1026,6 +1028,7 @@ export default defineSchema({
         content: v.string(),
         blocks: v.optional(v.any()), // Visualization blocks for assistant responses
         timestamp: v.number(),
+        userId: v.optional(v.id("users")), // Who sent this message (for user-role messages)
       })
     ),
 

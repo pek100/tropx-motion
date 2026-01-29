@@ -1,8 +1,8 @@
 /**
- * User Query Handler for Horus AI
+ * User Query Handler for Horus AI (V2)
  *
- * Allows users to ask questions about their analysis directly.
- * The AI responds with validated visualization blocks.
+ * Enhanced chat with full context injection from the V2 analysis pipeline.
+ * Includes enriched sections, cross-analysis, and all session metrics.
  */
 
 import { action, internalAction, internalMutation, query } from "../_generated/server";
@@ -10,17 +10,34 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { SessionMetrics, TokenUsage } from "./types";
+import type {
+  V2PipelineOutput,
+  EnrichedSection,
+  RadarScores,
+  KeyFinding,
+  QualityLink,
+} from "./v2/types";
+import type { CrossAnalysisOutput } from "./crossAnalysis/types";
+import { hasFullCrossAnalysis } from "./crossAnalysis/types";
 import { getValidTagsForPrompt } from "./metricTags";
 
 // ─────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────
 
+/** Link returned in chat response */
+interface ResponseLink {
+  url: string;
+  title: string;
+  relevance: string;
+}
+
 interface UserQueryResult {
   success: boolean;
   response?: {
     blocks: unknown[];
     textResponse?: string;
+    links?: ResponseLink[];
   };
   error?: string;
   tokenUsage?: TokenUsage;
@@ -140,24 +157,24 @@ export const runUserQueryAgent = internalAction({
   },
   handler: async (ctx, args): Promise<{
     success: boolean;
-    response?: { blocks: unknown[]; textResponse?: string };
+    response?: { blocks: unknown[]; textResponse?: string; links?: ResponseLink[] };
     error?: string;
     tokenUsage?: TokenUsage;
   }> => {
     const { userPrompt, existingAnalysis, metrics, chatHistory } = args;
 
     try {
-      // Build the prompt
+      // Build the prompt with full V2 context
       const systemPrompt = buildUserQuerySystemPrompt();
-      const userMessage = buildUserQueryMessage(userPrompt, existingAnalysis, metrics, chatHistory);
+      const userMessage = buildFullV2ChatContext(userPrompt, existingAnalysis, metrics, chatHistory);
 
       // Call the LLM with structured output
       const llmResult = await ctx.runAction(internal.horus.llm.vertex.callVertexAI, {
         systemPrompt,
         userPrompt: userMessage,
         responseSchema: USER_QUERY_RESPONSE_SCHEMA,
-        temperature: 0.3, // Lower temperature for more focused responses
-        maxTokens: 2048,
+        temperature: 0.3,
+        maxTokens: 4096, // Increased for richer responses
       });
 
       if (!llmResult.text) {
@@ -172,14 +189,15 @@ export const runUserQueryAgent = internalAction({
         return { success: false, error: "Failed to parse AI response" };
       }
 
-      // Validate the response
-      const validated = validateUserQueryResponse(parsedOutput);
+      // Validate the response and extract relevant links
+      const validated = validateUserQueryResponse(parsedOutput, existingAnalysis);
 
       return {
         success: true,
         response: {
           blocks: validated.blocks,
           textResponse: validated.textResponse,
+          links: validated.links,
         },
         tokenUsage: llmResult.tokenUsage,
       };
@@ -197,106 +215,280 @@ export const runUserQueryAgent = internalAction({
 // ─────────────────────────────────────────────────────────────────
 
 function buildUserQuerySystemPrompt(): string {
-  return `You are a clinical movement analysis AI assistant. Users will ask questions about their rehabilitation session analysis.
+  return `You are a friendly movement analysis assistant helping patients understand their rehabilitation progress.
 
-Your role is to:
-1. Answer questions clearly and concisely
-2. Reference specific metrics from the session data
-3. Provide visualization blocks when helpful
-4. Maintain clinical accuracy
+YOUR COMMUNICATION STYLE:
+- Explain findings in plain language, avoiding medical jargon
+- When using technical terms, immediately explain what they mean
+- Use analogies to make concepts relatable (e.g., "Think of it like...")
+- Be encouraging while being honest about areas that need work
+- Keep responses concise but complete
 
-IMPORTANT RULES:
-- Only use metrics that exist in the provided data
-- Use ONLY these valid metric tags for visualization blocks:
-${getValidTagsForPrompt()}
+YOU HAVE FULL CONTEXT:
+You have access to the complete analysis including:
+- All session metrics (flexibility, speed, symmetry, etc.)
+- Detailed clinical sections with evidence-backed findings
+- Research citations and scientific sources
+- Cross-analysis comparing to previous sessions (if available)
+- Q&A reasoning explaining why each finding was flagged
 
-- Be helpful but don't make claims beyond what the data supports
-- If asked about something not in the data, say so clearly
-- Keep responses focused and actionable
+USE THIS CONTEXT TO:
+- Answer "why" questions by referencing the QA reasoning
+- Cite specific evidence when discussing findings
+- Compare to baseline/history when relevant
+- Reference the userExplanation fields for patient-friendly summaries
 
 RESPONSE FORMAT:
-You must respond with a JSON object containing:
-1. "textResponse": A clear, conversational answer to the user's question
-2. "blocks": An array of visualization blocks (can be empty if just text is needed)
-
-Block types you can use:
-- "stat_card": Show a single metric value
-  { type: "stat_card", title: "Label for metric", metric: "<TAG>" }
-
-- "comparison_card": Compare left vs right leg
-  { type: "comparison_card", title: "Comparison title", leftMetric: "<LEFT_TAG>", rightMetric: "<RIGHT_TAG>", leftLabel: "Left Leg", rightLabel: "Right Leg", showDifference: true }
-
-- "alert_card": Highlight important info
-  { type: "alert_card", title: "Alert title", description: "Details...", severity: "info"|"warning"|"success" }
-
-IMPORTANT: Use EXACT block type names (stat_card, comparison_card, alert_card). Do not use abbreviated names.`;
+Respond with a JSON object:
+{
+  "textResponse": "Your friendly, clear answer",
+  "blocks": [...visualization blocks if helpful...],
+  "citedSections": ["section-id-1", "section-id-2"] // IDs of sections you referenced
 }
 
-function buildUserQueryMessage(
+VISUALIZATION BLOCKS (use sparingly, only when they add value):
+- "stat_card": { type: "stat_card", title: "Label", metric: "<TAG>" }
+- "comparison_card": { type: "comparison_card", title: "Title", leftMetric: "<LEFT_TAG>", rightMetric: "<RIGHT_TAG>" }
+- "alert_card": { type: "alert_card", title: "Title", description: "...", severity: "info"|"warning"|"success" }
+
+Valid metric tags:
+${getValidTagsForPrompt()}
+
+IMPORTANT:
+- Reference specific findings from the analysis, don't make things up
+- If the user asks about something not covered, say so honestly
+- When citing research, mention the source naturally (e.g., "Research shows..." or "Studies have found...")`;
+}
+
+/**
+ * Build full V2 chat context with all pipeline outputs.
+ * Structured as markdown for optimal LLM comprehension.
+ */
+function buildFullV2ChatContext(
   userPrompt: string,
   existingAnalysis: unknown,
   metrics: SessionMetrics,
   chatHistory: ChatHistoryMessage[]
 ): string {
-  const analysis = existingAnalysis as {
-    summary?: string;
-    insights?: Array<{ title: string; content: string }>;
-    strengths?: string[];
-    weaknesses?: string[];
-  };
+  const analysis = existingAnalysis as Partial<V2PipelineOutput>;
+  const sections: string[] = [];
 
-  // Build conversation history section
-  let conversationContext = "";
+  // 1. Conversation history
   if (chatHistory.length > 0) {
-    conversationContext = `## Previous Conversation
-${chatHistory.map((msg) => `${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}`).join("\n\n")}
-
----
-
-`;
+    sections.push(`## Previous Conversation
+${chatHistory.map((msg) => `**${msg.role === "user" ? "Patient" : "Assistant"}:** ${msg.content}`).join("\n\n")}`);
   }
 
-  return `${conversationContext}## Current Question
-${userPrompt}
+  // 2. Current question
+  sections.push(`## Current Question
+${userPrompt}`);
 
-## Session Analysis Summary
-${analysis.summary || "No summary available"}
+  // 3. Overall assessment
+  sections.push(`## Overall Assessment
+**Grade:** ${analysis.overallGrade || "N/A"}
+**Summary:** ${analysis.summary || "No summary available"}
 
-## Key Strengths
-${analysis.strengths?.join("\n- ") || "None identified"}
+### Performance Radar (1-10 scale)
+${formatRadarScores(analysis.radarScores)}
 
-## Key Weaknesses
-${analysis.weaknesses?.join("\n- ") || "None identified"}
+### Key Findings
+${formatKeyFindings(analysis.keyFindings)}
 
-## Session Metrics
+### Strengths
+${analysis.strengths?.map(s => `- ${s}`).join("\n") || "- None identified"}
+
+### Areas for Improvement
+${analysis.weaknesses?.map(w => `- ${w}`).join("\n") || "- None identified"}`);
+
+  // 4. Enriched sections (the meat of the analysis)
+  if (analysis.enrichedSections?.length) {
+    sections.push(`## Detailed Findings
+
+${analysis.enrichedSections.map(section => formatEnrichedSection(section)).join("\n\n---\n\n")}`);
+  }
+
+  // 5. Cross-analysis (if available)
+  if (analysis.crossAnalysis && hasFullCrossAnalysis(analysis.crossAnalysis)) {
+    sections.push(formatCrossAnalysis(analysis.crossAnalysis));
+  }
+
+  // 6. Raw metrics (for precise queries)
+  sections.push(`## Session Metrics (Raw Data)
 
 ### Left Leg
 - Peak Flexion: ${metrics.leftLeg.peakFlexion.toFixed(1)}°
 - Peak Extension: ${metrics.leftLeg.peakExtension.toFixed(1)}°
 - Average ROM: ${metrics.leftLeg.averageRom.toFixed(1)}°
 - Max ROM: ${metrics.leftLeg.overallMaxRom.toFixed(1)}°
-- Velocity: ${metrics.leftLeg.peakAngularVelocity.toFixed(0)}°/s
-- Power: ${metrics.leftLeg.explosivenessConcentric.toFixed(0)} W/kg
-- Jerk: ${metrics.leftLeg.rmsJerk.toFixed(1)}
+- Peak Velocity: ${metrics.leftLeg.peakAngularVelocity.toFixed(0)}°/s
+- Concentric Power: ${metrics.leftLeg.explosivenessConcentric.toFixed(1)} W/kg
+- Loading Power: ${metrics.leftLeg.explosivenessLoading.toFixed(1)} W/kg
+- Movement Smoothness (Jerk): ${metrics.leftLeg.rmsJerk.toFixed(1)}
+- Consistency (ROM CoV): ${metrics.leftLeg.romCoV.toFixed(1)}%
 
 ### Right Leg
 - Peak Flexion: ${metrics.rightLeg.peakFlexion.toFixed(1)}°
 - Peak Extension: ${metrics.rightLeg.peakExtension.toFixed(1)}°
 - Average ROM: ${metrics.rightLeg.averageRom.toFixed(1)}°
 - Max ROM: ${metrics.rightLeg.overallMaxRom.toFixed(1)}°
-- Velocity: ${metrics.rightLeg.peakAngularVelocity.toFixed(0)}°/s
-- Power: ${metrics.rightLeg.explosivenessConcentric.toFixed(0)} W/kg
-- Jerk: ${metrics.rightLeg.rmsJerk.toFixed(1)}
+- Peak Velocity: ${metrics.rightLeg.peakAngularVelocity.toFixed(0)}°/s
+- Concentric Power: ${metrics.rightLeg.explosivenessConcentric.toFixed(1)} W/kg
+- Loading Power: ${metrics.rightLeg.explosivenessLoading.toFixed(1)} W/kg
+- Movement Smoothness (Jerk): ${metrics.rightLeg.rmsJerk.toFixed(1)}
+- Consistency (ROM CoV): ${metrics.rightLeg.romCoV.toFixed(1)}%
 
-### Bilateral/Symmetry
+### Symmetry & Coordination
 - ROM Asymmetry: ${metrics.bilateral.romAsymmetry.toFixed(1)}%
 - Velocity Asymmetry: ${metrics.bilateral.velocityAsymmetry.toFixed(1)}%
-- Cross Correlation: ${metrics.bilateral.crossCorrelation.toFixed(2)}
-- Net Asymmetry: ${metrics.bilateral.netGlobalAsymmetry.toFixed(1)}%
+- Cross Correlation: ${metrics.bilateral.crossCorrelation.toFixed(3)}
+- Net Global Asymmetry: ${metrics.bilateral.netGlobalAsymmetry.toFixed(1)}%
+- Phase Shift: ${metrics.bilateral.phaseShift.toFixed(1)}°
+- Temporal Lag: ${metrics.bilateral.temporalLag.toFixed(0)}ms
+- Flexion Timing Difference: ${metrics.bilateral.maxFlexionTimingDiff.toFixed(0)}ms
 
-${metrics.opiScore !== undefined ? `### Performance Score\n- OPI Score: ${metrics.opiScore.toFixed(0)}/100` : ""}
+${metrics.opiScore !== undefined ? `### Overall Performance Index\n- OPI Score: ${metrics.opiScore.toFixed(0)}/100 (${metrics.opiGrade || "N/A"})` : ""}`);
 
-Please answer the user's question based on this data. Provide visualization blocks if they would help illustrate the answer.`;
+  // 7. Recommendations
+  if (analysis.recommendations?.length) {
+    sections.push(`## Recommendations
+${analysis.recommendations.map((r, i) => `${i + 1}. ${r}`).join("\n")}`);
+  }
+
+  return sections.join("\n\n───────────────────────────────────────\n\n");
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Context Formatting Helpers
+// ─────────────────────────────────────────────────────────────────
+
+function formatRadarScores(radar?: RadarScores): string {
+  if (!radar) return "- Not available";
+  return `- Flexibility: ${radar.flexibility}/10
+- Consistency: ${radar.consistency}/10
+- Symmetry: ${radar.symmetry}/10
+- Smoothness: ${radar.smoothness}/10
+- Control: ${radar.control}/10`;
+}
+
+function formatKeyFindings(findings?: KeyFinding[]): string {
+  if (!findings?.length) return "- No key findings";
+  return findings.map(f => `- [${f.severity.toUpperCase()}] ${f.text}`).join("\n");
+}
+
+function formatEnrichedSection(section: EnrichedSection): string {
+  const parts: string[] = [];
+
+  // Header with severity
+  parts.push(`### ${section.title} [${section.severity}]
+**Domain:** ${section.domain} | **Priority:** ${section.priority}/10
+**Section ID:** ${section.id}`);
+
+  // Clinical narrative (enriched with evidence)
+  parts.push(`**Clinical Finding:**
+${section.enrichedNarrative || section.clinicalNarrative}`);
+
+  // Patient-friendly explanation
+  if (section.userExplanation) {
+    parts.push(`**In Simple Terms:**
+${section.userExplanation.summary}
+
+**What This Means:** ${section.userExplanation.whatItMeans}
+**Why It Matters:** ${section.userExplanation.whyItMatters}
+${section.userExplanation.analogy ? `**Think of it like:** ${section.userExplanation.analogy}` : ""}`);
+  }
+
+  // QA Reasoning (why this was flagged)
+  if (section.qaReasoning?.length) {
+    parts.push(`**Clinical Reasoning:**
+${section.qaReasoning.map(qa => `Q: ${qa.question}\nA: ${qa.answer}`).join("\n\n")}`);
+  }
+
+  // Metric contributions
+  if (section.metricContributions?.length) {
+    parts.push(`**Supporting Metrics:**
+${section.metricContributions.map(m => `- ${m.metric}: ${m.value}${m.unit} (${m.role})`).join("\n")}`);
+  }
+
+  // Citations
+  if (section.citations?.length) {
+    parts.push(`**Research Evidence:**
+${section.citations.map(c => `- [${c.tier}] "${c.text}" — ${c.source}`).join("\n")}`);
+  }
+
+  // Links
+  if (section.links?.length) {
+    const featuredLinks = section.links.filter(l => l.featured);
+    const otherLinks = section.links.filter(l => !l.featured);
+
+    if (featuredLinks.length) {
+      parts.push(`**Key Sources:**
+${featuredLinks.map(l => `- [${l.tier}] ${l.title}: ${l.url}`).join("\n")}`);
+    }
+    if (otherLinks.length) {
+      parts.push(`**Additional Sources:**
+${otherLinks.slice(0, 3).map(l => `- ${l.title}: ${l.url}`).join("\n")}`);
+    }
+  }
+
+  // Recommendation
+  if (section.recommendation) {
+    parts.push(`**Recommendation:** ${section.recommendation}`);
+  }
+
+  return parts.join("\n\n");
+}
+
+function formatCrossAnalysis(cross: CrossAnalysisOutput): string {
+  const parts: string[] = [];
+
+  parts.push(`## Historical Analysis (${cross.sessionsAnalyzed} sessions over ${cross.dateRangeDays} days)
+**Confidence:** ${cross.analysisConfidence}
+
+**Summary:** ${cross.summary}`);
+
+  // Trends
+  if (cross.trendInsights?.length) {
+    parts.push(`### Trends
+${cross.trendInsights.map(t =>
+  `- **${t.displayName}:** ${t.direction} (${t.magnitude}) — ${t.changePercent > 0 ? "+" : ""}${t.changePercent.toFixed(1)}% from baseline
+  ${t.narrative}`
+).join("\n")}`);
+  }
+
+  // Patterns
+  if (cross.recurringPatterns?.length) {
+    parts.push(`### Recurring Patterns
+${cross.recurringPatterns.map(p =>
+  `- **${p.title}** (${p.patternType}, ${(p.confidence * 100).toFixed(0)}% confidence)
+  ${p.description}
+  Recommendation: ${p.recommendation}`
+).join("\n\n")}`);
+  }
+
+  // Baseline comparison
+  if (cross.baselineComparison) {
+    parts.push(`### Compared to Your Baseline
+**Overall:** ${cross.baselineComparison.overallAssessment}
+**Performance:** ${cross.baselineComparison.comparedToBaseline} baseline
+
+${cross.baselineComparison.significantDeviations?.length
+  ? `Significant changes:\n${cross.baselineComparison.significantDeviations.map(d =>
+      `- ${d.displayName}: ${d.currentValue.toFixed(1)} vs baseline ${d.baselineMedian.toFixed(1)} (${d.direction} by ${Math.abs(d.deviationPercent).toFixed(0)}%)`
+    ).join("\n")}`
+  : "No significant deviations from your baseline."}`);
+  }
+
+  // Refined insights
+  if (cross.refinedInsights?.length) {
+    parts.push(`### Key Insights
+${cross.refinedInsights.map(i =>
+  `**${i.title}**
+${i.summary}
+${i.details}`
+).join("\n\n")}`);
+  }
+
+  return parts.join("\n\n");
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -308,11 +500,11 @@ const USER_QUERY_RESPONSE_SCHEMA = {
   properties: {
     textResponse: {
       type: "string",
-      description: "Clear, conversational answer to the user's question",
+      description: "Clear, friendly answer to the user's question in plain language",
     },
     blocks: {
       type: "array",
-      description: "Visualization blocks to display (can be empty)",
+      description: "Visualization blocks to display (use sparingly)",
       items: {
         type: "object",
         properties: {
@@ -362,6 +554,13 @@ const USER_QUERY_RESPONSE_SCHEMA = {
         required: ["type", "title"],
       },
     },
+    citedSections: {
+      type: "array",
+      description: "IDs of enriched sections you referenced in your answer",
+      items: {
+        type: "string",
+      },
+    },
   },
   required: ["textResponse", "blocks"],
 };
@@ -383,11 +582,22 @@ interface QueryBlock {
   severity?: string;
 }
 
-function validateUserQueryResponse(response: unknown): {
+interface LLMResponse {
+  textResponse?: string;
+  blocks?: unknown[];
+  citedSections?: string[];
+}
+
+function validateUserQueryResponse(
+  response: unknown,
+  existingAnalysis?: unknown
+): {
   blocks: unknown[];
   textResponse: string;
+  links: ResponseLink[];
 } {
-  const resp = response as { textResponse?: string; blocks?: unknown[] };
+  const resp = response as LLMResponse;
+  const analysis = existingAnalysis as Partial<V2PipelineOutput> | undefined;
 
   // Normalize and validate blocks
   const normalizedBlocks = Array.isArray(resp.blocks)
@@ -414,10 +624,53 @@ function validateUserQueryResponse(response: unknown): {
         })
     : [];
 
+  // Extract relevant links from cited sections
+  const links = extractRelevantLinks(resp.citedSections, analysis);
+
   return {
     textResponse: resp.textResponse || "I couldn't generate a response.",
     blocks: normalizedBlocks,
+    links,
   };
+}
+
+/**
+ * Extract links from the sections that were cited in the response.
+ */
+function extractRelevantLinks(
+  citedSectionIds?: string[],
+  analysis?: Partial<V2PipelineOutput>
+): ResponseLink[] {
+  if (!citedSectionIds?.length || !analysis?.enrichedSections?.length) {
+    return [];
+  }
+
+  const links: ResponseLink[] = [];
+  const seenUrls = new Set<string>();
+
+  for (const sectionId of citedSectionIds) {
+    const section = analysis.enrichedSections.find(s => s.id === sectionId);
+    if (!section?.links?.length) continue;
+
+    // Prioritize featured links, then take top 2 from each section
+    const sectionLinks = [...section.links]
+      .sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0))
+      .slice(0, 2);
+
+    for (const link of sectionLinks) {
+      if (seenUrls.has(link.url)) continue;
+      seenUrls.add(link.url);
+
+      links.push({
+        url: link.url,
+        title: link.title,
+        relevance: link.relevance || section.title,
+      });
+    }
+  }
+
+  // Limit total links to avoid overwhelming the user
+  return links.slice(0, 5);
 }
 
 // ─────────────────────────────────────────────────────────────────

@@ -282,4 +282,5 @@ electron/renderer/src/components/dashboard/horus/
 
 ## Related Documentation
 - [Implementation Checklist](/docs/horus-ui/checklist.md)
+- [Chat Component](/docs/horus-ui/chat-component.md)
 - [Backend Horus System](/docs/horus/README.md)

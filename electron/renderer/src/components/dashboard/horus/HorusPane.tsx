@@ -7,31 +7,24 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from "react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Loader2,
-  Pencil,
-  Trash2,
-  User,
-} from "lucide-react";
 import { HorusChatInput } from "./HorusChatInput";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { AtomSpin } from "@/components/AtomSpin";
 import { useAction, useQuery, useMutation } from "convex/react";
 import { api } from "../../../../../../convex/_generated/api";
 import type { Id } from "../../../../../../convex/_generated/dataModel";
-import type { VisualizationBlock, EvaluationContext } from "./types";
-import { BlockRenderer } from "./BlockRenderer";
-import { useVisualization } from "./hooks/useVisualization";
 import { useV2Analysis } from "./hooks/useV2Analysis";
 import { V2SectionsView } from "./v2";
-import gsap from "gsap";
-import { Draggable } from "gsap/Draggable";
+import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 
-// Register GSAP plugin
-gsap.registerPlugin(Draggable);
+// ─────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────
+
+const CHAT_PADDING_X = 18;   // Horizontal padding from pane right edge
+const CHAT_PADDING_Y = 20;  // Vertical padding from pane bottom edge
+const TRIGGER_ZONE_HEIGHT = 150;
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -43,6 +36,7 @@ interface ChatMessage {
   content: string;
   blocks?: unknown[];
   timestamp: number;
+  userId?: string;
 }
 
 interface SessionData {
@@ -62,9 +56,86 @@ interface HorusPaneProps {
   sessions: SessionData[];
   borderless?: boolean;
   className?: string;
-  /** User's profile image URL for chat avatar */
   userImage?: string;
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Utilities
+// ─────────────────────────────────────────────────────────────────
+
+const generateMessageId = () => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+const createMessage = (role: "user" | "assistant", content: string, blocks?: unknown[], userId?: string): ChatMessage => ({
+  id: generateMessageId(),
+  role,
+  content,
+  blocks,
+  timestamp: Date.now(),
+  ...(userId ? { userId } : {}),
+});
+
+const buildHistoryContext = (history: ChatMessage[], excludeId?: string) =>
+  history
+    .filter((m) => !excludeId || m.id !== excludeId)
+    .slice(-10)
+    .map(({ role, content }) => ({ role, content }));
+
+/** Calculate chat position relative to pane (bottom-right anchored, caged within pane) */
+const calculateChatPosition = (paneRect: DOMRect, chatWidth: number, chatHeight: number = 88) => {
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+
+  // Validate inputs
+  if (chatWidth <= 0 || paneRect.width <= 0 || paneRect.height <= 0) {
+    return null; // Invalid state, don't render
+  }
+
+  // Calculate visible pane area
+  const visiblePaneTop = Math.max(paneRect.top, 0);
+  const visiblePaneBottom = Math.min(paneRect.bottom, vh);
+  const visiblePaneHeight = visiblePaneBottom - visiblePaneTop;
+
+  // If pane is not visible enough, don't show chat
+  if (visiblePaneHeight < chatHeight + CHAT_PADDING_Y * 2) {
+    return null;
+  }
+
+  // Distance from pane bottom to viewport bottom
+  const paneBottomOffset = vh - Math.min(paneRect.bottom, vh);
+
+  // Bottom position (distance from viewport bottom)
+  let bottom = Math.max(CHAT_PADDING_Y, paneBottomOffset + CHAT_PADDING_Y);
+
+  // Maximum bottom value - chat must stay within visible pane area
+  // When pane scrolls up (top goes negative), chat should stop at pane's visible top
+  const maxBottom = vh - visiblePaneTop - chatHeight - CHAT_PADDING_Y;
+  bottom = Math.min(bottom, maxBottom);
+
+  // Position chat at pane's right edge minus padding
+  let left = Math.min(paneRect.right, vw) - chatWidth - CHAT_PADDING_X;
+  left = Math.max(0, Math.min(left, vw - chatWidth));
+
+  return { bottom, left };
+};
+
+/** Calculate horizontal drag constraints based on pane bounds */
+const calculateDragConstraints = (paneRect: DOMRect, chatWidth: number, currentLeft: number) => {
+  const vw = window.innerWidth;
+  const visibleLeft = Math.max(paneRect.left, 0) + CHAT_PADDING_X;
+  const visibleRight = Math.min(paneRect.right, vw) - CHAT_PADDING_X;
+
+  // Calculate how far we can drag left and right from current position
+  const minX = visibleLeft - currentLeft;
+  const maxX = visibleRight - chatWidth - currentLeft;
+
+  return { left: Math.min(minX, 0), right: Math.max(maxX, 0) };
+};
+
+/** Check if pane is visible in viewport */
+const isPaneVisible = (paneRect: DOMRect) => {
+  return paneRect.bottom > 0 && paneRect.top < window.innerHeight &&
+         paneRect.right > 0 && paneRect.left < window.innerWidth;
+};
 
 // ─────────────────────────────────────────────────────────────────
 // Component
@@ -78,304 +149,416 @@ export function HorusPane({
   className,
   userImage,
 }: HorusPaneProps) {
+  // Current user
+  const { user } = useCurrentUser();
+  const currentUserId = user?._id ?? null;
+
+  // Refs
   const paneRef = useRef<HTMLDivElement>(null);
-  const chatRef = useRef<HTMLDivElement>(null);
-  const chatInnerRef = useRef<HTMLDivElement>(null);
-  const draggableRef = useRef<Draggable | null>(null);
-  const animationRef = useRef<gsap.core.Tween | null>(null);
+  const wasInZoneRef = useRef(false);
+  const isInitializedRef = useRef(false);
+  const userExpandedRef = useRef(false); // Use ref for immediate access in scroll handler
 
+  // Position state for fixed positioning
+  const [chatPosition, setChatPosition] = useState<{ bottom: number; left: number } | null>(null);
+  const [dragConstraints, setDragConstraints] = useState({ left: 0, right: 0 });
+
+  // UI State
   const [chatInput, setChatInput] = useState("");
-  const [chatMinimized, setChatMinimized] = useState(true); // Actual state (controls content)
-  const [targetMinimized, setTargetMinimized] = useState(true); // Target state (triggers animation)
-  const [userExpanded, setUserExpanded] = useState(false); // Track if user manually expanded
-  const wasInZoneRef = useRef(false); // Persist trigger zone state across effect re-runs
-  const isAnimatingRef = useRef(false);
+  const [isMinimized, setIsMinimized] = useState(true);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState<{ text: string; timestamp: number } | null>(null);
+  const [aiResponse, setAiResponse] = useState<{ text: string; links?: Array<{ url: string; title: string; relevance: string }> } | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
 
-  // GSAP Draggable for chat input - fixed to viewport, trapped in pane
-  useLayoutEffect(() => {
-    if (!paneRef.current || !chatRef.current || !selectedSessionId) return;
+  // Convex
+  const chatList = useQuery(
+    api.horus.chat.listChats,
+    selectedSessionId ? { parentSessionId: selectedSessionId } : "skip"
+  ) ?? [];
+  const chatData = useQuery(
+    api.horus.chat.getChatHistory,
+    activeChatId ? { sessionId: activeChatId } : "skip"
+  );
+  const chatHistory = chatData?.messages ?? [];
+  const chatOwnerId = chatData?.ownerId ?? null;
+  const isOwnChat = !chatOwnerId || chatOwnerId === currentUserId;
 
-    const pane = paneRef.current;
-    const chat = chatRef.current;
-    const padding = 16;
+  const addMessagesMutation = useMutation(api.horus.chat.addMessages);
+  const truncateFromMutation = useMutation(api.horus.chat.truncateFrom);
+  const forkChatMutation = useMutation(api.horus.chat.forkChat);
+  const renameChatMutation = useMutation(api.horus.chat.renameChat);
+  const deleteChatMutation = useMutation(api.horus.chat.deleteChat);
+  const askAnalysis = useAction(api.horus.userQuery.askAnalysis);
+  const v2Analysis = useV2Analysis(selectedSessionId ?? undefined);
 
-    // Check if pane is visible in viewport
-    const isPaneVisible = () => {
-      const paneRect = pane.getBoundingClientRect();
-      return paneRect.bottom > 0 && paneRect.top < window.innerHeight &&
-             paneRect.right > 0 && paneRect.left < window.innerWidth;
-    };
+  // ─────────────────────────────────────────────────────────────────
+  // Chat Message Handler (DRY: single function for all send operations)
+  // ─────────────────────────────────────────────────────────────────
 
-    // Get bounds relative to the chat's current CSS position
-    // GSAP transforms are relative to the element's original position
-    const getBounds = () => {
-      const paneRect = pane.getBoundingClientRect();
-      const chatRect = chat.getBoundingClientRect();
-      const vh = window.innerHeight;
-      const vw = window.innerWidth;
-      const chatW = chat.offsetWidth;
-      const chatH = chat.offsetHeight;
+  const sendMessage = useCallback(async (
+    messageText: string,
+    chatSessionId: string,
+    options: { excludeMessageId?: string } = {}
+  ) => {
+    if (!selectedSessionId || !messageText.trim()) return;
 
-      // Visible portion of pane
-      const visibleLeft = Math.max(paneRect.left, 0) + padding;
-      const visibleRight = Math.min(paneRect.right, vw) - padding;
-      const visibleTop = Math.max(paneRect.top, 0) + padding;
-      const visibleBottom = Math.min(paneRect.bottom, vh) - padding;
+    const userMessage = createMessage("user", messageText.trim(), undefined, currentUserId ?? undefined);
+    setChatLoading(true);
+    setAiResponse(null);
 
-      // Current chat position (CSS left/top + transform)
-      const currentX = gsap.getProperty(chat, "x") as number || 0;
-      const currentY = gsap.getProperty(chat, "y") as number || 0;
+    try {
+      const historyForContext = buildHistoryContext(chatHistory, options.excludeMessageId);
 
-      // Base position (CSS left/top without transforms)
-      const baseLeft = chatRect.left - currentX;
-      const baseTop = chatRect.top - currentY;
+      const result = await askAnalysis({
+        sessionId: selectedSessionId,
+        userPrompt: messageText,
+        patientId: patientId ?? undefined,
+        chatHistory: historyForContext,
+      });
 
-      // Compute bounds for transforms relative to base position
-      // Handle case where visible area is smaller than chat
-      let minX = visibleLeft - baseLeft;
-      let maxX = visibleRight - chatW - baseLeft;
-      let minY = visibleTop - baseTop;
-      let maxY = visibleBottom - chatH - baseTop;
-
-      // If chat is wider/taller than visible area, center the bounds
-      if (maxX < minX) {
-        const center = (minX + maxX) / 2;
-        minX = maxX = center;
-      }
-      if (maxY < minY) {
-        const center = (minY + maxY) / 2;
-        minY = maxY = center;
-      }
-
-      return { minX, maxX, minY, maxY };
-    };
-
-    // Set initial position (bottom-right of visible pane)
-    const setInitialPosition = () => {
-      const paneRect = pane.getBoundingClientRect();
-      const vh = window.innerHeight;
-      const vw = window.innerWidth;
-      // Use actual dimensions, with fallbacks based on minimized state
-      const defaultW = chatMinimized ? 44 : 400;
-      const defaultH = chatMinimized ? 44 : 88;
-      const chatW = chat.offsetWidth || defaultW;
-      const chatH = chat.offsetHeight || defaultH;
-
-      const visibleRight = Math.min(paneRect.right, vw) - padding;
-      const visibleBottom = Math.min(paneRect.bottom, vh) - padding;
-
-      chat.style.position = "fixed";
-      chat.style.left = `${visibleRight - chatW}px`;
-      chat.style.top = `${visibleBottom - chatH}px`;
-
-      // Reset any transforms
-      gsap.set(chat, { x: 0, y: 0 });
-    };
-
-    // Track if we've initialized position
-    let hasInitialized = false;
-
-    // Initialize position (with frame delay to ensure element has rendered)
-    chat.style.position = "fixed";
-    const chatInner = chatInnerRef.current;
-    requestAnimationFrame(() => {
-      // Ensure inner wrapper starts at scale 1
-      if (chatInner) {
-        gsap.set(chatInner, { scale: 1, transformOrigin: "100% 100%" });
-      }
-      if (isPaneVisible()) {
-        setInitialPosition();
-        gsap.set(chat, { autoAlpha: 1 });
-        hasInitialized = true;
+      if (result.success && result.response) {
+        setAiResponse({
+          text: result.response.textResponse ?? "",
+          links: result.response.links,
+        });
       } else {
-        chat.style.left = "0px";
-        chat.style.top = "0px";
-        gsap.set(chat, { autoAlpha: 0 });
+        setAiResponse({
+          text: result.error || "Failed to process question",
+        });
       }
+
+      const assistantMessage = result.success && result.response
+        ? createMessage("assistant", result.response.textResponse ?? "", result.response.blocks)
+        : createMessage("assistant", result.error || "Failed to process question");
+
+      await addMessagesMutation({
+        sessionId: chatSessionId,
+        patientId: patientId ?? undefined,
+        messages: [userMessage, assistantMessage],
+      });
+
+      setPendingMessage(null);
+      setAiResponse(null);
+    } catch (err) {
+      const errorText = err instanceof Error ? err.message : "Something went wrong";
+      setAiResponse({ text: errorText });
+
+      const errorMessage = createMessage("assistant", errorText);
+      await addMessagesMutation({
+        sessionId: chatSessionId,
+        patientId: patientId ?? undefined,
+        messages: [userMessage, errorMessage],
+      });
+
+      setPendingMessage(null);
+      setAiResponse(null);
+    } finally {
+      setChatLoading(false);
+    }
+  }, [selectedSessionId, patientId, currentUserId, chatHistory, askAnalysis, addMessagesMutation]);
+
+  // ─────────────────────────────────────────────────────────────────
+  // Chat Actions
+  // ─────────────────────────────────────────────────────────────────
+
+  const handleSendQuestion = useCallback(() => {
+    if (!chatInput.trim() || !selectedSessionId) return;
+
+    // Generate new chat ID if no active chat
+    const chatId = activeChatId ?? `${selectedSessionId}__chat__${Date.now()}`;
+    if (!activeChatId) setActiveChatId(chatId);
+
+    setPendingMessage({ text: chatInput.trim(), timestamp: Date.now() });
+    setAiResponse(null);
+    setChatInput("");
+    sendMessage(chatInput, chatId);
+  }, [chatInput, selectedSessionId, activeChatId, sendMessage]);
+
+  const handleEditPendingMessage = useCallback((newText: string) => {
+    if (!activeChatId) return;
+    setPendingMessage({ text: newText, timestamp: Date.now() });
+    sendMessage(newText, activeChatId);
+  }, [activeChatId, sendMessage]);
+
+  const handleDeletePendingMessage = useCallback(() => {
+    setPendingMessage(null);
+    setAiResponse(null);
+    setChatLoading(false);
+  }, []);
+
+  const handleRegeneratePendingMessage = useCallback(() => {
+    if (pendingMessage && activeChatId) {
+      sendMessage(pendingMessage.text, activeChatId);
+    }
+  }, [pendingMessage, activeChatId, sendMessage]);
+
+  // Load a previous chat conversation
+  const handleSelectPreviousChat = useCallback((chat: { id: string }) => {
+    setActiveChatId(chat.id);
+    setIsMinimized(false);
+    userExpandedRef.current = true;
+  }, []);
+
+  // Start a new chat (clear active chat)
+  const handleNewChat = useCallback(() => {
+    setActiveChatId(null);
+    setPendingMessage(null);
+    setAiResponse(null);
+  }, []);
+
+  // Handle edit historical message: truncate from this message (inclusive), then regenerate with new text
+  const handleEditHistoryMessage = useCallback(async (messageId: string, newText: string) => {
+    if (!activeChatId) return;
+
+    await truncateFromMutation({
+      sessionId: activeChatId,
+      messageId,
+      inclusive: true,
     });
 
-    // Create Draggable
-    const [draggable] = Draggable.create(chat, {
-      type: "x,y",
-      trigger: "[data-drag-handle]",
-      dragClickables: false,
-      edgeResistance: 1,
-      bounds: getBounds,
-      onDragStart: function() {
-        chat.style.cursor = "grabbing";
-      },
-      onDragEnd: function() {
-        chat.style.cursor = "";
-      },
+    setPendingMessage({ text: newText, timestamp: Date.now() });
+    sendMessage(newText, activeChatId);
+  }, [activeChatId, truncateFromMutation, sendMessage]);
+
+  // Handle delete historical message: truncate from this message (inclusive)
+  const handleDeleteHistoryMessage = useCallback(async (messageId: string) => {
+    if (!activeChatId) return;
+
+    await truncateFromMutation({
+      sessionId: activeChatId,
+      messageId,
+      inclusive: true,
+    });
+  }, [activeChatId, truncateFromMutation]);
+
+  // Handle regenerate from a specific message: find the user message, truncate, resend
+  const handleRegenerateFrom = useCallback(async (messageId: string) => {
+    if (!activeChatId) return;
+
+    const msg = chatHistory.find((m: ChatMessage) => m.id === messageId);
+    if (!msg) return;
+
+    const userMsg = msg.role === "user"
+      ? msg
+      : chatHistory
+          .slice(0, chatHistory.findIndex((m: ChatMessage) => m.id === messageId))
+          .reverse()
+          .find((m: ChatMessage) => m.role === "user");
+
+    if (!userMsg) return;
+
+    await truncateFromMutation({
+      sessionId: activeChatId,
+      messageId: userMsg.id,
+      inclusive: true,
     });
 
-    draggableRef.current = draggable;
+    setPendingMessage({ text: userMsg.content, timestamp: Date.now() });
+    sendMessage(userMsg.content, activeChatId);
+  }, [activeChatId, chatHistory, truncateFromMutation, sendMessage]);
 
-    // Scroll handler - update visibility and reapply bounds
+  // Handle fork/branch: create a new chat with messages up to and including the forked message
+  const handleBranchFrom = useCallback(async (messageId: string) => {
+    if (!activeChatId) return;
+
+    const result = await forkChatMutation({
+      sessionId: activeChatId,
+      messageId,
+      patientId: patientId ?? undefined,
+    });
+
+    if (result.success) {
+      toast.success(`Chat forked with ${result.messageCount} messages`);
+      // Switch to the forked chat
+      if (result.newSessionId) setActiveChatId(result.newSessionId);
+    } else {
+      toast.error(result.error || "Failed to fork chat");
+    }
+  }, [activeChatId, patientId, forkChatMutation]);
+
+  // Handle rename chat
+  const handleRenameChat = useCallback(async (chatId: string, newName: string) => {
+    try {
+      await renameChatMutation({ sessionId: chatId, name: newName });
+    } catch (err) {
+      toast.error("Failed to rename chat");
+    }
+  }, [renameChatMutation]);
+
+  // Handle delete chat
+  const handleDeleteChat = useCallback(async (chatId: string) => {
+    try {
+      await deleteChatMutation({ sessionId: chatId });
+      // If deleted chat was the active one, clear it
+      if (activeChatId === chatId) {
+        setActiveChatId(null);
+        setPendingMessage(null);
+        setAiResponse(null);
+      }
+    } catch (err) {
+      toast.error("Failed to delete chat");
+    }
+  }, [deleteChatMutation, activeChatId]);
+
+  // Handle toggling fullscreen mode
+  const handleOpenFullscreen = useCallback(() => {
+    setIsFullscreen(true);
+    setIsMinimized(false);
+  }, []);
+
+  const handleCloseFullscreen = useCallback(() => {
+    setIsFullscreen(false);
+  }, []);
+
+  // Previous chat conversations for pills
+  const previousChatsForInput = useMemo(() =>
+    chatList.map((chat: { sessionId: string; preview: string; lastTimestamp: number }) => ({
+      id: chat.sessionId,
+      text: chat.preview,
+      timestamp: chat.lastTimestamp,
+    })),
+    [chatList]
+  );
+
+  // Full chat list for the list view
+  const allChatsForList = useMemo(() =>
+    chatList.map((chat: { sessionId: string; name?: string | null; preview: string; messageCount: number; lastTimestamp: number; ownerId: string | null }) => ({
+      sessionId: chat.sessionId,
+      name: chat.name ?? null,
+      preview: chat.preview,
+      messageCount: chat.messageCount,
+      timestamp: chat.lastTimestamp,
+      ownerId: chat.ownerId,
+    })),
+    [chatList]
+  );
+
+  // ─────────────────────────────────────────────────────────────────
+  // Position & Constraints Management
+  // ─────────────────────────────────────────────────────────────────
+
+  const updatePosition = useCallback((minimized: boolean) => {
+    const pane = paneRef.current;
+    if (!pane) return;
+
+    const paneRect = pane.getBoundingClientRect();
+
+    // Don't update if pane is completely off-screen
+    if (!isPaneVisible(paneRect)) {
+      setChatPosition(null);
+      return;
+    }
+
+    const chatWidth = minimized ? 56 : 500;
+    const chatHeight = minimized ? 56 : 88;
+    const newPosition = calculateChatPosition(paneRect, chatWidth, chatHeight);
+
+    // If position is null (not enough visible space), hide chat
+    if (!newPosition) {
+      setChatPosition(null);
+      return;
+    }
+
+    setChatPosition(newPosition);
+
+    // Only calculate drag constraints for expanded state
+    if (!minimized) {
+      const constraints = calculateDragConstraints(paneRect, chatWidth, newPosition.left);
+      setDragConstraints(constraints);
+    }
+  }, []);
+
+  // Reset initialization and active chat when session changes
+  useEffect(() => {
+    isInitializedRef.current = false;
+    setChatPosition(null);
+    setActiveChatId(null);
+    setPendingMessage(null);
+    setAiResponse(null);
+  }, [selectedSessionId]);
+
+  // Initial positioning - runs once before paint
+  useLayoutEffect(() => {
+    if (!selectedSessionId || isInitializedRef.current) return;
+
+    // Wait for next frame to ensure pane is rendered
+    const frame = requestAnimationFrame(() => {
+      updatePosition(isMinimized);
+      isInitializedRef.current = true;
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [selectedSessionId, isMinimized, updatePosition]);
+
+  // Handle scroll and resize
+  useEffect(() => {
+    if (!selectedSessionId) return;
+
     let scrollTicking = false;
     const handleScroll = () => {
       if (scrollTicking) return;
       scrollTicking = true;
-
       requestAnimationFrame(() => {
-        if (!isPaneVisible()) {
-          gsap.set(chat, { autoAlpha: 0 });
-        } else {
-          // Initialize position on first scroll into view
-          if (!hasInitialized) {
-            setInitialPosition();
-            hasInitialized = true;
-          }
-          gsap.set(chat, { autoAlpha: 1 });
-          // Update bounds and apply them
-          draggable.applyBounds(getBounds());
-        }
+        updatePosition(isMinimized);
         scrollTicking = false;
       });
     };
 
-    // Resize handler - reset position
     const handleResize = () => {
-      if (isPaneVisible()) {
-        setInitialPosition();
-        gsap.set(chat, { autoAlpha: 1 });
-        draggable.applyBounds(getBounds());
-      }
+      updatePosition(isMinimized);
     };
 
-    // Event listeners
     window.addEventListener("scroll", handleScroll, { passive: true });
     window.addEventListener("resize", handleResize);
 
     return () => {
       window.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", handleResize);
-      draggable.kill();
-      draggableRef.current = null;
-      gsap.set(chat, { clearProps: "all" });
-      if (chatInner) {
-        gsap.set(chatInner, { clearProps: "all" });
-      }
     };
-  }, [selectedSessionId]);
+  }, [selectedSessionId, isMinimized, updatePosition]);
 
-  // Animate scale and reset position on state change
+  // Update position when minimize state changes (after animation settles)
   useEffect(() => {
-    const chat = chatRef.current;
-    const chatInner = chatInnerRef.current;
-    const pane = paneRef.current;
-    if (!chat || !chatInner || !pane) return;
+    if (!isInitializedRef.current) return;
 
-    // Skip if already animating or already at target state
-    if (isAnimatingRef.current || chatMinimized === targetMinimized) {
-      return;
-    }
+    // Small delay to let the component re-render with new dimensions
+    const timer = setTimeout(() => {
+      updatePosition(isMinimized);
+    }, 50);
 
-    const padding = 16;
+    return () => clearTimeout(timer);
+  }, [isMinimized, updatePosition]);
 
-    // Reset position to bottom-right
-    const resetPosition = () => {
-      const paneRect = pane.getBoundingClientRect();
-      const vh = window.innerHeight;
-      const vw = window.innerWidth;
-      const chatW = chat.offsetWidth;
-      const chatH = chat.offsetHeight;
+  // ─────────────────────────────────────────────────────────────────
+  // Auto-expand/collapse based on scroll position
+  // ─────────────────────────────────────────────────────────────────
 
-      const visibleRight = Math.min(paneRect.right, vw) - padding;
-      const visibleBottom = Math.min(paneRect.bottom, vh) - padding;
-      const visibleLeft = Math.max(paneRect.left, 0) + padding;
-      const visibleTop = Math.max(paneRect.top, 0) + padding;
-
-      let left = visibleRight - chatW;
-      let top = visibleBottom - chatH;
-      left = Math.max(left, visibleLeft);
-      top = Math.max(top, visibleTop);
-
-      chat.style.left = `${left}px`;
-      chat.style.top = `${top}px`;
-      gsap.set(chat, { x: 0, y: 0 });
-    };
-
-    // Kill any ongoing animation
-    if (animationRef.current) {
-      animationRef.current.kill();
-    }
-
-    isAnimatingRef.current = true;
-
-    // Animate: scale down -> swap content -> scale up
-    animationRef.current = gsap.to(chatInner, {
-      scale: 0,
-      duration: 0.1,
-      ease: "power2.in",
-      transformOrigin: "100% 100%", // bottom-right
-      onComplete: () => {
-        // Swap content
-        setChatMinimized(targetMinimized);
-
-        // Enable/disable draggable
-        if (targetMinimized) {
-          draggableRef.current?.disable();
-        } else {
-          draggableRef.current?.enable();
-        }
-
-        // Wait for new content to render, then animate in
-        requestAnimationFrame(() => {
-          // Ensure new content starts at scale 0
-          gsap.set(chatInner, { scale: 0, transformOrigin: "100% 100%" });
-
-          resetPosition();
-
-          animationRef.current = gsap.to(chatInner, {
-            scale: 1,
-            duration: 0.12,
-            ease: "back.out(1.4)",
-            transformOrigin: "100% 100%",
-            onComplete: () => {
-              isAnimatingRef.current = false;
-              animationRef.current = null;
-            },
-          });
-        });
-      },
-    });
-
-    return () => {
-      if (animationRef.current) {
-        animationRef.current.kill();
-        animationRef.current = null;
-      }
-    };
-  }, [targetMinimized, chatMinimized]);
-
-  // Auto-expand/collapse chat based on trigger zone at bottom of pane
   useEffect(() => {
-    if (!paneRef.current || !selectedSessionId) return;
-
     const pane = paneRef.current;
-    const triggerZoneHeight = 150; // Trigger zone size
-    let hasScrolled = false; // Skip auto-expand until user scrolls
+    if (!pane || !selectedSessionId) return;
+
+    let hasScrolled = false;
 
     const checkTriggerZone = () => {
+      // Skip if user manually expanded or pane has no analysis content
+      if (userExpandedRef.current) return;
+      if (!v2Analysis.output) return;
+
       const paneRect = pane.getBoundingClientRect();
       const vh = window.innerHeight;
-
-      // Bottom trigger zone: bottom of pane is visible and close to viewport bottom
       const paneBottomInView = paneRect.bottom <= vh && paneRect.bottom > 0;
-      const inTriggerZone = paneBottomInView && (vh - paneRect.bottom) < triggerZoneHeight;
+      const inTriggerZone = paneBottomInView && (vh - paneRect.bottom) < TRIGGER_ZONE_HEIGHT;
 
-      // Only auto-expand when ENTERING the zone (and not already manually expanded)
-      // Skip on initial load - only trigger after user has scrolled
-      if (inTriggerZone && !wasInZoneRef.current && !userExpanded && hasScrolled) {
-        setTargetMinimized(false);
+      // Only trigger on zone transitions after user has scrolled
+      if (hasScrolled) {
+        if (inTriggerZone && !wasInZoneRef.current) {
+          setIsMinimized(false);
+        } else if (!inTriggerZone && wasInZoneRef.current) {
+          setIsMinimized(true);
+        }
       }
-
-      // Only auto-collapse when LEAVING the zone (and not manually expanded)
-      if (!inTriggerZone && wasInZoneRef.current && !userExpanded) {
-        setTargetMinimized(true);
-      }
-
       wasInZoneRef.current = inTriggerZone;
     };
 
@@ -386,288 +569,30 @@ export function HorusPane({
 
     window.addEventListener("scroll", handleScroll, { passive: true });
 
-    // Set initial zone state without triggering expand
+    // Set initial zone state (but don't trigger expand)
     const paneRect = pane.getBoundingClientRect();
-    const vh = window.innerHeight;
-    const paneBottomInView = paneRect.bottom <= vh && paneRect.bottom > 0;
-    wasInZoneRef.current = paneBottomInView && (vh - paneRect.bottom) < triggerZoneHeight;
+    const paneBottomInView = paneRect.bottom <= window.innerHeight && paneRect.bottom > 0;
+    wasInZoneRef.current = paneBottomInView && (window.innerHeight - paneRect.bottom) < TRIGGER_ZONE_HEIGHT;
 
-    return () => {
-      window.removeEventListener("scroll", handleScroll);
-    };
-  }, [selectedSessionId, userExpanded]);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [selectedSessionId]); // No dependency on userExpanded - we use the ref
 
+  // ─────────────────────────────────────────────────────────────────
+  // Empty States
+  // ─────────────────────────────────────────────────────────────────
 
-  // Chat state
-  const [chatLoading, setChatLoading] = useState(false);
-  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [editingContent, setEditingContent] = useState("");
+  const emptyStateClass = cn(
+    "flex flex-col items-center justify-center py-16 bg-[var(--tropx-card)]",
+    borderless
+      ? "rounded-none border-0 sm:rounded-xl sm:border sm:border-[var(--tropx-border)]"
+      : "rounded-xl border border-[var(--tropx-border)]",
+    className
+  );
 
-  // Confirmation dialogs
-  const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-
-  // Load chat history from Convex
-  const chatHistory = useQuery(
-    api.horus.chat.getChatHistory,
-    selectedSessionId ? { sessionId: selectedSessionId } : "skip"
-  ) ?? [];
-
-  // Mutations
-  const addMessagesMutation = useMutation(api.horus.chat.addMessages);
-  const deleteMessageMutation = useMutation(api.horus.chat.deleteMessage);
-  const clearHistoryMutation = useMutation(api.horus.chat.clearHistory);
-
-  // User query action
-  const askAnalysis = useAction(api.horus.userQuery.askAnalysis);
-
-  // V2 Analysis hook for session mode
-  const v2Analysis = useV2Analysis(selectedSessionId ?? undefined);
-
-  // Generate unique ID
-  const generateId = useCallback(() => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`, []);
-
-  // Handle sending a question
-  const handleSendQuestion = useCallback(async () => {
-    if (!chatInput.trim() || !selectedSessionId) return;
-
-    const userMessage: ChatMessage = {
-      id: generateId(),
-      role: "user",
-      content: chatInput.trim(),
-      timestamp: Date.now(),
-    };
-
-    const inputText = chatInput.trim();
-    setChatInput("");
-    setChatLoading(true);
-
-    try {
-      // Build chat history context (limit to last 10 messages)
-      const historyForContext = chatHistory
-        .slice(-10)
-        .map((msg: ChatMessage) => ({
-          role: msg.role,
-          content: msg.content,
-        }));
-
-      const result = await askAnalysis({
-        sessionId: selectedSessionId,
-        userPrompt: inputText,
-        patientId: patientId ?? undefined,
-        chatHistory: historyForContext,
-      });
-
-      if (result.success && result.response) {
-        const assistantMessage: ChatMessage = {
-          id: generateId(),
-          role: "assistant",
-          content: result.response.textResponse ?? "",
-          blocks: result.response.blocks,
-          timestamp: Date.now(),
-        };
-
-        // Save both messages to Convex
-        await addMessagesMutation({
-          sessionId: selectedSessionId,
-          patientId: patientId ?? undefined,
-          messages: [userMessage, assistantMessage],
-        });
-      } else {
-        // Save user message and error response
-        const errorMessage: ChatMessage = {
-          id: generateId(),
-          role: "assistant",
-          content: result.error || "Failed to process question",
-          timestamp: Date.now(),
-        };
-        await addMessagesMutation({
-          sessionId: selectedSessionId,
-          patientId: patientId ?? undefined,
-          messages: [userMessage, errorMessage],
-        });
-      }
-    } catch (err) {
-      // Save user message and error
-      const errorMessage: ChatMessage = {
-        id: generateId(),
-        role: "assistant",
-        content: err instanceof Error ? err.message : "Something went wrong",
-        timestamp: Date.now(),
-      };
-      await addMessagesMutation({
-        sessionId: selectedSessionId,
-        patientId: patientId ?? undefined,
-        messages: [userMessage, errorMessage],
-      });
-    } finally {
-      setChatLoading(false);
-    }
-  }, [chatInput, selectedSessionId, patientId, chatHistory, askAnalysis, generateId, addMessagesMutation]);
-
-  // Clear chat history (with confirmation)
-  const handleClearChat = useCallback(async () => {
-    if (!selectedSessionId) return;
-    await clearHistoryMutation({ sessionId: selectedSessionId });
-    setShowClearConfirm(false);
-  }, [selectedSessionId, clearHistoryMutation]);
-
-  // Delete a message (with confirmation)
-  const handleDeleteMessage = useCallback(async () => {
-    if (!selectedSessionId || !deleteConfirmId) return;
-    await deleteMessageMutation({ sessionId: selectedSessionId, messageId: deleteConfirmId });
-    setDeleteConfirmId(null);
-  }, [selectedSessionId, deleteConfirmId, deleteMessageMutation]);
-
-  // Start editing a message
-  const startEditing = useCallback((message: ChatMessage) => {
-    setEditingMessageId(message.id);
-    setEditingContent(message.content);
-  }, []);
-
-  // Cancel editing
-  const cancelEditing = useCallback(() => {
-    setEditingMessageId(null);
-    setEditingContent("");
-  }, []);
-
-  // Submit edited message (delete old and immediately resend)
-  const submitEdit = useCallback(async () => {
-    if (!editingMessageId || !editingContent.trim() || !selectedSessionId) return;
-
-    // Find the message being edited
-    const messageIdx = chatHistory.findIndex((m: ChatMessage) => m.id === editingMessageId);
-    if (messageIdx === -1) return;
-
-    const newContent = editingContent.trim();
-
-    // Delete the old message from DB
-    await deleteMessageMutation({ sessionId: selectedSessionId, messageId: editingMessageId });
-
-    // Clear edit state
-    setEditingMessageId(null);
-    setEditingContent("");
-
-    // Immediately send the edited message
-    setChatLoading(true);
-
-    const userMessage: ChatMessage = {
-      id: generateId(),
-      role: "user",
-      content: newContent,
-      timestamp: Date.now(),
-    };
-
-    try {
-      // Build chat history context (excluding the deleted message)
-      const historyForContext = chatHistory
-        .filter((m: ChatMessage) => m.id !== editingMessageId)
-        .slice(-10)
-        .map((msg: ChatMessage) => ({
-          role: msg.role,
-          content: msg.content,
-        }));
-
-      const result = await askAnalysis({
-        sessionId: selectedSessionId,
-        userPrompt: newContent,
-        patientId: patientId ?? undefined,
-        chatHistory: historyForContext,
-      });
-
-      if (result.success && result.response) {
-        const assistantMessage: ChatMessage = {
-          id: generateId(),
-          role: "assistant",
-          content: result.response.textResponse ?? "",
-          blocks: result.response.blocks,
-          timestamp: Date.now(),
-        };
-
-        await addMessagesMutation({
-          sessionId: selectedSessionId,
-          patientId: patientId ?? undefined,
-          messages: [userMessage, assistantMessage],
-        });
-      } else {
-        const errorMessage: ChatMessage = {
-          id: generateId(),
-          role: "assistant",
-          content: result.error || "Failed to process question",
-          timestamp: Date.now(),
-        };
-        await addMessagesMutation({
-          sessionId: selectedSessionId,
-          patientId: patientId ?? undefined,
-          messages: [userMessage, errorMessage],
-        });
-      }
-    } catch (err) {
-      const errorMessage: ChatMessage = {
-        id: generateId(),
-        role: "assistant",
-        content: err instanceof Error ? err.message : "Something went wrong",
-        timestamp: Date.now(),
-      };
-      await addMessagesMutation({
-        sessionId: selectedSessionId,
-        patientId: patientId ?? undefined,
-        messages: [userMessage, errorMessage],
-      });
-    } finally {
-      setChatLoading(false);
-    }
-  }, [editingMessageId, editingContent, chatHistory, selectedSessionId, patientId, deleteMessageMutation, generateId, askAnalysis, addMessagesMutation]);
-
-  // Previous chats (user messages only, most recent first)
-  const previousChatsForInput = useMemo(() => {
-    return chatHistory
-      .filter((msg: ChatMessage) => msg.role === "user")
-      .map((msg: ChatMessage) => ({
-        id: msg.id,
-        text: msg.content,
-        timestamp: msg.timestamp,
-      }))
-      .reverse();
-  }, [chatHistory]);
-
-  // Handle selecting a previous chat from pills
-  const handleSelectPreviousChat = useCallback((chat: { id: string; text: string }) => {
-    setChatInput(chat.text);
-  }, []);
-
-  // Get visualization data
-  const { isLoading, context } =
-    useVisualization(patientId, selectedSessionId, sessions);
-
-  // Fallback context when real context isn't available (metrics not loaded)
-  const fallbackContext: EvaluationContext = {
-    current: {
-      sessionId: selectedSessionId || "unknown",
-      leftLeg: { overallMaxRom: 0, averageRom: 0, peakFlexion: 0, peakExtension: 0, peakAngularVelocity: 0, explosivenessConcentric: 0, explosivenessLoading: 0, rmsJerk: 0, romCoV: 0 },
-      rightLeg: { overallMaxRom: 0, averageRom: 0, peakFlexion: 0, peakExtension: 0, peakAngularVelocity: 0, explosivenessConcentric: 0, explosivenessLoading: 0, rmsJerk: 0, romCoV: 0 },
-      bilateral: { romAsymmetry: 0, velocityAsymmetry: 0, crossCorrelation: 0, realAsymmetryAvg: 0, netGlobalAsymmetry: 0, phaseShift: 0, temporalLag: 0, maxFlexionTimingDiff: 0 },
-      movementType: "bilateral",
-      recordedAt: Date.now(),
-    },
-  };
-  const effectiveContext = context || fallbackContext;
-
-  // Empty state
   if (!patientId) {
     return (
-      <div
-        className={cn(
-          "flex flex-col items-center justify-center py-16 bg-[var(--tropx-card)]",
-          borderless
-            ? "rounded-none border-0 sm:rounded-xl sm:border sm:border-[var(--tropx-border)]"
-            : "rounded-xl border border-[var(--tropx-border)]",
-          className
-        )}
-      >
-        <div className="text-tropx-vibrant mb-4">
-          <AtomSpin className="size-12" />
-        </div>
+      <div className={emptyStateClass}>
+        <div className="text-tropx-vibrant mb-4"><AtomSpin className="size-12" /></div>
         <p className="text-[var(--tropx-text-sub)]">Select a patient to view AI analysis</p>
       </div>
     );
@@ -675,22 +600,16 @@ export function HorusPane({
 
   if (sessions.length === 0) {
     return (
-      <div
-        className={cn(
-          "flex flex-col items-center justify-center py-16 bg-[var(--tropx-card)]",
-          borderless
-            ? "rounded-none border-0 sm:rounded-xl sm:border sm:border-[var(--tropx-border)]"
-            : "rounded-xl border border-[var(--tropx-border)]",
-          className
-        )}
-      >
-        <div className="text-tropx-vibrant mb-4">
-          <AtomSpin className="size-12" />
-        </div>
+      <div className={emptyStateClass}>
+        <div className="text-tropx-vibrant mb-4"><AtomSpin className="size-12" /></div>
         <p className="text-[var(--tropx-text-sub)]">No sessions available for analysis</p>
       </div>
     );
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  // Main Render
+  // ─────────────────────────────────────────────────────────────────
 
   return (
     <div
@@ -703,7 +622,7 @@ export function HorusPane({
         className
       )}
     >
-      {/* Header - Horus branding */}
+      {/* Header */}
       <div className="flex items-center gap-4 px-4 sm:px-5 py-4 sm:py-5 border-b border-[var(--tropx-border)] shrink-0">
         <div className="flex items-center gap-3">
           <div style={{ color: 'var(--tropx-vibrant)' }}>
@@ -720,7 +639,7 @@ export function HorusPane({
         </div>
       </div>
 
-      {/* Main content */}
+      {/* Content */}
       <div className="p-4 sm:p-5 flex-1">
         {selectedSessionId ? (
           <V2SectionsView
@@ -732,45 +651,92 @@ export function HorusPane({
           />
         ) : (
           <div className="flex flex-col items-center justify-center py-16">
-            <div className="text-tropx-vibrant mb-4">
-              <AtomSpin className="size-10" />
-            </div>
-            <p className="text-sm text-[var(--tropx-text-sub)]">
-              Select a session to view AI analysis
-            </p>
+            <div className="text-tropx-vibrant mb-4"><AtomSpin className="size-10" /></div>
+            <p className="text-sm text-[var(--tropx-text-sub)]">Select a session to view AI analysis</p>
           </div>
         )}
       </div>
 
-      {/* Chat - fixed to viewport, trapped in pane bounds */}
-      {selectedSessionId && (
-        <div
-          ref={chatRef}
-          className={cn("z-30", chatMinimized ? "w-auto" : "w-[400px]")}
-        >
-          {/* Inner wrapper for scale animation - separate from position transforms */}
-          <div ref={chatInnerRef} className="origin-bottom-right">
+      {/* Backdrop for fullscreen mode */}
+      <AnimatePresence>
+        {isFullscreen && (
+          <motion.div
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={handleCloseFullscreen}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Chat - Only render when we have a valid position or fullscreen */}
+      <AnimatePresence>
+        {selectedSessionId && (chatPosition || isFullscreen) && (
+          <motion.div
+            key={isFullscreen ? "fullscreen" : isMinimized ? "minimized" : "expanded"}
+            className={cn(
+              "fixed origin-bottom-right",
+              isFullscreen
+                ? "z-50 top-[12%] left-[12%] right-[12%] bottom-[12%]"
+                : cn(
+                    "z-30",
+                    isMinimized ? "w-auto" : "w-[500px] max-w-[90vw] cursor-grab active:cursor-grabbing"
+                  )
+            )}
+            style={isFullscreen ? {} : {
+              bottom: chatPosition?.bottom,
+              left: chatPosition?.left,
+            }}
+            drag={isMinimized && !isFullscreen ? false : isFullscreen ? false : "x"}
+            dragConstraints={dragConstraints}
+            dragElastic={0.1}
+            dragMomentum={false}
+            initial={{ scale: 0, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1, x: 0 }}
+            exit={{ scale: 0, opacity: 0 }}
+            transition={{
+              type: "spring",
+              stiffness: 400,
+              damping: 25,
+            }}
+          >
             <HorusChatInput
               value={chatInput}
               onChange={setChatInput}
               onSend={handleSendQuestion}
-              minimized={chatMinimized}
-              onMinimize={() => {
-                setTargetMinimized(true);
-                setUserExpanded(false);
-              }}
-              onExpand={() => {
-                setTargetMinimized(false);
-                setUserExpanded(true);
-              }}
+              minimized={isMinimized && !isFullscreen}
+              onMinimize={() => { setIsMinimized(true); setIsFullscreen(false); userExpandedRef.current = false; }}
+              onExpand={() => { setIsMinimized(false); userExpandedRef.current = true; }}
               isLoading={chatLoading}
-              disabled={!selectedSessionId}
+              disabled={!selectedSessionId || !isOwnChat}
               previousChats={previousChatsForInput}
               onSelectPreviousChat={handleSelectPreviousChat}
+              onNewChat={handleNewChat}
+              pendingMessage={pendingMessage}
+              onDismissPending={() => { setPendingMessage(null); setAiResponse(null); }}
+              userImage={userImage}
+              onEditMessage={handleEditPendingMessage}
+              onDeleteMessage={handleDeletePendingMessage}
+              onRegenerate={handleRegeneratePendingMessage}
+              aiResponse={aiResponse}
+              chatHistory={chatHistory}
+              onEditHistoryMessage={handleEditHistoryMessage}
+              onDeleteHistoryMessage={handleDeleteHistoryMessage}
+              onRegenerateFrom={handleRegenerateFrom}
+              onBranchFrom={handleBranchFrom}
+              onOpenModal={handleOpenFullscreen}
+              isFullscreen={isFullscreen}
+              onCloseFullscreen={handleCloseFullscreen}
+              isOwnChat={isOwnChat}
+              currentUserId={currentUserId}
+              allChats={allChatsForList}
+              onRenameChat={handleRenameChat}
+              onDeleteChat={handleDeleteChat}
             />
-          </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
